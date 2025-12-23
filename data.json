@@ -1,0 +1,11 @@
+{
+  "focusMinutes": 25,
+  "breakMinutes": 5,
+  "autoStartBreak": false,
+  "autoStartFocus": false,
+  "showInStatusBar": true,
+  "soundEnabled": true,
+  "soundVolume": 0.7,
+  "tasksPath": "Projects/",
+  "logFolderPath": "Pomodoro_logs/"
+}

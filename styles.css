@@ -1,0 +1,552 @@
+/* Container Layout */
+.gp-root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 20px;
+}
+
+/* --- The Abstract Shape Container --- */
+.gp-timer-visual {
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+    position: relative;
+    width: 100%;
+    max-width: 220px; /* Smaller, fits sidebar better */
+    aspect-ratio: 1 / 1; /* Keep it square-ish */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* The Shape Wrapper */
+.gp-timer-shape {
+    position: absolute;
+    inset: 0;
+    border-radius: 35px; /* Soft rounded corners (Squircle-ish) */
+    overflow: hidden;
+    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
+    
+    /* CHANGED: Added box-shadow to transition list.
+       This ensures that when 'animation' is removed (by removing the class),
+       the box-shadow gently interpolates back to the base state instead of snapping. */
+    transition: transform 0.8s ease-out, box-shadow 0.8s ease-out;
+
+	z-index: 1; /* Above background layers, below content */
+}
+
+.gp-state-running .gp-timer-shape {
+    /* Very slow, gentle pulse */
+    animation: gp-gentle-pulse 8s ease-in-out infinite;
+}
+
+/* Subtle rectangular progress halo around the timer shape */
+.gp-progress-ring {
+	position: absolute;
+	inset: -6px;              /* slightly bigger than the shape */
+	border-radius: 35px;      /* 👈 match .gp-timer-shape border-radius */
+	pointer-events: none;
+	z-index: 0;
+
+	/* Simple conic gradient: the card itself will mask the center,
+	   so we only see the "border" outside the shape. */
+	background: conic-gradient(
+		var(--gp-ring-color, #f6d365)
+		calc(var(--gp-ring-progress, 0) * 1turn),
+		transparent 0
+	);
+
+	opacity: 0.25;
+	transform: scale(0.99);
+	transition:
+		opacity 0.8s ease-out,
+		transform 0.8s ease-out;
+}
+
+/* Slightly stronger halo while running */
+.gp-state-running .gp-progress-ring {
+	opacity: 0.5;
+	transform: scale(1);
+}
+
+@keyframes gp-gentle-pulse {
+    0% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3); }
+    50% { transform: scale(1.03); box-shadow: 0 15px 40px -10px rgba(0, 0, 0, 0.4); }
+    100% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3); }
+}
+
+/* --- The Color Layers --- */
+
+/* Layer 1: Summer Daylight (Bottom) */
+.gp-layer-day {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+    z-index: 0;
+}
+
+/* Layer 1.5: Dusk / Dawn (Middle) */
+.gp-layer-dusk {
+    position: absolute;
+    inset: 0;
+    /* A rich purple/pink gradient to bridge Day and Night */
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    z-index: 1;
+
+    /* Opacity controlled by JS */
+    opacity: var(--gp-dusk-opacity, 0);
+    
+    /* CHANGED: Increased transition time for a smoother color reset on stop */
+    transition: opacity 0.8s ease-out;
+}
+
+/* Layer 2: Night / Northern Lights (Top) */
+.gp-layer-night {
+    position: absolute;
+    inset: 0;
+    /* Deep blue/purple to teal/green aurora look */
+    background: linear-gradient(135deg, #243949 0%, #517fa4 100%); 
+    z-index: 1;
+    
+    /* Opacity controlled by JS via CSS variable */
+    opacity: var(--gp-night-opacity, 0);
+
+    /* CHANGED: Increased transition time for a smoother color reset on stop */
+    transition: opacity 0.8s ease-out;
+}
+
+/* --- Typography --- */
+.gp-timer-content {
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.gp-timer-time {
+    font-size: 3.5rem;
+    /* Slightly bolder weight usually looks better for rounded fonts */
+    font-weight: 600; 
+    /* UPDATED FONT STACK:
+       1. SF Pro Rounded / ui-rounded: macOS/iOS
+       2. Arial Rounded MT Bold: Windows (with Office)
+       3. Varela Round / Quicksand / Nunito: Common free rounded fonts (if user has them)
+       4. Segoe UI: Windows default (not rounded, but cleaner than Arial)
+       5. sans-serif: Fallback
+    */
+    font-family: "SF Pro Rounded", "ui-rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI", sans-serif;
+    color: #ffffff;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    
+    /* Crucial: keeps the numbers from jittering left/right as they change */
+    font-variant-numeric: tabular-nums;
+    
+    /* Visibility Logic */
+    transition: opacity 0.3s ease;
+    opacity: 1;
+}
+
+/* Overtime Text Style */
+.gp-overtime {
+    color: #ff6b6b; /* Reddish tint to indicate overtime */
+    text-shadow: 0 0 15px rgba(255, 107, 107, 0.5);
+}
+
+/* When running, hide the time... */
+.gp-state-running .gp-timer-time {
+    opacity: 0;
+}
+
+/* ...unless hovering over the shape */
+.gp-timer-visual:hover .gp-timer-time {
+    opacity: 1;
+}
+
+.gp-mode-label {
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 700;
+    font-family: "SF Pro Rounded", "ui-rounded", "Arial Rounded MT Bold", sans-serif;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+
+/* --- Controls --- */
+.gp-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem; /* Space between rows */
+    width: 100%;
+    max-width: 240px; /* Keep controls compact */
+
+    position: relative;
+    z-index: 2; /* ensure controls sit above any visual layers */
+}
+
+.gp-controls-row {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem; /* Space between buttons */
+    width: 100%;
+}
+
+/* Utility to remove gap for rows that handle spacing internally */
+.gp-controls-row.gp-gap-none {
+    gap: 0;
+}
+
+/* Wrapper for +/- buttons to animate them together */
+.gp-adjust-wrapper {
+    display: flex;
+    gap: 0.75rem; /* Internal gap between - and + */
+    
+    /* Animation properties */
+    transition: 
+        max-width 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+        opacity 0.3s ease,
+        margin-right 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+        transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+        
+    /* Visible State */
+    max-width: 120px; /* Sufficient for 2 buttons (42px*2) + gap */
+    opacity: 1;
+    margin-right: 0.75rem; /* Gap between this group and Settings button */
+    transform: translateX(0) scale(1);
+    overflow: hidden;
+}
+
+.gp-adjust-wrapper.gp-hidden-animated {
+    max-width: 0;
+    opacity: 0;
+    margin-right: 0; /* Collapse the external gap */
+    transform: translateX(-10px) scale(0.9);
+    pointer-events: none;
+}
+
+/* Base Button Style */
+.gp-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--interactive-normal);
+    cursor: pointer;
+    /* Make transition faster for a snappier feel */
+    transition: background 0.1s ease, transform 0.1s ease;
+    color: var(--text-normal);
+}
+
+.gp-btn:hover {
+    background: var(--interactive-hover);
+    /* FIX: Removed translateY(-1px). 
+       Moving the button physically makes it a "moving target" that causes missed clicks. */
+    transform: none;
+}
+
+.gp-btn:active {
+    /* FIX: Use scale(0.95) instead of translateY.
+       This shrinks the button towards its center, ensuring it stays under your mouse. */
+    transform: scale(0.95);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* Icon Buttons (Square-ish) */
+.gp-icon-btn {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+}
+
+.gp-icon-btn svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2.5px; /* Make icons slightly bolder */
+}
+
+/* Primary Action (Start/Pause) */
+.gp-btn-primary {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border: none;
+}
+
+.gp-btn-primary:hover {
+    background-color: var(--interactive-accent-hover);
+}
+
+/* Full Width Button (Task Selector) */
+.gp-btn-full {
+    width: 100%;
+    min-height: 52px; /* Increased height for 2 rows */
+    padding: 4px 12px;
+    display: flex;
+    flex-direction: column; /* Stack content vertically */
+    align-items: flex-start; /* Align text to left */
+    justify-content: center;
+    gap: 2px;
+    font-weight: 500;
+    font-size: 0.9rem;
+    line-height: 1.2;
+}
+
+/* The label "Select Task" or "Current Task" (Small top row) */
+.gp-task-btn-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+    width: 100%;
+    text-align: left;
+}
+
+/* The actual task text (Main row) */
+.gp-task-btn-text {
+    font-size: 0.95rem;
+    color: var(--text-normal);
+    width: 100%;
+    text-align: left;
+    
+    /* Truncate with ellipsis */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* --- Settings Panel --- */
+.gp-settings-panel {
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--background-modifier-border);
+    
+    /* Add bottom divider and spacing */
+    padding-bottom: 1rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--background-modifier-border);
+
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    width: 100%;
+    
+    /* Slide down animation */
+    animation: gp-slide-down 0.2s ease-out;
+}
+
+@keyframes gp-slide-down {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.gp-settings-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+.gp-settings-row span {
+    flex: 1;
+}
+
+.gp-settings-row input[type="number"] {
+    width: 60px;
+    text-align: center;
+    border-radius: 6px;
+}
+
+.gp-settings-row input[type="checkbox"] {
+    cursor: pointer;
+    width: 1.2rem;
+    height: 1.2rem;
+}
+
+/* Status bar indicator */
+.gp-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.gp-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--text-muted);
+    opacity: 0.8;
+    transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.gp-status-dot.gp-mode-focus {
+    background: #f39c12;
+}
+
+.gp-status-dot.gp-mode-break {
+    background: #3498db;
+}
+
+.gp-status-dot.gp-running {
+    transform: scale(1.2);
+}
+
+.gp-status-label {
+    font-size: 0.75rem;
+    opacity: 0.8;
+}
+
+/* Disabled State for Buttons */
+.gp-btn:disabled,
+.gp-btn.gp-btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+	filter: grayscale(100%);
+	background-color: var(--background-modifier-form-field);
+}
+
+/* Utility to hide elements completely */
+.gp-hidden {
+    display: none !important;
+}
+
+/* --- Settings Panel --- */
+.gp-settings-panel {
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--background-modifier-border);
+    
+    /* NEW: Add bottom divider and spacing */
+    padding-bottom: 1rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--background-modifier-border);
+
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    width: 100%;
+    
+    /* Slide down animation */
+    animation: gp-slide-down 0.2s ease-out;
+}
+
+/* --- Task List Dropdown --- */
+.gp-task-list {
+    width: 100%;
+    max-height: 0;
+    overflow-y: auto;
+    background-color: var(--background-secondary);
+    border-radius: 12px;
+    margin-top: 0.5rem;
+    transition: max-height 0.3s ease-in-out, padding 0.3s ease;
+    border: 1px solid transparent;
+}
+
+.gp-task-list.gp-visible {
+    max-height: 250px; /* Increased slightly for groups */
+    border-color: var(--background-modifier-border);
+    padding: 0.5rem;
+}
+
+/* NEW: Group Header Style */
+.gp-task-group-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-top: 0.75rem;
+    margin-bottom: 0.25rem;
+    padding-left: 0.5rem;
+    border-bottom: 1px solid var(--background-modifier-border);
+    padding-bottom: 2px;
+}
+
+.gp-task-group-header:first-child {
+    margin-top: 0.25rem;
+}
+
+.gp-task-item {
+    padding: 6px 12px; /* Slightly more compact */
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-normal);
+    transition: background-color 0.1s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.3;
+} 
+
+/* --- Overtime Visuals --- */
+
+/* Define the breathing animation */
+@keyframes gp-breathing-glow {
+    0% { box-shadow: 0 0 15px 2px var(--gp-glow-color); }
+    50% { box-shadow: 0 0 25px 8px var(--gp-glow-color); }
+    100% { box-shadow: 0 0 15px 2px var(--gp-glow-color); }
+}
+
+/* Base state for overtime: Enable animation on the shape */
+.gp-state-overtime .gp-timer-shape {
+    /* CHANGED: 4s -> 6s for a slower, more gentle breath */
+    animation: gp-breathing-glow 6s ease-in-out infinite;
+    transition: box-shadow 1s ease;
+}
+
+/* 1. Focus Mode Overtime: Midnight Blue Glow */
+.gp-state-overtime.gp-mode-focus .gp-timer-shape {
+    /* Deep Sky Blue / Midnight tone with low opacity */
+    --gp-glow-color: rgba(30, 144, 255, 0.35); 
+}
+
+/* 2. Rest/Break Mode Overtime: Daylight Orange Glow */
+.gp-state-overtime.gp-mode-break .gp-timer-shape {
+    /* Orange / Sunset tone with low opacity */
+    --gp-glow-color: rgba(255, 140, 0, 0.35);
+}
+
+/* --- Total Time (Overtime Only) --- */
+.gp-total-time {
+    font-size: 1rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-top: -4px; /* Pull it closer to the main time */
+    opacity: 0; /* Hidden by default */
+    transition: opacity 0.3s ease;
+    height: 0; /* Collapse space when hidden */
+    overflow: hidden;
+}
+
+/* Show it when we are in overtime */
+.gp-state-overtime .gp-total-time {
+    height: auto;
+    opacity: 1;
+}
+
+/* NEW: Specific color for Break/Daylight mode */
+/* Uses a soft white instead of dark grey to look cleaner on the orange background */
+.gp-state-overtime.gp-mode-break .gp-total-time {
+    color: rgba(255, 255, 255, 0.85);
+    text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* When running, hide it (like the main timer) */
+.gp-state-running .gp-total-time {
+    opacity: 0;
+}
+
+/* ...unless hovering over the shape */
+.gp-timer-visual:hover .gp-total-time {
+    opacity: 0.8;
+}
