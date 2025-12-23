@@ -164,6 +164,8 @@ class TimerEngine {
                     gain.connect(ctx.destination);
                     source.start(0);
                     return; // Exit if successful
+                } else {
+                    console.log(`[GentlePomo] Custom sound file not found at: ${soundFile}`);
                 }
             }
         } catch (e) {

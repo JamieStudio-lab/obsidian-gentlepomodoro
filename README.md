@@ -7,16 +7,19 @@ This plugin is designed to help you maintain focus while keeping track of your w
 ## Features
 
 ### 🍅 Visual Timer
+
 *   **Ambient Visuals:** Instead of a ticking clock, a soothing shape gently pulses and transitions colors (Day → Dusk → Night) as time progresses.
 *   **Focus & Rest Modes:** Customizable durations for work and breaks.
 *   **Overtime Tracking:** The timer counts up after the session ends, glowing gently to let you know you're in overtime without breaking your flow.
 
 ### ✅ Task Integration
+
 *   **Seamless Workflow:** Select tasks directly from your Markdown files (compatible with the [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) plugin format).
 *   **Smart Filtering:** Automatically finds tasks scheduled for Today, Tomorrow, or Overdue.
 *   **Context:** Links your focus session to the specific file where the task lives.
 
 ### 📊 Automated Logging
+
 *   **Daily Logs:** Automatically generates a daily log file (e.g., `2025-12-23-gentle-pomodoro-log.md`).
 *   **Dataview Compatible:** Logs are written in a format easily queried by the Dataview plugin.
 *   **Detailed Metrics:** Tracks start/end times, pauses, actual duration vs. scheduled duration, and links back to the specific task file.
@@ -31,6 +34,7 @@ This plugin is designed to work seamlessly with other powerful Obsidian tools:
 ## Installation
 
 ### Option 1: Via BRAT (Recommended for Beta)
+
 This plugin is currently in **Beta**. The easiest way to install it is using the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin.
 
 1.  Install **BRAT** from the Obsidian Community Plugins list.
@@ -42,10 +46,10 @@ This plugin is currently in **Beta**. The easiest way to install it is using the
 [View the latest release (0.0.3)](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/tag/0.0.3)
 
 ### Option 2: Manual Installation
-1.  Download `main.js`, `manifest.json`, and `styles.css` from the [Latest Release (0.0.3 Beta)](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/latest).
-2.  Create a folder named `obsidian-gentlepomodoro` inside your vault's `.obsidian/plugins/` directory.
-3.  Move the downloaded files into that folder.
-4.  Reload Obsidian and enable the plugin.
+
+1.  Download `obsidian-gentlepomodoro.zip` from the [Latest Release](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/latest).
+2.  Extract the zip file into your vault's `.obsidian/plugins/` directory.
+3.  Reload Obsidian and enable the plugin.
 
 ## Usage
 
