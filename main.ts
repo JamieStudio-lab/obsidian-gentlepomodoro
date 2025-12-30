@@ -7,6 +7,7 @@ import {
     WorkspaceLeaf,
     setIcon,
     TFile,
+    TAbstractFile,
     // moment,
 } from "obsidian";
 
@@ -47,6 +48,7 @@ interface TimerState {
     isRunning: boolean;
     remainingMs: number;
     totalMs: number;
+    taskName: string;
 }
 
 type TimerListener = (state: TimerState) => void;
@@ -72,6 +74,7 @@ class TimerEngine {
             isRunning: false,
             remainingMs: total,
             totalMs: total,
+            taskName: "No Task",
         };
     }
 
@@ -79,8 +82,25 @@ class TimerEngine {
     setTask(name: string, path?: string) {
         this.currentTaskName = name;
         this.currentTaskPath = path;
+        this.state.taskName = name;
         // If a session is running (or paused), update its log entry immediately
         this.plugin.logManager.updateTask(name, path);
+        this.emit();
+    }
+
+    // Handle file modification to check for task completion
+    async onFileModify(file: TAbstractFile) {
+        // 1. Basic checks
+        if (this.currentTaskName === "No Task" || !this.currentTaskPath) return;
+        
+        // 2. Check if modified file matches current task file
+        if (file.path !== this.currentTaskPath) return;
+
+        // 3. If timer is running, do NOT unlink automatically (per requirements)
+        if (this.state.isRunning) return;
+
+        // 4. Check completion
+        await this.checkTaskCompletionAndUnlink();
     }
 
     getState(): TimerState {
@@ -131,9 +151,24 @@ class TimerEngine {
         // Log the finished session
         this.plugin.logManager.endSession("finished");
 
-        if (this.plugin.settings.soundEnabled) {
-            this.playChime();
-        }
+        // Check if task is completed and unlink if so
+        this.checkTaskCompletionAndUnlink();
+
+        // REMOVED: if (this.plugin.settings.soundEnabled) { this.playChime(); } 
+        // Sound is now handled in finish() or skip() before calling this, 
+        // or we can add auto-finish sound logic here if the timer runs out naturally.
+        
+        // NOTE: If the timer runs out naturally (via startLoop), we still need a sound.
+        // Since handleFinished is called by startLoop, let's add a check here for natural completion.
+        // However, finish() and skip() call this too. To avoid double sounds, we can rely on the caller
+        // OR pass a flag. 
+        // But wait, startLoop calls handleFinished() directly when time < 0 (if we had auto-finish logic, 
+        // but currently we go into overtime).
+        
+        // Actually, this plugin goes into OVERTIME, it doesn't auto-finish.
+        // So handleFinished is ONLY called by user interaction (Stop/Skip).
+        // Therefore, the sound logic in finish() and skip() is sufficient.
+        
         if (this.state.mode === "focus") {
             this.switchMode("break", this.plugin.settings.autoStartBreak);
         } else {
@@ -141,12 +176,65 @@ class TimerEngine {
         }
     }
 
-    private async playChime() {
-        // 1. Try to play bundled mp3 file: gentle-pomo-new-notification.mp3
+    private async checkTaskCompletionAndUnlink() {
+        if (!this.currentTaskPath || this.currentTaskName === "No Task") return;
+
+        const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
+        if (!(file instanceof TFile)) return;
+
+        try {
+            const content = await this.plugin.app.vault.read(file);
+            const lines = content.split("\n");
+            
+            // Regex to match completed tasks: - [x] ...
+            // Reuse cleanup regex logic (same as in GentlePomoView)
+            // Added: ✅ for Tasks plugin completion dates
+            const cleanupRegex = /[⏳📅🛫➕✅]\s*\d{4}-\d{2}-\d{2}|[🔺🔽🔥]\s*\w*|🔁\s*[a-zA-Z0-9\s]+/g;
+            
+            let foundIncomplete = false;
+            let foundComplete = false;
+
+            for (const line of lines) {
+                // Check for Incomplete: - [ ] ...
+                const incompleteMatch = line.match(/^\s*-\s*\[ \]\s+(.*)$/);
+                if (incompleteMatch) {
+                    const clean = incompleteMatch[1].replace(cleanupRegex, "").trim();
+                    if (clean === this.currentTaskName) {
+                        foundIncomplete = true;
+                        // If we find an incomplete version, we assume the task is still active.
+                        break; 
+                    }
+                }
+
+                // Check for Complete: - [x] ...
+                const completeMatch = line.match(/^\s*-\s*\[x\]\s+(.*)$/i);
+                if (completeMatch) {
+                    const clean = completeMatch[1].replace(cleanupRegex, "").trim();
+                    if (clean === this.currentTaskName) {
+                        foundComplete = true;
+                    }
+                }
+            }
+
+            // Logic:
+            // 1. If we found an incomplete version, the task is still active. Do nothing.
+            // 2. If we did NOT find an incomplete version, but DID find a complete version, it means the task was finished. Unlink.
+            if (!foundIncomplete && foundComplete) {
+                this.setTask("No Task");
+            }
+        } catch (e) {
+            console.error("[GentlePomo] Failed to check task completion", e);
+        }
+    }
+
+    // CHANGED: Generalized sound player that takes a specific filename
+    private async playSound(filename: string) {
+        if (!this.plugin.settings.soundEnabled) return;
+
         try {
             const pluginDir = this.plugin.manifest.dir;
             if (pluginDir) {
-                const soundFile = `${pluginDir}/gentle-pomo-new-notification.mp3`;
+                const soundFile = `${pluginDir}/${filename}`;
                 const exists = await this.plugin.app.vault.adapter.exists(soundFile);
                 
                 if (exists) {
@@ -163,27 +251,13 @@ class TimerEngine {
                     source.connect(gain);
                     gain.connect(ctx.destination);
                     source.start(0);
-                    return; // Exit if successful
                 } else {
-                    console.log(`[GentlePomo] Custom sound file not found at: ${soundFile}`);
+                    console.log(`[GentlePomo] Sound file not found: ${soundFile}`);
                 }
             }
         } catch (e) {
-            console.error("[GentlePomo] Failed to play bundled sound:", e);
+            console.error(`[GentlePomo] Failed to play sound ${filename}:`, e);
         }
-
-        // 2. Fallback to generated beep
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(880, ctx.currentTime);
-        gain.gain.setValueAtTime(this.plugin.settings.soundVolume, ctx.currentTime);
-        osc.start();
-        gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + 0.5);
-        osc.stop(ctx.currentTime + 0.5);
     }
 
     switchMode(mode: PomoMode, autoStart = false) {
@@ -199,6 +273,7 @@ class TimerEngine {
             isRunning: autoStart,
             remainingMs: total,
             totalMs: total,
+            taskName: this.currentTaskName,
         };
         this.emit();
 
@@ -216,6 +291,11 @@ class TimerEngine {
 
     start() {
         if (this.state.isRunning) return;
+        
+        // Check if this is a fresh start (not a resume)
+        // Play War Drum only on fresh Focus start
+        const isFreshStart = this.state.remainingMs === this.state.totalMs;
+
         this.state.isRunning = true;
 
         // Start or Resume Logging
@@ -227,6 +307,11 @@ class TimerEngine {
         // Set target based on current remaining time
         this.targetTime = Date.now() + this.state.remainingMs;
         
+        // NEW: Play War Drum only on fresh Focus start
+        if (isFreshStart && this.state.mode === "focus") {
+            this.playSound("war-drum_short.mp3");
+        }
+
         this.emit();
         this.startLoop();
     }
@@ -244,28 +329,76 @@ class TimerEngine {
     }
 
     finish() {
+        // Play specific sounds based on mode when manually finishing
+        if (this.state.mode === "focus") {
+            this.playSound("singing_bell_short.mp3");
+        } else {
+            this.playSound("ding-sound.mp3");
+        }
         this.handleFinished();
     }
 
     skip() {
+        // Check if we are in a "stopped" state (fresh start, not running, not paused)
+        const isStopped = !this.state.isRunning && this.state.remainingMs === this.state.totalMs;
+
+        // Play specific sounds based on mode when skipping, unless stopped
+        if (!isStopped) {
+            // Logic mirrors finish(): Focus -> Bell, Rest -> Ding
+            if (this.state.mode === "focus") {
+                this.playSound("singing_bell_short.mp3");
+            } else {
+                this.playSound("ding-sound.mp3");
+            }
+        }
+
         // Differentiate status based on mode
         // Focus: Skip -> Cancelled (stopped work early)
         // Rest: Skip -> Finished (stopped rest early, effectively finishing it)
         const status = this.state.mode === "focus" ? "cancelled" : "finished";
         this.plugin.logManager.endSession(status);
 
+        // Check if task is completed and unlink if so
+        this.checkTaskCompletionAndUnlink();
+
         const nextMode: PomoMode = this.state.mode === "focus" ? "break" : "focus";
         this.switchMode(nextMode, false);
     }
 
+    // Cancel current session without switching modes; not in use currently
     cancel() {
-        // NEW: Log cancellation
+        // Log cancellation
         this.plugin.logManager.endSession("cancelled");
+
+        // Check if task is completed and unlink if so
+        this.checkTaskCompletionAndUnlink();
+
         this.switchMode(this.state.mode, false);
     }
 
     reset() {
-        this.cancel();
+        // Calculate total for current mode
+        const minutes = this.state.mode === "focus" 
+            ? this.plugin.settings.focusMinutes 
+            : this.plugin.settings.breakMinutes;
+        const total = minutes * 60 * 1000;
+
+        // Reset time
+        this.state.remainingMs = total;
+        this.state.totalMs = total;
+
+        // Handle Logging: Keep the current log going. Do not end or clear it.
+
+        if (this.state.isRunning) {
+            // If running, just update the target time
+            this.targetTime = Date.now() + total;
+        } else {
+            // If paused/stopped, we are now in fresh state
+            this.targetTime = null;
+            this.clearLoop();
+        }
+
+        this.emit();
     }
 
     addMinutes(delta: number) {
@@ -325,14 +458,16 @@ class GentlePomoView extends ItemView {
     plugin: GentlePomoPlugin;
     timer: TimerEngine;
     timerShape!: HTMLDivElement; // Timer Shape Element
+    // REMOVED: progressRing!: HTMLDivElement; // Progress Ring Element
     timeLabel!: HTMLDivElement; // Time Label
     totalTimeLabel!: HTMLDivElement; // Total Time Label
     modeLabel!: HTMLDivElement;
     settingsPanel!: HTMLDivElement;
     settingsVisible = false;
 
-    // Wrapper for animation
+    // Wrappers for animation
     adjustWrapper!: HTMLDivElement;
+    secondaryControlsWrapper!: HTMLDivElement;
     
     // Task List Elements
     taskListContainer!: HTMLDivElement;
@@ -366,6 +501,8 @@ class GentlePomoView extends ItemView {
 
         // --- Timer Visual Area ---
         const visual = container.createDiv("gp-timer-visual");
+
+        // Create Shape
         this.timerShape = visual.createDiv("gp-timer-shape");
         
         // Create Layers in Order: Day -> Dusk -> Night 
@@ -400,7 +537,10 @@ class GentlePomoView extends ItemView {
             this.timer.pause();
         });
 
-        const stopBtn = row1.createEl("button", { cls: "gp-btn gp-icon-btn" });
+        // Wrapper for Secondary Controls (Stop, Reset) - Skip moved OUT
+        this.secondaryControlsWrapper = row1.createDiv("gp-animated-wrapper gp-secondary-controls");
+
+        const stopBtn = this.secondaryControlsWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
         setIcon(stopBtn, "square");
         stopBtn.setAttribute("aria-label", "Finish & Next");
         this.registerDomEvent(stopBtn, "click", (evt) => {
@@ -408,7 +548,7 @@ class GentlePomoView extends ItemView {
             this.timer.finish();
         });
 
-        const resetBtn = row1.createEl("button", { cls: "gp-btn gp-icon-btn" });
+        const resetBtn = this.secondaryControlsWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
         setIcon(resetBtn, "rotate-ccw");
         resetBtn.setAttribute("aria-label", "Reset Session");
         this.registerDomEvent(resetBtn, "click", (evt) => {
@@ -416,6 +556,7 @@ class GentlePomoView extends ItemView {
             this.timer.reset();
         });
 
+        // Skip Button - Now outside the wrapper, always visible
         const skipBtn = row1.createEl("button", { cls: "gp-btn gp-icon-btn" });
         setIcon(skipBtn, "skip-forward");
         skipBtn.setAttribute("aria-label", "Skip to Next");
@@ -428,7 +569,7 @@ class GentlePomoView extends ItemView {
         const row2 = controls.createDiv("gp-controls-row");
 
         // Create wrapper for +/- buttons
-        this.adjustWrapper = row2.createDiv("gp-adjust-wrapper");
+        this.adjustWrapper = row2.createDiv("gp-animated-wrapper gp-adjust-wrapper");
 
         const minusBtn = this.adjustWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
         setIcon(minusBtn, "minus");
@@ -490,15 +631,26 @@ class GentlePomoView extends ItemView {
             if (state.isRunning) {
                 startBtn.addClass("gp-hidden");
                 pauseBtn.removeClass("gp-hidden");
+                
+                // Show secondary controls (Stop, Reset, Skip)
+                this.secondaryControlsWrapper.removeClass("gp-hidden-animated");
 
                 // Animate Wrapper In
                 this.adjustWrapper.removeClass("gp-hidden-animated");
             } else {
                 startBtn.removeClass("gp-hidden");
                 pauseBtn.addClass("gp-hidden");
-
-                // Animate Wrapper Out
-                this.adjustWrapper.addClass("gp-hidden-animated");
+                
+                // Show secondary controls if paused (active session), hide if fresh/reset
+                if (state.remainingMs !== state.totalMs) {
+                    this.secondaryControlsWrapper.removeClass("gp-hidden-animated");
+                    // Show wrapper if paused
+                    this.adjustWrapper.removeClass("gp-hidden-animated");
+                } else {
+                    this.secondaryControlsWrapper.addClass("gp-hidden-animated");
+                    // Hide wrapper if reset
+                    this.adjustWrapper.addClass("gp-hidden-animated");
+                }
             }
 
             // Disable Minus Button if remaining time < 5 minutes
@@ -546,6 +698,16 @@ class GentlePomoView extends ItemView {
             this.modeLabel.setText(state.mode === "focus" ? "Focus" : "Rest");
             visual.toggleClass("gp-state-running", state.isRunning);
 
+            // Update Task Button Text
+            const textEl = this.taskBtn.querySelector(".gp-task-btn-text");
+            if (textEl) {
+                if (state.taskName === "No Task") {
+                    textEl.setText("Select a task...");
+                } else {
+                    textEl.setText(state.taskName);
+                }
+            }
+
             // --- Gradient Transition Logic ---
             let progress = 0;
             if (state.totalMs > 0) {
@@ -560,6 +722,13 @@ class GentlePomoView extends ItemView {
             } else {
                 skyPhase = 1 - progress; // Night -> Day
             }
+
+            // Calculate Ring Color based on Sky Phase
+            // Day Color: #f6d365 (RGB: 246, 211, 101)
+            // Night Color: #517fa4 (RGB: 81, 127, 164)
+            const r = Math.round(246 + (81 - 246) * skyPhase);
+            const g = Math.round(211 + (127 - 211) * skyPhase);
+            const b = Math.round(101 + (164 - 101) * skyPhase);
 
             // Calculate Opacities for 2-Stage Transition
             // Stage 1 (0.0 - 0.5): Day -> Dusk
@@ -577,8 +746,8 @@ class GentlePomoView extends ItemView {
                 duskOpacity = 1; // Dusk stays fully opaque behind Night
                 nightOpacity = (skyPhase - 0.5) * 2;
             }
-            this.timerShape.style.setProperty("--gp-dusk-opacity", duskOpacity.toString()); 
-            this.timerShape.style.setProperty("--gp-night-opacity", nightOpacity.toString());
+            visual.style.setProperty("--gp-dusk-opacity", duskOpacity.toString()); 
+            visual.style.setProperty("--gp-night-opacity", nightOpacity.toString());
         };
 
         this.plugin.timer.onChange(this.timerListener);
@@ -604,10 +773,6 @@ class GentlePomoView extends ItemView {
         clearItem.style.fontStyle = "italic"; 
         
         clearItem.onclick = () => {
-            // Reset the button text
-            const textEl = this.taskBtn.querySelector(".gp-task-btn-text");
-            if (textEl) textEl.setText("Select a task...");
-
             // Use the new setter to update both Engine and LogManager
             this.timer.setTask("No Task");
             
@@ -637,11 +802,11 @@ class GentlePomoView extends ItemView {
             const dueRegex = /📅\s*(\d{4}-\d{2}-\d{2})/;
             
             // Regex to clean up:
-            // 1. Dates: ⏳ YYYY-MM-DD, 📅 YYYY-MM-DD, 🛫 YYYY-MM-DD, ➕ YYYY-MM-DD
+            // 1. Dates: ⏳ YYYY-MM-DD, 📅 YYYY-MM-DD, 🛫 YYYY-MM-DD, ➕ YYYY-MM-DD, ✅ YYYY-MM-DD
             // 2. Priorities: 🔺, 🔽, 🔥
             // 3. Recurrence: 🔁 ...
             // REMOVED: |#\w+ (We now keep tags)
-            const cleanupRegex = /[⏳📅🛫➕]\s*\d{4}-\d{2}-\d{2}|[🔺🔽🔥]\s*\w*|🔁\s*[a-zA-Z0-9\s]+/g;
+            const cleanupRegex = /[⏳📅🛫➕✅]\s*\d{4}-\d{2}-\d{2}|[🔺🔽🔥]\s*\w*|🔁\s*[a-zA-Z0-9\s]+/g;
 
             for (const line of lines) {
                 const match = line.match(taskRegex);
@@ -717,11 +882,15 @@ class GentlePomoView extends ItemView {
                 // REMOVED: setIcon(item, "circle");
                 item.createSpan({ text: task.cleanText });
                 
-                item.onclick = () => {
-                    // Update the text inside the button
-                    const textEl = this.taskBtn.querySelector(".gp-task-btn-text");
-                    if (textEl) textEl.setText(task.cleanText);
+                // Highlight if this is the currently selected task
+                if (task.cleanText === this.timer.currentTaskName && task.path === this.timer.currentTaskPath) {
+                    item.addClass("gp-task-selected");
+                    // Create a separate container for the icon so setIcon doesn't wipe the text
+                    const iconContainer = item.createDiv("gp-task-check-icon");
+                    setIcon(iconContainer, "check");
+                }
 
+                item.onclick = () => {
                     // FIX: Use the new setter to update both Engine and LogManager
                     this.timer.setTask(task.cleanText, task.path);
                     
@@ -817,6 +986,11 @@ export default class GentlePomoPlugin extends Plugin {
         await this.loadSettings();
         this.logManager = new LogManager(this); 
         this.timer = new TimerEngine(this);
+
+        // Register event to watch for task completion in the background
+        this.registerEvent(this.app.vault.on('modify', async (file) => {
+            await this.timer.onFileModify(file);
+        }));
 
         this.registerView(
             VIEW_TYPE_GENTLE_POMO,

@@ -1,6 +1,6 @@
 {
-  "focusMinutes": 25,
-  "breakMinutes": 5,
+  "focusMinutes": 45,
+  "breakMinutes": 15,
   "autoStartBreak": false,
   "autoStartFocus": false,
   "showInStatusBar": true,

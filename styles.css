@@ -27,14 +27,21 @@
     inset: 0;
     border-radius: 35px; /* Soft rounded corners (Squircle-ish) */
     overflow: hidden;
-    box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
     
-    /* CHANGED: Added box-shadow to transition list.
-       This ensures that when 'animation' is removed (by removing the class),
-       the box-shadow gently interpolates back to the base state instead of snapping. */
+    /* CHANGED: Set a dark background to prevent underlying orange layers from bleeding through edges */
+    background-color: #1e1e1e; 
+    
+    /* CHANGED: Use dynamic shadow color matching the timer theme */
+    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    
+    /* CHANGED: Added box-shadow to transition list. */
     transition: transform 0.8s ease-out, box-shadow 0.8s ease-out;
 
-	z-index: 1; /* Above background layers, below content */
+    z-index: 1; /* Above background layers, below content */
+    
+    /* NEW: Fix for Safari/Webkit border bleeding */
+    -webkit-mask-image: -webkit-radial-gradient(white, black);
+    mask-image: radial-gradient(white, black);
 }
 
 .gp-state-running .gp-timer-shape {
@@ -42,39 +49,10 @@
     animation: gp-gentle-pulse 8s ease-in-out infinite;
 }
 
-/* Subtle rectangular progress halo around the timer shape */
-.gp-progress-ring {
-	position: absolute;
-	inset: -6px;              /* slightly bigger than the shape */
-	border-radius: 35px;      /* 👈 match .gp-timer-shape border-radius */
-	pointer-events: none;
-	z-index: 0;
-
-	/* Simple conic gradient: the card itself will mask the center,
-	   so we only see the "border" outside the shape. */
-	background: conic-gradient(
-		var(--gp-ring-color, #f6d365)
-		calc(var(--gp-ring-progress, 0) * 1turn),
-		transparent 0
-	);
-
-	opacity: 0.25;
-	transform: scale(0.99);
-	transition:
-		opacity 0.8s ease-out,
-		transform 0.8s ease-out;
-}
-
-/* Slightly stronger halo while running */
-.gp-state-running .gp-progress-ring {
-	opacity: 0.5;
-	transform: scale(1);
-}
-
 @keyframes gp-gentle-pulse {
-    0% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3); }
-    50% { transform: scale(1.03); box-shadow: 0 15px 40px -10px rgba(0, 0, 0, 0.4); }
-    100% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3); }
+    0% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4); }
+    50% { transform: scale(1.03); box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5); }
+    100% { transform: scale(1); box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4); }
 }
 
 /* --- The Color Layers --- */
@@ -193,8 +171,17 @@
 .gp-controls-row {
     display: flex;
     justify-content: center;
-    gap: 0.75rem; /* Space between buttons */
+    /* CHANGED: Removed gap to allow better control over collapsing elements.
+       Using gap caused double-spacing when an element collapsed to 0 width but remained in the flex flow. */
+    /* gap: 0.75rem; */ 
     width: 100%;
+}
+
+/* Add spacing to all items except the last one.
+   This ensures that if an intermediate item (like the wrapper) is hidden 
+   (via margin: 0 !important), the space effectively disappears. */
+.gp-controls-row > *:not(:last-child) {
+    margin-right: 0.75rem;
 }
 
 /* Utility to remove gap for rows that handle spacing internally */
@@ -202,32 +189,41 @@
     gap: 0;
 }
 
-/* Wrapper for +/- buttons to animate them together */
-.gp-adjust-wrapper {
+/* Shared Wrapper for animated button groups */
+.gp-animated-wrapper {
     display: flex;
-    gap: 0.75rem; /* Internal gap between - and + */
+    gap: 0.75rem;
     
     /* Animation properties */
     transition: 
         max-width 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
         opacity 0.3s ease,
-        margin-right 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+        margin 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
         transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
         
-    /* Visible State */
-    max-width: 120px; /* Sufficient for 2 buttons (42px*2) + gap */
     opacity: 1;
-    margin-right: 0.75rem; /* Gap between this group and Settings button */
     transform: translateX(0) scale(1);
     overflow: hidden;
 }
 
-.gp-adjust-wrapper.gp-hidden-animated {
-    max-width: 0;
+.gp-animated-wrapper.gp-hidden-animated {
+    max-width: 0 !important;
     opacity: 0;
-    margin-right: 0; /* Collapse the external gap */
+    margin: 0 !important; /* Collapse all margins */
     transform: translateX(-10px) scale(0.9);
     pointer-events: none;
+}
+
+/* Specifics for Adjust Wrapper (+/-) */
+.gp-adjust-wrapper {
+    max-width: 120px; /* Sufficient for 2 buttons */
+    /* Removed margin-right to keep spacing consistent via flex gap */
+}
+
+/* Specifics for Secondary Controls (Stop/Reset) */
+.gp-secondary-controls {
+    max-width: 120px; /* Adjusted for 2 buttons (Stop, Reset) / 
+    Removed margin-left to keep spacing consistent via flex gap */
 }
 
 /* Base Button Style */
@@ -487,6 +483,34 @@
     gap: 8px;
     line-height: 1.3;
 } 
+
+.gp-task-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+/* Selected Task Highlight */
+.gp-task-item.gp-task-selected {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+
+.gp-task-item.gp-task-selected:hover {
+    background-color: var(--interactive-accent-hover);
+}
+
+/* Ensure the checkmark icon in selected task is visible and positioned */
+.gp-task-item.gp-task-selected .gp-task-check-icon {
+    margin-left: auto; /* Push to the right */
+    display: flex;
+    align-items: center;
+}
+
+.gp-task-item.gp-task-selected .gp-task-check-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 3px;
+}
 
 /* --- Overtime Visuals --- */
 

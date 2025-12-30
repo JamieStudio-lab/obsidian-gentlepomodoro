@@ -1,7 +1,7 @@
 {
   "id": "gentle-pomo",
   "name": "Gentle Pomodoro",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "minAppVersion": "1.0.0",
   "description": "A visually soothing, task-integrated Pomodoro timer for Obsidian. Focus on your work with gentle animations and Pomodoro logging.",
   "author": "JamStudio",

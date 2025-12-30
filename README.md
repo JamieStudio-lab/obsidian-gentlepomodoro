@@ -10,6 +10,7 @@ This plugin is designed to help you maintain focus while keeping track of your w
 
 *   **Ambient Visuals:** Instead of a ticking clock, a soothing shape gently pulses and transitions colors (Day → Dusk → Night) as time progresses.
 *   **Focus & Rest Modes:** Customizable durations for work and breaks.
+*   **Audio Cues:** Game-ambient, gentle sounds for starting focus (War Drum) and finishing sessions (Bell/Ding).
 *   **Overtime Tracking:** The timer counts up after the session ends, glowing gently to let you know you're in overtime without breaking your flow.
 
 ### ✅ Task Integration
@@ -82,7 +83,7 @@ Go to Settings > Gentle Pomodoro to configure:
 - Focus/Break Duration: Set your preferred minutes. 
 - Tasks Folder Path: Limit task search to a specific folder (e.g., Daily Notes or Projects).
 - Pomodoro Logs Folder: Choose where to save the daily log files (e.g., `Pomodoro_logs`).
-- Sound: Toggle the notification chime. 
+- Sound: Toggle notification sounds.
 
 ## Development
 
@@ -90,7 +91,14 @@ This project uses TypeScript.
 
 1. `npm install` to install dependencies.
 2. `npm run dev` to start compilation in watch mode.
+3. `npm run build` to build the plugin for production.
+
+## Credits
+
+- **Ding Sound:** Sound Effect by <a href="https://pixabay.com/users/universfield-28281460/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=352755">Universfield</a> from <a href="https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=352755">Pixabay</a> 
+- **Bell Sound:** Sound Effect by <a href="https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=103870">freesound_community</a> from <a href="https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=103870">Pixabay</a>
+- **Bell Sound:** Sound Effect by <a href="https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=75258">freesound_community</a> from <a href="https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=75258">Pixabay</a>
 
 ## License
 
-MIT
+[MIT](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/blob/main/LICENSE)
