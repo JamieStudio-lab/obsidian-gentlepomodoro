@@ -127,6 +127,10 @@ This project uses TypeScript.
 - **Bell Sound:** Sound Effect by <a href="https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=103870">freesound_community</a> from <a href="https://pixabay.com//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=103870">Pixabay</a>
 - **Bell Sound:** Sound Effect by <a href="https://pixabay.com/users/freesound_community-46691455/?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=75258">freesound_community</a> from <a href="https://pixabay.com/sound-effects//?utm_source=link-attribution&utm_medium=referral&utm_campaign=music&utm_content=75258">Pixabay</a>
 
+## AI Disclaimer
+
+Parts of this plugin were developed with assistance from AI models (including Codex and Gemini 3 Pro). All code has been reviewed and tested by the maintainer before release.
+
 ## License
 
 [MIT](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/blob/main/LICENSE)
