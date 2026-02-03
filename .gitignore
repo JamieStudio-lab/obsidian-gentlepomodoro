@@ -5,6 +5,7 @@
 # npm
 node_modules
 package-lock.json
+eslint.config.mjs
 
 # build
 main.js

@@ -105,7 +105,7 @@ export class GentlePomoView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Gentle Pomodoro";
+    return "Gentle pomodoro";
   }
 
   getIcon(): string {

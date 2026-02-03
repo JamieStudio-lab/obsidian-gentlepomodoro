@@ -39,7 +39,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_GENTLE_POMO, (leaf) => new GentlePomoView(leaf, this));
 
-    this.addRibbonIcon("clock", "Gentle Pomodoro", () => {
+    this.addRibbonIcon("clock", "Gentle pomodoro", () => {
       void this.activateView();
     });
 
@@ -149,11 +149,12 @@ export default class GentlePomoPlugin extends Plugin {
       leaf = workspace.getRightLeaf(false);
       await leaf?.setViewState({ type: VIEW_TYPE_GENTLE_POMO, active: true });
     }
-    if (leaf) workspace.revealLeaf(leaf);
+    if (leaf) await workspace.revealLeaf(leaf);
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
   }
 
   async saveSettings() {

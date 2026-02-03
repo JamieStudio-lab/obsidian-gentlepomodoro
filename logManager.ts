@@ -130,12 +130,12 @@ export class LogManager {
         }
     }
 
-    async refreshLoggedTaskNamesById() {
-        const folderPath = this.plugin.settings.logFolderPath;
-        if (!folderPath) {
-            new Notice("[GentlePomo] Log folder path not set.");
-            return;
-        }
+	    async refreshLoggedTaskNamesById() {
+	        const folderPath = this.plugin.settings.logFolderPath;
+	        if (!folderPath) {
+	            new Notice("Gentle pomodoro: log folder path is not set.");
+	            return;
+	        }
 
         const app = this.plugin.app;
         const normalizedFolder = normalizePath(folderPath);
@@ -143,10 +143,10 @@ export class LogManager {
             .getFiles()
             .filter((f) => f.extension === "md" && f.path.startsWith(normalizedFolder));
 
-        if (logFiles.length === 0) {
-            new Notice("[GentlePomo] No log files found.");
-            return;
-        }
+	        if (logFiles.length === 0) {
+	            new Notice("Gentle pomodoro: no log files found.");
+	            return;
+	        }
 
         const taskContentCache = new Map<string, string | null>();
         const taskNameCache = new Map<string, string | null>();

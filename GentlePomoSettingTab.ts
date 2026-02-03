@@ -13,7 +13,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    new Setting(containerEl).setName("Gentle Pomodoro settings").setHeading();
 
     const applySettingsToOpenViews = () => {
       const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
@@ -33,10 +32,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Tasks folder path")
-      .setDesc("Folder to search for tasks (e.g., 'Daily Notes'). Leave empty to search entire vault.")
+      .setDesc("Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.")
       .addText((text) =>
         text
-          .setPlaceholder("Example: Projects/Active")
+          .setPlaceholder("Example: projects/active")
           .setValue(this.plugin.settings.tasksPath)
           .onChange(async (value) => {
             this.plugin.settings.tasksPath = value;
@@ -46,10 +45,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Pomodoro logs folder")
-      .setDesc("Folder to store daily log files (e.g., 'Pomodoro_logs').")
+      .setDesc("Folder to store daily log files (e.g., 'pomodoro_logs').")
       .addText((text) =>
         text
-          .setPlaceholder("Example: Pomodoro_logs")
+          .setPlaceholder("Example: pomodoro_logs")
           .setValue(this.plugin.settings.logFolderPath)
           .onChange(async (value) => {
             this.plugin.settings.logFolderPath = value;
@@ -59,7 +58,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Auto-open on startup")
-      .setDesc("Open the Gentle Pomodoro view in the right panel when Obsidian starts.")
+      .setDesc("Open the view in the right panel when Obsidian starts.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoOpenOnStartup).onChange(async (value) => {
           this.plugin.settings.autoOpenOnStartup = value;
@@ -69,7 +68,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Show status bar")
-      .setDesc("Show the Gentle Pomodoro status bar indicator.")
+      .setDesc("Show the status bar indicator.")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.showInStatusBar).onChange(async (value) => {
           await this.plugin.setStatusBarVisibility(value);
