@@ -98,12 +98,66 @@
 /* --- Typography --- */
 .gp-timer-content {
     z-index: 3;
+    position: relative;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     width: 100%;
     height: 100%;
+}
+
+.gp-daynight-indicator {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 4;
+    pointer-events: none;
+    opacity: 0.82;
+}
+
+.gp-daynight-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 26px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    /* Dark "scrim" pill so the icon stays readable on light (orange) gradients */
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.14));
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    color: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+
+.gp-daynight-icon-stack {
+    position: relative;
+    width: 14px;
+    height: 14px;
+}
+
+.gp-daynight-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 220ms ease;
+}
+
+.gp-daynight-icon.is-active {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gp-daynight-icon {
+        transition: none;
+    }
 }
 
 .gp-timer-time {
@@ -317,29 +371,50 @@
     text-overflow: ellipsis;
 }
 
-/* --- Settings Panel --- */
+/* --- Settings Panel (collapsible) --- */
 .gp-settings-panel {
-    margin-top: 0.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--background-modifier-border);
-    
-    /* Add bottom divider and spacing */
-    padding-bottom: 1rem;
-    margin-bottom: 0.5rem;
-    border-bottom: 1px solid var(--background-modifier-border);
-
     display: flex;
     flex-direction: column;
     gap: 0.8rem;
     width: 100%;
-    
-    /* Slide down animation */
-    animation: gp-slide-down 0.2s ease-out;
+
+    /* Collapsed state */
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    border-top: 1px solid transparent;
+    border-bottom: 1px solid transparent;
+    transform: translateY(-6px);
+
+    transition:
+        max-height 0.35s ease,
+        opacity 0.25s ease,
+        transform 0.35s ease,
+        padding 0.35s ease,
+        margin 0.35s ease,
+        border-color 0.35s ease;
 }
 
-@keyframes gp-slide-down {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+.gp-settings-panel.gp-visible {
+    max-height: 220px; /* enough for current rows */
+    opacity: 1;
+    transform: translateY(0);
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    border-top-color: var(--background-modifier-border);
+    border-bottom-color: var(--background-modifier-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gp-settings-panel {
+        transition: none;
+    }
 }
 
 .gp-settings-row {
@@ -375,8 +450,8 @@
 }
 
 .gp-status-dot {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 999px;
     background: var(--text-muted);
     opacity: 0.8;
@@ -384,11 +459,11 @@
 }
 
 .gp-status-dot.gp-mode-focus {
-    background: #f39c12;
+    background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
 }
 
 .gp-status-dot.gp-mode-break {
-    background: #3498db;
+    background: linear-gradient(135deg, #243949 0%, #517fa4 100%);
 }
 
 .gp-status-dot.gp-running {
@@ -396,8 +471,32 @@
 }
 
 .gp-status-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 0.75rem;
     opacity: 0.8;
+}
+
+.gp-status-time {
+    max-width: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    transform: translateY(-2px);
+    transition: max-width 0.25s ease, opacity 0.2s ease, transform 0.2s ease;
+}
+
+.gp-status.gp-show-time .gp-status-time {
+    max-width: 64px;
+    opacity: 0.9;
+    transform: translateY(0);
+}
+
+.gp-status-focus-total {
+    font-size: 0.7rem;
+    opacity: 0.65;
+    margin-left: 4px;
 }
 
 /* Disabled State for Buttons */
@@ -413,26 +512,6 @@
 /* Utility to hide elements completely */
 .gp-hidden {
     display: none !important;
-}
-
-/* --- Settings Panel --- */
-.gp-settings-panel {
-    margin-top: 0.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--background-modifier-border);
-    
-    /* NEW: Add bottom divider and spacing */
-    padding-bottom: 1rem;
-    margin-bottom: 0.5rem;
-    border-bottom: 1px solid var(--background-modifier-border);
-
-    display: flex;
-    flex-direction: column;
-    gap: 0.8rem;
-    width: 100%;
-    
-    /* Slide down animation */
-    animation: gp-slide-down 0.2s ease-out;
 }
 
 /* --- Task List Dropdown --- */
