@@ -200,7 +200,12 @@ export class TimerEngine {
 
         if (exists) {
           const arrayBuffer = await this.plugin.app.vault.adapter.readBinary(soundFile);
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const AudioContextCtor =
+            window.AudioContext ??
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+          if (!AudioContextCtor) return;
+          const ctx = new AudioContextCtor();
           const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
           const source = ctx.createBufferSource();
@@ -213,7 +218,7 @@ export class TimerEngine {
           gain.connect(ctx.destination);
           source.start(0);
         } else {
-          console.log(`[GentlePomo] Sound file not found: ${soundFile}`);
+          console.debug(`[GentlePomo] Sound file not found: ${soundFile}`);
         }
       }
     } catch (e) {
@@ -276,7 +281,7 @@ export class TimerEngine {
 
     // Play War Drum only on fresh Focus start
     if (isFreshStart && this.state.mode === "focus") {
-      this.playSound("war-drum_short.mp3");
+      void this.playSound("war-drum_short.mp3");
     }
 
     this.emit();
@@ -298,9 +303,9 @@ export class TimerEngine {
   async finish() {
     // Play specific sounds based on mode when manually finishing
     if (this.state.mode === "focus") {
-      this.playSound("singing_bell_short.mp3");
+      void this.playSound("singing_bell_short.mp3");
     } else {
-      this.playSound("ding-sound.mp3");
+      void this.playSound("ding-sound.mp3");
     }
     await this.handleFinished();
   }
@@ -312,9 +317,9 @@ export class TimerEngine {
     // Play specific sounds based on mode when skipping, unless stopped
     if (!isStopped) {
       if (this.state.mode === "focus") {
-        this.playSound("singing_bell_short.mp3");
+        void this.playSound("singing_bell_short.mp3");
       } else {
-        this.playSound("ding-sound.mp3");
+        void this.playSound("ding-sound.mp3");
       }
     }
 

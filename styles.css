@@ -563,6 +563,11 @@
     line-height: 1.3;
 } 
 
+.gp-task-item.gp-task-item-clear {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 .gp-task-item:hover {
     background-color: var(--background-modifier-hover);
 }

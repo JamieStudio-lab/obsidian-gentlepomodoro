@@ -4,33 +4,70 @@ import type { TimerListener, TaskItem, TimerState } from "./types";
 import { VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { isPathInFolder, normalizeTaskText, normalizeTaskTextForDisplay } from "./taskLoader"; 
+import type { MomentFactory } from "./momentTypes";
 
-declare const moment: any;
+declare const moment: MomentFactory;
 
 type DayNightIcon = "sun" | "sunset" | "moon" | "sunrise";
 
-const DAY_NIGHT_ICONS: Record<DayNightIcon, string> = {
-  sun: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <circle cx="12" cy="12" r="4"></circle>
-  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"></path>
-</svg>`,
-  sunset: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M6 18h12"></path>
-  <path d="M7 18a5 5 0 0 1 10 0"></path>
-  <path d="M12 3v3"></path>
-  <path d="M5 12h2M17 12h2"></path>
-  <path d="M7 9l1.2 1.2M17 9l-1.2 1.2"></path>
-</svg>`,
-  moon: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M21 12.6A8.5 8.5 0 0 1 11.4 3a7 7 0 1 0 9.6 9.6Z"></path>
-</svg>`,
-  sunrise: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-  <path d="M6 18h12"></path>
-  <path d="M7 18a5 5 0 0 1 10 0"></path>
-  <path d="M12 3v3"></path>
-  <path d="M5 12h2M17 12h2"></path>
-  <path d="M4 15h2M18 15h2"></path>
-</svg>`,
+const DAY_NIGHT_ICON_ORDER: DayNightIcon[] = ["sun", "sunset", "moon", "sunrise"];
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const createSvgEl = <K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] =>
+  document.createElementNS(SVG_NS, tag);
+
+const buildDayNightIcon = (icon: DayNightIcon): SVGSVGElement => {
+  const svg = createSvgEl("svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+
+  const addPath = (d: string) => {
+    const p = createSvgEl("path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  };
+
+  if (icon === "sun") {
+    const c = createSvgEl("circle");
+    c.setAttribute("cx", "12");
+    c.setAttribute("cy", "12");
+    c.setAttribute("r", "4");
+    svg.appendChild(c);
+    addPath(
+      "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+    );
+    return svg;
+  }
+
+  if (icon === "sunset") {
+    addPath("M6 18h12");
+    addPath("M7 18a5 5 0 0 1 10 0");
+    addPath("M12 3v3");
+    addPath("M5 12h2M17 12h2");
+    addPath("M7 9l1.2 1.2M17 9l-1.2 1.2");
+    return svg;
+  }
+
+  if (icon === "sunrise") {
+    addPath("M6 18h12");
+    addPath("M7 18a5 5 0 0 1 10 0");
+    addPath("M12 3v3");
+    addPath("M5 12h2M17 12h2");
+    addPath("M4 15h2M18 15h2");
+    return svg;
+  }
+
+  // moon
+  addPath("M21 12.6A8.5 8.5 0 0 1 11.4 3a7 7 0 1 0 9.6 9.6Z");
+  return svg;
 };
 
 export class GentlePomoView extends ItemView {
@@ -75,7 +112,7 @@ export class GentlePomoView extends ItemView {
     return "clock";
   }
 
-  async onOpen() {
+  onOpen(): Promise<void> {
     const container = this.containerEl;
     container.empty();
     container.addClass("gp-root");
@@ -97,9 +134,9 @@ export class GentlePomoView extends ItemView {
     const badge = this.dayNightIndicator.createDiv("gp-daynight-badge");
     const iconStack = badge.createDiv("gp-daynight-icon-stack");
 
-    (Object.keys(DAY_NIGHT_ICONS) as DayNightIcon[]).forEach((key) => {
+    DAY_NIGHT_ICON_ORDER.forEach((key) => {
       const iconEl = iconStack.createSpan({ cls: "gp-daynight-icon" });
-      iconEl.innerHTML = DAY_NIGHT_ICONS[key];
+      iconEl.appendChild(buildDayNightIcon(key));
       this.dayNightIconEls[key] = iconEl;
     });
 
@@ -133,7 +170,7 @@ export class GentlePomoView extends ItemView {
 
     const stopBtn = this.secondaryControlsWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
     setIcon(stopBtn, "square");
-    stopBtn.setAttribute("aria-label", "Finish & Next");
+    stopBtn.setAttribute("aria-label", "Finish & next");
     this.registerDomEvent(stopBtn, "click", (evt) => {
       evt.preventDefault();
       void this.timer.finish();
@@ -141,7 +178,7 @@ export class GentlePomoView extends ItemView {
 
     const resetBtn = this.secondaryControlsWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
     setIcon(resetBtn, "rotate-ccw");
-    resetBtn.setAttribute("aria-label", "Reset Session");
+    resetBtn.setAttribute("aria-label", "Reset session");
     this.registerDomEvent(resetBtn, "click", (evt) => {
       evt.preventDefault();
       this.timer.reset();
@@ -149,7 +186,7 @@ export class GentlePomoView extends ItemView {
 
     const skipBtn = row1.createEl("button", { cls: "gp-btn gp-icon-btn" });
     setIcon(skipBtn, "skip-forward");
-    skipBtn.setAttribute("aria-label", "Skip to Next");
+    skipBtn.setAttribute("aria-label", "Skip to next");
     this.registerDomEvent(skipBtn, "click", (evt) => {
       evt.preventDefault();
       void this.timer.skip();
@@ -195,7 +232,7 @@ export class GentlePomoView extends ItemView {
     this.taskBtn = row3.createEl("button", { cls: "gp-btn gp-btn-full" });
 
     const btnLabel = this.taskBtn.createDiv("gp-task-btn-label");
-    btnLabel.setText("Current Task");
+    btnLabel.setText("Current task");
 
     const btnText = this.taskBtn.createDiv("gp-task-btn-text");
     btnText.setText("Select a task...");
@@ -296,10 +333,6 @@ export class GentlePomoView extends ItemView {
         skyPhase = 1 - progress;
       }
 
-      const r = Math.round(246 + (81 - 246) * skyPhase);
-      const g = Math.round(211 + (127 - 211) * skyPhase);
-      const b = Math.round(101 + (164 - 101) * skyPhase);
-
       let duskOpacity = 0;
       let nightOpacity = 0;
       if (skyPhase < 0.5) {
@@ -314,13 +347,15 @@ export class GentlePomoView extends ItemView {
     };
 
     this.plugin.timer.onChange(this.timerListener);
+    return Promise.resolve();
   }
 
-  async onClose() {
+  onClose(): Promise<void> {
     if (this.timerListener) {
       this.plugin.timer.offChange(this.timerListener);
       this.timerListener = null;
     }
+    return Promise.resolve();
   }
 
   applySettings() {
@@ -331,7 +366,7 @@ export class GentlePomoView extends ItemView {
 
     const state = this.lastState ?? this.timer.getState();
     const icon = this.getDayNightIcon(state);
-    for (const key of Object.keys(DAY_NIGHT_ICONS) as DayNightIcon[]) {
+    for (const key of DAY_NIGHT_ICON_ORDER) {
       this.dayNightIconEls[key]?.toggleClass("is-active", key === icon);
     }
   }
@@ -353,10 +388,9 @@ export class GentlePomoView extends ItemView {
     this.taskListContainer.empty();
 
     const clearItem = this.taskListContainer.createDiv("gp-task-item");
+    clearItem.addClass("gp-task-item-clear");
     setIcon(clearItem, "x-circle");
     clearItem.createSpan({ text: "Unlink Current Task" });
-    clearItem.style.color = "var(--text-muted)";
-    clearItem.style.fontStyle = "italic";
 
     clearItem.onclick = () => {
       this.timer.setTask(NO_TASK_LABEL);

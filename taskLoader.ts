@@ -1,8 +1,9 @@
 import { TFile, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type { TaskItem } from "./types";
+import type { MomentFactory } from "./momentTypes";
 
-declare const moment: any;
+declare const moment: MomentFactory;
 
 export interface TaskGroup {
   label: string;

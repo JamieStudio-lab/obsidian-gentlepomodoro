@@ -13,17 +13,26 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Gentle Pomodoro Settings" });
+    new Setting(containerEl).setName("Gentle Pomodoro settings").setHeading();
 
     const applySettingsToOpenViews = () => {
+      const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
+        if (!view || typeof view !== "object") return false;
+        return (
+          "applySettings" in view &&
+          typeof (view as { applySettings?: unknown }).applySettings === "function"
+        );
+      };
+
       const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO);
       for (const leaf of leaves) {
-        (leaf.view as any)?.applySettings?.();
+        const view: unknown = leaf.view;
+        if (hasApplySettings(view)) view.applySettings();
       }
     };
 
     new Setting(containerEl)
-      .setName("Tasks Folder Path")
+      .setName("Tasks folder path")
       .setDesc("Folder to search for tasks (e.g., 'Daily Notes'). Leave empty to search entire vault.")
       .addText((text) =>
         text
@@ -36,7 +45,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Pomodoro Logs Folder")
+      .setName("Pomodoro logs folder")
       .setDesc("Folder to store daily log files (e.g., 'Pomodoro_logs').")
       .addText((text) =>
         text

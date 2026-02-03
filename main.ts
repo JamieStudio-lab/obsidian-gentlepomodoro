@@ -25,7 +25,6 @@ export default class GentlePomoPlugin extends Plugin {
   private statusFocusFetchInFlight = false;
   private statusTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
-  private deferredUnloadObserver: MutationObserver | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -41,13 +40,13 @@ export default class GentlePomoPlugin extends Plugin {
     this.registerView(VIEW_TYPE_GENTLE_POMO, (leaf) => new GentlePomoView(leaf, this));
 
     this.addRibbonIcon("clock", "Gentle Pomodoro", () => {
-      this.activateView();
+      void this.activateView();
     });
 
     this.addSettingTab(new GentlePomoSettingTab(this.app, this));
 
     this.addCommand({
-      id: "gentle-pomo-refresh-logs-by-task-id",
+      id: "refresh-logs-by-task-id",
       name: "Refresh log task names by ID",
       callback: async () => {
         await this.logManager.refreshLoggedTaskNamesById();
@@ -55,7 +54,7 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-open-view",
+      id: "open-view",
       name: "Open view",
       callback: async () => {
         await this.activateView();
@@ -63,7 +62,7 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-start",
+      id: "start",
       name: "Start",
       checkCallback: (checking: boolean) => {
         const state = this.timer.getState();
@@ -74,7 +73,7 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-pause",
+      id: "pause",
       name: "Pause",
       checkCallback: (checking: boolean) => {
         const state = this.timer.getState();
@@ -85,8 +84,8 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-finish",
-      name: "Finish & Next",
+      id: "finish",
+      name: "Finish & next",
       checkCallback: (checking: boolean) => {
         const state = this.timer.getState();
         const canShow = state.isRunning || state.remainingMs !== state.totalMs;
@@ -97,7 +96,7 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-skip",
+      id: "skip",
       name: "Skip to next",
       callback: () => {
         void this.timer.skip();
@@ -105,8 +104,8 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-show-status-bar",
-      name: "Gentle Pomodoro: Show status bar",
+      id: "show-status-bar",
+      name: "Show status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return !this.settings.showInStatusBar;
         void this.setStatusBarVisibility(true);
@@ -115,8 +114,8 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "gentle-pomo-hide-status-bar",
-      name: "Gentle Pomodoro: Hide status bar",
+      id: "hide-status-bar",
+      name: "Hide status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return this.settings.showInStatusBar;
         void this.setStatusBarVisibility(false);
@@ -130,29 +129,13 @@ export default class GentlePomoPlugin extends Plugin {
   }
 
 
-  async onunload() {
+  onunload() {
     if (this.autoOpenObserver) {
       this.autoOpenObserver.disconnect();
       this.autoOpenObserver = null;
     }
-    if (this.deferredUnloadObserver) {
-      this.deferredUnloadObserver.disconnect();
-      this.deferredUnloadObserver = null;
-    }
 
-    if (this.isSettingsModalOpen()) {
-      this.deferredUnloadObserver = new MutationObserver(() => {
-        if (!this.isSettingsModalOpen()) {
-          this.deferredUnloadObserver?.disconnect();
-          this.deferredUnloadObserver = null;
-          this.app.workspace.detachLeavesOfType(VIEW_TYPE_GENTLE_POMO);
-        }
-      });
-      this.deferredUnloadObserver.observe(document.body, { childList: true, subtree: true });
-      return;
-    }
-
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_GENTLE_POMO);
+    this.destroyStatusBar();
   }
 
   async activateView() {
@@ -181,7 +164,7 @@ export default class GentlePomoPlugin extends Plugin {
     if (!this.settings.autoOpenOnStartup) return;
 
     if (!this.isSettingsModalOpen()) {
-      this.activateView();
+      void this.activateView();
       return;
     }
 
@@ -191,7 +174,7 @@ export default class GentlePomoPlugin extends Plugin {
       if (!this.isSettingsModalOpen()) {
         this.autoOpenObserver?.disconnect();
         this.autoOpenObserver = null;
-        this.activateView();
+        void this.activateView();
       }
     });
 
@@ -232,7 +215,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.registerDomEvent(this.statusDot, "click", (evt) => {
       evt.preventDefault();
-      this.activateView();
+      void this.activateView();
     });
 
     this.registerDomEvent(this.statusLabel, "click", async (evt) => {
@@ -243,10 +226,10 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.statusTimerListener = (state) => {
-      void this.updateStatusBar(state);
+      this.updateStatusBar(state);
     };
     this.timer.onChange(this.statusTimerListener);
-    void this.updateStatusBar(this.timer.getState(), true);
+    this.updateStatusBar(this.timer.getState(), true);
   }
 
   private destroyStatusBar() {
@@ -265,7 +248,7 @@ export default class GentlePomoPlugin extends Plugin {
     this.statusFocusTotal = null;
   }
 
-  private async updateStatusBar(state: TimerState, force = false) {
+  private updateStatusBar(state: TimerState, force = false): void {
     if (
       !this.statusBarEl ||
       !this.statusDot ||

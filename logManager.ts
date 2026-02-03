@@ -1,25 +1,28 @@
 import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
+import type { MomentFactory, MomentLike } from "./momentTypes";
 
-declare const moment: any;
+declare const moment: MomentFactory;
 
 export interface SessionLog {
     mode: "focus" | "break";
     taskName: string;
     taskPath?: string; // Store the file path of the task
     scheduledDurationMinutes: number;
-    startTime: any; // moment object
-    endTime: any; // moment object
-    pauses: { start: any; end: any }[];
+    startTime: MomentLike;
+    endTime: MomentLike;
+    pauses: { start: MomentLike; end: MomentLike }[];
     status: "finished" | "cancelled";
     taskId?: string; // Tasks plugin ID
 }
 
+type ActiveSessionLog = Omit<SessionLog, "endTime">;
+
 export class LogManager {
     private plugin: GentlePomoPlugin;
-    private currentSession: Partial<SessionLog> | null = null;
-    private currentPauseStart: any | null = null;
+    private currentSession: ActiveSessionLog | null = null;
+    private currentPauseStart: MomentLike | null = null;
     private focusTotalCacheDate: string | null = null;
     private focusTotalCacheSeconds = 0;
     private focusTotalCacheAt = 0;
@@ -80,10 +83,13 @@ export class LogManager {
             this.resumeSession();
         }
 
-        this.currentSession.endTime = moment();
-        this.currentSession.status = status;
+        const session: SessionLog = {
+            ...this.currentSession,
+            endTime: moment(),
+            status,
+        };
 
-        await this.writeLog(this.currentSession as SessionLog);
+        await this.writeLog(session);
         
         // Reset state
         this.currentSession = null;
