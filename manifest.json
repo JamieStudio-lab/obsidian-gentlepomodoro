@@ -5,6 +5,6 @@
   "minAppVersion": "1.0.0",
   "description": "A visually soothing, task-integrated Pomodoro timer for Obsidian. Focus on your work with gentle animations and Pomodoro logging.",
   "author": "JamStudio",
-  "authorUrl": "",
+  "authorUrl": "https://github.com/JamieStudio-lab",
   "isDesktopOnly": false
 }
