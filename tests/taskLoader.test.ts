@@ -4,6 +4,8 @@ import {
   normalizeTaskTextForDisplay,
   isPathInFolder,
   findTaskNameByIdInContent,
+  parseTodayPomodoroCount,
+  incrementTodayPomodoroCount,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -106,5 +108,64 @@ describe("findTaskNameByIdInContent", () => {
   it("returns null for empty inputs", () => {
     expect(findTaskNameByIdInContent("", "anything")).toBeNull();
     expect(findTaskNameByIdInContent(content, "")).toBeNull();
+  });
+});
+
+describe("parseTodayPomodoroCount", () => {
+  const TODAY = "2025-05-18";
+
+  it("returns 0 when no marker is present", () => {
+    expect(parseTodayPomodoroCount("- [ ] Write docs ⏳ 2025-12-23", TODAY)).toBe(0);
+  });
+
+  it("returns the count when the marker matches today", () => {
+    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 3 (2025-05-18)", TODAY)).toBe(3);
+  });
+
+  it("returns 0 when the marker date is stale", () => {
+    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)", TODAY)).toBe(0);
+  });
+
+  it("returns 0 when the marker has no date (treated as stale)", () => {
+    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 5", TODAY)).toBe(0);
+  });
+});
+
+describe("incrementTodayPomodoroCount", () => {
+  const TODAY = "2025-05-18";
+
+  it("appends `🍅 1 (today)` when no marker is present", () => {
+    const line = "- [ ] Write docs ⏳ 2025-12-23";
+    expect(incrementTodayPomodoroCount(line, TODAY)).toBe(
+      "- [ ] Write docs ⏳ 2025-12-23 🍅 1 (2025-05-18)"
+    );
+  });
+
+  it("increments N when the marker matches today", () => {
+    const line = "- [ ] Write docs 🍅 3 (2025-05-18)";
+    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 4 (2025-05-18)");
+  });
+
+  it("resets to `🍅 1 (today)` when the marker date is stale", () => {
+    const line = "- [ ] Write docs 🍅 5 (2024-01-01)";
+    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
+  });
+
+  it("resets to `🍅 1 (today)` when the marker has no date", () => {
+    const line = "- [ ] Write docs 🍅 5";
+    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
+  });
+
+  it("is idempotent within a day: 0 -> 1 -> 2", () => {
+    const start = "- [ ] T";
+    const after1 = incrementTodayPomodoroCount(start, TODAY);
+    expect(parseTodayPomodoroCount(after1, TODAY)).toBe(1);
+    const after2 = incrementTodayPomodoroCount(after1, TODAY);
+    expect(parseTodayPomodoroCount(after2, TODAY)).toBe(2);
+  });
+
+  it("trims trailing whitespace before appending", () => {
+    const line = "- [ ] Write docs   ";
+    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
   });
 });

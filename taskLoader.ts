@@ -20,6 +20,10 @@ const TASK_LINE_REGEX = /^\s*-\s*\[( |x)\]\s+(.*)$/i;
 const SCHEDULED_REGEX = /⏳\s*(\d{4}-\d{2}-\d{2})/;
 const DUE_REGEX = /📅\s*(\d{4}-\d{2}-\d{2})/;
 const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
+// Pomodoro count marker. Date group is optional: a bare `🍅 5` (no parens) is
+// treated as stale so the next session resets it rather than incrementing a
+// count from an unknown day.
+const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\((\d{4}-\d{2}-\d{2})\))?/;
 const PRIORITY_REGEX = /[🔺🔽🔥⏫⏬🔼]\uFE0F?/gu;
 const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 
@@ -49,6 +53,36 @@ export function normalizeTaskTextForDisplay(text: string): string {
   }
 
   return cleaned;
+}
+
+/**
+ * Read today's pomodoro count from a task line. Format: `🍅 N (YYYY-MM-DD)`.
+ * Returns 0 when the marker is absent, missing a date, or dated for a
+ * different day (stale).
+ */
+export function parseTodayPomodoroCount(line: string, today: string): number {
+  const match = line.match(POMO_MARKER_REGEX);
+  if (!match) return 0;
+  if (!match[2] || match[2] !== today) return 0;
+  return parseInt(match[1], 10);
+}
+
+/**
+ * Returns the line with today's pomodoro count incremented by 1.
+ * - If marker exists with today's date: increment N.
+ * - If marker exists with stale date (or no date): replace with `🍅 1 (today)`.
+ * - If no marker: append ` 🍅 1 (today)` at the end.
+ */
+export function incrementTodayPomodoroCount(line: string, today: string): string {
+  const match = line.match(POMO_MARKER_REGEX);
+  if (match) {
+    if (match[2] === today) {
+      const next = parseInt(match[1], 10) + 1;
+      return line.replace(POMO_MARKER_REGEX, `🍅 ${next} (${today})`);
+    }
+    return line.replace(POMO_MARKER_REGEX, `🍅 1 (${today})`);
+  }
+  return `${line.trimEnd()} 🍅 1 (${today})`;
 }
 
 export function isPathInFolder(filePath: string, folderPath: string): boolean {

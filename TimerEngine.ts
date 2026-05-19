@@ -4,7 +4,7 @@ import type { PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
-import { findTaskNameById, normalizeTaskText } from "./taskLoader";
+import { findTaskNameById, incrementTodayPomodoroCount, normalizeTaskText } from "./taskLoader";
 
 declare const moment: MomentFactory;
 
@@ -135,6 +135,12 @@ export class TimerEngine {
     // Log the finished session
     await this.plugin.logManager.endSession("finished");
 
+    // For focus sessions: optionally increment the task's pomodoro count
+    // BEFORE the unlink check so we don't skip on a just-completed task.
+    if (this.state.mode === "focus") {
+      await this.maybeIncrementTaskPomodoroCount();
+    }
+
     // Check if task is completed and unlink if so
     await this.checkTaskCompletionAndUnlink();
 
@@ -154,6 +160,52 @@ export class TimerEngine {
       this.switchMode("break", this.plugin.settings.autoStartBreak, isLongBreak);
     } else {
       this.switchMode("focus", this.plugin.settings.autoStartFocus);
+    }
+  }
+
+  /**
+   * If the user has opted in (`incrementPomodoroCountOnFinish`), increment the
+   * `🍅 N (today)` marker on the linked task line. Best-effort: failures are
+   * logged but never throw.
+   */
+  private async maybeIncrementTaskPomodoroCount() {
+    if (!this.plugin.settings.incrementPomodoroCountOnFinish) return;
+    if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
+
+    const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
+    if (!(file instanceof TFile)) return;
+
+    try {
+      const content = await this.plugin.app.vault.read(file);
+      const lines = content.split("\n");
+      const today = todayLocalStr();
+      let updatedIndex = -1;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Prefer ID match when available.
+        if (this.currentTaskId) {
+          const idMatch = line.match(TASK_ID_REGEX);
+          if (idMatch && idMatch[1] === this.currentTaskId) {
+            updatedIndex = i;
+            break;
+          }
+          continue;
+        }
+        // Fallback: match by normalized text on a task line (open or completed).
+        const taskMatch = line.match(/^\s*-\s*\[( |x)\]\s+(.*)$/i);
+        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
+          updatedIndex = i;
+          break;
+        }
+      }
+
+      if (updatedIndex === -1) return;
+
+      lines[updatedIndex] = incrementTodayPomodoroCount(lines[updatedIndex], today);
+      await this.plugin.app.vault.modify(file, lines.join("\n"));
+    } catch (e) {
+      logger.warn("Failed to increment task pomodoro count", e);
     }
   }
 
