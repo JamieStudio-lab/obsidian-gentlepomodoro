@@ -6,7 +6,7 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 **Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.0 (beta)**.
 
-**0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N (today)` counter written back to task lines (today-only — resets at local midnight), volume slider and auto-start toggles in the in-view settings panel.
+**0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N` counter written back to task lines (lifetime total per task; never resets), volume slider and auto-start toggles in the in-view settings panel.
 
 Plugin ID: `gentle-pomo`. Mobile-compatible. Min Obsidian: 1.0.0.
 
@@ -99,7 +99,7 @@ Field order is **load-bearing** for users' Dataview queries — do not reorder o
 - **`noImplicitOverride: true`** is enabled in [tsconfig.json](tsconfig.json). Always mark methods that override Obsidian base classes (`Plugin.onload`, `ItemView.onClose`, etc.) with `override`.
 - **`package-lock.json` is gitignored** — npm install in CI resolves fresh; reproducibility comes from semver pins in [package.json](package.json).
 - **Local-timezone date string** used for daily reset logic is `moment().format("YYYY-MM-DD")` (defined as `todayLocalStr()` in both [main.ts](main.ts) and [TimerEngine.ts](TimerEngine.ts)). Same format as the daily log file naming, so all "today" logic agrees.
-- **Per-task counter is opt-in** (`incrementPomodoroCountOnFinish`, default off). When enabled, finishing a focus session linked to a task writes `🍅 N (YYYY-MM-DD)` back to the task line. A stale-dated marker is treated as 0 and replaced; no background midnight wipe runs.
+- **Per-task counter is opt-in** (`incrementPomodoroCountOnFinish`, default off). When enabled, finishing a focus session linked to a task increments a lifetime `🍅 N` marker on the task line. Legacy `🍅 N (YYYY-MM-DD)` markers from an earlier 0.1.0 build are still readable; on the next increment the parens are stripped and the marker becomes `🍅 N+1`.
 - **Internal state fields** in `GentlePomoSettings` (`lastGoalHitDate`, `sessionsSinceLongBreak`, `sessionCounterDate`) are persisted to `data.json` alongside user settings but are not surfaced in any settings UI — they implement the once-per-day notice and long-break counter.
 
 ## Don't Do This

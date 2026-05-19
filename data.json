@@ -1,6 +1,8 @@
 {
   "focusMinutes": 25,
   "breakMinutes": 5,
+  "longBreakMinutes": 15,
+  "longBreakEvery": 4,
   "autoStartBreak": false,
   "autoStartFocus": false,
   "autoOpenOnStartup": true,
@@ -10,5 +12,11 @@
   "soundEnabled": true,
   "soundVolume": 0.7,
   "tasksPath": "Projects/",
-  "logFolderPath": "Pomodoro_logs/"
+  "logFolderPath": "Pomodoro_logs/",
+  "dailyFocusGoalMinutes": 120,
+  "goalNoticeEnabled": true,
+  "incrementPomodoroCountOnFinish": false,
+  "lastGoalHitDate": null,
+  "sessionsSinceLongBreak": 0,
+  "sessionCounterDate": null
 }

@@ -4,7 +4,7 @@ import type { PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
-import { findTaskNameById, incrementTodayPomodoroCount, normalizeTaskText } from "./taskLoader";
+import { findTaskNameById, incrementPomodoroCount, normalizeTaskText } from "./taskLoader";
 
 declare const moment: MomentFactory;
 
@@ -165,7 +165,7 @@ export class TimerEngine {
 
   /**
    * If the user has opted in (`incrementPomodoroCountOnFinish`), increment the
-   * `🍅 N (today)` marker on the linked task line. Best-effort: failures are
+   * lifetime `🍅 N` marker on the linked task line. Best-effort: failures are
    * logged but never throw.
    */
   private async maybeIncrementTaskPomodoroCount() {
@@ -178,7 +178,6 @@ export class TimerEngine {
     try {
       const content = await this.plugin.app.vault.read(file);
       const lines = content.split("\n");
-      const today = todayLocalStr();
       let updatedIndex = -1;
 
       for (let i = 0; i < lines.length; i++) {
@@ -202,7 +201,7 @@ export class TimerEngine {
 
       if (updatedIndex === -1) return;
 
-      lines[updatedIndex] = incrementTodayPomodoroCount(lines[updatedIndex], today);
+      lines[updatedIndex] = incrementPomodoroCount(lines[updatedIndex]);
       await this.plugin.app.vault.modify(file, lines.join("\n"));
     } catch (e) {
       logger.warn("Failed to increment task pomodoro count", e);

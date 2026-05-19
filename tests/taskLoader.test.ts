@@ -4,8 +4,8 @@ import {
   normalizeTaskTextForDisplay,
   isPathInFolder,
   findTaskNameByIdInContent,
-  parseTodayPomodoroCount,
-  incrementTodayPomodoroCount,
+  parsePomodoroCount,
+  incrementPomodoroCount,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -111,61 +111,51 @@ describe("findTaskNameByIdInContent", () => {
   });
 });
 
-describe("parseTodayPomodoroCount", () => {
-  const TODAY = "2025-05-18";
-
+describe("parsePomodoroCount", () => {
   it("returns 0 when no marker is present", () => {
-    expect(parseTodayPomodoroCount("- [ ] Write docs ⏳ 2025-12-23", TODAY)).toBe(0);
+    expect(parsePomodoroCount("- [ ] Write docs ⏳ 2025-12-23")).toBe(0);
   });
 
-  it("returns the count when the marker matches today", () => {
-    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 3 (2025-05-18)", TODAY)).toBe(3);
+  it("returns N for the lifetime marker `🍅 N`", () => {
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 3")).toBe(3);
   });
 
-  it("returns 0 when the marker date is stale", () => {
-    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)", TODAY)).toBe(0);
+  it("reads N from the legacy today-only format `🍅 N (date)`", () => {
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)")).toBe(5);
   });
 
-  it("returns 0 when the marker has no date (treated as stale)", () => {
-    expect(parseTodayPomodoroCount("- [ ] Write docs 🍅 5", TODAY)).toBe(0);
+  it("tolerates arbitrary content inside the legacy parens", () => {
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (anything)")).toBe(7);
   });
 });
 
-describe("incrementTodayPomodoroCount", () => {
-  const TODAY = "2025-05-18";
-
-  it("appends `🍅 1 (today)` when no marker is present", () => {
+describe("incrementPomodoroCount", () => {
+  it("appends `🍅 1` when no marker is present", () => {
     const line = "- [ ] Write docs ⏳ 2025-12-23";
-    expect(incrementTodayPomodoroCount(line, TODAY)).toBe(
-      "- [ ] Write docs ⏳ 2025-12-23 🍅 1 (2025-05-18)"
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs ⏳ 2025-12-23 🍅 1");
+  });
+
+  it("increments N on an existing lifetime marker", () => {
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 3")).toBe("- [ ] Write docs 🍅 4");
+  });
+
+  it("migrates legacy `🍅 N (date)` to `🍅 N+1` (date stripped)", () => {
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)")).toBe(
+      "- [ ] Write docs 🍅 6"
     );
   });
 
-  it("increments N when the marker matches today", () => {
-    const line = "- [ ] Write docs 🍅 3 (2025-05-18)";
-    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 4 (2025-05-18)");
-  });
-
-  it("resets to `🍅 1 (today)` when the marker date is stale", () => {
-    const line = "- [ ] Write docs 🍅 5 (2024-01-01)";
-    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
-  });
-
-  it("resets to `🍅 1 (today)` when the marker has no date", () => {
-    const line = "- [ ] Write docs 🍅 5";
-    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
-  });
-
-  it("is idempotent within a day: 0 -> 1 -> 2", () => {
-    const start = "- [ ] T";
-    const after1 = incrementTodayPomodoroCount(start, TODAY);
-    expect(parseTodayPomodoroCount(after1, TODAY)).toBe(1);
-    const after2 = incrementTodayPomodoroCount(after1, TODAY);
-    expect(parseTodayPomodoroCount(after2, TODAY)).toBe(2);
+  it("accumulates across multiple increments: 0 -> 1 -> 2 -> 3", () => {
+    const start = "- [ ] Task";
+    const a = incrementPomodoroCount(start);
+    expect(parsePomodoroCount(a)).toBe(1);
+    const b = incrementPomodoroCount(a);
+    expect(parsePomodoroCount(b)).toBe(2);
+    const c = incrementPomodoroCount(b);
+    expect(parsePomodoroCount(c)).toBe(3);
   });
 
   it("trims trailing whitespace before appending", () => {
-    const line = "- [ ] Write docs   ";
-    expect(incrementTodayPomodoroCount(line, TODAY)).toBe("- [ ] Write docs 🍅 1 (2025-05-18)");
+    expect(incrementPomodoroCount("- [ ] Write docs   ")).toBe("- [ ] Write docs 🍅 1");
   });
 });

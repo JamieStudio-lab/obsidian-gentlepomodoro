@@ -148,7 +148,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Increment task pomodoro count on finish")
       .setDesc(
-        "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. The count resets each new day."
+        "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task."
       )
       .addToggle((toggle) =>
         toggle
