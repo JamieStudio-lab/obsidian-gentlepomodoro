@@ -13,6 +13,8 @@ export const FOCUS_TOTAL_CACHE_TTL_MS = 30_000;
 export const DEFAULT_SETTINGS: GentlePomoSettings = {
   focusMinutes: 25,
   breakMinutes: 5,
+  longBreakMinutes: 15,
+  longBreakEvery: 4,
   autoStartBreak: false,
   autoStartFocus: false,
   autoOpenOnStartup: true,
@@ -23,4 +25,10 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   soundVolume: 0.7,
   tasksPath: "",
   logFolderPath: "",
+  dailyFocusGoalMinutes: 120,
+  goalNoticeEnabled: true,
+  incrementPomodoroCountOnFinish: false,
+  lastGoalHitDate: null,
+  sessionsSinceLongBreak: 0,
+  sessionCounterDate: null,
 };
