@@ -87,5 +87,76 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           applySettingsToOpenViews();
         })
       );
+
+    new Setting(containerEl).setName("Long break").setHeading();
+
+    new Setting(containerEl)
+      .setName("Long break duration (minutes)")
+      .setDesc("Length of the long break that replaces a regular break.")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.longBreakMinutes.toString()).onChange(async (value) => {
+          const n = parseInt(value, 10);
+          if (Number.isFinite(n) && n > 0) {
+            this.plugin.settings.longBreakMinutes = n;
+            await this.plugin.saveSettings();
+          }
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Long break frequency")
+      .setDesc("Number of focus sessions before each long break (classic technique uses 4).")
+      .addText((text) =>
+        text.setValue(this.plugin.settings.longBreakEvery.toString()).onChange(async (value) => {
+          const n = parseInt(value, 10);
+          if (Number.isFinite(n) && n >= 1) {
+            this.plugin.settings.longBreakEvery = n;
+            await this.plugin.saveSettings();
+          }
+        })
+      );
+
+    new Setting(containerEl).setName("Daily focus goal").setHeading();
+
+    new Setting(containerEl)
+      .setName("Daily focus goal (minutes)")
+      .setDesc("Set to 0 to disable. The status bar shows today's progress against this goal.")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.dailyFocusGoalMinutes.toString())
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n >= 0) {
+              this.plugin.settings.dailyFocusGoalMinutes = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Goal-hit notice")
+      .setDesc("Show a one-time notice when today's focus first crosses the daily goal.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.goalNoticeEnabled).onChange(async (value) => {
+          this.plugin.settings.goalNoticeEnabled = value;
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl).setName("Task integration").setHeading();
+
+    new Setting(containerEl)
+      .setName("Increment task pomodoro count on finish")
+      .setDesc(
+        "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. The count resets each new day."
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.incrementPomodoroCountOnFinish)
+          .onChange(async (value) => {
+            this.plugin.settings.incrementPomodoroCountOnFinish = value;
+            await this.plugin.saveSettings();
+          })
+      );
   }
 }

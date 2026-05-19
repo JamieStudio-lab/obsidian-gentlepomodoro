@@ -411,5 +411,36 @@ export class GentlePomoView extends ItemView {
       this.plugin.settings.soundEnabled = soundToggle.checked;
       await this.plugin.saveSettings();
     };
+
+    const volumeRow = this.settingsPanel.createDiv("gp-settings-row");
+    volumeRow.createSpan({ text: "Volume" });
+    const volumeInput = volumeRow.createEl("input", { type: "range" });
+    volumeInput.min = "0";
+    volumeInput.max = "100";
+    volumeInput.step = "1";
+    volumeInput.value = Math.round(this.plugin.settings.soundVolume * 100).toString();
+    volumeInput.onchange = async () => {
+      const pct = Math.max(0, Math.min(100, parseInt(volumeInput.value) || 0));
+      this.plugin.settings.soundVolume = pct / 100;
+      await this.plugin.saveSettings();
+    };
+
+    const autoBreakRow = this.settingsPanel.createDiv("gp-settings-row");
+    autoBreakRow.createSpan({ text: "Auto-start break" });
+    const autoBreakToggle = autoBreakRow.createEl("input", { type: "checkbox" });
+    autoBreakToggle.checked = this.plugin.settings.autoStartBreak;
+    autoBreakToggle.onchange = async () => {
+      this.plugin.settings.autoStartBreak = autoBreakToggle.checked;
+      await this.plugin.saveSettings();
+    };
+
+    const autoFocusRow = this.settingsPanel.createDiv("gp-settings-row");
+    autoFocusRow.createSpan({ text: "Auto-start focus" });
+    const autoFocusToggle = autoFocusRow.createEl("input", { type: "checkbox" });
+    autoFocusToggle.checked = this.plugin.settings.autoStartFocus;
+    autoFocusToggle.onchange = async () => {
+      this.plugin.settings.autoStartFocus = autoFocusToggle.checked;
+      await this.plugin.saveSettings();
+    };
   }
 }
