@@ -5,6 +5,7 @@ import type { MomentFactory } from "./momentTypes";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
 import { findTaskNameById, incrementPomodoroCount, normalizeTaskText } from "./taskLoader";
+import { AUDIO_URLS } from "./audioAssets";
 
 declare const moment: MomentFactory;
 
@@ -267,35 +268,39 @@ export class TimerEngine {
   private async playSound(filename: string) {
     if (!this.plugin.settings.soundEnabled) return;
 
+    const dataUrl = AUDIO_URLS[filename];
+    if (!dataUrl) {
+      logger.debug(`Sound file not bundled: ${filename}`);
+      return;
+    }
+
     try {
-      const pluginDir = this.plugin.manifest.dir;
-      if (pluginDir) {
-        const soundFile = `${pluginDir}/${filename}`;
-        const exists = await this.plugin.app.vault.adapter.exists(soundFile);
-
-        if (exists) {
-          const arrayBuffer = await this.plugin.app.vault.adapter.readBinary(soundFile);
-          const AudioContextCtor =
-            window.AudioContext ??
-            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-
-          if (!AudioContextCtor) return;
-          const ctx = new AudioContextCtor();
-          const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-
-          const source = ctx.createBufferSource();
-          source.buffer = audioBuffer;
-
-          const gain = ctx.createGain();
-          gain.gain.value = this.plugin.settings.soundVolume;
-
-          source.connect(gain);
-          gain.connect(ctx.destination);
-          source.start(0);
-        } else {
-          logger.debug(`Sound file not found: ${soundFile}`);
-        }
+      // Strip the `data:audio/...;base64,` prefix and decode to bytes.
+      // Avoids fetch() (restricted by obsidianmd lint config) and the network round-trip.
+      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      const binary = window.atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
       }
+
+      const AudioContextCtor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+
+      const ctx = new AudioContextCtor();
+      const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+
+      const gain = ctx.createGain();
+      gain.gain.value = this.plugin.settings.soundVolume;
+
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      source.start(0);
     } catch (e) {
       logger.error(`Failed to play sound ${filename}:`, e);
     }

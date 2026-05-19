@@ -1,0 +1,6 @@
+// Declarations for asset imports handled by @rollup/plugin-url at build time.
+// At runtime the import resolves to a base64 data URL string.
+declare module "*.mp3" {
+  const url: string;
+  export default url;
+}
