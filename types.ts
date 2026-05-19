@@ -49,6 +49,8 @@ export interface TimerState {
   remainingMs: number;
   totalMs: number;
   taskName: string;
+  // null when mode is "focus"; otherwise indicates short vs long break.
+  breakType: "short" | "long" | null;
 }
 
 // Listener signature for timer state updates.

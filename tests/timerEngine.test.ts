@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { TimerEngine } from "../TimerEngine";
+import { DEFAULT_SETTINGS } from "../constants";
 import type { TimerState } from "../types";
 
 // TimerEngine uses `window.setInterval` / `window.clearInterval`. In Node those
@@ -8,6 +9,13 @@ beforeAll(() => {
   if (typeof (globalThis as unknown as { window?: unknown }).window === "undefined") {
     (globalThis as unknown as { window: unknown }).window = globalThis;
   }
+  // Some TimerEngine paths read moment(). Stub it minimally if not already present.
+  const g = globalThis as unknown as { moment?: unknown };
+  if (typeof g.moment === "undefined") {
+    g.moment = () => ({
+      format: (_fmt: string) => "2025-05-18", // fixed "today" for deterministic tests
+    });
+  }
 });
 
 interface LogCall {
@@ -15,7 +23,16 @@ interface LogCall {
   args: unknown[];
 }
 
-function makePluginStub(opts: { focusMinutes?: number; breakMinutes?: number } = {}) {
+interface PluginStubOptions {
+  focusMinutes?: number;
+  breakMinutes?: number;
+  longBreakMinutes?: number;
+  longBreakEvery?: number;
+  sessionsSinceLongBreak?: number;
+  sessionCounterDate?: string | null;
+}
+
+function makePluginStub(opts: PluginStubOptions = {}) {
   const calls: LogCall[] = [];
   const record = (name: string) => {
     return (...args: unknown[]) => {
@@ -28,16 +45,22 @@ function makePluginStub(opts: { focusMinutes?: number; breakMinutes?: number } =
     };
   };
 
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    focusMinutes: opts.focusMinutes ?? 25,
+    breakMinutes: opts.breakMinutes ?? 5,
+    longBreakMinutes: opts.longBreakMinutes ?? 15,
+    longBreakEvery: opts.longBreakEvery ?? 4,
+    sessionsSinceLongBreak: opts.sessionsSinceLongBreak ?? 0,
+    sessionCounterDate: opts.sessionCounterDate ?? null,
+    soundEnabled: false, // skip playSound branches in tests
+  };
+
   return {
     calls,
+    settings,
     plugin: {
-      settings: {
-        focusMinutes: opts.focusMinutes ?? 25,
-        breakMinutes: opts.breakMinutes ?? 5,
-        autoStartBreak: false,
-        autoStartFocus: false,
-        soundEnabled: false, // skips playSound branches
-      },
+      settings,
       logManager: {
         startSession: record("startSession"),
         pauseSession: record("pauseSession"),
@@ -51,6 +74,7 @@ function makePluginStub(opts: { focusMinutes?: number; breakMinutes?: number } =
         },
       },
       manifest: { dir: null },
+      saveSettings: async () => {},
     },
   };
 }
@@ -69,6 +93,107 @@ describe("TimerEngine — initial state", () => {
     expect(state.remainingMs).toBe(25 * ONE_MINUTE_MS);
     expect(state.totalMs).toBe(25 * ONE_MINUTE_MS);
     expect(state.taskName).toBe("No Task");
+    expect(state.breakType).toBe(null);
+  });
+});
+
+describe("TimerEngine — long break after N pomodoros", () => {
+  const TODAY = "2025-05-18"; // matches the moment stub in beforeAll
+
+  it("3rd consecutive focus → short break, counter 2 -> 3", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 2,
+      sessionCounterDate: TODAY,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.breakType).toBe("short");
+    expect(state.totalMs).toBe(5 * ONE_MINUTE_MS);
+    expect(stub.settings.sessionsSinceLongBreak).toBe(3);
+  });
+
+  it("4th consecutive focus → LONG break, counter 3 -> 4, longer duration", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 3,
+      sessionCounterDate: TODAY,
+      longBreakMinutes: 15,
+      longBreakEvery: 4,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.breakType).toBe("long");
+    expect(state.totalMs).toBe(15 * ONE_MINUTE_MS);
+    expect(stub.settings.sessionsSinceLongBreak).toBe(4);
+  });
+
+  it("5th focus continues the cycle → short break (counter 4 -> 5)", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 4,
+      sessionCounterDate: TODAY,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    expect(timer.getState().breakType).toBe("short");
+    expect(stub.settings.sessionsSinceLongBreak).toBe(5);
+  });
+
+  it("midnight rollover resets the counter (yesterday's date → 0 then increment to 1)", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 3,
+      sessionCounterDate: "2025-05-17", // yesterday relative to stubbed today
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    // First session of new day: counter goes 0 -> 1, not 3 -> 4
+    expect(stub.settings.sessionsSinceLongBreak).toBe(1);
+    expect(timer.getState().breakType).toBe("short");
+    expect(stub.settings.sessionCounterDate).toBe(TODAY);
+  });
+
+  it("null sessionCounterDate is treated as 'new day' (fresh install)", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 0,
+      sessionCounterDate: null,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    expect(stub.settings.sessionsSinceLongBreak).toBe(1);
+    expect(stub.settings.sessionCounterDate).toBe(TODAY);
+  });
+
+  it("skipping a focus does NOT advance the counter (cancelled status)", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 2,
+      sessionCounterDate: TODAY,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.skip();
+
+    // Counter unchanged: skip() goes through endSession+switchMode, NOT handleFinished
+    expect(stub.settings.sessionsSinceLongBreak).toBe(2);
+    // Resulting break is always short on skip
+    expect(timer.getState().breakType).toBe("short");
   });
 });
 

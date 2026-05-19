@@ -16,6 +16,8 @@ export interface SessionLog {
   pauses: { start: MomentLike; end: MomentLike }[];
   status: "finished" | "cancelled";
   taskId?: string; // Tasks plugin ID
+  // null/undefined when mode is "focus"; otherwise distinguishes short vs long break.
+  breakType?: "short" | "long" | null;
 }
 
 type ActiveSessionLog = Omit<SessionLog, "endTime">;
@@ -43,10 +45,11 @@ export function formatLogLine(session: SessionLog): string {
     }
     const pauseJson = JSON.stringify(pauseStrings);
     const idStr = session.taskId ? ` | ID:: ${session.taskId}` : "";
-    return `- 🍅 Focus | Task:: ${taskStr}${idStr} | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Pauses:: ${pauseJson} | Total:: ${totalSeconds} | Status:: ${session.status}`;
+    return `- 🍅 Focus | Task:: ${taskStr}${idStr} | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Pauses:: ${pauseJson} | Total:: ${totalSeconds} | Status:: ${session.status} | Type:: focus`;
   }
 
-  return `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds}`;
+  const breakTypeStr = session.breakType === "long" ? "long-break" : "short-break";
+  return `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds} | Type:: ${breakTypeStr}`;
 }
 
 // Pure helper: sum Total:: seconds across all focus lines in a log file's content.
@@ -81,7 +84,8 @@ export class LogManager {
     taskName: string,
     durationMinutes: number,
     taskPath?: string,
-    taskId?: string
+    taskId?: string,
+    breakType?: "short" | "long" | null
   ) {
     // If a session is already active (e.g. resuming from pause), don't overwrite start time
     if (this.currentSession) {
@@ -98,6 +102,7 @@ export class LogManager {
       startTime: moment(),
       pauses: [],
       status: "cancelled",
+      breakType,
     };
   }
 

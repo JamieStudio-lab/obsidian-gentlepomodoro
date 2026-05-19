@@ -1,11 +1,17 @@
 import { TAbstractFile, TFile } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { PomoMode, TimerListener, TimerState } from "./types";
+import type { MomentFactory } from "./momentTypes";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
 import { findTaskNameById, normalizeTaskText } from "./taskLoader";
 
+declare const moment: MomentFactory;
+
 const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
+
+// Local-timezone YYYY-MM-DD; matches the format LogManager uses for daily log filenames.
+const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
 export class TimerEngine {
   private state: TimerState;
@@ -31,6 +37,7 @@ export class TimerEngine {
       remainingMs: total,
       totalMs: total,
       taskName: NO_TASK_LABEL,
+      breakType: null,
     };
   }
 
@@ -132,7 +139,19 @@ export class TimerEngine {
     await this.checkTaskCompletionAndUnlink();
 
     if (this.state.mode === "focus") {
-      this.switchMode("break", this.plugin.settings.autoStartBreak);
+      // Advance the long-break counter, resetting at local-midnight rollover.
+      const today = todayLocalStr();
+      const counter =
+        this.plugin.settings.sessionCounterDate === today
+          ? this.plugin.settings.sessionsSinceLongBreak + 1
+          : 1;
+      this.plugin.settings.sessionsSinceLongBreak = counter;
+      this.plugin.settings.sessionCounterDate = today;
+      await this.plugin.saveSettings();
+
+      const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
+      const isLongBreak = counter % longBreakEvery === 0;
+      this.switchMode("break", this.plugin.settings.autoStartBreak, isLongBreak);
     } else {
       this.switchMode("focus", this.plugin.settings.autoStartFocus);
     }
@@ -231,9 +250,24 @@ export class TimerEngine {
     }
   }
 
-  switchMode(mode: PomoMode, autoStart = false) {
-    const minutes =
-      mode === "focus" ? this.plugin.settings.focusMinutes : this.plugin.settings.breakMinutes;
+  /**
+   * Transition to the given mode. When entering break, `isLongBreak` selects
+   * `longBreakMinutes` over `breakMinutes` and records the type on the state
+   * so the log line can include it.
+   */
+  switchMode(mode: PomoMode, autoStart = false, isLongBreak = false) {
+    let minutes: number;
+    let breakType: "short" | "long" | null;
+    if (mode === "focus") {
+      minutes = this.plugin.settings.focusMinutes;
+      breakType = null;
+    } else if (isLongBreak) {
+      minutes = this.plugin.settings.longBreakMinutes;
+      breakType = "long";
+    } else {
+      minutes = this.plugin.settings.breakMinutes;
+      breakType = "short";
+    }
 
     const total = minutes * ONE_MINUTE_MS;
 
@@ -243,6 +277,7 @@ export class TimerEngine {
       remainingMs: total,
       totalMs: total,
       taskName: this.currentTaskName,
+      breakType,
     };
     this.emit();
 
@@ -252,7 +287,8 @@ export class TimerEngine {
         this.currentTaskName,
         minutes,
         this.currentTaskPath,
-        this.currentTaskId
+        this.currentTaskId,
+        breakType
       );
       this.targetTime = Date.now() + total;
       this.startLoop();
@@ -281,7 +317,8 @@ export class TimerEngine {
       this.currentTaskName,
       minutes,
       this.currentTaskPath,
-      this.currentTaskId
+      this.currentTaskId,
+      this.state.breakType
     );
 
     // Set target based on current remaining time

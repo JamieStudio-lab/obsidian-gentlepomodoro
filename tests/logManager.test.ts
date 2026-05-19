@@ -63,7 +63,7 @@ describe("formatLogLine — focus", () => {
     expect(line).toBe(
       "- 🍅 Focus | Task:: [[Projects/Docs.md|Write docs]] | ID:: abc123 | " +
         "Start:: 2025-12-23 10:00:00 | End:: 2025-12-23 10:25:00 | " +
-        "Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished"
+        "Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished | Type:: focus"
     );
   });
 
@@ -158,7 +158,43 @@ describe("formatLogLine — focus", () => {
 });
 
 describe("formatLogLine — break", () => {
-  it("emits the shorter rest format without task/status fields", () => {
+  it("emits the shorter rest format with short-break Type", () => {
+    const session: SessionLog = {
+      mode: "break",
+      taskName: "No Task",
+      scheduledDurationMinutes: 5,
+      startTime: m("2025-12-23T10:25:00"),
+      endTime: m("2025-12-23T10:30:00"),
+      pauses: [],
+      status: "finished",
+      breakType: "short",
+    };
+
+    expect(formatLogLine(session)).toBe(
+      "- ☕ Rest | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | " +
+        "Scheduled:: 300 | Total:: 300 | Type:: short-break"
+    );
+  });
+
+  it("emits long-break Type when breakType is 'long'", () => {
+    const session: SessionLog = {
+      mode: "break",
+      taskName: "No Task",
+      scheduledDurationMinutes: 15,
+      startTime: m("2025-12-23T11:00:00"),
+      endTime: m("2025-12-23T11:15:00"),
+      pauses: [],
+      status: "finished",
+      breakType: "long",
+    };
+
+    expect(formatLogLine(session)).toBe(
+      "- ☕ Rest | Start:: 2025-12-23 11:00:00 | End:: 2025-12-23 11:15:00 | " +
+        "Scheduled:: 900 | Total:: 900 | Type:: long-break"
+    );
+  });
+
+  it("defaults to short-break when breakType is missing", () => {
     const session: SessionLog = {
       mode: "break",
       taskName: "No Task",
@@ -169,10 +205,7 @@ describe("formatLogLine — break", () => {
       status: "finished",
     };
 
-    expect(formatLogLine(session)).toBe(
-      "- ☕ Rest | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | " +
-        "Scheduled:: 300 | Total:: 300"
-    );
+    expect(formatLogLine(session)).toContain("Type:: short-break");
   });
 });
 
