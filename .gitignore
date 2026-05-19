@@ -15,3 +15,6 @@ main.js
 
 # notes
 pomodoro_log_dev_doc.md
+
+# user data — Obsidian recreates this on first save; defaults live in constants.ts
+data.json
