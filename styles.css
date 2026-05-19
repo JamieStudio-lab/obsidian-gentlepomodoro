@@ -175,21 +175,20 @@
 }
 
 .gp-timer-time {
-  font-size: 3.5rem;
-  /* Make the timer text scale down smoothly in narrow sidebars (fallback remains 3.5rem) */
+  /* Scale down smoothly in narrow sidebars; upper bound is the original 3.5rem */
   font-size: clamp(2rem, 26cqi, 3.5rem);
   /* Slightly bolder weight usually looks better for rounded fonts */
   font-weight: 600;
-  /* UPDATED FONT STACK:
-       1. SF Pro Rounded / ui-rounded: macOS/iOS
+  /* Font stack:
+       1. SF Pro Rounded: macOS/iOS
        2. Arial Rounded MT Bold: Windows (with Office)
        3. Varela Round / Quicksand / Nunito: Common free rounded fonts (if user has them)
        4. Segoe UI: Windows default (not rounded, but cleaner than Arial)
        5. sans-serif: Fallback
     */
   font-family:
-    "SF Pro Rounded", "ui-rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito",
-    "Segoe UI", sans-serif;
+    "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI",
+    sans-serif;
   color: #ffffff;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 
@@ -231,7 +230,7 @@
   letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
   color: rgba(255, 255, 255, 0.9);
   font-weight: 700;
-  font-family: "SF Pro Rounded", "ui-rounded", "Arial Rounded MT Bold", sans-serif;
+  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -265,8 +264,8 @@
 }
 
 /* Add spacing to all items except the last one.
-   This ensures that if an intermediate item (like the wrapper) is hidden 
-   (via margin: 0 !important), the space effectively disappears. */
+   This ensures that if an intermediate item (like the wrapper) is hidden
+   (via margin: 0 on .gp-hidden-animated), the space effectively disappears. */
 .gp-controls-row > *:not(:last-child) {
   margin-right: var(--gp-control-gap, 12px);
 }
@@ -294,9 +293,11 @@
 }
 
 .gp-animated-wrapper.gp-hidden-animated {
-  max-width: 0 !important;
+  /* No !important needed — this two-class selector already beats the
+     single-class .gp-adjust-wrapper / .gp-secondary-controls rules. */
+  max-width: 0;
   opacity: 0;
-  margin: 0 !important; /* Collapse all margins */
+  margin: 0; /* Collapse all margins */
   transform: translateX(-10px) scale(0.9);
   pointer-events: none;
 }
@@ -588,9 +589,11 @@
   background-color: var(--background-modifier-form-field);
 }
 
-/* Utility to hide elements completely */
-.gp-hidden {
-  display: none !important;
+/* Utility to hide elements completely. Scoped to .gp-root so the
+   specificity wins without !important; all use sites in the plugin
+   live inside the timer view (.gp-root). */
+.gp-root .gp-hidden {
+  display: none;
 }
 
 /* --- Task List Dropdown --- */
@@ -713,7 +716,6 @@
 
 /* --- Total Time (Overtime Only) --- */
 .gp-total-time {
-  font-size: 1rem;
   font-size: clamp(0.75rem, 10cqi, 1rem);
   font-weight: 500;
   color: var(--text-muted);
