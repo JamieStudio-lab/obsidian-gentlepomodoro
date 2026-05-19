@@ -2,7 +2,8 @@ import { TAbstractFile, TFile } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { PomoMode, TimerListener, TimerState } from "./types";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
-import { findTaskNameById, normalizeTaskText } from "./taskLoader"; // NEW
+import { logger } from "./logger";
+import { findTaskNameById, normalizeTaskText } from "./taskLoader";
 
 const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 
@@ -33,7 +34,7 @@ export class TimerEngine {
     };
   }
 
-  // Method to update task name and sync with LogManager
+  /** Update the active task and notify LogManager so future log lines reflect the change. */
   setTask(name: string, path?: string, taskId?: string) {
     this.currentTaskName = name;
     this.currentTaskPath = path;
@@ -43,7 +44,11 @@ export class TimerEngine {
     this.emit();
   }
 
-  // Handle file modification to check for task completion
+  /**
+   * Reaction to vault file changes. If the modified file holds the active task,
+   * refreshes the task name (when ID is known) and auto-unlinks if it's now
+   * completed (only while not currently running).
+   */
   async onFileModify(file: TAbstractFile) {
     // 1. Basic checks
     if (this.currentTaskName === NO_TASK_LABEL || !this.currentTaskPath) return;
@@ -185,7 +190,7 @@ export class TimerEngine {
         this.setTask(NO_TASK_LABEL);
       }
     } catch (e) {
-      console.error("[GentlePomo] Failed to check task completion", e);
+      logger.error("Failed to check task completion", e);
     }
   }
 
@@ -218,11 +223,11 @@ export class TimerEngine {
           gain.connect(ctx.destination);
           source.start(0);
         } else {
-          console.debug(`[GentlePomo] Sound file not found: ${soundFile}`);
+          logger.debug(`Sound file not found: ${soundFile}`);
         }
       }
     } catch (e) {
-      console.error(`[GentlePomo] Failed to play sound ${filename}:`, e);
+      logger.error(`Failed to play sound ${filename}:`, e);
     }
   }
 
@@ -257,6 +262,7 @@ export class TimerEngine {
     }
   }
 
+  /** Start or resume the timer. Opens a session in LogManager and begins the 50ms tick loop. */
   start() {
     if (this.state.isRunning) return;
 
@@ -290,6 +296,7 @@ export class TimerEngine {
     this.startLoop();
   }
 
+  /** Pause the timer without ending the session — pause is logged for accounting. */
   pause() {
     if (!this.state.isRunning) return;
 
@@ -302,6 +309,7 @@ export class TimerEngine {
     this.emit();
   }
 
+  /** Finish the current session, log it as finished, and switch to the next mode. */
   async finish() {
     // Play specific sounds based on mode when manually finishing
     if (this.state.mode === "focus") {
@@ -312,6 +320,7 @@ export class TimerEngine {
     await this.handleFinished();
   }
 
+  /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
   async skip() {
     // Check if we are in a "stopped" state (fresh start, not running, not paused)
     const isStopped = !this.state.isRunning && this.state.remainingMs === this.state.totalMs;
@@ -361,6 +370,7 @@ export class TimerEngine {
     this.emit();
   }
 
+  /** Adjust total and remaining by `delta` minutes (clamped to a 1-minute minimum total). */
   addMinutes(delta: number) {
     const deltaMs = delta * ONE_MINUTE_MS;
 
@@ -386,6 +396,7 @@ export class TimerEngine {
     this.emit();
   }
 
+  /** Change a mode's configured duration; takes effect immediately only if that mode is fresh-stopped. */
   updateDuration(mode: PomoMode, minutes: number) {
     if (this.state.mode === mode) {
       const newTotal = minutes * ONE_MINUTE_MS;

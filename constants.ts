@@ -5,6 +5,10 @@ export const VIEW_TYPE_GENTLE_POMO = "gentle-pomo-view";
 export const NO_TASK_LABEL = "No Task";
 export const ONE_MINUTE_MS = 60_000;
 
+// Cache TTL for "today's total focus seconds" — read by both the status bar
+// refresh loop in main.ts and the public method on LogManager.
+export const FOCUS_TOTAL_CACHE_TTL_MS = 30_000;
+
 // Default settings used on first load or when a setting is missing.
 export const DEFAULT_SETTINGS: GentlePomoSettings = {
   focusMinutes: 25,

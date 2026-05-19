@@ -4,8 +4,8 @@ import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
 import { LogManager } from "./logManager";
 import { TimerEngine } from "./TimerEngine";
-import { DEFAULT_SETTINGS, VIEW_TYPE_GENTLE_POMO } from "./constants";
-import type { GentlePomoSettings, TimerListener, TimerState } from "./types";
+import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
+import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 
 export default class GentlePomoPlugin extends Plugin {
   settings!: GentlePomoSettings;
@@ -17,9 +17,7 @@ export default class GentlePomoPlugin extends Plugin {
   private statusModeEl: HTMLElement | null = null;
   private statusTimeEl: HTMLElement | null = null;
   private statusFocusTotal: HTMLElement | null = null;
-  private statusLastSecond: number | null = null;
-  private statusLastMode: string | null = null;
-  private statusLastRunning: boolean | null = null;
+  private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
   private statusFocusBaseSeconds = 0;
   private statusFocusLastFetchMs = 0;
   private statusFocusFetchInFlight = false;
@@ -125,7 +123,10 @@ export default class GentlePomoPlugin extends Plugin {
 
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
 
-    this.maybeAutoOpenView();
+    // Defer auto-open until Obsidian has finished initial layout setup.
+    this.app.workspace.onLayoutReady(() => {
+      this.maybeAutoOpenView();
+    });
   }
 
   override onunload() {
@@ -267,16 +268,19 @@ export default class GentlePomoPlugin extends Plugin {
 
     if (
       !force &&
-      this.statusLastSecond === absSeconds &&
-      this.statusLastMode === state.mode &&
-      this.statusLastRunning === state.isRunning
+      this.lastStatusRender &&
+      this.lastStatusRender.second === absSeconds &&
+      this.lastStatusRender.mode === state.mode &&
+      this.lastStatusRender.running === state.isRunning
     ) {
       return;
     }
 
-    this.statusLastSecond = absSeconds;
-    this.statusLastMode = state.mode;
-    this.statusLastRunning = state.isRunning;
+    this.lastStatusRender = {
+      second: absSeconds,
+      mode: state.mode,
+      running: state.isRunning,
+    };
 
     this.statusDot.toggleClass("gp-mode-focus", state.mode === "focus");
     this.statusDot.toggleClass("gp-mode-break", state.mode === "break");
@@ -308,7 +312,7 @@ export default class GentlePomoPlugin extends Plugin {
   private async maybeRefreshFocusTotal() {
     if (this.statusFocusFetchInFlight) return;
     const now = Date.now();
-    if (now - this.statusFocusLastFetchMs < 30_000) return;
+    if (now - this.statusFocusLastFetchMs < FOCUS_TOTAL_CACHE_TTL_MS) return;
 
     this.statusFocusFetchInFlight = true;
     try {

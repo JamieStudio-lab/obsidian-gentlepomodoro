@@ -1,5 +1,6 @@
 import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
+import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
 import { findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 
@@ -74,6 +75,7 @@ export class LogManager {
     this.plugin = plugin;
   }
 
+  /** Open a new session or resume from pause (idempotent if a session is already active). */
   startSession(
     mode: "focus" | "break",
     taskName: string,
@@ -124,6 +126,7 @@ export class LogManager {
     }
   }
 
+  /** Close the active session and append a log line; invalidates today's focus-total cache. */
   async endSession(status: "finished" | "cancelled") {
     if (!this.currentSession) return;
 
@@ -145,6 +148,7 @@ export class LogManager {
     this.currentPauseStart = null;
   }
 
+  /** Rewrite the Task:: field on all log lines that reference `taskId`. Used when the task is renamed. */
   async updateLoggedTaskName(taskId: string, taskName: string, taskPath?: string) {
     const folderPath = this.plugin.settings.logFolderPath;
     if (!folderPath || !taskId) return;
@@ -179,6 +183,7 @@ export class LogManager {
     }
   }
 
+  /** Refresh ALL log files' Task:: fields by re-resolving each ID-bearing line against the source task. */
   async refreshLoggedTaskNamesById() {
     const folderPath = this.plugin.settings.logFolderPath;
     if (!folderPath) {
@@ -334,6 +339,7 @@ export class LogManager {
     }
   }
 
+  /** Today's total focus seconds, summed from today's log file. Cached for FOCUS_TOTAL_CACHE_TTL_MS. */
   async getTodayFocusSeconds(): Promise<number> {
     const folderPath = this.plugin.settings.logFolderPath;
     if (!folderPath) return 0;
@@ -341,7 +347,10 @@ export class LogManager {
     const dateStr = moment().format("YYYY-MM-DD");
     const now = Date.now();
 
-    if (this.focusTotalCacheDate === dateStr && now - this.focusTotalCacheAt < 30_000) {
+    if (
+      this.focusTotalCacheDate === dateStr &&
+      now - this.focusTotalCacheAt < FOCUS_TOTAL_CACHE_TTL_MS
+    ) {
       return this.focusTotalCacheSeconds;
     }
 
