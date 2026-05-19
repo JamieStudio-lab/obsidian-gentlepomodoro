@@ -1,74 +1,10 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type GentlePomoPlugin from "./main";
-import type { TimerListener, TaskItem, TimerState } from "./types";
+import type { TimerListener, TimerState } from "./types";
 import { VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { TimerEngine } from "./TimerEngine";
-import { isPathInFolder, normalizeTaskText, normalizeTaskTextForDisplay } from "./taskLoader";
-import type { MomentFactory } from "./momentTypes";
-
-declare const moment: MomentFactory;
-
-type DayNightIcon = "sun" | "sunset" | "moon" | "sunrise";
-
-const DAY_NIGHT_ICON_ORDER: DayNightIcon[] = ["sun", "sunset", "moon", "sunrise"];
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-const createSvgEl = <K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] =>
-  document.createElementNS(SVG_NS, tag);
-
-const buildDayNightIcon = (icon: DayNightIcon): SVGSVGElement => {
-  const svg = createSvgEl("svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "14");
-  svg.setAttribute("height", "14");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("aria-hidden", "true");
-
-  const addPath = (d: string) => {
-    const p = createSvgEl("path");
-    p.setAttribute("d", d);
-    svg.appendChild(p);
-  };
-
-  if (icon === "sun") {
-    const c = createSvgEl("circle");
-    c.setAttribute("cx", "12");
-    c.setAttribute("cy", "12");
-    c.setAttribute("r", "4");
-    svg.appendChild(c);
-    addPath(
-      "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-    );
-    return svg;
-  }
-
-  if (icon === "sunset") {
-    addPath("M6 18h12");
-    addPath("M7 18a5 5 0 0 1 10 0");
-    addPath("M12 3v3");
-    addPath("M5 12h2M17 12h2");
-    addPath("M7 9l1.2 1.2M17 9l-1.2 1.2");
-    return svg;
-  }
-
-  if (icon === "sunrise") {
-    addPath("M6 18h12");
-    addPath("M7 18a5 5 0 0 1 10 0");
-    addPath("M12 3v3");
-    addPath("M5 12h2M17 12h2");
-    addPath("M4 15h2M18 15h2");
-    return svg;
-  }
-
-  // moon
-  addPath("M21 12.6A8.5 8.5 0 0 1 11.4 3a7 7 0 1 0 9.6 9.6Z");
-  return svg;
-};
+import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
+import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
 
 export class GentlePomoView extends ItemView {
   plugin: GentlePomoPlugin;
@@ -385,7 +321,7 @@ export class GentlePomoView extends ItemView {
     return "moon";
   }
 
-  // --- Task Loading Logic ---
+  /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */
   async loadTasks() {
     this.taskListContainer.empty();
 
@@ -400,98 +336,23 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.removeClass("gp-visible");
     };
 
-    const tasks: TaskItem[] = [];
-    const path = this.plugin.settings.tasksPath;
-
-    const files = this.plugin.app.vault
-      .getFiles()
-      .filter((f) => isPathInFolder(f.path, path) && f.extension === "md");
-
-    const today = moment().startOf("day");
-    const limitDate = moment().add(3, "days").endOf("day");
-
-    for (const file of files) {
-      const content = await this.plugin.app.vault.cachedRead(file);
-      const lines = content.split("\n");
-
-      const taskRegex = /^\s*-\s*\[ \]\s+(.*)$/;
-      const scheduledRegex = /⏳\s*(\d{4}-\d{2}-\d{2})/;
-      const dueRegex = /📅\s*(\d{4}-\d{2}-\d{2})/;
-      const taskIdRegex = /🆔\s*([A-Za-z0-9_-]+)/;
-
-      for (const line of lines) {
-        const match = line.match(taskRegex);
-        if (match) {
-          const originalText = match[1];
-
-          const scheduledMatch = originalText.match(scheduledRegex);
-          const dueMatch = originalText.match(dueRegex);
-
-          const scheduled = scheduledMatch ? scheduledMatch[1] : null;
-          const due = dueMatch ? dueMatch[1] : null;
-
-          const effectiveDateStr = scheduled || due;
-
-          const idMatch = originalText.match(taskIdRegex);
-          const taskId = idMatch ? idMatch[1] : undefined;
-
-          if (effectiveDateStr) {
-            const dateObj = moment(effectiveDateStr);
-            if (dateObj.isSameOrBefore(limitDate)) {
-              const cleanText = normalizeTaskText(originalText);
-              const displayText = normalizeTaskTextForDisplay(originalText);
-
-              tasks.push({
-                text: originalText,
-                cleanText: cleanText || "Untitled Task",
-                displayText: displayText || cleanText || "Untitled Task",
-                status: "todo",
-                path: file.path,
-                scheduled,
-                due,
-                effectiveDateStr,
-                taskId,
-              });
-            }
-          }
-        }
-      }
-    }
-
-    tasks.sort((a, b) => {
-      if (a.effectiveDateStr !== b.effectiveDateStr) {
-        return a.effectiveDateStr.localeCompare(b.effectiveDateStr);
-      }
-      return a.path.localeCompare(b.path);
+    const tasks = await fetchTasks(this.plugin.app, {
+      tasksPath: this.plugin.settings.tasksPath,
     });
+    const groups = groupTasksByDate(tasks);
 
-    if (tasks.length === 0) {
+    if (groups.length === 0) {
       this.taskListContainer.createDiv({
         cls: "gp-task-item-empty",
         text: "No tasks found for next 3 days.",
       });
-    } else {
-      let lastGroupLabel = "";
+      return;
+    }
 
-      tasks.forEach((task) => {
-        const dateObj = moment(task.effectiveDateStr);
-        let groupLabel = "";
+    for (const group of groups) {
+      this.taskListContainer.createDiv("gp-task-group-header").setText(group.label);
 
-        if (dateObj.isBefore(today)) {
-          groupLabel = "Overdue";
-        } else if (dateObj.isSame(today, "day")) {
-          groupLabel = "Today";
-        } else if (dateObj.isSame(moment().add(1, "day"), "day")) {
-          groupLabel = "Tomorrow";
-        } else {
-          groupLabel = dateObj.format("dddd, MMM D");
-        }
-
-        if (groupLabel !== lastGroupLabel) {
-          this.taskListContainer.createDiv("gp-task-group-header").setText(groupLabel);
-          lastGroupLabel = groupLabel;
-        }
-
+      for (const task of group.items) {
         const item = this.taskListContainer.createDiv("gp-task-item");
         item.createSpan({ text: task.displayText });
 
@@ -509,7 +370,7 @@ export class GentlePomoView extends ItemView {
           this.taskListVisible = false;
           this.taskListContainer.removeClass("gp-visible");
         };
-      });
+      }
     }
   }
 
