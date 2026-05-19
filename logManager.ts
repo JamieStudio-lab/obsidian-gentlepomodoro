@@ -19,6 +19,49 @@ export interface SessionLog {
 
 type ActiveSessionLog = Omit<SessionLog, "endTime">;
 
+// Pure helper: format a completed session as a single log line.
+// Exported so tests can lock in the inline-field schema that users' Dataview queries depend on.
+export function formatLogLine(session: SessionLog): string {
+  let totalPauseMs = 0;
+  const pauseStrings = session.pauses.map((p) => {
+    totalPauseMs += p.end.diff(p.start);
+    return `${p.start.format("YYYY-MM-DD HH:mm:ss")} - ${p.end.format("YYYY-MM-DD HH:mm:ss")}`;
+  });
+
+  const totalDurationMs = session.endTime.diff(session.startTime) - totalPauseMs;
+  const totalSeconds = Math.floor(totalDurationMs / 1000);
+  const scheduledSeconds = session.scheduledDurationMinutes * 60;
+
+  const startFmt = session.startTime.format("YYYY-MM-DD HH:mm:ss");
+  const endFmt = session.endTime.format("YYYY-MM-DD HH:mm:ss");
+
+  if (session.mode === "focus") {
+    let taskStr = session.taskName === "No Task" ? "No Task" : `${session.taskName}`;
+    if (session.taskPath && session.taskName !== "No Task") {
+      taskStr = `[[${session.taskPath}|${session.taskName}]]`;
+    }
+    const pauseJson = JSON.stringify(pauseStrings);
+    const idStr = session.taskId ? ` | ID:: ${session.taskId}` : "";
+    return `- 🍅 Focus | Task:: ${taskStr}${idStr} | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Pauses:: ${pauseJson} | Total:: ${totalSeconds} | Status:: ${session.status}`;
+  }
+
+  return `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds}`;
+}
+
+// Pure helper: sum Total:: seconds across all focus lines in a log file's content.
+export function parseFocusTotalSeconds(content: string): number {
+  const lines = content.split("\n");
+  let total = 0;
+  for (const line of lines) {
+    if (!line.includes("🍅 Focus")) continue;
+    const totalMatch = line.match(/Total::\s*(\d+)/);
+    if (!totalMatch) continue;
+    const seconds = parseInt(totalMatch[1], 10);
+    if (!Number.isNaN(seconds)) total += seconds;
+  }
+  return total;
+}
+
 export class LogManager {
   private plugin: GentlePomoPlugin;
   private currentSession: ActiveSessionLog | null = null;
@@ -273,42 +316,10 @@ export class LogManager {
     const fileName = `${dateStr}-gentle-pomodoro-log.md`;
     const filePath = normalizePath(`${normalizedFolder}/${fileName}`);
 
-    // 3. Calculate Totals
-    let totalPauseMs = 0;
-    const pauseStrings = session.pauses.map((p) => {
-      totalPauseMs += p.end.diff(p.start);
-      return `${p.start.format("YYYY-MM-DD HH:mm:ss")} - ${p.end.format("YYYY-MM-DD HH:mm:ss")}`;
-    });
+    // 3. Format the line via the pure helper (tested in tests/logManager.test.ts).
+    const line = formatLogLine(session);
 
-    const totalDurationMs = session.endTime.diff(session.startTime) - totalPauseMs;
-    const totalSeconds = Math.floor(totalDurationMs / 1000);
-
-    const scheduledSeconds = session.scheduledDurationMinutes * 60; // Convert scheduled minutes to seconds
-
-    // 4. Format Line
-    let line = "";
-    const startFmt = session.startTime.format("YYYY-MM-DD HH:mm:ss");
-    const endFmt = session.endTime.format("YYYY-MM-DD HH:mm:ss");
-
-    if (session.mode === "focus") {
-      // - 🍅 Focus | Task:: [[Path|Task Name]] | Start:: ...
-      let taskStr = session.taskName === "No Task" ? "No Task" : `${session.taskName}`;
-
-      // Create a WikiLink if we have a path. This helps with Dataview matching.
-      if (session.taskPath && session.taskName !== "No Task") {
-        taskStr = `[[${session.taskPath}|${session.taskName}]]`;
-      }
-
-      const pauseJson = JSON.stringify(pauseStrings);
-      // Add ID if present
-      const idStr = session.taskId ? ` | ID:: ${session.taskId}` : "";
-      line = `- 🍅 Focus | Task:: ${taskStr}${idStr} | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Pauses:: ${pauseJson} | Total:: ${totalSeconds} | Status:: ${session.status}`;
-    } else {
-      // - ☕ Rest | Start:: ...
-      line = `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds}`;
-    }
-
-    // 5. Append to File
+    // 4. Append to File
     if (await adapter.exists(filePath)) {
       const file = app.vault.getAbstractFileByPath(filePath);
       if (file instanceof TFile) {
@@ -346,24 +357,11 @@ export class LogManager {
     }
 
     const content = await this.plugin.app.vault.read(file);
-    const totalSeconds = this.parseFocusTotalSeconds(content);
+    const totalSeconds = parseFocusTotalSeconds(content);
 
     this.focusTotalCacheDate = dateStr;
     this.focusTotalCacheSeconds = totalSeconds;
     this.focusTotalCacheAt = now;
     return totalSeconds;
-  }
-
-  private parseFocusTotalSeconds(content: string): number {
-    const lines = content.split("\n");
-    let total = 0;
-    for (const line of lines) {
-      if (!line.includes("🍅 Focus")) continue;
-      const totalMatch = line.match(/Total::\s*(\d+)/);
-      if (!totalMatch) continue;
-      const seconds = parseInt(totalMatch[1], 10);
-      if (!Number.isNaN(seconds)) total += seconds;
-    }
-    return total;
   }
 }

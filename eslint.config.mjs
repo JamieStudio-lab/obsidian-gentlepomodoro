@@ -6,7 +6,15 @@ import prettierConfig from "eslint-config-prettier";
 
 export default defineConfig([
   {
-    ignores: ["node_modules/**", "main.js", "eslint.config.mjs", "rollup.config.js"],
+    ignores: [
+      "node_modules/**",
+      "main.js",
+      "eslint.config.mjs",
+      "rollup.config.js",
+      "vitest.config.ts",
+      "tests/**",
+      "__mocks__/**",
+    ],
   },
 
   ...obsidianmd.configs.recommended,
