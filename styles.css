@@ -572,6 +572,12 @@
   margin-left: 4px;
 }
 
+.gp-status-focus-total.gp-status-goal-met {
+  color: var(--text-success, var(--color-green, #4ade80));
+  opacity: 1;
+  font-weight: 600;
+}
+
 /* Disabled State for Buttons */
 .gp-btn:disabled,
 .gp-btn.gp-btn-disabled {

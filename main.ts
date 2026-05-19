@@ -1,11 +1,17 @@
-import { Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
-import { LogManager } from "./logManager";
+import { LogManager, shouldFireGoalNotice } from "./logManager";
 import { TimerEngine } from "./TimerEngine";
 import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
+import type { MomentFactory } from "./momentTypes";
+
+declare const moment: MomentFactory;
+
+// Local-timezone YYYY-MM-DD; matches LogManager's daily-log file naming.
+const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
 export default class GentlePomoPlugin extends Plugin {
   settings!: GentlePomoSettings;
@@ -291,14 +297,42 @@ export default class GentlePomoPlugin extends Plugin {
     this.statusTimeEl.setText(timeText);
 
     const focusTotalSeconds = this.statusFocusBaseSeconds + this.getLiveFocusSeconds(state);
-    this.statusFocusTotal.setText(`Today ${this.formatHoursMinutes(focusTotalSeconds)}`);
+    const goalMinutes = this.settings.dailyFocusGoalMinutes;
+    let totalText = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
+    let goalMet = false;
+    if (goalMinutes > 0) {
+      totalText += ` / ${this.formatHoursMinutes(goalMinutes * 60)}`;
+      goalMet = focusTotalSeconds >= goalMinutes * 60;
+    }
+    this.statusFocusTotal.setText(totalText);
+    this.statusFocusTotal.toggleClass("gp-status-goal-met", goalMet);
 
     this.statusBarEl.setAttribute(
       "aria-label",
       showTimeLeft ? `${modeLabel} ${timeText}` : `${modeLabel} (time hidden)`
     );
 
+    this.maybeFireGoalNotice(focusTotalSeconds);
     void this.maybeRefreshFocusTotal();
+  }
+
+  private maybeFireGoalNotice(currentSeconds: number) {
+    const today = todayLocalStr();
+    if (
+      !shouldFireGoalNotice(
+        currentSeconds,
+        this.settings.dailyFocusGoalMinutes,
+        this.settings.goalNoticeEnabled,
+        this.settings.lastGoalHitDate,
+        today
+      )
+    ) {
+      return;
+    }
+    const goalHm = this.formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
+    new Notice(`[GentlePomo] Daily focus goal hit: ${goalHm}`);
+    this.settings.lastGoalHitDate = today;
+    void this.saveSettings();
   }
 
   private getLiveFocusSeconds(state: TimerState): number {

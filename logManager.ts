@@ -52,6 +52,29 @@ export function formatLogLine(session: SessionLog): string {
   return `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds} | Type:: ${breakTypeStr}`;
 }
 
+/**
+ * Pure helper: should the "daily goal hit" notice fire?
+ *
+ * Returns true when all of:
+ *  - goal is configured (> 0 minutes)
+ *  - notice is enabled
+ *  - current focus seconds today have crossed the goal threshold
+ *  - notice hasn't already fired today (date-keyed flag)
+ */
+export function shouldFireGoalNotice(
+  currentSeconds: number,
+  goalMinutes: number,
+  noticeEnabled: boolean,
+  lastGoalHitDate: string | null,
+  today: string
+): boolean {
+  if (goalMinutes <= 0) return false;
+  if (!noticeEnabled) return false;
+  if (currentSeconds < goalMinutes * 60) return false;
+  if (lastGoalHitDate === today) return false;
+  return true;
+}
+
 // Pure helper: sum Total:: seconds across all focus lines in a log file's content.
 export function parseFocusTotalSeconds(content: string): number {
   const lines = content.split("\n");

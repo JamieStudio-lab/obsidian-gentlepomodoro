@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { formatLogLine, parseFocusTotalSeconds, type SessionLog } from "../logManager";
+import {
+  formatLogLine,
+  parseFocusTotalSeconds,
+  shouldFireGoalNotice,
+  type SessionLog,
+} from "../logManager";
 import type { MomentLike } from "../momentTypes";
 
 // Minimal moment-like stub that supports the two methods formatLogLine uses.
@@ -232,5 +237,35 @@ describe("parseFocusTotalSeconds", () => {
 
   it("returns 0 for empty content", () => {
     expect(parseFocusTotalSeconds("")).toBe(0);
+  });
+});
+
+describe("shouldFireGoalNotice", () => {
+  const TODAY = "2025-05-18";
+
+  it("fires when seconds cross the goal and notice hasn't fired today", () => {
+    expect(shouldFireGoalNotice(7200, 120, true, null, TODAY)).toBe(true);
+    expect(shouldFireGoalNotice(7200, 120, true, "2025-05-17", TODAY)).toBe(true);
+  });
+
+  it("does NOT fire when goal is 0 (disabled)", () => {
+    expect(shouldFireGoalNotice(99999, 0, true, null, TODAY)).toBe(false);
+  });
+
+  it("does NOT fire when notice is disabled", () => {
+    expect(shouldFireGoalNotice(7200, 120, false, null, TODAY)).toBe(false);
+  });
+
+  it("does NOT fire when below the threshold", () => {
+    expect(shouldFireGoalNotice(7199, 120, true, null, TODAY)).toBe(false);
+  });
+
+  it("does NOT fire when already fired today (date matches)", () => {
+    expect(shouldFireGoalNotice(7200, 120, true, TODAY, TODAY)).toBe(false);
+  });
+
+  it("fires again on the next day even if lastGoalHitDate is set", () => {
+    // lastGoalHitDate is yesterday, today is new -> fires
+    expect(shouldFireGoalNotice(7200, 120, true, "2025-05-17", TODAY)).toBe(true);
   });
 });
