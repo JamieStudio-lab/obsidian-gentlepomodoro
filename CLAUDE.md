@@ -4,7 +4,9 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 ## Project Summary
 
-**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.0.6 (beta)**.
+**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.0 (beta)**.
+
+**0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N (today)` counter written back to task lines (today-only — resets at local midnight), volume slider and auto-start toggles in the in-view settings panel.
 
 Plugin ID: `gentle-pomo`. Mobile-compatible. Min Obsidian: 1.0.0.
 
@@ -44,22 +46,22 @@ GentlePomoPlugin (main.ts)
 
 ## Source Map
 
-| File                                               | Purpose                                                                                                                               |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| [main.ts](main.ts)                                 | Plugin entry. Commands, ribbon, status bar, auto-open (via `onLayoutReady`), settings load/save.                                      |
-| [TimerEngine.ts](TimerEngine.ts)                   | Timer state machine: start/pause/finish/skip, mode switching, sound, task linking, vault-modify reactions.                            |
-| [GentlePomoView.ts](GentlePomoView.ts)             | Sidebar `ItemView` (~400 LOC). Builds DOM, subscribes to `TimerEngine`, renders task dropdown and day/night gradient.                 |
-| [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts) | Settings page (folder paths, auto-open, status bar, day/night toggle).                                                                |
-| [logManager.ts](logManager.ts)                     | Writes daily `*-gentle-pomodoro-log.md` files, tracks pauses, refreshes logged task names by ID, caches today's focus total.          |
-| [taskLoader.ts](taskLoader.ts)                     | Parses Tasks-plugin markdown (`⏳ 📅 🆔 🔺`), normalizes display text, groups by Overdue/Today/Tomorrow/Upcoming.                     |
-| [icons.ts](icons.ts)                               | Inline SVG day/night icons (`buildDayNightIcon`, `DAY_NIGHT_ICON_ORDER`).                                                             |
-| [logger.ts](logger.ts)                             | `logger.warn/error/debug` — auto-prefix `[GentlePomo]`. Use instead of `console.*`. (`console.log` is disallowed by the lint config.) |
-| [types.ts](types.ts)                               | `PomoMode`, `GentlePomoSettings`, `TimerState`, `TimerListener`, `TaskItem`.                                                          |
-| [constants.ts](constants.ts)                       | `VIEW_TYPE_GENTLE_POMO`, `NO_TASK_LABEL`, `ONE_MINUTE_MS`, `FOCUS_TOTAL_CACHE_TTL_MS`, `DEFAULT_SETTINGS`.                            |
-| [momentTypes.ts](momentTypes.ts)                   | Type stubs for Obsidian's bundled `moment` global.                                                                                    |
-| [styles.css](styles.css)                           | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries.                                  |
-| [tests/](tests/)                                   | Vitest unit tests for taskLoader, logManager (formatLogLine + parseFocusTotalSeconds), TimerEngine state machine.                     |
-| [\_\_mocks\_\_/obsidian.ts](__mocks__/obsidian.ts) | Minimal Obsidian-API stubs so unit tests can `import` from project files without an Obsidian runtime.                                 |
+| File                                               | Purpose                                                                                                                                                                                                           |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [main.ts](main.ts)                                 | Plugin entry. Commands, ribbon, status bar, auto-open (via `onLayoutReady`), settings load/save.                                                                                                                  |
+| [TimerEngine.ts](TimerEngine.ts)                   | Timer state machine: start/pause/finish/skip, mode switching, sound, task linking, vault-modify reactions.                                                                                                        |
+| [GentlePomoView.ts](GentlePomoView.ts)             | Sidebar `ItemView` (~400 LOC). Builds DOM, subscribes to `TimerEngine`, renders task dropdown and day/night gradient.                                                                                             |
+| [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts) | Settings page (folder paths, auto-open, status bar, day/night toggle).                                                                                                                                            |
+| [logManager.ts](logManager.ts)                     | Writes daily `*-gentle-pomodoro-log.md` files, tracks pauses, refreshes logged task names by ID, caches today's focus total.                                                                                      |
+| [taskLoader.ts](taskLoader.ts)                     | Parses Tasks-plugin markdown (`⏳ 📅 🆔 🔺`), normalizes display text, groups by date. Per-task counter helpers: `parseTodayPomodoroCount` / `incrementTodayPomodoroCount`.                                       |
+| [icons.ts](icons.ts)                               | Inline SVG day/night icons (`buildDayNightIcon`, `DAY_NIGHT_ICON_ORDER`).                                                                                                                                         |
+| [logger.ts](logger.ts)                             | `logger.warn/error/debug` — auto-prefix `[GentlePomo]`. Use instead of `console.*`. (`console.log` is disallowed by the lint config.)                                                                             |
+| [types.ts](types.ts)                               | `PomoMode`, `GentlePomoSettings`, `TimerState`, `TimerListener`, `TaskItem`.                                                                                                                                      |
+| [constants.ts](constants.ts)                       | `VIEW_TYPE_GENTLE_POMO`, `NO_TASK_LABEL`, `ONE_MINUTE_MS`, `FOCUS_TOTAL_CACHE_TTL_MS`, `DEFAULT_SETTINGS`. New settings live here as defaults (long-break, daily-goal, per-task counter, transient state fields). |
+| [momentTypes.ts](momentTypes.ts)                   | Type stubs for Obsidian's bundled `moment` global.                                                                                                                                                                |
+| [styles.css](styles.css)                           | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries.                                                                                                              |
+| [tests/](tests/)                                   | Vitest unit tests for taskLoader, logManager (formatLogLine + parseFocusTotalSeconds), TimerEngine state machine.                                                                                                 |
+| [\_\_mocks\_\_/obsidian.ts](__mocks__/obsidian.ts) | Minimal Obsidian-API stubs so unit tests can `import` from project files without an Obsidian runtime.                                                                                                             |
 
 ## Conventions
 
@@ -80,19 +82,25 @@ GentlePomoPlugin (main.ts)
 Daily file: `<folder>/YYYY-MM-DD-gentle-pomodoro-log.md`. One line per session, inline-field format so Dataview can query it:
 
 ```markdown
-- 🍅 Focus | Task:: [[Projects/MyProject.md|Write Docs]] | ID:: abcd12 | Start:: 2025-12-23 10:00:00 | End:: 2025-12-23 10:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished
-- ☕ Rest | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | Scheduled:: 300 | Total:: 300
+- 🍅 Focus | Task:: [[Projects/MyProject.md|Write Docs]] | ID:: abcd12 | Start:: 2025-12-23 10:00:00 | End:: 2025-12-23 10:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished | Type:: focus
+- ☕ Rest | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | Scheduled:: 300 | Total:: 300 | Type:: short-break
+- ☕ Rest | Start:: 2025-12-23 11:00:00 | End:: 2025-12-23 11:15:00 | Scheduled:: 900 | Total:: 900 | Type:: long-break
 ```
+
+`Type::` was added in 0.1.0 — values are `focus | short-break | long-break`. Additive; existing Dataview queries still match.
 
 Field order is **load-bearing** for users' Dataview queries — do not reorder or rename without a version bump and changelog note. The schema is locked in by [tests/logManager.test.ts](tests/logManager.test.ts).
 
 ## Important Quirks
 
-- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json), [manifest.json](manifest.json), and [versions.json](versions.json) all track 0.0.6.
+- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) track 0.1.0; [versions.json](versions.json) maps each plugin version to its `minAppVersion`.
 - **`main.js` is the built artifact.** It's gitignored, but Obsidian loads it directly — you must `npm run build` (or have `npm run dev` running) before reloading the plugin.
 - **Auto-open** runs inside `this.app.workspace.onLayoutReady()`. A `MutationObserver` fallback waits for any settings/community-plugin modal to close before activating the view (handles freshly-installed-plugin UX).
 - **`noImplicitOverride: true`** is enabled in [tsconfig.json](tsconfig.json). Always mark methods that override Obsidian base classes (`Plugin.onload`, `ItemView.onClose`, etc.) with `override`.
 - **`package-lock.json` is gitignored** — npm install in CI resolves fresh; reproducibility comes from semver pins in [package.json](package.json).
+- **Local-timezone date string** used for daily reset logic is `moment().format("YYYY-MM-DD")` (defined as `todayLocalStr()` in both [main.ts](main.ts) and [TimerEngine.ts](TimerEngine.ts)). Same format as the daily log file naming, so all "today" logic agrees.
+- **Per-task counter is opt-in** (`incrementPomodoroCountOnFinish`, default off). When enabled, finishing a focus session linked to a task writes `🍅 N (YYYY-MM-DD)` back to the task line. A stale-dated marker is treated as 0 and replaced; no background midnight wipe runs.
+- **Internal state fields** in `GentlePomoSettings` (`lastGoalHitDate`, `sessionsSinceLongBreak`, `sessionCounterDate`) are persisted to `data.json` alongside user settings but are not surfaced in any settings UI — they implement the once-per-day notice and long-break counter.
 
 ## Don't Do This
 
