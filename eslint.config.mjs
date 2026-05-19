@@ -10,7 +10,7 @@ export default defineConfig([
       "node_modules/**",
       "main.js",
       "eslint.config.mjs",
-      "rollup.config.js",
+      "rollup.config.mjs",
       "vitest.config.ts",
       "tests/**",
       "__mocks__/**",
