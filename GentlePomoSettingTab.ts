@@ -32,7 +32,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Tasks folder path")
-      .setDesc("Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.")
+      .setDesc(
+        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
+      )
       .addText((text) =>
         text
           .setPlaceholder("Example: projects/active")

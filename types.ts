@@ -37,7 +37,7 @@ export interface TaskItem {
   status: string;
   path: string;
   scheduled: string | null;
-  due: string | null;  
+  due: string | null;
   effectiveDateStr: string; // Date string used for sorting/grouping (scheduled or due).
   taskId?: string; // optional Tasks plugin ID
 }

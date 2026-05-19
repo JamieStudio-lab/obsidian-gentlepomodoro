@@ -3,7 +3,7 @@ import type GentlePomoPlugin from "./main";
 import type { TimerListener, TaskItem, TimerState } from "./types";
 import { VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { TimerEngine } from "./TimerEngine";
-import { isPathInFolder, normalizeTaskText, normalizeTaskTextForDisplay } from "./taskLoader"; 
+import { isPathInFolder, normalizeTaskText, normalizeTaskTextForDisplay } from "./taskLoader";
 import type { MomentFactory } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -108,11 +108,11 @@ export class GentlePomoView extends ItemView {
     return "Gentle pomodoro";
   }
 
-  getIcon(): string {
+  override getIcon(): string {
     return "clock";
   }
 
-  onOpen(): Promise<void> {
+  override onOpen(): Promise<void> {
     const container = this.containerEl;
     container.empty();
     container.addClass("gp-root");
@@ -176,7 +176,9 @@ export class GentlePomoView extends ItemView {
       void this.timer.finish();
     });
 
-    const resetBtn = this.secondaryControlsWrapper.createEl("button", { cls: "gp-btn gp-icon-btn" });
+    const resetBtn = this.secondaryControlsWrapper.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
+    });
     setIcon(resetBtn, "rotate-ccw");
     resetBtn.setAttribute("aria-label", "Reset session");
     this.registerDomEvent(resetBtn, "click", (evt) => {
@@ -350,7 +352,7 @@ export class GentlePomoView extends ItemView {
     return Promise.resolve();
   }
 
-  onClose(): Promise<void> {
+  override onClose(): Promise<void> {
     if (this.timerListener) {
       this.plugin.timer.offChange(this.timerListener);
       this.timerListener = null;
@@ -408,8 +410,6 @@ export class GentlePomoView extends ItemView {
     const today = moment().startOf("day");
     const limitDate = moment().add(3, "days").endOf("day");
 
-    
-
     for (const file of files) {
       const content = await this.plugin.app.vault.cachedRead(file);
       const lines = content.split("\n");
@@ -418,7 +418,6 @@ export class GentlePomoView extends ItemView {
       const scheduledRegex = /⏳\s*(\d{4}-\d{2}-\d{2})/;
       const dueRegex = /📅\s*(\d{4}-\d{2}-\d{2})/;
       const taskIdRegex = /🆔\s*([A-Za-z0-9_-]+)/;
-
 
       for (const line of lines) {
         const match = line.match(taskRegex);
@@ -431,8 +430,8 @@ export class GentlePomoView extends ItemView {
           const scheduled = scheduledMatch ? scheduledMatch[1] : null;
           const due = dueMatch ? dueMatch[1] : null;
 
-          const effectiveDateStr = scheduled || due;       
-          
+          const effectiveDateStr = scheduled || due;
+
           const idMatch = originalText.match(taskIdRegex);
           const taskId = idMatch ? idMatch[1] : undefined;
 
@@ -451,7 +450,7 @@ export class GentlePomoView extends ItemView {
                 scheduled,
                 due,
                 effectiveDateStr,
-                taskId, 
+                taskId,
               });
             }
           }
@@ -467,7 +466,10 @@ export class GentlePomoView extends ItemView {
     });
 
     if (tasks.length === 0) {
-      this.taskListContainer.createDiv({ cls: "gp-task-item-empty", text: "No tasks found for next 3 days." });
+      this.taskListContainer.createDiv({
+        cls: "gp-task-item-empty",
+        text: "No tasks found for next 3 days.",
+      });
     } else {
       let lastGroupLabel = "";
 
@@ -493,16 +495,19 @@ export class GentlePomoView extends ItemView {
         const item = this.taskListContainer.createDiv("gp-task-item");
         item.createSpan({ text: task.displayText });
 
-        if (task.cleanText === this.timer.currentTaskName && task.path === this.timer.currentTaskPath) {
+        if (
+          task.cleanText === this.timer.currentTaskName &&
+          task.path === this.timer.currentTaskPath
+        ) {
           item.addClass("gp-task-selected");
           const iconContainer = item.createDiv("gp-task-check-icon");
           setIcon(iconContainer, "check");
         }
 
         item.onclick = () => {
-            this.timer.setTask(task.cleanText, task.path, task.taskId);
-            this.taskListVisible = false;
-            this.taskListContainer.removeClass("gp-visible");
+          this.timer.setTask(task.cleanText, task.path, task.taskId);
+          this.taskListVisible = false;
+          this.taskListContainer.removeClass("gp-visible");
         };
       });
     }

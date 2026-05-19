@@ -26,7 +26,7 @@ export default class GentlePomoPlugin extends Plugin {
   private statusTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
 
-  async onload() {
+  override async onload() {
     await this.loadSettings();
     this.logManager = new LogManager(this);
     this.timer = new TimerEngine(this);
@@ -128,8 +128,7 @@ export default class GentlePomoPlugin extends Plugin {
     this.maybeAutoOpenView();
   }
 
-
-  onunload() {
+  override onunload() {
     if (this.autoOpenObserver) {
       this.autoOpenObserver.disconnect();
       this.autoOpenObserver = null;

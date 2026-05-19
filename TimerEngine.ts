@@ -134,60 +134,60 @@ export class TimerEngine {
   }
 
   private async checkTaskCompletionAndUnlink() {
-  if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
+    if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
 
-  const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
-  if (!(file instanceof TFile)) return;
+    const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
+    if (!(file instanceof TFile)) return;
 
-  try {
-    const content = await this.plugin.app.vault.read(file);
-    const lines = content.split("\n");
+    try {
+      const content = await this.plugin.app.vault.read(file);
+      const lines = content.split("\n");
 
-    let foundIncomplete = false;
-    let foundComplete = false;
+      let foundIncomplete = false;
+      let foundComplete = false;
 
-    for (const line of lines) {
-      // If current task has ID, match by ID
-      if (this.currentTaskId) {
-        const idMatch = line.match(TASK_ID_REGEX);
-        if (idMatch && idMatch[1] === this.currentTaskId) {
-          if (/^\s*-\s*\[ \]\s+/.test(line)) {
+      for (const line of lines) {
+        // If current task has ID, match by ID
+        if (this.currentTaskId) {
+          const idMatch = line.match(TASK_ID_REGEX);
+          if (idMatch && idMatch[1] === this.currentTaskId) {
+            if (/^\s*-\s*\[ \]\s+/.test(line)) {
+              foundIncomplete = true;
+              break;
+            }
+            if (/^\s*-\s*\[x\]\s+/i.test(line)) {
+              foundComplete = true;
+            }
+          }
+          continue;
+        }
+
+        // Fallback: match by normalized text
+        const incompleteMatch = line.match(/^\s*-\s*\[ \]\s+(.*)$/);
+        if (incompleteMatch) {
+          const clean = normalizeTaskText(incompleteMatch[1]);
+          if (clean === this.currentTaskName) {
             foundIncomplete = true;
             break;
           }
-          if (/^\s*-\s*\[x\]\s+/i.test(line)) {
+        }
+
+        const completeMatch = line.match(/^\s*-\s*\[x\]\s+(.*)$/i);
+        if (completeMatch) {
+          const clean = normalizeTaskText(completeMatch[1]);
+          if (clean === this.currentTaskName) {
             foundComplete = true;
           }
         }
-        continue;
       }
 
-      // Fallback: match by normalized text
-      const incompleteMatch = line.match(/^\s*-\s*\[ \]\s+(.*)$/);
-      if (incompleteMatch) {
-        const clean = normalizeTaskText(incompleteMatch[1]);
-        if (clean === this.currentTaskName) {
-          foundIncomplete = true;
-          break;
-        }
+      if (!foundIncomplete && foundComplete) {
+        this.setTask(NO_TASK_LABEL);
       }
-
-      const completeMatch = line.match(/^\s*-\s*\[x\]\s+(.*)$/i);
-      if (completeMatch) {
-        const clean = normalizeTaskText(completeMatch[1]);
-        if (clean === this.currentTaskName) {
-          foundComplete = true;
-        }
-      }
+    } catch (e) {
+      console.error("[GentlePomo] Failed to check task completion", e);
     }
-
-    if (!foundIncomplete && foundComplete) {
-      this.setTask(NO_TASK_LABEL);
-    }
-  } catch (e) {
-    console.error("[GentlePomo] Failed to check task completion", e);
   }
-}
 
   private async playSound(filename: string) {
     if (!this.plugin.settings.soundEnabled) return;
@@ -267,13 +267,15 @@ export class TimerEngine {
 
     // Start or Resume Logging
     const minutes =
-      this.state.mode === "focus" ? this.plugin.settings.focusMinutes : this.plugin.settings.breakMinutes;
+      this.state.mode === "focus"
+        ? this.plugin.settings.focusMinutes
+        : this.plugin.settings.breakMinutes;
     this.plugin.logManager.startSession(
-        this.state.mode,
-        this.currentTaskName,
-        minutes,
-        this.currentTaskPath,
-        this.currentTaskId
+      this.state.mode,
+      this.currentTaskName,
+      minutes,
+      this.currentTaskPath,
+      this.currentTaskId
     );
 
     // Set target based on current remaining time
@@ -341,7 +343,9 @@ export class TimerEngine {
 
   reset() {
     const minutes =
-      this.state.mode === "focus" ? this.plugin.settings.focusMinutes : this.plugin.settings.breakMinutes;
+      this.state.mode === "focus"
+        ? this.plugin.settings.focusMinutes
+        : this.plugin.settings.breakMinutes;
     const total = minutes * ONE_MINUTE_MS;
 
     this.state.remainingMs = total;

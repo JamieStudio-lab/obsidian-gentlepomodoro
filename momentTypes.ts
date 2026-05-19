@@ -15,4 +15,3 @@ export interface MomentLike {
 }
 
 export type MomentFactory = (input?: string) => MomentLike;
-

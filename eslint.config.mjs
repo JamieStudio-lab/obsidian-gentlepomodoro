@@ -1,24 +1,21 @@
 import { defineConfig } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
 import tsParser from "@typescript-eslint/parser";
+import tsPlugin from "@typescript-eslint/eslint-plugin";
+import prettierConfig from "eslint-config-prettier";
 
 export default defineConfig([
-  // Don’t lint dependencies/build output/config files
   {
-    ignores: [
-      "node_modules/**",
-      "main.js",
-      "eslint.config.mjs",
-      "rollup.config.js",
-    ],
+    ignores: ["node_modules/**", "main.js", "eslint.config.mjs", "rollup.config.js"],
   },
 
-  // Obsidian’s recommended rules (matches what the review bot expects)
   ...obsidianmd.configs.recommended,
 
-  // Parse TypeScript (enables typed rules like @typescript-eslint/no-deprecated)
   {
     files: ["**/*.ts", "**/*.tsx"],
+    plugins: {
+      "@typescript-eslint": tsPlugin,
+    },
     languageOptions: {
       parser: tsParser,
       globals: {
@@ -32,5 +29,11 @@ export default defineConfig([
         tsconfigRootDir: import.meta.dirname,
       },
     },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "warn",
+      "@typescript-eslint/no-misused-promises": "warn",
+    },
   },
+
+  prettierConfig,
 ]);

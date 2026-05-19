@@ -11,14 +11,16 @@ Plugin ID: `gentle-pomo`. Mobile-compatible. Min Obsidian: 1.0.0.
 ## Build & Dev Commands
 
 ```bash
-npm install            # bootstrap (obsidian is pulled from master tarball — see Quirks)
+npm install            # bootstrap
 npm run dev            # rollup --watch (rebuilds main.js into project root)
 npm run build          # one-shot production build
-npm run lint           # ESLint check (Obsidian's recommended rules)
+npm run lint           # ESLint check (Obsidian's recommended rules + typed rules)
 npm run lint:fix       # auto-fix what's safe
+npm run format         # prettier --write .
+npm run format:check   # prettier --check . (used by CI)
 ```
 
-There is **no test script** and **no CI**. Verify behavior by loading the plugin in Obsidian (the working directory *is* a real `.obsidian/plugins/...` folder, so a reload picks up the build).
+There is **no test script yet** (planned). Verify behavior by loading the plugin in Obsidian (the working directory _is_ a real `.obsidian/plugins/...` folder, so a reload picks up the build).
 
 ## Architecture
 
@@ -40,18 +42,18 @@ GentlePomoPlugin (main.ts)
 
 ## Source Map
 
-| File | Purpose |
-|------|---------|
-| [main.ts](main.ts) | Plugin entry. Commands, ribbon, status bar, auto-open observer, settings load/save. |
-| [TimerEngine.ts](TimerEngine.ts) | Timer state machine: start/pause/finish/skip, mode switching, sound, task linking, vault-modify reactions. |
-| [GentlePomoView.ts](GentlePomoView.ts) | Sidebar `ItemView` — 549 LOC. Builds DOM, subscribes to `TimerEngine`, renders task dropdown and day/night gradient. |
-| [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts) | Settings page (folder paths, auto-open, status bar, day/night toggle). |
-| [logManager.ts](logManager.ts) | Writes daily `*-gentle-pomodoro-log.md` files, tracks pauses, refreshes logged task names by ID, caches today's focus total. |
-| [taskLoader.ts](taskLoader.ts) | Parses Tasks-plugin markdown (`⏳ 📅 🆔 🔺`), normalizes display text, groups by Overdue/Today/Tomorrow/Upcoming. |
-| [types.ts](types.ts) | `PomoMode`, `GentlePomoSettings`, `TimerState`, `TimerListener`, `TaskItem`. |
-| [constants.ts](constants.ts) | `VIEW_TYPE_GENTLE_POMO`, `NO_TASK_LABEL`, `ONE_MINUTE_MS`, `DEFAULT_SETTINGS`. |
-| [momentTypes.ts](momentTypes.ts) | Type stubs for Obsidian's bundled `moment` global. |
-| [styles.css](styles.css) | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries. |
+| File                                               | Purpose                                                                                                                      |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| [main.ts](main.ts)                                 | Plugin entry. Commands, ribbon, status bar, auto-open observer, settings load/save.                                          |
+| [TimerEngine.ts](TimerEngine.ts)                   | Timer state machine: start/pause/finish/skip, mode switching, sound, task linking, vault-modify reactions.                   |
+| [GentlePomoView.ts](GentlePomoView.ts)             | Sidebar `ItemView` — 549 LOC. Builds DOM, subscribes to `TimerEngine`, renders task dropdown and day/night gradient.         |
+| [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts) | Settings page (folder paths, auto-open, status bar, day/night toggle).                                                       |
+| [logManager.ts](logManager.ts)                     | Writes daily `*-gentle-pomodoro-log.md` files, tracks pauses, refreshes logged task names by ID, caches today's focus total. |
+| [taskLoader.ts](taskLoader.ts)                     | Parses Tasks-plugin markdown (`⏳ 📅 🆔 🔺`), normalizes display text, groups by Overdue/Today/Tomorrow/Upcoming.            |
+| [types.ts](types.ts)                               | `PomoMode`, `GentlePomoSettings`, `TimerState`, `TimerListener`, `TaskItem`.                                                 |
+| [constants.ts](constants.ts)                       | `VIEW_TYPE_GENTLE_POMO`, `NO_TASK_LABEL`, `ONE_MINUTE_MS`, `DEFAULT_SETTINGS`.                                               |
+| [momentTypes.ts](momentTypes.ts)                   | Type stubs for Obsidian's bundled `moment` global.                                                                           |
+| [styles.css](styles.css)                           | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries.                         |
 
 ## Conventions
 
@@ -72,18 +74,18 @@ Daily file: `<folder>/YYYY-MM-DD-gentle-pomodoro-log.md`. One line per session, 
 
 ```markdown
 - 🍅 Focus | Task:: [[Projects/MyProject.md|Write Docs]] | ID:: abcd12 | Start:: 2025-12-23 10:00:00 | End:: 2025-12-23 10:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished
-- ☕ Rest  | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | Scheduled:: 300 | Total:: 300
+- ☕ Rest | Start:: 2025-12-23 10:25:00 | End:: 2025-12-23 10:30:00 | Scheduled:: 300 | Total:: 300
 ```
 
 Field order is load-bearing for users' Dataview queries — do not reorder or rename without a version bump and changelog note.
 
 ## Important Quirks
 
-- **`obsidian` dependency is `https://github.com/obsidianmd/obsidian-api/tarball/master`** — `npm install` can pull in surprise API changes. Don't assume the lockfile is reproducible.
-- **Version of record is [manifest.json](manifest.json)** (currently 0.0.6). [package.json](package.json) is stale at 0.0.1 — ignore it for version checks.
+- **`obsidian` dep is pinned to `^1.4.16`** (the types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) both track 0.0.6.
 - **`main.js` is the built artifact.** It's gitignored, but Obsidian loads it directly — you must `npm run build` (or have `npm run dev` running) before reloading the plugin.
-- **Auto-open uses a `MutationObserver`** ([main.ts:174](main.ts)) to wait for the settings modal to close on startup. If you change startup flow, test the "Obsidian launched with settings open" case.
-- **No tests.** Do not claim behavior works without verifying in Obsidian — type-check passing is not enough.
+- **Auto-open uses a `MutationObserver`** ([main.ts:173](main.ts)) to wait for the settings modal to close on startup. If you change startup flow, test the "Obsidian launched with settings open" case.
+- **No tests yet.** Do not claim behavior works without verifying in Obsidian — type-check passing is not enough.
+- **`noImplicitOverride: true`** is enabled in [tsconfig.json](tsconfig.json). Always mark methods that override Obsidian base classes (`Plugin.onload`, `ItemView.onClose`, etc.) with `override`.
 
 ## Don't Do This
 

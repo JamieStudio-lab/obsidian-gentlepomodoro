@@ -57,10 +57,7 @@ export function isPathInFolder(filePath: string, folderPath: string): boolean {
   const normalizedFolder = normalizePath(folderPath).replace(/\/+$/, "");
   const normalizedPath = normalizePath(filePath);
 
-  return (
-    normalizedPath === normalizedFolder ||
-    normalizedPath.startsWith(`${normalizedFolder}/`)
-  );
+  return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
 }
 
 export function findTaskNameByIdInContent(content: string, taskId: string): string | null {
@@ -81,7 +78,11 @@ export function findTaskNameByIdInContent(content: string, taskId: string): stri
   return null;
 }
 
-export async function findTaskNameById(app: App, filePath: string, taskId: string): Promise<string | null> {
+export async function findTaskNameById(
+  app: App,
+  filePath: string,
+  taskId: string
+): Promise<string | null> {
   if (!filePath || !taskId) return null;
 
   const file = app.vault.getAbstractFileByPath(filePath);
