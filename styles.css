@@ -771,4 +771,12 @@
   .gp-total-time {
     transform: none;
   }
+
+  /* Disable the two infinite shape animations (gentle pulse on focus/break,
+     breathing glow on overtime). Users with motion sensitivity get a static
+     timer instead of a continuously scaling/glowing shape. */
+  .gp-state-running .gp-timer-shape,
+  .gp-state-overtime .gp-timer-shape {
+    animation: none;
+  }
 }

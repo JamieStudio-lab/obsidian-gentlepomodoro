@@ -4,9 +4,11 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 ## Project Summary
 
-**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.0 (beta)**.
+**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.1 (beta)**.
 
 **0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N` counter written back to task lines (lifetime total per task; never resets), volume slider and auto-start toggles in the in-view settings panel.
+
+**0.1.1 added:** audio cues now bundled into `main.js` so catalog/BRAT installs get sound out of the box (no mp3 assets needed on disk), `prefers-reduced-motion` respect on the timer-shape animations, sigstore artifact attestations on release assets, committed `package-lock.json` + CI uses `npm ci` for reproducible builds.
 
 Plugin ID: `gentle-pomo`. Mobile-compatible. Min Obsidian: 1.0.0.
 
