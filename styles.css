@@ -19,6 +19,9 @@
     display: flex;
     justify-content: center;
     align-items: center;
+
+    /* Enables responsive scaling based on the actual sidebar width */
+    container-type: inline-size;
 }
 
 /* The Shape Wrapper */
@@ -162,6 +165,8 @@
 
 .gp-timer-time {
     font-size: 3.5rem;
+    /* Make the timer text scale down smoothly in narrow sidebars (fallback remains 3.5rem) */
+    font-size: clamp(2rem, 26cqi, 3.5rem);
     /* Slightly bolder weight usually looks better for rounded fonts */
     font-weight: 600; 
     /* UPDATED FONT STACK:
@@ -177,9 +182,13 @@
     
     /* Crucial: keeps the numbers from jittering left/right as they change */
     font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    margin: 0;
+    margin-bottom: 0.65rem;
     
     /* Visibility Logic */
-    transition: opacity 0.3s ease;
+    transition: opacity 0.3s ease, color 0.25s ease, text-shadow 0.25s ease;
     opacity: 1;
 }
 
@@ -200,7 +209,7 @@
 }
 
 .gp-mode-label {
-    margin-top: 0.25rem;
+    margin-top: 0;
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
@@ -220,6 +229,9 @@
 
     position: relative;
     z-index: 2; /* ensure controls sit above any visual layers */
+
+    /* Responsive controls based on the real control width (Obsidian side pane) */
+    container-type: inline-size;
 }
 
 .gp-controls-row {
@@ -229,13 +241,18 @@
        Using gap caused double-spacing when an element collapsed to 0 width but remained in the flex flow. */
     /* gap: 0.75rem; */ 
     width: 100%;
+
+    /* Defaults (used by responsive container queries below) */
+    --gp-control-gap: 12px;
+    --gp-icon-btn-size: 42px;
+    --gp-icon-svg-size: 20px;
 }
 
 /* Add spacing to all items except the last one.
    This ensures that if an intermediate item (like the wrapper) is hidden 
    (via margin: 0 !important), the space effectively disappears. */
 .gp-controls-row > *:not(:last-child) {
-    margin-right: 0.75rem;
+    margin-right: var(--gp-control-gap, 12px);
 }
 
 /* Utility to remove gap for rows that handle spacing internally */
@@ -246,7 +263,7 @@
 /* Shared Wrapper for animated button groups */
 .gp-animated-wrapper {
     display: flex;
-    gap: 0.75rem;
+    gap: var(--gp-control-gap, 12px);
     
     /* Animation properties */
     transition: 
@@ -310,15 +327,48 @@
 
 /* Icon Buttons (Square-ish) */
 .gp-icon-btn {
-    width: 42px;
-    height: 42px;
+    width: var(--gp-icon-btn-size, 42px);
+    height: var(--gp-icon-btn-size, 42px);
     padding: 0;
 }
 
 .gp-icon-btn svg {
-    width: 20px;
-    height: 20px;
+    width: var(--gp-icon-svg-size, 20px);
+    height: var(--gp-icon-svg-size, 20px);
     stroke-width: 2.5px; /* Make icons slightly bolder */
+}
+
+/* Responsive controls: keep the 2 rows of square buttons usable in narrow sidebars */
+@container (max-width: 210px) {
+    .gp-controls-row {
+        --gp-control-gap: 10px;
+        --gp-icon-btn-size: 38px;
+        --gp-icon-svg-size: 18px;
+    }
+}
+
+@container (max-width: 185px) {
+    .gp-controls-row {
+        --gp-control-gap: 8px;
+        --gp-icon-btn-size: 34px;
+        --gp-icon-svg-size: 17px;
+    }
+}
+
+@container (max-width: 160px) {
+    .gp-controls-row {
+        --gp-control-gap: 6px;
+        --gp-icon-btn-size: 32px;
+        --gp-icon-svg-size: 16px;
+    }
+}
+
+@container (max-width: 145px) {
+    .gp-controls-row {
+        --gp-control-gap: 4px;
+        --gp-icon-btn-size: 30px;
+        --gp-icon-svg-size: 15px;
+    }
 }
 
 /* Primary Action (Start/Pause) */
@@ -627,19 +677,33 @@
 /* --- Total Time (Overtime Only) --- */
 .gp-total-time {
     font-size: 1rem;
+    font-size: clamp(0.75rem, 10cqi, 1rem);
     font-weight: 500;
     color: var(--text-muted);
-    margin-top: -4px; /* Pull it closer to the main time */
+    margin: 0;
+    margin-bottom: 0;
     opacity: 0; /* Hidden by default */
-    transition: opacity 0.3s ease;
-    height: 0; /* Collapse space when hidden */
+    max-height: 0; /* Collapse space when hidden (animatable) */
     overflow: hidden;
+    line-height: 1.2;
+    white-space: nowrap;
+    transform: translateY(-6px);
+    will-change: max-height, opacity, transform;
+    transition:
+        max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
+        opacity 200ms ease,
+        transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
+        margin-bottom 260ms ease,
+        color 0.25s ease,
+        text-shadow 0.25s ease;
 }
 
 /* Show it when we are in overtime */
 .gp-state-overtime .gp-total-time {
-    height: auto;
     opacity: 1;
+    max-height: 2.5em;
+    margin-bottom: 0.65rem;
+    transform: translateY(0);
 }
 
 /* NEW: Specific color for Break/Daylight mode */
@@ -657,4 +721,15 @@
 /* ...unless hovering over the shape */
 .gp-timer-visual:hover .gp-total-time {
     opacity: 0.8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gp-timer-time,
+    .gp-total-time {
+        transition: none;
+    }
+
+    .gp-total-time {
+        transform: none;
+    }
 }

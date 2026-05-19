@@ -1,7 +1,7 @@
 {
   "name": "obsidian-gentle-pomodoro",
-  "version": "0.0.1",
-  "description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+  "version": "0.0.6",
+  "description": "A visually soothing, task-integrated Pomodoro timer. Focus on your work with gentle animations and Pomodoro logging.",
   "main": "main.js",
   "scripts": {
     "dev": "rollup --config rollup.config.js -w",
@@ -10,7 +10,7 @@
     "lint:fix": "eslint . --fix"
   },
   "keywords": [],
-  "author": "",
+  "author": "JamStudio",
   "license": "MIT",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^15.1.0",
@@ -20,7 +20,7 @@
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^9.39.2",
     "eslint-plugin-obsidianmd": "^0.1.9",
-    "obsidian": "https://github.com/obsidianmd/obsidian-api/tarball/master",
+    "obsidian": "^1.4.16",
     "rollup": "^2.32.1",
     "tslib": "^2.0.3",
     "typescript": "^4.0.3"

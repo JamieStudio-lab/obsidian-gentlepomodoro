@@ -52,7 +52,7 @@ This plugin is currently in **Beta**. The easiest way to install it is using the
 4.  Click **Add Plugin**.
 5.  Enable "Gentle Pomodoro" in your Community Plugins list.
 
-[View the latest release (0.0.3)](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/tag/0.0.3)
+[View the latest release (0.0.6)](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/tag/0.0.6)
 
 ### Option 2: Manual Installation
 
