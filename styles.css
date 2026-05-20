@@ -469,7 +469,7 @@
 }
 
 .gp-settings-panel.gp-visible {
-  max-height: 220px; /* enough for current rows */
+  max-height: 360px; /* generous headroom for current 6 rows + future additions */
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
