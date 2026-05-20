@@ -469,7 +469,7 @@
 }
 
 .gp-settings-panel.gp-visible {
-  max-height: 480px; /* generous headroom for current 6 rows + section headers + reset row */
+  max-height: 560px; /* room for 6 rows + roomier section headers + reset row */
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
@@ -514,7 +514,8 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
-  margin-top: 0.25rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
 }
 
 .gp-settings-section-label:first-child {
@@ -577,7 +578,7 @@
   background: var(--background-modifier-border);
   border-radius: 6px;
   padding: 2px;
-  height: 28px;
+  height: 32px;
   align-items: center;
   flex: 0 0 auto;
 }
@@ -587,7 +588,7 @@
   border: none;
   color: var(--text-muted);
   padding: 0 12px;
-  height: 24px;
+  height: 28px;
   min-width: 40px;
   font-size: 0.75rem;
   font-weight: 500;
