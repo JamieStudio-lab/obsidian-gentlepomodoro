@@ -196,10 +196,10 @@
     transform 0.25s ease;
 }
 
-/* Hide the day/night indicator once the focus color block gets cramped.
-   170px sits mid-way through the scroll-driven 220→140px shrink, so the
-   indicator fades out and slides up smoothly while the shape collapses. */
-@container (max-width: 170px) {
+/* Hide the day/night indicator once the focus color block starts to
+   shrink. 200px triggers the fade as soon as the block visibly
+   compresses (block is ~220px at rest, 140px fully scroll-shrunk). */
+@container (max-width: 200px) {
   .gp-daynight-indicator {
     opacity: 0;
     transform: translateX(-50%) translateY(-6px);
