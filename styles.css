@@ -12,6 +12,10 @@
   align-items: center;
   height: 100%;
   padding: 20px;
+
+  /* Container query context so descendants (notably the settings panel)
+     can cap their height relative to the leaf instead of the viewport. */
+  container-type: size;
 }
 
 /* Flex spacers vertically center the content when the leaf is taller
@@ -519,9 +523,10 @@
 }
 
 .gp-settings-panel.gp-visible {
-  /* Hard cap at 560px AND never more than 70% of the viewport — leaves
-     room for the visual + other controls on short sidebars. */
-  max-height: min(560px, 70vh);
+  /* Hard cap at 560px AND never more than 70% of the LEAF height (via
+     container query units against .gp-root). Keeps the visual + other
+     controls visible on short sidebars. */
+  max-height: min(560px, 70cqh);
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
