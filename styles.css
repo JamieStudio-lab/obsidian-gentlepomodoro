@@ -196,10 +196,10 @@
     transform 0.25s ease;
 }
 
-/* Hide the day/night indicator once the focus color block starts to
-   shrink. 200px triggers the fade as soon as the block visibly
-   compresses (block is ~220px at rest, 140px fully scroll-shrunk). */
-@container (max-width: 200px) {
+/* Hide the day/night indicator as soon as the leaf gets vertically
+   cramped — no scrolling required. The threshold is set against
+   .gp-root's height (the leaf height), not the focus block's width. */
+@container (max-height: 500px) {
   .gp-daynight-indicator {
     opacity: 0;
     transform: translateX(-50%) translateY(-6px);
