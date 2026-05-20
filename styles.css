@@ -157,6 +157,16 @@
   z-index: 4;
   pointer-events: none;
   opacity: 0.82;
+  transition: opacity 0.2s ease;
+}
+
+/* Hide the day/night indicator once the clock (focus block) shrinks
+   below 200px — only happens on narrow sidebars (block is normally
+   220px square via max-width + aspect-ratio: 1/1). */
+@container (max-width: 200px) {
+  .gp-daynight-indicator {
+    opacity: 0;
+  }
 }
 
 .gp-daynight-badge {
@@ -197,7 +207,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gp-daynight-icon {
+  .gp-daynight-icon,
+  .gp-daynight-indicator {
     transition: none;
   }
 }
@@ -285,10 +296,21 @@
   /* gap: 0.75rem; */
   width: 100%;
 
-  /* Defaults (used by responsive container queries below) */
+  /* On narrow sidebars, let the row scroll horizontally instead of
+     shrinking the buttons. Hidden scrollbar — the icon row itself is
+     the obvious scrollable affordance. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+
+  /* Button-row sizing tokens */
   --gp-control-gap: 12px;
   --gp-icon-btn-size: 42px;
   --gp-icon-svg-size: 20px;
+}
+
+.gp-controls-row::-webkit-scrollbar {
+  display: none;
 }
 
 /* Add spacing to all items except the last one.
@@ -383,39 +405,6 @@
   width: var(--gp-icon-svg-size, 20px);
   height: var(--gp-icon-svg-size, 20px);
   stroke-width: 2.5px; /* Make icons slightly bolder */
-}
-
-/* Responsive controls: keep the 2 rows of square buttons usable in narrow sidebars */
-@container (max-width: 210px) {
-  .gp-controls-row {
-    --gp-control-gap: 10px;
-    --gp-icon-btn-size: 38px;
-    --gp-icon-svg-size: 18px;
-  }
-}
-
-@container (max-width: 185px) {
-  .gp-controls-row {
-    --gp-control-gap: 8px;
-    --gp-icon-btn-size: 34px;
-    --gp-icon-svg-size: 17px;
-  }
-}
-
-@container (max-width: 160px) {
-  .gp-controls-row {
-    --gp-control-gap: 6px;
-    --gp-icon-btn-size: 32px;
-    --gp-icon-svg-size: 16px;
-  }
-}
-
-@container (max-width: 145px) {
-  .gp-controls-row {
-    --gp-control-gap: 4px;
-    --gp-icon-btn-size: 30px;
-    --gp-icon-svg-size: 15px;
-  }
 }
 
 /* Primary Action (Start/Pause) */
