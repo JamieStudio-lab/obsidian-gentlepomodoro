@@ -13,6 +13,14 @@
   height: 100%;
   padding: 20px;
 
+  /* Make the whole view scrollable when its natural content exceeds the
+     leaf height. overflow-x: hidden defends against accidental horizontal
+     scroll bars. scrollbar-gutter: stable reserves the scrollbar's slot
+     so layout doesn't shift horizontally when content grows/shrinks. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+
   /* Container query context so descendants (notably the settings panel)
      can cap their height relative to the leaf instead of the viewport. */
   container-type: size;
