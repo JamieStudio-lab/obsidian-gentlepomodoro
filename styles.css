@@ -469,7 +469,7 @@
 }
 
 .gp-settings-panel.gp-visible {
-  max-height: 360px; /* generous headroom for current 6 rows + future additions */
+  max-height: 480px; /* generous headroom for current 6 rows + section headers + reset row */
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
@@ -490,6 +490,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 32px;
   font-size: 0.9rem;
   color: var(--text-muted);
 }
@@ -499,15 +500,147 @@
 }
 
 .gp-settings-row input[type="number"] {
-  width: 60px;
+  width: 80px;
+  height: 32px;
   text-align: center;
   border-radius: 6px;
+  font-variant-numeric: tabular-nums;
 }
 
-.gp-settings-row input[type="checkbox"] {
+/* --- Section header inside the in-view settings panel --- */
+.gp-settings-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  margin-top: 0.25rem;
+}
+
+.gp-settings-section-label:first-child {
+  margin-top: 0;
+}
+
+/* --- Toggle switch (replaces native checkboxes in the settings panel) --- */
+.gp-toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.gp-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.gp-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background-color: var(--background-modifier-border);
+  border-radius: 12px;
   cursor: pointer;
-  width: 1.2rem;
-  height: 1.2rem;
+  transition: background-color 0.2s ease;
+}
+
+.gp-toggle-slider::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  background-color: var(--text-on-accent, #ffffff);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+
+.gp-toggle input:checked + .gp-toggle-slider {
+  background-color: var(--interactive-accent);
+}
+
+.gp-toggle input:checked + .gp-toggle-slider::before {
+  transform: translateX(20px);
+}
+
+.gp-toggle input:focus-visible + .gp-toggle-slider {
+  box-shadow: 0 0 0 2px var(--interactive-accent);
+}
+
+/* --- Segmented control (Low / Mid / High volume) --- */
+.gp-segmented {
+  display: inline-flex;
+  background: var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 2px;
+  height: 28px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.gp-segmented-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 0 12px;
+  height: 24px;
+  min-width: 40px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.gp-segmented-btn:hover:not(.is-active) {
+  color: var(--text-normal);
+}
+
+.gp-segmented-btn.is-active {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.gp-segmented-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
+.gp-settings-reset {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.gp-reset-button {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gp-reset-button:hover {
+  color: var(--text-normal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gp-toggle-slider,
+  .gp-toggle-slider::before,
+  .gp-segmented-btn {
+    transition: none;
+  }
 }
 
 /* Status bar indicator */

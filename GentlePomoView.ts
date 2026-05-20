@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
-import { VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
+import { DEFAULT_SETTINGS, VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
@@ -377,70 +377,135 @@ export class GentlePomoView extends ItemView {
   renderSettingsPanel() {
     this.settingsPanel.empty();
 
-    const focusRow = this.settingsPanel.createDiv("gp-settings-row");
-    focusRow.createSpan({ text: "Focus (m)" });
-    const focusInput = focusRow.createEl("input", { type: "number" });
-    focusInput.value = this.plugin.settings.focusMinutes.toString();
-    focusInput.onchange = async () => {
-      const val = parseInt(focusInput.value);
-      if (val > 0) {
-        this.plugin.settings.focusMinutes = val;
-        await this.plugin.saveSettings();
-        this.timer.updateDuration("focus", val);
+    const settings = this.plugin.settings;
+
+    const section = (label: string) => {
+      this.settingsPanel.createDiv({ cls: "gp-settings-section-label", text: label });
+    };
+
+    const numberRow = (
+      label: string,
+      initial: number,
+      onChange: (next: number) => Promise<void>
+    ) => {
+      const row = this.settingsPanel.createDiv("gp-settings-row");
+      row.createSpan({ text: label });
+      const input = row.createEl("input", { type: "number" });
+      input.value = initial.toString();
+      this.registerDomEvent(input, "change", () => {
+        const val = parseInt(input.value);
+        if (val > 0) void onChange(val);
+      });
+      this.registerDomEvent(input, "keydown", (e: KeyboardEvent) => {
+        if (e.key === "Enter") input.blur();
+      });
+    };
+
+    const toggleRow = (
+      label: string,
+      initial: boolean,
+      onChange: (next: boolean) => Promise<void>
+    ) => {
+      const row = this.settingsPanel.createDiv("gp-settings-row");
+      row.createSpan({ text: label });
+      const wrap = row.createEl("label", { cls: "gp-toggle" });
+      const input = wrap.createEl("input", { type: "checkbox" });
+      input.checked = initial;
+      wrap.createSpan({ cls: "gp-toggle-slider" });
+      this.registerDomEvent(input, "change", () => void onChange(input.checked));
+    };
+
+    const segmentedRow = (
+      label: string,
+      options: { label: string; value: number }[],
+      initial: number,
+      onChange: (next: number) => Promise<void>
+    ) => {
+      const row = this.settingsPanel.createDiv("gp-settings-row");
+      row.createSpan({ text: label });
+      const seg = row.createDiv({ cls: "gp-segmented", attr: { role: "radiogroup" } });
+      const nearest = options.reduce((best, opt) =>
+        Math.abs(opt.value - initial) < Math.abs(best.value - initial) ? opt : best
+      );
+      const buttons: HTMLButtonElement[] = [];
+      for (const opt of options) {
+        const btn = seg.createEl("button", { cls: "gp-segmented-btn", text: opt.label });
+        btn.type = "button";
+        btn.setAttribute("role", "radio");
+        const isActive = opt === nearest;
+        btn.setAttribute("aria-checked", String(isActive));
+        if (isActive) btn.addClass("is-active");
+        buttons.push(btn);
+        this.registerDomEvent(btn, "click", () => {
+          for (const b of buttons) {
+            b.removeClass("is-active");
+            b.setAttribute("aria-checked", "false");
+          }
+          btn.addClass("is-active");
+          btn.setAttribute("aria-checked", "true");
+          void onChange(opt.value);
+        });
       }
     };
 
-    const breakRow = this.settingsPanel.createDiv("gp-settings-row");
-    breakRow.createSpan({ text: "Break (m)" });
-    const breakInput = breakRow.createEl("input", { type: "number" });
-    breakInput.value = this.plugin.settings.breakMinutes.toString();
-    breakInput.onchange = async () => {
-      const val = parseInt(breakInput.value);
-      if (val > 0) {
-        this.plugin.settings.breakMinutes = val;
+    section("Timing");
+    numberRow("Focus (m)", settings.focusMinutes, async (v) => {
+      settings.focusMinutes = v;
+      await this.plugin.saveSettings();
+      this.timer.updateDuration("focus", v);
+    });
+    numberRow("Break (m)", settings.breakMinutes, async (v) => {
+      settings.breakMinutes = v;
+      await this.plugin.saveSettings();
+      this.timer.updateDuration("break", v);
+    });
+
+    section("Audio");
+    toggleRow("Sound", settings.soundEnabled, async (v) => {
+      settings.soundEnabled = v;
+      await this.plugin.saveSettings();
+    });
+    segmentedRow(
+      "Volume",
+      [
+        { label: "Low", value: 0.3 },
+        { label: "Mid", value: 0.7 },
+        { label: "High", value: 1.0 },
+      ],
+      settings.soundVolume,
+      async (v) => {
+        settings.soundVolume = v;
         await this.plugin.saveSettings();
-        this.timer.updateDuration("break", val);
       }
-    };
+    );
 
-    const soundRow = this.settingsPanel.createDiv("gp-settings-row");
-    soundRow.createSpan({ text: "Sound" });
-    const soundToggle = soundRow.createEl("input", { type: "checkbox" });
-    soundToggle.checked = this.plugin.settings.soundEnabled;
-    soundToggle.onchange = async () => {
-      this.plugin.settings.soundEnabled = soundToggle.checked;
+    section("Auto-start");
+    toggleRow("Auto-start break", settings.autoStartBreak, async (v) => {
+      settings.autoStartBreak = v;
       await this.plugin.saveSettings();
-    };
+    });
+    toggleRow("Auto-start focus", settings.autoStartFocus, async (v) => {
+      settings.autoStartFocus = v;
+      await this.plugin.saveSettings();
+    });
 
-    const volumeRow = this.settingsPanel.createDiv("gp-settings-row");
-    volumeRow.createSpan({ text: "Volume" });
-    const volumeInput = volumeRow.createEl("input", { type: "range" });
-    volumeInput.min = "0";
-    volumeInput.max = "100";
-    volumeInput.step = "1";
-    volumeInput.value = Math.round(this.plugin.settings.soundVolume * 100).toString();
-    volumeInput.onchange = async () => {
-      const pct = Math.max(0, Math.min(100, parseInt(volumeInput.value) || 0));
-      this.plugin.settings.soundVolume = pct / 100;
+    const resetWrap = this.settingsPanel.createDiv("gp-settings-reset");
+    const resetBtn = resetWrap.createEl("button", {
+      cls: "gp-reset-button",
+      text: "Reset to defaults",
+    });
+    resetBtn.type = "button";
+    this.registerDomEvent(resetBtn, "click", async () => {
+      settings.focusMinutes = DEFAULT_SETTINGS.focusMinutes;
+      settings.breakMinutes = DEFAULT_SETTINGS.breakMinutes;
+      settings.soundEnabled = DEFAULT_SETTINGS.soundEnabled;
+      settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
+      settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
+      settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
       await this.plugin.saveSettings();
-    };
-
-    const autoBreakRow = this.settingsPanel.createDiv("gp-settings-row");
-    autoBreakRow.createSpan({ text: "Auto-start break" });
-    const autoBreakToggle = autoBreakRow.createEl("input", { type: "checkbox" });
-    autoBreakToggle.checked = this.plugin.settings.autoStartBreak;
-    autoBreakToggle.onchange = async () => {
-      this.plugin.settings.autoStartBreak = autoBreakToggle.checked;
-      await this.plugin.saveSettings();
-    };
-
-    const autoFocusRow = this.settingsPanel.createDiv("gp-settings-row");
-    autoFocusRow.createSpan({ text: "Auto-start focus" });
-    const autoFocusToggle = autoFocusRow.createEl("input", { type: "checkbox" });
-    autoFocusToggle.checked = this.plugin.settings.autoStartFocus;
-    autoFocusToggle.onchange = async () => {
-      this.plugin.settings.autoStartFocus = autoFocusToggle.checked;
-      await this.plugin.saveSettings();
-    };
+      this.timer.updateDuration("focus", settings.focusMinutes);
+      this.timer.updateDuration("break", settings.breakMinutes);
+      this.renderSettingsPanel();
+    });
   }
 }
