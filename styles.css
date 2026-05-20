@@ -191,6 +191,19 @@
   z-index: 4;
   pointer-events: none;
   opacity: 0.82;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+/* Hide the day/night indicator once the focus color block gets cramped.
+   170px sits mid-way through the scroll-driven 220→140px shrink, so the
+   indicator fades out and slides up smoothly while the shape collapses. */
+@container (max-width: 170px) {
+  .gp-daynight-indicator {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
 }
 
 .gp-daynight-badge {
@@ -231,7 +244,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gp-daynight-icon {
+  .gp-daynight-icon,
+  .gp-daynight-indicator {
     transition: none;
   }
 }
