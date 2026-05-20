@@ -285,8 +285,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem; /* Space between rows */
-  width: 100%;
-  max-width: 240px; /* Keep controls compact */
+  width: 260px; /* Fixed — controls don't shrink on narrow sidebars; leaf scrolls horizontally instead */
 
   position: relative;
   z-index: 2; /* ensure controls sit above any visual layers */
