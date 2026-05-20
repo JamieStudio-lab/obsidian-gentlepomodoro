@@ -615,25 +615,25 @@
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
 .gp-settings-reset {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem;
 }
 
 .gp-reset-button {
+  display: block;
+  width: 100%;
+  height: 32px;
   background: transparent;
-  border: none;
+  border: 1px solid var(--background-modifier-border);
   color: var(--text-muted);
   font-size: 0.75rem;
+  font-weight: 500;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  border-radius: 6px;
 }
 
 .gp-reset-button:hover {
   color: var(--text-normal);
+  background: var(--background-modifier-hover);
 }
 
 @media (prefers-reduced-motion: reduce) {
