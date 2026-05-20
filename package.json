@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gentle-pomodoro",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A visually soothing, task-integrated Pomodoro timer. Focus on your work with gentle animations and Pomodoro logging.",
   "main": "main.js",
   "scripts": {

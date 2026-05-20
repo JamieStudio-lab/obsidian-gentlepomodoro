@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Ambient day→night gradient instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **Beta — v0.1.0.** Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat). See [Install](#install).
+> **v0.1.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -11,7 +11,8 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. A
 - Ambient shape that transitions Day → Dusk → Night as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
-- Optional audio cues (war drum on start, bell/ding on finish) with a volume slider.
+- Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
+- Respects `prefers-reduced-motion`: timer animations soften when the OS requests it.
 
 ### ✅ Task integration
 
@@ -39,15 +40,17 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. A
 
 ## Install
 
-### BRAT (recommended while beta)
+### Community Plugins (recommended)
 
-1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) from Community Plugins.
-2. BRAT → **Add beta plugin** → paste `https://github.com/JamieStudio-lab/obsidian-gentlepomodoro`.
-3. Enable **Gentle Pomodoro** in Community Plugins.
+1. Open **Settings → Community plugins → Browse**.
+2. Search for **Gentle Pomodoro** and click **Install**.
+3. Enable it in **Community plugins**.
+
+Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins?id=gentle-pomo).
 
 ### Manual
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/latest).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/releases/latest). Audio is bundled into `main.js` — no extra files needed.
 2. Drop them into `<vault>/.obsidian/plugins/gentle-pomo/`.
 3. Reload and enable in Community Plugins.
 
@@ -61,11 +64,14 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. A
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).
 
-**In-view panel** (gear icon on the timer):
+**In-view panel** (gear icon on the timer) — grouped into sections:
 
-- Focus / break duration.
-- Sound toggle and volume slider.
-- Auto-start break / auto-start focus.
+- **Timing**: focus / short break / long break durations (press Enter to apply).
+- **Audio**: sound toggle and **Low / Mid / High** volume.
+- **Auto-start**: auto-start break, auto-start focus.
+- Full-width **Reset to defaults** button at the bottom.
+
+Layout adapts to narrow sidebars: the timer visual stays sticky at the top, controls keep a comfortable minimum width and the panel scrolls horizontally if needed.
 
 ## Log format
 

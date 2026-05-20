@@ -4,13 +4,15 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 ## Project Summary
 
-**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.2 (beta)**.
+**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.3 (beta)**.
 
 **0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N` counter written back to task lines (lifetime total per task; never resets), volume slider and auto-start toggles in the in-view settings panel.
 
 **0.1.1 added:** audio cues now bundled into `main.js` so catalog/BRAT installs get sound out of the box (no mp3 assets needed on disk), `prefers-reduced-motion` respect on the timer-shape animations, sigstore artifact attestations on release assets, committed `package-lock.json` + CI uses `npm ci` for reproducible builds.
 
 **0.1.2 added:** in-view settings panel redesigned with iOS-style toggle switches, Low/Mid/High segmented volume control, section headers (Timing / Audio / Auto-start), full-width Reset to defaults button, and apply-on-Enter for number inputs. Responsive pass: sticky timer visual at the top of the view, leaf-level horizontal scrolling on narrow sidebars (controls + settings + tasks lock at 260px and never shrink), day/night indicator auto-fades when the side panel drops below 200px, clock floors at 200×200, leaf min-height held at 320px so the divider stops shrinking past usable size.
+
+**0.1.3 added:** docs-only release for the Obsidian Community Plugins catalog launch. README install path moved from BRAT to Community Plugins, and the feature list now reflects the 0.1.1 (bundled audio, `prefers-reduced-motion`) and 0.1.2 (redesigned in-view settings panel, narrow-sidebar responsive layout) changes that had not yet been written up.
 
 Plugin ID: `gentle-pomo`. Mobile-compatible. Min Obsidian: 1.0.0.
 
