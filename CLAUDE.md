@@ -99,11 +99,11 @@ Field order is **load-bearing** for users' Dataview queries — do not reorder o
 
 ## Important Quirks
 
-- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) track 0.1.0; [versions.json](versions.json) maps each plugin version to its `minAppVersion`.
+- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) track 0.1.3; [versions.json](versions.json) maps each plugin version to its `minAppVersion`.
 - **`main.js` is the built artifact.** It's gitignored, but Obsidian loads it directly — you must `npm run build` (or have `npm run dev` running) before reloading the plugin.
 - **Auto-open** runs inside `this.app.workspace.onLayoutReady()`. A `MutationObserver` fallback waits for any settings/community-plugin modal to close before activating the view (handles freshly-installed-plugin UX).
 - **`noImplicitOverride: true`** is enabled in [tsconfig.json](tsconfig.json). Always mark methods that override Obsidian base classes (`Plugin.onload`, `ItemView.onClose`, etc.) with `override`.
-- **`package-lock.json` is gitignored** — npm install in CI resolves fresh; reproducibility comes from semver pins in [package.json](package.json).
+- **`package-lock.json` is tracked** — CI uses `npm ci` for reproducible builds (since 0.1.1). Regenerate with `npm install` whenever `package.json` changes.
 - **Local-timezone date string** used for daily reset logic is `moment().format("YYYY-MM-DD")` (defined as `todayLocalStr()` in both [main.ts](main.ts) and [TimerEngine.ts](TimerEngine.ts)). Same format as the daily log file naming, so all "today" logic agrees.
 - **Per-task counter is opt-in** (`incrementPomodoroCountOnFinish`, default off). When enabled, finishing a focus session linked to a task increments a lifetime `🍅 N` marker on the task line. Legacy `🍅 N (YYYY-MM-DD)` markers from an earlier 0.1.0 build are still readable; on the next increment the parens are stripped and the marker becomes `🍅 N+1`.
 - **Internal state fields** in `GentlePomoSettings` (`lastGoalHitDate`, `sessionsSinceLongBreak`, `sessionCounterDate`) are persisted to `data.json` alongside user settings but are not surfaced in any settings UI — they implement the once-per-day notice and long-break counter.
