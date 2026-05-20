@@ -20,10 +20,6 @@
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-gutter: stable;
-
-  /* Container query context so descendants (notably the settings panel)
-     can cap their height relative to the leaf instead of the viewport. */
-  container-type: size;
 }
 
 /* Flex spacers vertically center the content when the leaf is taller
@@ -54,36 +50,6 @@
 
   /* Enables responsive scaling based on the actual sidebar width */
   container-type: inline-size;
-}
-
-/* Compress padding + visual margin on very short sidebars. */
-@media (max-height: 500px) {
-  .gp-root {
-    padding: 12px;
-  }
-
-  .gp-timer-visual {
-    margin-bottom: 0.75rem;
-  }
-}
-
-/* Scroll-aware shrinking. As the user scrolls within the view, the
-   pinned visual smoothly collapses from 220px → 140px wide, freeing
-   vertical space for settings / tasks. Gated on browser support so
-   older Chromium just sees a static sticky visual. */
-@supports (animation-timeline: scroll()) {
-  .gp-timer-visual {
-    animation: gp-visual-shrink linear both;
-    animation-timeline: scroll(nearest);
-    animation-range: 0 200px;
-  }
-
-  @keyframes gp-visual-shrink {
-    to {
-      max-width: 140px;
-      margin-bottom: 0.75rem;
-    }
-  }
 }
 
 /* The Shape Wrapper */
@@ -191,19 +157,6 @@
   z-index: 4;
   pointer-events: none;
   opacity: 0.82;
-  transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
-}
-
-/* Hide the day/night indicator as soon as the leaf gets vertically
-   cramped — no scrolling required. The threshold is set against
-   .gp-root's height (the leaf height), not the focus block's width. */
-@container (max-height: 500px) {
-  .gp-daynight-indicator {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-6px);
-  }
 }
 
 .gp-daynight-badge {
@@ -244,8 +197,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gp-daynight-icon,
-  .gp-daynight-indicator {
+  .gp-daynight-icon {
     transition: none;
   }
 }
@@ -545,10 +497,9 @@
 }
 
 .gp-settings-panel.gp-visible {
-  /* Hard cap at 560px AND never more than 70% of the LEAF height (via
-     container query units against .gp-root). Keeps the visual + other
-     controls visible on short sidebars. */
-  max-height: min(560px, 70cqh);
+  /* Fixed shorter cap. Settings panel is intentionally compact and
+     scrolls internally past this height, regardless of leaf size. */
+  max-height: 320px;
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
