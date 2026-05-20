@@ -3,16 +3,25 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Stack from the top — prevents the visual from being pushed off-screen
+     when settings/task-list expand beyond the leaf's viewport. */
+  justify-content: flex-start;
   height: 100%;
+  /* Keeps the view usable on very short Obsidian splits — below this,
+     the leaf's own scrollbar takes over instead of the view collapsing. */
+  min-height: 320px;
   padding: 20px;
 }
 
-/* --- The Abstract Shape Container --- */
+/* --- The Abstract Shape Container ---
+   Sticky to the top of the scrolling leaf so the focus color block + time
+   number remain visible while the user scrolls through settings / tasks. */
 .gp-timer-visual {
-  margin-top: 1rem;
-  margin-bottom: 2rem;
-  position: relative;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--background-primary);
+  margin-bottom: 1.5rem;
   width: 100%;
   max-width: 220px; /* Smaller, fits sidebar better */
   aspect-ratio: 1 / 1; /* Keep it square-ish */
@@ -22,6 +31,36 @@
 
   /* Enables responsive scaling based on the actual sidebar width */
   container-type: inline-size;
+}
+
+/* Compress padding + visual margin on very short sidebars. */
+@media (max-height: 500px) {
+  .gp-root {
+    padding: 12px;
+  }
+
+  .gp-timer-visual {
+    margin-bottom: 0.75rem;
+  }
+}
+
+/* Scroll-aware shrinking. As the user scrolls within the view, the
+   pinned visual smoothly collapses from 220px → 140px wide, freeing
+   vertical space for settings / tasks. Gated on browser support so
+   older Chromium just sees a static sticky visual. */
+@supports (animation-timeline: scroll()) {
+  .gp-timer-visual {
+    animation: gp-visual-shrink linear both;
+    animation-timeline: scroll(nearest);
+    animation-range: 0 200px;
+  }
+
+  @keyframes gp-visual-shrink {
+    to {
+      max-width: 140px;
+      margin-bottom: 0.75rem;
+    }
+  }
 }
 
 /* The Shape Wrapper */
@@ -469,7 +508,9 @@
 }
 
 .gp-settings-panel.gp-visible {
-  max-height: 560px; /* room for 6 rows + roomier section headers + reset row */
+  /* Hard cap at 560px AND never more than 70% of the viewport — leaves
+     room for the visual + other controls on short sidebars. */
+  max-height: min(560px, 70vh);
   opacity: 1;
   transform: translateY(0);
   padding-top: 1rem;
@@ -478,6 +519,8 @@
   margin-bottom: 0.5rem;
   border-top-color: var(--background-modifier-border);
   border-bottom-color: var(--background-modifier-border);
+  /* Scroll the panel internally if its natural content exceeds max-height. */
+  overflow-y: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

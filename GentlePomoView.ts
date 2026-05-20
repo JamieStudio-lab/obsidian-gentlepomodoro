@@ -158,7 +158,14 @@ export class GentlePomoView extends ItemView {
       this.settingsVisible = !this.settingsVisible;
       this.settingsPanel.toggleClass("gp-visible", this.settingsVisible);
       settingsBtn.setAttribute("aria-expanded", this.settingsVisible ? "true" : "false");
-      if (this.settingsVisible) this.renderSettingsPanel();
+      if (this.settingsVisible) {
+        this.renderSettingsPanel();
+        // Give the open transition a moment to start, then scroll the
+        // panel into view so the user sees it without manual scrolling.
+        window.setTimeout(() => {
+          this.settingsPanel.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }, 50);
+      }
     });
 
     // --- Settings Panel ---
