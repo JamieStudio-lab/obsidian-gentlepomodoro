@@ -13,13 +13,19 @@
   height: 100%;
   padding: 20px;
 
-  /* Make the whole view scrollable when its natural content exceeds the
-     leaf height. overflow-x: hidden defends against accidental horizontal
-     scroll bars. scrollbar-gutter: stable reserves the scrollbar's slot
-     so layout doesn't shift horizontally when content grows/shrinks. */
+  /* Both axes scroll when content exceeds the leaf. Horizontal scroll
+     kicks in on narrow sidebars where the natural row width exceeds
+     the leaf. scrollbar-gutter: stable reserves the vertical-scrollbar
+     slot so vertical content doesn't shift horizontally when settings
+     panel etc. opens/closes. */
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   scrollbar-gutter: stable;
+
+  /* Named container so the day/night indicator can react to the
+     leaf's width (the whole side panel), not the focus block's width. */
+  container-name: gp-view;
+  container-type: inline-size;
 }
 
 /* Flex spacers vertically center the content when the leaf is taller
@@ -160,10 +166,10 @@
   transition: opacity 0.2s ease;
 }
 
-/* Hide the day/night indicator once the clock (focus block) shrinks
-   below 200px — only happens on narrow sidebars (block is normally
-   220px square via max-width + aspect-ratio: 1/1). */
-@container (max-width: 200px) {
+/* Hide the day/night indicator once the WHOLE side panel (leaf width)
+   drops below 200px. Uses the named container on .gp-root so the
+   query targets the leaf, not the focus block. */
+@container gp-view (max-width: 200px) {
   .gp-daynight-indicator {
     opacity: 0;
   }
@@ -296,21 +302,18 @@
   /* gap: 0.75rem; */
   width: 100%;
 
-  /* On narrow sidebars, let the row scroll horizontally instead of
-     shrinking the buttons. Hidden scrollbar — the icon row itself is
-     the obvious scrollable affordance. */
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-
   /* Button-row sizing tokens */
   --gp-control-gap: 12px;
   --gp-icon-btn-size: 42px;
   --gp-icon-svg-size: 20px;
 }
 
-.gp-controls-row::-webkit-scrollbar {
-  display: none;
+/* Lock every direct child of a row at its natural size. When the leaf
+   is narrower than the row's natural width, the whole side panel
+   scrolls horizontally instead of buttons shrinking or each row
+   getting its own scrollbar. */
+.gp-controls-row > * {
+  flex-shrink: 0;
 }
 
 /* Add spacing to all items except the last one.
