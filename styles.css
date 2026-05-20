@@ -48,6 +48,7 @@
   background: var(--background-primary);
   margin-bottom: 1.5rem;
   width: 100%;
+  min-width: 200px; /* Floor — clock stays readable even on narrow sidebars (leaf scrolls horizontally if needed) */
   max-width: 220px; /* Smaller, fits sidebar better */
   aspect-ratio: 1 / 1; /* Keep it square-ish */
   display: flex;
