@@ -84,10 +84,6 @@
     box-shadow 0.8s ease-out;
 
   z-index: 1; /* Above background layers, below content */
-
-  /* NEW: Fix for Safari/Webkit border bleeding */
-  -webkit-mask-image: -webkit-radial-gradient(white, black);
-  mask-image: radial-gradient(white, black);
 }
 
 .gp-state-running .gp-timer-shape {
