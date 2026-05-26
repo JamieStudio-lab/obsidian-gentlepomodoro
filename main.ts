@@ -160,7 +160,17 @@ export default class GentlePomoPlugin extends Plugin {
 
   async loadSettings() {
     const loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
+    // Migrate legacy "sunset" → "classic" (renamed in 2026-05-26). Saved
+    // once so future loads don't repeat the rewrite.
+    let migrated = false;
+    if (loaded && (loaded.theme as unknown) === "sunset") {
+      loaded.theme = "classic";
+      migrated = true;
+    }
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
+    if (migrated) {
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {

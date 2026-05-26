@@ -4,7 +4,9 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 ## Project Summary
 
-**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.1.3 (beta)**.
+**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.2.0 (beta)**.
+
+**0.2.0 added:** new **Frosted Glass** theme — a 3D frosted pane in front of three drifting, hue-shifting color orbs (warm sunrise/fireplace → cool twilight, driven by the `--gp-progress` CSS variable). Theme picker (Classic / Frosted glass) in the main Obsidian Settings tab. Renamed the original theme internally from `"sunset"` to `"classic"` with one-time auto-migration in `loadSettings()`. Pastel-twilight palette in Obsidian light mode; fireplace-orange warmth in dark mode with mode-specific overrides. Overtime text contrast fixes for both modes (focus and break). Smooth color interpolation on skip/reset via `@property --gp-progress` registration. `THEMES.md` documents four future theme ideas.
 
 **0.1.0 added:** long break after every Nth focus session (classic Pomodoro Technique), daily focus goal with status-bar progress + once-per-day "goal hit" notice, opt-in `🍅 N` counter written back to task lines (lifetime total per task; never resets), volume slider and auto-start toggles in the in-view settings panel.
 
@@ -65,7 +67,8 @@ GentlePomoPlugin (main.ts)
 | [types.ts](types.ts)                               | `PomoMode`, `GentlePomoSettings`, `TimerState`, `TimerListener`, `TaskItem`.                                                                                                                                      |
 | [constants.ts](constants.ts)                       | `VIEW_TYPE_GENTLE_POMO`, `NO_TASK_LABEL`, `ONE_MINUTE_MS`, `FOCUS_TOTAL_CACHE_TTL_MS`, `DEFAULT_SETTINGS`. New settings live here as defaults (long-break, daily-goal, per-task counter, transient state fields). |
 | [momentTypes.ts](momentTypes.ts)                   | Type stubs for Obsidian's bundled `moment` global.                                                                                                                                                                |
-| [styles.css](styles.css)                           | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries.                                                                                                              |
+| [styles.css](styles.css)                           | All visual styling. Class names are `gp-*` prefixed. Responsive via `clamp()` and container queries. Two themes scoped via `.gp-theme-classic` / `.gp-theme-frosted-glass` on `.gp-root`.                         |
+| [THEMES.md](THEMES.md)                             | Documents the two shipped themes (Classic, Frosted Glass) and four future theme ideas (Moon Phases, Tide, Zen Ripple, Lantern) with the wiring pattern for adding a new theme.                                    |
 | [tests/](tests/)                                   | Vitest unit tests for taskLoader, logManager (formatLogLine + parseFocusTotalSeconds), TimerEngine state machine.                                                                                                 |
 | [\_\_mocks\_\_/obsidian.ts](__mocks__/obsidian.ts) | Minimal Obsidian-API stubs so unit tests can `import` from project files without an Obsidian runtime.                                                                                                             |
 

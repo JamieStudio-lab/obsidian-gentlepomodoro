@@ -64,6 +64,14 @@ export class GentlePomoView extends ItemView {
     this.timerShape.createDiv("gp-layer-dusk");
     this.timerShape.createDiv("gp-layer-night");
 
+    // Frosted-glass theme layers (CSS-toggled per theme; built once here).
+    const orbs = this.timerShape.createDiv("gp-glass-orbs");
+    orbs.createDiv("gp-orb gp-orb-1");
+    orbs.createDiv("gp-orb gp-orb-2");
+    orbs.createDiv("gp-orb gp-orb-3");
+    this.timerShape.createDiv("gp-glass-pane");
+    this.timerShape.createDiv("gp-glass-highlight");
+
     const content = visual.createDiv("gp-timer-content");
     this.dayNightIndicator = content.createDiv("gp-daynight-indicator");
     this.dayNightIndicator.setAttribute("aria-hidden", "true");
@@ -289,6 +297,10 @@ export class GentlePomoView extends ItemView {
       }
       visual.style.setProperty("--gp-dusk-opacity", duskOpacity.toString());
       visual.style.setProperty("--gp-night-opacity", nightOpacity.toString());
+      // Consumed by frosted-glass orb color-mix() in styles.css. Uses skyPhase
+      // (not raw progress) so orbs warm→cool on focus and cool→warm on break,
+      // matching the classic theme's narrative arc.
+      visual.style.setProperty("--gp-progress", skyPhase.toString());
     };
 
     this.plugin.timer.onChange(this.timerListener);
@@ -304,6 +316,10 @@ export class GentlePomoView extends ItemView {
   }
 
   applySettings() {
+    const theme = this.plugin.settings.theme;
+    this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
+    this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
+
     if (!this.dayNightIndicator) return;
     const enabled = this.plugin.settings.showDayNightIndicator;
     this.dayNightIndicator.toggleClass("gp-hidden", !enabled);
@@ -422,24 +438,32 @@ export class GentlePomoView extends ItemView {
       this.registerDomEvent(input, "change", () => void onChange(input.checked));
     };
 
-    const segmentedRow = (
+    const segmentedRow = <T>(
       label: string,
-      options: { label: string; value: number }[],
-      initial: number,
-      onChange: (next: number) => Promise<void>
+      options: { label: string; value: T }[],
+      initial: T,
+      onChange: (next: T) => Promise<void>
     ) => {
       const row = this.settingsPanel.createDiv("gp-settings-row");
       row.createSpan({ text: label });
       const seg = row.createDiv({ cls: "gp-segmented", attr: { role: "radiogroup" } });
-      const nearest = options.reduce((best, opt) =>
-        Math.abs(opt.value - initial) < Math.abs(best.value - initial) ? opt : best
-      );
+      // For numeric values we pick the option closest to `initial` (e.g. volume:
+      // tolerate any past saved float). For other types, strict equality.
+      const initialOpt: { label: string; value: T } =
+        typeof initial === "number"
+          ? options.reduce((best, opt) =>
+              Math.abs((opt.value as number) - (initial as number)) <
+              Math.abs((best.value as number) - (initial as number))
+                ? opt
+                : best
+            )
+          : (options.find((o) => o.value === initial) ?? options[0]);
       const buttons: HTMLButtonElement[] = [];
       for (const opt of options) {
         const btn = seg.createEl("button", { cls: "gp-segmented-btn", text: opt.label });
         btn.type = "button";
         btn.setAttribute("role", "radio");
-        const isActive = opt === nearest;
+        const isActive = opt === initialOpt;
         btn.setAttribute("aria-checked", String(isActive));
         if (isActive) btn.addClass("is-active");
         buttons.push(btn);

@@ -57,6 +57,12 @@
 
   /* Enables responsive scaling based on the actual sidebar width */
   container-type: inline-size;
+
+  /* Smooth interpolation of --gp-progress (registered via @property
+     in the frosted-glass block) so the orbs ease through color phases
+     when the user clicks skip/reset. Matches the 0.8s opacity ease-out
+     used by the classic theme's dusk/night layers. */
+  transition: --gp-progress 0.8s ease-out;
 }
 
 /* The Shape Wrapper */
@@ -838,6 +844,257 @@
   stroke-width: 3px;
 }
 
+/* --- Frosted-glass theme ---
+   A "3D" frosted pane in front of three drifting color orbs. The orb
+   colors interpolate through the sunrise→sunset palette as --gp-progress
+   advances (set by the timer listener in GentlePomoView). The orbs sit
+   behind a backdrop-filter pane that blurs them into soft bokeh. */
+
+/* Register --gp-progress as an animatable <number> so the engine can
+   interpolate it through transitions. Without this, CSS variable
+   changes are raw text substitution and dependent color-mix() values
+   in the orb backgrounds would snap on every JS update — making the
+   "skip" button feel jarring instead of smooth. The transition itself
+   is declared on .gp-timer-visual above. */
+@property --gp-progress {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+/* Frosted-glass DOM nodes are always built; hidden by default so the
+   classic theme renders unchanged. */
+.gp-glass-orbs,
+.gp-glass-pane,
+.gp-glass-highlight {
+  display: none;
+}
+
+/* When the frosted-glass theme is active, hide the classic gradient
+   layers and show the glass-theme nodes. */
+.gp-theme-frosted-glass .gp-layer-day,
+.gp-theme-frosted-glass .gp-layer-dusk,
+.gp-theme-frosted-glass .gp-layer-night {
+  display: none;
+}
+
+.gp-theme-frosted-glass .gp-glass-orbs,
+.gp-theme-frosted-glass .gp-glass-pane,
+.gp-theme-frosted-glass .gp-glass-highlight {
+  display: block;
+}
+
+/* Pale-lavender base — keeps the composition luminous so it lands at
+   "twilight" not "midnight" by the end of a focus session. */
+.gp-theme-frosted-glass .gp-timer-shape {
+  background-color: #ede5f3;
+}
+
+.gp-glass-orbs {
+  position: absolute;
+  inset: 0;
+  z-index: 1; /* above the (hidden) gradient layers, below the pane */
+  border-radius: inherit;
+}
+
+.gp-orb {
+  position: absolute;
+  /* Oversized so three orbs together blanket the shape — no center "dead
+     zone" where the pale base shows through. .gp-timer-shape's
+     overflow: hidden clips the excess. */
+  width: 110%;
+  height: 110%;
+  border-radius: 50%;
+  /* Filter order matters: blur first (soft edges), then saturate to deepen
+     the pastel hues, then brightness to drop luminance a touch so the
+     composition reads richer rather than washed. */
+  filter: blur(24px) saturate(140%) brightness(0.9);
+  opacity: 0.95;
+  /* color-mix(in oklab, ...) interpolates in a perceptually-even space,
+     so the hue shift looks like a slow sunset rather than a muddy fade. */
+  transition: background 0.8s ease-out;
+}
+
+/* Warm/cool endpoints are exposed as custom properties per orb so the
+   dark-mode block below can swap just the warm value into fireplace
+   tones without restating the whole radial-gradient. */
+.gp-orb-1 {
+  --gp-orb-warm: #f6d365; /* sunny morning yellow */
+  --gp-orb-cool: #a594c9; /* soft lavender */
+  top: -25%;
+  left: -25%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 85%
+  );
+  animation: gp-orb-drift-1 65s ease-in-out infinite;
+}
+
+.gp-orb-2 {
+  --gp-orb-warm: #ff8c9c; /* warm pink */
+  --gp-orb-cool: #e0a5bd; /* dusty rose */
+  top: -10%;
+  right: -25%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 85%
+  );
+  animation: gp-orb-drift-2 58s ease-in-out infinite;
+}
+
+.gp-orb-3 {
+  --gp-orb-warm: #ff9145; /* sunset orange */
+  --gp-orb-cool: #b8c5e8; /* soft periwinkle */
+  bottom: -25%;
+  left: -5%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 85%
+  );
+  animation: gp-orb-drift-3 72s ease-in-out infinite;
+}
+
+/* Each orb traces a soft 4-waypoint loop inside the visible area so the
+   motion reads as gentle drift rather than back-and-forth bobbing.
+   Different rotation directions + different durations (65s/58s/72s) keep
+   the trio from syncing — they pass each other instead. */
+@keyframes gp-orb-drift-1 {
+  /* clockwise loop, anchored top-left */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(12%, 3%) scale(1.03);
+  }
+  50% {
+    transform: translate(15%, 14%) scale(1.05);
+  }
+  75% {
+    transform: translate(3%, 12%) scale(1.03);
+  }
+}
+
+@keyframes gp-orb-drift-2 {
+  /* counter-clockwise loop, anchored top-right */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(-12%, 4%) scale(1.04);
+  }
+  50% {
+    transform: translate(-15%, 12%) scale(1.06);
+  }
+  75% {
+    transform: translate(-4%, 14%) scale(1.04);
+  }
+}
+
+@keyframes gp-orb-drift-3 {
+  /* diagonal sweep, anchored bottom */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(10%, -10%) scale(1.03);
+  }
+  50% {
+    transform: translate(-3%, -14%) scale(1.05);
+  }
+  75% {
+    transform: translate(-12%, -4%) scale(1.03);
+  }
+}
+
+/* The frosted glass surface itself. backdrop-filter blurs everything
+   behind (the orbs); the inset shadows give a soft top-bright,
+   bottom-dark "3D" lip. */
+.gp-glass-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  /* Soft plum tint instead of a white wash so light Obsidian gets a
+     slightly darker frosted surface — gives the white overtime text a
+     bit of luminance headroom. Dark mode has its own override below. */
+  background: rgba(40, 30, 50, 0.1);
+  backdrop-filter: blur(22px) saturate(220%);
+  -webkit-backdrop-filter: blur(22px) saturate(220%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18);
+}
+
+/* Top-edge sheen — sells the glass as a curved surface catching light. */
+.gp-glass-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(255, 255, 255, 0.05) 35%,
+    transparent 60%
+  );
+}
+
+/* Dark-mode tuning. Obsidian sets body.theme-dark on the document root;
+   these overrides scope cleanly so light mode stays untouched. The pale
+   base + white frost are right for light Obsidian themes but read as
+   "too bright" against a dark UI — so the base flips to deep plum, the
+   frost overlay flips to a plum-tinted dark wash, and orbs drop another
+   notch in luminance so they read as soft washes rather than light
+   sources. Top sheen + 1px white top-edge highlight stay (catch-light
+   on glass looks right in both modes). */
+.theme-dark .gp-theme-frosted-glass .gp-timer-shape {
+  background-color: #2a2438;
+}
+
+.theme-dark .gp-theme-frosted-glass .gp-glass-pane {
+  background: rgba(20, 18, 30, 0.2);
+}
+
+/* Fireplace warm endpoints — swap only the warm var so the orbs glow
+   like flame on a winter night against the deep-plum dark base. Cool
+   endpoints stay pastel-twilight: the arc reads as fire-at-peak →
+   embers settling into twilight as --gp-progress advances. */
+.theme-dark .gp-orb-1 {
+  --gp-orb-warm: #ffae40; /* warm orange */
+}
+
+.theme-dark .gp-orb-2 {
+  --gp-orb-warm: #ff9333; /* vivid mid-orange */
+}
+
+.theme-dark .gp-orb-3 {
+  --gp-orb-warm: #ff7530; /* deep orange */
+}
+
+.theme-dark .gp-orb {
+  /* Near-natural luminance so the orange flames glow softly without
+     overpowering the dim plum glass. Saturate stays at 155% to keep
+     the fire feel. */
+  filter: blur(24px) saturate(155%) brightness(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gp-orb {
+    animation: none;
+  }
+}
+
 /* --- Overtime Visuals --- */
 
 /* Define the breathing animation */
@@ -908,6 +1165,53 @@
 .gp-state-overtime.gp-mode-break .gp-total-time {
   color: rgba(255, 255, 255, 0.85);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark Obsidian + Frosted Glass: the plum/violet glass backdrop is too
+   close in tone to --text-muted for the overtime "Total: M:SS" line to
+   remain legible — especially in focus mode, which had no override.
+   Slightly stronger shadow than break-mode for the darker base. */
+.theme-dark .gp-theme-frosted-glass .gp-total-time {
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* Dark + Frosted Glass + break overtime: the warm orange orb field at
+   peak saturation collides with the reddish .gp-overtime color, so the
+   "+M:SS" number disappears into the day-color wash. Drop orb saturate
+   a touch and flip the overtime number to white-with-red-glow — the
+   warning semantic survives via the red halo, but legibility wins on
+   the actual digits. */
+.theme-dark .gp-theme-frosted-glass .gp-state-overtime.gp-mode-break .gp-orb {
+  filter: blur(24px) saturate(125%) brightness(0.97);
+}
+
+.theme-dark .gp-theme-frosted-glass .gp-state-overtime.gp-mode-break .gp-overtime {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 0 18px rgba(255, 107, 107, 0.6);
+}
+
+/* Light Obsidian + Frosted Glass: the pale lavender base + saturated
+   pastel orbs make the default --text-muted gray (Total) and the
+   reddish .gp-overtime (Timer) both wash out. Mirror the dark-mode
+   approach with white text — combined with the slightly-darker glass
+   overlay (the base .gp-glass-pane change above), readability lands. */
+.theme-light .gp-theme-frosted-glass .gp-total-time {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.theme-light .gp-theme-frosted-glass .gp-overtime {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 0 18px rgba(255, 107, 107, 0.6);
+}
+
+/* Day-phase orb saturation drop only when warm orbs collide with the
+   overtime text in light mode (break overtime). Cool focus-overtime
+   keeps full saturate — pastels don't fight white text the way warm
+   tones do. */
+.theme-light .gp-theme-frosted-glass .gp-state-overtime.gp-mode-break .gp-orb {
+  filter: blur(24px) saturate(115%) brightness(0.9);
 }
 
 /* When running, hide it (like the main timer) */

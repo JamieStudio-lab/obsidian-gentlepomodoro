@@ -88,6 +88,21 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         })
       );
 
+    new Setting(containerEl)
+      .setName("Theme")
+      .setDesc("Visual style for the timer.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("classic", "Classic")
+          .addOption("frosted-glass", "Frosted glass")
+          .setValue(this.plugin.settings.theme)
+          .onChange(async (value) => {
+            this.plugin.settings.theme = value as "classic" | "frosted-glass";
+            await this.plugin.saveSettings();
+            applySettingsToOpenViews();
+          })
+      );
+
     new Setting(containerEl).setName("Long break").setHeading();
 
     new Setting(containerEl)

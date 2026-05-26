@@ -1,14 +1,15 @@
 # Gentle Pomodoro
 
-A visually soothing, task-integrated Pomodoro timer for your daily focus work. Ambient day→night gradient instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
+A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.1.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.2.0 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
 ### 🍅 Gentle visual timer
 
-- Ambient shape that transitions Day → Dusk → Night as the timer runs.
+- **Two themes**: **Classic** (the original day → dusk → night gradient) and **Frosted Glass** (three drifting color orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode). Switch in the main Obsidian Settings tab.
+- Ambient shape that transitions through warm → cool colors as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
 - Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
@@ -60,6 +61,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - Tasks folder path, log folder path.
 - Auto-open on startup, show status bar, day/night indicator.
+- **Theme**: `Classic` (default) or `Frosted glass`.
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).

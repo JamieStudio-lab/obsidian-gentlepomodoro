@@ -21,6 +21,9 @@ export interface GentlePomoSettings {
   showStatusBarTimeLeft: boolean;
   showDayNightIndicator: boolean;
 
+  // Appearance
+  theme: "classic" | "frosted-glass";
+
   // Audio
   soundEnabled: boolean;
   soundVolume: number;
