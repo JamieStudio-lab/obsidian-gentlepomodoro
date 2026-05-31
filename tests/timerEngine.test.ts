@@ -197,6 +197,130 @@ describe("TimerEngine — long break after N pomodoros", () => {
   });
 });
 
+describe("TimerEngine — natural completion (auto-start)", () => {
+  const TODAY = "2025-05-18"; // matches the moment stub in beforeAll
+
+  // completeNaturally() is private but mirrors the finish() path; reach it via cast.
+  const complete = (timer: TimerEngine) =>
+    (timer as unknown as { completeNaturally: () => Promise<void> }).completeNaturally();
+
+  it("focus with autoStartBreak → switches to a running break", async () => {
+    const stub = makePluginStub({ sessionsSinceLongBreak: 1, sessionCounterDate: TODAY });
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await complete(timer);
+
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.breakType).toBe("short");
+    expect(state.isRunning).toBe(true);
+    expect(stub.settings.sessionsSinceLongBreak).toBe(2);
+    timer.pause(); // stop the interval started by the auto-started break
+  });
+
+  it("Nth focus with autoStartBreak → auto-starts a LONG break", async () => {
+    const stub = makePluginStub({
+      sessionsSinceLongBreak: 3,
+      sessionCounterDate: TODAY,
+      longBreakEvery: 4,
+      longBreakMinutes: 15,
+    });
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await complete(timer);
+
+    const state = timer.getState();
+    expect(state.breakType).toBe("long");
+    expect(state.totalMs).toBe(15 * ONE_MINUTE_MS);
+    expect(state.isRunning).toBe(true);
+    timer.pause();
+  });
+
+  it("break with autoStartFocus → switches to a running focus", async () => {
+    const stub = makePluginStub();
+    stub.settings.autoStartFocus = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    // Move into a (stopped) break first, then complete it.
+    timer.switchMode("break", false);
+
+    await complete(timer);
+
+    const state = timer.getState();
+    expect(state.mode).toBe("focus");
+    expect(state.isRunning).toBe(true);
+    timer.pause();
+  });
+});
+
+describe("TimerEngine — Stop vs Skip with auto-start on", () => {
+  const TODAY = "2025-05-18"; // matches the moment stub in beforeAll
+
+  it("Stop (finish) never auto-starts the next session, even with autoStartBreak on", async () => {
+    const stub = makePluginStub({ sessionsSinceLongBreak: 1, sessionCounterDate: TODAY });
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.finish();
+
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.isRunning).toBe(false); // Stop always pauses the next session
+  });
+
+  it("Skip starts the next session when autoStartBreak is on", async () => {
+    const stub = makePluginStub();
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.skip();
+
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.isRunning).toBe(true); // Skip respects the toggle
+    timer.pause(); // stop the interval started by the auto-started break
+  });
+
+  it("Skip leaves the next session paused when auto-start is off", async () => {
+    const stub = makePluginStub(); // auto-start defaults off
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.skip();
+
+    expect(timer.getState().isRunning).toBe(false);
+  });
+});
+
+describe("TimerEngine — dispose", () => {
+  it("stops a running timer without throwing and can be restarted", () => {
+    const stub = makePluginStub();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    expect(() => timer.dispose()).not.toThrow();
+    // Re-start works after dispose (loop was cleared, not corrupted).
+    expect(() => timer.start()).not.toThrow();
+    expect(timer.getState().isRunning).toBe(true);
+    timer.pause();
+  });
+
+  it("is a no-op (no throw) on a fresh, idle engine", () => {
+    const stub = makePluginStub();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    expect(() => timer.dispose()).not.toThrow();
+  });
+});
+
 describe("TimerEngine — setTask", () => {
   it("updates state.taskName and notifies LogManager", () => {
     const stub = makePluginStub();

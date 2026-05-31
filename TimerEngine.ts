@@ -20,6 +20,17 @@ export class TimerEngine {
   private listeners: Set<TimerListener> = new Set();
   private plugin: GentlePomoPlugin;
 
+  // Single shared AudioContext, created lazily. Reusing one persistent context
+  // avoids the per-call `new AudioContext()` footgun: a context created off a
+  // user gesture (e.g. a timer-triggered completion sound) can start in the
+  // `suspended` state, and an un-retained context/source can be GC'd before
+  // playback finishes. A live shared context keeps its active sources alive.
+  private audioCtx: AudioContext | null = null;
+
+  // Decoded audio cache keyed by filename — decode each bundled asset once and
+  // reuse its (immutable) AudioBuffer via a fresh BufferSource per play.
+  private audioBuffers: Map<string, AudioBuffer> = new Map();
+
   // Track the target end time (timestamp)
   private targetTime: number | null = null;
 
@@ -126,13 +137,49 @@ export class TimerEngine {
 
       // Calculate remaining time based on system clock
       const now = Date.now();
+      const prev = this.state.remainingMs;
       this.state.remainingMs = this.targetTime - now;
+
+      // Natural completion: fire once on the tick that crosses zero. The
+      // `prev > 0` guard guarantees this fires a single time (later ticks have
+      // prev <= 0; a new session restores a positive remainingMs). Only act
+      // when the next mode's auto-start toggle is on — otherwise fall through
+      // and let the timer count up into overtime (unchanged behavior).
+      if (prev > 0 && this.state.remainingMs <= 0) {
+        const autoStart =
+          this.state.mode === "focus"
+            ? this.plugin.settings.autoStartBreak
+            : this.plugin.settings.autoStartFocus;
+        if (autoStart) {
+          this.state.remainingMs = 0; // freeze display at 00:00
+          this.clearLoop(); // stop ticking; completeNaturally restarts the loop
+          this.emit();
+          void this.completeNaturally();
+          return;
+        }
+      }
 
       this.emit();
     }, 50);
   }
 
-  private async handleFinished() {
+  /**
+   * Natural end-of-session handler (timer reached zero with auto-start on).
+   * Plays the end cue, then reuses handleFinished() to log the session, advance
+   * the long-break counter, and auto-start the next session. handleFinished()
+   * itself plays no sound (finish() plays it first) — we mirror that here.
+   */
+  private async completeNaturally() {
+    if (this.state.mode === "focus") {
+      void this.playSound("singing_bell_short.mp3");
+    } else {
+      void this.playSound("ding-sound.mp3");
+    }
+    // Natural completion only fires when the toggle is on → auto-start the next.
+    await this.handleFinished(true);
+  }
+
+  private async handleFinished(autoStartNext: boolean) {
     // Log the finished session
     await this.plugin.logManager.endSession("finished");
 
@@ -158,9 +205,9 @@ export class TimerEngine {
 
       const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
       const isLongBreak = counter % longBreakEvery === 0;
-      this.switchMode("break", this.plugin.settings.autoStartBreak, isLongBreak);
+      this.switchMode("break", autoStartNext, isLongBreak);
     } else {
-      this.switchMode("focus", this.plugin.settings.autoStartFocus);
+      this.switchMode("focus", autoStartNext);
     }
   }
 
@@ -265,6 +312,34 @@ export class TimerEngine {
     }
   }
 
+  /** Lazily create (once) and return the shared AudioContext, or null if unsupported. */
+  private getAudioContext(): AudioContext | null {
+    if (this.audioCtx) return this.audioCtx;
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) return null;
+
+    this.audioCtx = new AudioContextCtor();
+    return this.audioCtx;
+  }
+
+  /**
+   * Release engine resources on plugin unload: stop the tick loop, close the
+   * shared AudioContext (Chromium caps live contexts, so leaking one per
+   * disable/enable cycle would eventually silence all sound), and drop the
+   * decoded-buffer cache.
+   */
+  dispose() {
+    this.clearLoop();
+    if (this.audioCtx) {
+      void this.audioCtx.close().catch(() => {});
+      this.audioCtx = null;
+    }
+    this.audioBuffers.clear();
+  }
+
   private async playSound(filename: string) {
     if (!this.plugin.settings.soundEnabled) return;
 
@@ -275,22 +350,29 @@ export class TimerEngine {
     }
 
     try {
-      // Strip the `data:audio/...;base64,` prefix and decode to bytes.
-      // Avoids fetch() (restricted by obsidianmd lint config) and the network round-trip.
-      const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-      const binary = window.atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
+      const ctx = this.getAudioContext();
+      if (!ctx) return;
+
+      // A context created off a user gesture starts suspended; resume so a
+      // timer-triggered completion sound is actually audible.
+      if (ctx.state === "suspended") await ctx.resume();
+
+      // Decode each bundled asset once, then reuse its AudioBuffer.
+      let audioBuffer = this.audioBuffers.get(filename);
+      if (!audioBuffer) {
+        // Strip the `data:audio/...;base64,` prefix and decode to bytes.
+        // Avoids fetch() (restricted by obsidianmd lint config) and the network round-trip.
+        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+        const binary = window.atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        // decodeAudioData detaches `bytes.buffer`; harmless since we cache the
+        // resulting AudioBuffer and never touch the raw bytes again.
+        audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        this.audioBuffers.set(filename, audioBuffer);
       }
-
-      const AudioContextCtor =
-        window.AudioContext ??
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) return;
-
-      const ctx = new AudioContextCtor();
-      const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -402,7 +484,11 @@ export class TimerEngine {
     this.emit();
   }
 
-  /** Finish the current session, log it as finished, and switch to the next mode. */
+  /**
+   * Finish the current session (Stop button): log it as finished and switch to
+   * the next mode **paused**. Stop never auto-starts the next session, even when
+   * the auto-start toggle is on — that's what Skip / natural completion are for.
+   */
   async finish() {
     // Play specific sounds based on mode when manually finishing
     if (this.state.mode === "focus") {
@@ -410,7 +496,7 @@ export class TimerEngine {
     } else {
       void this.playSound("ding-sound.mp3");
     }
-    await this.handleFinished();
+    await this.handleFinished(false);
   }
 
   /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
@@ -432,8 +518,14 @@ export class TimerEngine {
 
     await this.checkTaskCompletionAndUnlink();
 
+    // Skip respects the auto-start toggle: with it on, the next session starts
+    // running; with it off, it switches paused (same as Stop).
+    const autoStart =
+      this.state.mode === "focus"
+        ? this.plugin.settings.autoStartBreak
+        : this.plugin.settings.autoStartFocus;
     const nextMode: PomoMode = this.state.mode === "focus" ? "break" : "focus";
-    this.switchMode(nextMode, false);
+    this.switchMode(nextMode, autoStart);
   }
 
   // Cancel current session without switching modes; not in use currently

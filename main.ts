@@ -142,6 +142,10 @@ export default class GentlePomoPlugin extends Plugin {
     }
 
     this.destroyStatusBar();
+
+    // Release the tick loop + shared AudioContext so they don't leak across
+    // plugin disable/enable cycles.
+    if (this.timer) this.timer.dispose();
   }
 
   async activateView() {
