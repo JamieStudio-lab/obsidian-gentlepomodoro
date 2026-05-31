@@ -4,7 +4,9 @@ Project context for Claude Code sessions in this directory. Keep this file scann
 
 ## Project Summary
 
-**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.2.0 (beta)**.
+**Gentle Pomodoro** is an Obsidian plugin: a soothing, task-integrated Pomodoro timer that links sessions to Tasks-plugin markdown items and writes Dataview-compatible daily logs. Currently **v0.2.1 (beta)**.
+
+**0.2.1 fixed:** the timer now detects natural completion — when a session hits zero with the relevant auto-start toggle on, it plays the end cue (bell/ding) and auto-starts the next session (previously it just slid into overtime and never advanced). New `completeNaturally()` in `TimerEngine.startLoop()` fires once on the zero-crossing tick. Manual button semantics split: **Stop** (`finish()`) always switches to the next mode **paused** (`handleFinished(autoStartNext=false)`); **Skip** (`skip()`) respects the auto-start toggle. Audio robustness: a single shared `AudioContext` (resumed when suspended) instead of one-per-call, decoded clips cached in `audioBuffers`, and `TimerEngine.dispose()` (called from `main.ts` `onunload`) closes the context + clears the tick loop so nothing leaks across disable/enable cycles.
 
 **0.2.0 added:** new **Frosted Glass** theme — a 3D frosted pane in front of three drifting, hue-shifting color orbs (warm sunrise/fireplace → cool twilight, driven by the `--gp-progress` CSS variable). Theme picker (Classic / Frosted glass) in the main Obsidian Settings tab. Renamed the original theme internally from `"sunset"` to `"classic"` with one-time auto-migration in `loadSettings()`. Pastel-twilight palette in Obsidian light mode; fireplace-orange warmth in dark mode with mode-specific overrides. Overtime text contrast fixes for both modes (focus and break). Smooth color interpolation on skip/reset via `@property --gp-progress` registration. `THEMES.md` documents four future theme ideas.
 
@@ -103,7 +105,8 @@ Field order is **load-bearing** for users' Dataview queries — do not reorder o
 
 ## Important Quirks
 
-- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) track 0.1.3; [versions.json](versions.json) maps each plugin version to its `minAppVersion`.
+- **`obsidian` dep is pinned to `^1.4.16`** (types-only npm package). [package.json](package.json) and [manifest.json](manifest.json) track 0.2.1; [versions.json](versions.json) maps each plugin version to its `minAppVersion`.
+- **Audio lifecycle:** [TimerEngine.ts](TimerEngine.ts) owns a single shared `AudioContext`, created lazily in `playSound()` and resumed if suspended; decoded clips are cached in `audioBuffers`. `TimerEngine.dispose()` (called from [main.ts](main.ts) `onunload`) closes the context and clears the tick loop — Chromium caps live `AudioContext`s, so it must not leak across disable/enable cycles.
 - **`main.js` is the built artifact.** It's gitignored, but Obsidian loads it directly — you must `npm run build` (or have `npm run dev` running) before reloading the plugin.
 - **Auto-open** runs inside `this.app.workspace.onLayoutReady()`. A `MutationObserver` fallback waits for any settings/community-plugin modal to close before activating the view (handles freshly-installed-plugin UX).
 - **`noImplicitOverride: true`** is enabled in [tsconfig.json](tsconfig.json). Always mark methods that override Obsidian base classes (`Plugin.onload`, `ItemView.onClose`, etc.) with `override`.
