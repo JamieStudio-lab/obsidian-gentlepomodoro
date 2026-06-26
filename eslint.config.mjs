@@ -14,6 +14,9 @@ export default defineConfig([
       "vitest.config.ts",
       "tests/**",
       "__mocks__/**",
+      // obsidianmd's recommended set applies type-aware rules globally, which crash
+      // on package.json (no TS project for it). We only need it to lint our TS.
+      "package.json",
     ],
   },
 
@@ -29,6 +32,7 @@ export default defineConfig([
       globals: {
         console: "readonly",
         document: "readonly",
+        activeDocument: "readonly",
         MutationObserver: "readonly",
         window: "readonly",
       },

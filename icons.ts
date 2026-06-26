@@ -9,7 +9,7 @@ export const DAY_NIGHT_ICON_ORDER: DayNightIcon[] = ["sun", "sunset", "moon", "s
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const createSvgEl = <K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] =>
-  document.createElementNS(SVG_NS, tag);
+  activeDocument.createElementNS(SVG_NS, tag);
 
 export function buildDayNightIcon(icon: DayNightIcon): SVGSVGElement {
   const svg = createSvgEl("svg");

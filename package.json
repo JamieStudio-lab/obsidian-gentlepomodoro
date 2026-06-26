@@ -26,7 +26,7 @@
     "@typescript-eslint/parser": "^8.54.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-obsidianmd": "^0.1.9",
+    "eslint-plugin-obsidianmd": "^0.3.0",
     "obsidian": "^1.4.16",
     "prettier": "^3.3.0",
     "rollup": "^4.18.0",

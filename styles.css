@@ -1288,10 +1288,17 @@ body.is-tablet .gp-controls-row {
   --gp-icon-svg-size: 32px;
 }
 
-/* NOTE: the control-button glyph size is pinned inline (with !important) from
-   GentlePomoView, not here. Obsidian's tablet `.svg-icon` !important rule outranks
-   any stylesheet rule we can write, so a CSS-only override doesn't hold on iPad.
-   The --gp-icon-svg-size token (20px desktop / 32px mobile) feeds that inline style. */
+/* iPad/Safari collapses an SVG flex item's main-axis (width) to ~min-content (~8px),
+   ignoring the CSS width, while honoring height — so the control glyphs render as thin
+   slivers. A min-width/min-height floor is the hard limit the flex algorithm can't cross.
+   Scoped via the Obsidian `.svg-icon` class (which the glyph always carries) + !important
+   so it outranks Obsidian's own icon rules. The --gp-icon-svg-size token feeds the size. */
+body.is-mobile .gp-icon-btn svg.svg-icon,
+body.is-tablet .gp-icon-btn svg.svg-icon {
+  min-width: var(--gp-icon-svg-size) !important;
+  min-height: var(--gp-icon-svg-size) !important;
+  flex-shrink: 0 !important;
+}
 
 /* Let the timer visual use a little more width on mobile. */
 body.is-mobile .gp-timer-visual,

@@ -219,24 +219,8 @@ export class GentlePomoView extends ItemView {
     // main.ts through setGoalProgress().
     this.goalProgressEl = container.createDiv("gp-goal-progress");
 
-    // Force the control-button glyph size inline. On iPad, Safari's flexbox bug
-    // collapses an SVG flex item's main-axis (width) to ~min-content (8px) while
-    // honoring height — so the glyphs render as thin slivers. A `min-width` /
-    // `min-height` floor (plus `flex-shrink: 0`) is the hard limit the flex
-    // algorithm can't cross; inline `!important` also keeps it above Obsidian's own
-    // `.svg-icon` rules. Value comes from the --gp-icon-svg-size token (20px desktop
-    // / 32px mobile). The 8 icon buttons are built once above and not re-rendered.
-    this.containerEl.querySelectorAll<SVGElement>(".gp-icon-btn svg").forEach((svg) => {
-      /* eslint-disable obsidianmd/no-static-styles-assignment -- a CSS class can beat
-         neither Obsidian's icon rules nor Safari's SVG-in-flex main-axis collapse; only
-         an inline !important min-width floor does, which is the whole point here. */
-      svg.style.setProperty("width", "var(--gp-icon-svg-size)", "important");
-      svg.style.setProperty("height", "var(--gp-icon-svg-size)", "important");
-      svg.style.setProperty("min-width", "var(--gp-icon-svg-size)", "important");
-      svg.style.setProperty("min-height", "var(--gp-icon-svg-size)", "important");
-      svg.style.setProperty("flex-shrink", "0", "important");
-      /* eslint-enable obsidianmd/no-static-styles-assignment */
-    });
+    // (Control-button glyph sizing — including the iPad min-width floor — lives in
+    // styles.css; see the `.gp-icon-btn svg.svg-icon` rule in the Mobile & touch section.)
 
     // --- State Updates ---
     this.timerListener = (state) => {

@@ -199,12 +199,12 @@ export default class GentlePomoPlugin extends Plugin {
       }
     });
 
-    this.autoOpenObserver.observe(document.body, { childList: true, subtree: true });
+    this.autoOpenObserver.observe(activeDocument.body, { childList: true, subtree: true });
   }
 
   private isSettingsModalOpen(): boolean {
     return Boolean(
-      document.querySelector(
+      activeDocument.querySelector(
         ".modal.mod-settings, .modal-container.mod-settings, .modal.mod-community-plugins, .modal-container.mod-community-plugins"
       )
     );
