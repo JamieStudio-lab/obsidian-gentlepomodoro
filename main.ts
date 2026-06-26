@@ -321,6 +321,15 @@ export default class GentlePomoPlugin extends Plugin {
     this.statusFocusTotal.setText(totalText);
     this.statusFocusTotal.toggleClass("gp-status-goal-met", goalMet);
 
+    // Mirror the same goal progress into the view, which surfaces it on mobile
+    // (where Obsidian hides the status bar). The view element is CSS-hidden on
+    // desktop, so this is a cheap no-op there.
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+      if (leaf.view instanceof GentlePomoView) {
+        leaf.view.setGoalProgress(totalText, goalMet);
+      }
+    }
+
     this.statusBarEl.setAttribute(
       "aria-label",
       showTimeLeft ? `${modeLabel} ${timeText}` : `${modeLabel} (time hidden)`

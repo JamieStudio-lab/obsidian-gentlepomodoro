@@ -1,7 +1,8 @@
 import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
+import { logger } from "./logger";
 import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
-import { findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
+import { findTaskNameById, findTaskNameByIdInContent, isPathInFolder } from "./taskLoader";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -182,10 +183,9 @@ export class LogManager {
     if (!folderPath || !taskId) return;
 
     const app = this.plugin.app;
-    const normalizedFolder = normalizePath(folderPath);
     const files = app.vault
       .getFiles()
-      .filter((f) => f.extension === "md" && f.path.startsWith(normalizedFolder));
+      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
 
     if (files.length === 0) return;
 
@@ -220,10 +220,9 @@ export class LogManager {
     }
 
     const app = this.plugin.app;
-    const normalizedFolder = normalizePath(folderPath);
     const logFiles = app.vault
       .getFiles()
-      .filter((f) => f.extension === "md" && f.path.startsWith(normalizedFolder));
+      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
 
     if (logFiles.length === 0) {
       new Notice("Gentle pomodoro: no log files found.");
@@ -328,7 +327,6 @@ export class LogManager {
     if (!folderPath) return; // Logging disabled if no path set
 
     const app = this.plugin.app;
-    const adapter = app.vault.adapter;
 
     // Refresh task name from file if ID is available (handles renames)
     if (session.mode === "focus" && session.taskId && session.taskPath) {
@@ -338,32 +336,69 @@ export class LogManager {
       }
     }
 
-    // 1. Ensure folder exists
     const normalizedFolder = normalizePath(folderPath);
-    if (!(await adapter.exists(normalizedFolder))) {
-      await app.vault.createFolder(normalizedFolder);
-    }
 
-    // 2. Determine File Name based on Start Time
+    // File name is based on the session's start time (local date).
     const dateStr = session.startTime.format("YYYY-MM-DD");
     const fileName = `${dateStr}-gentle-pomodoro-log.md`;
     const filePath = normalizePath(`${normalizedFolder}/${fileName}`);
 
-    // 3. Format the line via the pure helper (tested in tests/logManager.test.ts).
+    // Format the line via the pure helper (tested in tests/logManager.test.ts).
     const line = formatLogLine(session);
 
-    // 4. Append to File
-    if (await adapter.exists(filePath)) {
-      const file = app.vault.getAbstractFileByPath(filePath);
-      if (file instanceof TFile) {
-        await app.vault.append(file, `\n${line}`);
-      }
-    } else {
-      await app.vault.create(filePath, line);
+    // Writes can fail on mobile (Obsidian Sync / iCloud conflicts, locked files).
+    // Catch here so a write failure never breaks the timer state machine — the
+    // caller (endSession → handleFinished/skip) still resolves and advances —
+    // and so the user is told instead of losing the session silently.
+    try {
+      await this.ensureFolder(normalizedFolder);
+      await this.appendLine(filePath, line);
+    } catch (e) {
+      logger.error("Failed to write session log", e);
+      new Notice("Gentle pomodoro: couldn't write the session log — check the log folder setting.");
+      return;
     }
 
     if (session.mode === "focus") {
       this.focusTotalCacheAt = 0;
+    }
+  }
+
+  /** Create the log folder if missing, tolerating a sync race that creates it first. */
+  private async ensureFolder(normalizedFolder: string) {
+    const app = this.plugin.app;
+    if (await app.vault.adapter.exists(normalizedFolder)) return;
+    try {
+      await app.vault.createFolder(normalizedFolder);
+    } catch (e) {
+      // A concurrent write or sync may have created it between the check and
+      // here; only swallow that case, re-throw anything else.
+      if (await app.vault.adapter.exists(normalizedFolder)) return;
+      throw e;
+    }
+  }
+
+  /**
+   * Append a line to the daily log, creating the file if needed. Resolves the
+   * file through the Vault index but falls back to the adapter when the index
+   * lags the filesystem (common on mobile right after create / on sync) — the
+   * previous adapter.exists()-then-getAbstractFileByPath() mix could silently
+   * drop a line when the two disagreed.
+   */
+  private async appendLine(filePath: string, line: string) {
+    const app = this.plugin.app;
+    const existing = app.vault.getAbstractFileByPath(filePath);
+    if (existing instanceof TFile) {
+      await app.vault.append(existing, `\n${line}`);
+      return;
+    }
+    try {
+      await app.vault.create(filePath, line);
+    } catch {
+      // Index lagged the filesystem: the file exists on disk but wasn't in the
+      // Vault index, so create() throws "already exists". Append at the adapter
+      // level instead of dropping the session.
+      await app.vault.adapter.append(filePath, `\n${line}`);
     }
   }
 

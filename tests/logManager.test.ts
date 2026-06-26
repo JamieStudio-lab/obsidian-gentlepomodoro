@@ -1,10 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { TFile } from "obsidian";
 import {
   formatLogLine,
   parseFocusTotalSeconds,
   shouldFireGoalNotice,
+  LogManager,
   type SessionLog,
 } from "../logManager";
+import type GentlePomoPlugin from "../main";
 import type { MomentLike } from "../momentTypes";
 
 // Minimal moment-like stub that supports the two methods formatLogLine uses.
@@ -267,5 +270,123 @@ describe("shouldFireGoalNotice", () => {
   it("fires again on the next day even if lastGoalHitDate is set", () => {
     // lastGoalHitDate is yesterday, today is new -> fires
     expect(shouldFireGoalNotice(7200, 120, true, "2025-05-17", TODAY)).toBe(true);
+  });
+});
+
+describe("LogManager.writeLog — daily-log write robustness", () => {
+  // logManager.ts uses Obsidian's global `moment`; stub it to a fixed instant so
+  // the log filename and formatted line are deterministic.
+  const FIXED = new Date("2025-12-23T10:00:00Z");
+
+  beforeEach(() => {
+    (globalThis as unknown as { moment: () => MomentLike }).moment = () => new TestMoment(FIXED);
+  });
+
+  afterEach(() => {
+    delete (globalThis as unknown as { moment?: () => MomentLike }).moment;
+    vi.restoreAllMocks();
+  });
+
+  // A finished short-break session avoids the focus-only task-name refresh path,
+  // keeping the test focused on the file write.
+  const runBreakSession = async (vault: unknown) => {
+    const plugin = {
+      settings: { logFolderPath: "Logs" },
+      app: { vault },
+    } as unknown as GentlePomoPlugin;
+    const lm = new LogManager(plugin);
+    lm.startSession("break", "No Task", 5, undefined, undefined, "short");
+    await lm.endSession("finished");
+  };
+
+  const expectedLine =
+    "- ☕ Rest | Start:: 2025-12-23 10:00:00 | End:: 2025-12-23 10:00:00 | " +
+    "Scheduled:: 300 | Total:: 0 | Type:: short-break";
+
+  it("appends via the Vault API when the file is in the index", async () => {
+    const file = Object.assign(new TFile(), {
+      path: "Logs/2025-12-23-gentle-pomodoro-log.md",
+    });
+    const append = vi.fn().mockResolvedValue(undefined);
+    const adapterAppend = vi.fn().mockResolvedValue(undefined);
+    const vault = {
+      adapter: { exists: vi.fn().mockResolvedValue(true), append: adapterAppend },
+      getAbstractFileByPath: vi.fn().mockReturnValue(file),
+      append,
+      create: vi.fn(),
+      createFolder: vi.fn(),
+    };
+
+    await runBreakSession(vault);
+
+    expect(append).toHaveBeenCalledWith(file, `\n${expectedLine}`);
+    expect(adapterAppend).not.toHaveBeenCalled();
+  });
+
+  it("does NOT silently drop the line when the index lags the filesystem", async () => {
+    // Index says "no such file" but create() rejects "already exists" because the
+    // file is on disk — the old adapter.exists()+getAbstractFileByPath() mix
+    // dropped the session here. We must fall back to adapter.append.
+    const adapterAppend = vi.fn().mockResolvedValue(undefined);
+    const vault = {
+      adapter: { exists: vi.fn().mockResolvedValue(true), append: adapterAppend },
+      getAbstractFileByPath: vi.fn().mockReturnValue(null),
+      append: vi.fn(),
+      create: vi.fn().mockRejectedValue(new Error("File already exists.")),
+      createFolder: vi.fn(),
+    };
+
+    await runBreakSession(vault);
+
+    expect(adapterAppend).toHaveBeenCalledWith(
+      "Logs/2025-12-23-gentle-pomodoro-log.md",
+      `\n${expectedLine}`
+    );
+  });
+
+  it("creates the file via the Vault API when it does not exist yet", async () => {
+    const create = vi.fn().mockResolvedValue(undefined);
+    const vault = {
+      adapter: { exists: vi.fn().mockResolvedValue(true), append: vi.fn() },
+      getAbstractFileByPath: vi.fn().mockReturnValue(null),
+      append: vi.fn(),
+      create,
+      createFolder: vi.fn(),
+    };
+
+    await runBreakSession(vault);
+
+    expect(create).toHaveBeenCalledWith("Logs/2025-12-23-gentle-pomodoro-log.md", expectedLine);
+  });
+
+  it("creates the log folder when missing", async () => {
+    const createFolder = vi.fn().mockResolvedValue(undefined);
+    const vault = {
+      adapter: { exists: vi.fn().mockResolvedValue(false), append: vi.fn() },
+      getAbstractFileByPath: vi.fn().mockReturnValue(null),
+      append: vi.fn(),
+      create: vi.fn().mockResolvedValue(undefined),
+      createFolder,
+    };
+
+    await runBreakSession(vault);
+
+    expect(createFolder).toHaveBeenCalledWith("Logs");
+  });
+
+  it("does not throw out of endSession when every write attempt fails", async () => {
+    // A write failure must not break the timer state machine — endSession resolves.
+    const vault = {
+      adapter: {
+        exists: vi.fn().mockResolvedValue(true),
+        append: vi.fn().mockRejectedValue(new Error("disk full")),
+      },
+      getAbstractFileByPath: vi.fn().mockReturnValue(null),
+      append: vi.fn(),
+      create: vi.fn().mockRejectedValue(new Error("File already exists.")),
+      createFolder: vi.fn(),
+    };
+
+    await expect(runBreakSession(vault)).resolves.toBeUndefined();
   });
 });

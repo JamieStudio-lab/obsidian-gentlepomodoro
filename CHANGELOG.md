@@ -4,6 +4,33 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-25
+
+### Added
+
+- **Systematic mobile (iPad / phone) support.** All mobile/touch styling now lives in one consolidated section in `styles.css`, driven by sizing tokens (`--gp-tap-min`, `--gp-icon-*-size`) so future tweaks live in one place. Two query strategies are used deliberately: `body.is-mobile` / `body.is-tablet` for layout/sizing, and `@media (hover: none) and (pointer: coarse)` for input-capability fixes.
+- **Tap-to-peek countdown on touch.** The running countdown is hidden by design ("gentle, don't fixate on the clock"); on desktop you hover the shape to peek. Touch devices have no hover, so tapping the timer shape now toggles the countdown visible/hidden.
+- **Daily-goal progress in the view on mobile.** Obsidian hides the status bar on mobile, which is where the `Today 2h / 4h` goal meter lived — it's now mirrored into the timer view and shown on mobile/tablet (hidden on desktop, where the status bar still carries it).
+
+### Changed
+
+- Bigger touch targets on mobile (≥44px): icon buttons, volume segments, the reset button, task-list rows, and number inputs.
+- Mobile control layout reflows (full-width column, wrapping button rows) instead of forcing the whole leaf to scroll sideways, and the timer visual is allowed a little more width.
+
+### Fixed
+
+- Icon-button glyphs were thin slivers on iPad. Root cause (found via Web Inspector): a WebKit/Safari flexbox bug collapses an SVG flex item's main-axis width to ~min-content (8px) while honoring its height, so the control glyphs rendered ~8px wide × 32px tall. Fixed by pinning a `min-width`/`min-height` floor (plus `flex-shrink: 0`) inline with `!important` from the view, which the flex algorithm can't cross. Glyphs are now a full 32px in a 48px button on mobile; iPhone and desktop unchanged.
+- **Daily-log writes are now robust on mobile.** A session could be silently dropped when the Vault file index lagged the filesystem (common on mobile right after the log file is created, or when Obsidian Sync brings it in): the old write path checked the raw filesystem but then looked the file up in the index, and when the two disagreed it appended nowhere. The write path now resolves the file through the Vault index and falls back to an adapter-level append, so a session is never lost to an index lag. Write failures (sync conflicts, locked files) are caught — the user gets a notice and the timer still advances, instead of an unhandled error — and the folder-create step tolerates a sync race.
+- Task-rename log rewrites now match the log folder by path boundary, so a log folder named e.g. `Log` no longer also scans/rewrites files under a sibling folder like `Logs`.
+
+### Internal
+
+- Task-picker click handlers converted from direct `.onclick` to `registerDomEvent` so listeners are cleaned up on view close.
+
+### Known limitations
+
+- On iOS, the hardware silent/ring switch mutes WebAudio, so completion sounds won't play with the switch on. Completion sounds otherwise rely on a prior tap (Start) to unlock audio. These are platform constraints, not plugin bugs.
+
 ## [0.2.1] — 2026-05-31
 
 ### Fixed

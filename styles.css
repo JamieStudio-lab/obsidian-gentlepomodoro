@@ -407,6 +407,11 @@
 }
 
 .gp-icon-btn svg {
+  /* Absolute px, deliberately. The button is a stable size (42px desktop / 48px
+     mobile), so a fixed glyph gives a predictable ratio. Relative units don't
+     survive here: `em` resolves against the svg's font-size, which Obsidian's
+     per-device button styles override (small on iPad/tablet); `%` collapses a
+     percentage-sized SVG flex item in iPad WebKit. */
   width: var(--gp-icon-svg-size, 20px);
   height: var(--gp-icon-svg-size, 20px);
   stroke-width: 2.5px; /* Make icons slightly bolder */
@@ -1236,5 +1241,128 @@
   .gp-state-running .gp-timer-shape,
   .gp-state-overtime .gp-timer-shape {
     animation: none;
+  }
+}
+
+/* In-view daily-goal progress line. Hidden on desktop (the status bar carries
+   it there); revealed on mobile, where Obsidian hides the status bar entirely.
+   Updated from main.ts via GentlePomoView.setGoalProgress(). */
+.gp-goal-progress {
+  display: none;
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.gp-goal-progress.gp-goal-met {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+
+/* =========================================================================
+   Mobile & touch
+   -------------------------------------------------------------------------
+   The single home for mobile/touch adaptations. Two query strategies, used
+   deliberately:
+     • body.is-mobile / body.is-tablet  — Obsidian-set classes, for layout and
+       sizing that should track "is this the mobile app."
+     • @media (hover: none) and (pointer: coarse) — for input-capability fixes
+       (e.g. hover-only reveals), correct even on hybrid devices.
+   Sizing flows through tokens (--gp-tap-min, --gp-icon-*-size) so future tweaks
+   live here, not scattered across the rules they affect.
+   ========================================================================= */
+body.is-mobile,
+body.is-tablet {
+  --gp-tap-min: 44px; /* Apple HIG minimum touch target */
+}
+
+/* Obsidian mobile renders the app at a larger base scale, so the desktop glyph
+   looks small inside the touch-sized button. Bump the button and the glyph.
+   32px ≈ 66% of the 48px button. 2×48 + 12px gap = 108px, still under the 120px
+   max-width of the two-button wrappers. */
+body.is-mobile .gp-controls-row,
+body.is-tablet .gp-controls-row {
+  --gp-icon-btn-size: 48px;
+  --gp-icon-svg-size: 32px;
+}
+
+/* NOTE: the control-button glyph size is pinned inline (with !important) from
+   GentlePomoView, not here. Obsidian's tablet `.svg-icon` !important rule outranks
+   any stylesheet rule we can write, so a CSS-only override doesn't hold on iPad.
+   The --gp-icon-svg-size token (20px desktop / 32px mobile) feeds that inline style. */
+
+/* Let the timer visual use a little more width on mobile. */
+body.is-mobile .gp-timer-visual,
+body.is-tablet .gp-timer-visual {
+  max-width: 280px;
+}
+
+/* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor
+   of a full-width column whose button rows wrap, so the larger touch targets
+   never push the leaf into sideways scrolling. */
+body.is-mobile .gp-controls,
+body.is-tablet .gp-controls {
+  width: 100%;
+  max-width: 360px;
+}
+
+body.is-mobile .gp-controls-row,
+body.is-tablet .gp-controls-row {
+  flex-wrap: wrap;
+  row-gap: var(--gp-control-gap, 12px);
+}
+
+/* Touch-target floors (≥44px) for the smaller interactive elements. */
+body.is-mobile .gp-segmented,
+body.is-tablet .gp-segmented {
+  height: var(--gp-tap-min);
+}
+
+body.is-mobile .gp-segmented-btn,
+body.is-tablet .gp-segmented-btn {
+  height: calc(var(--gp-tap-min) - 8px);
+  min-width: 52px;
+}
+
+body.is-mobile .gp-reset-button,
+body.is-tablet .gp-reset-button {
+  height: var(--gp-tap-min);
+}
+
+body.is-mobile .gp-settings-row,
+body.is-tablet .gp-settings-row {
+  min-height: var(--gp-tap-min);
+}
+
+body.is-mobile .gp-settings-row input[type="number"],
+body.is-tablet .gp-settings-row input[type="number"] {
+  height: var(--gp-tap-min);
+}
+
+body.is-mobile .gp-task-item,
+body.is-tablet .gp-task-item {
+  padding: 10px 12px;
+  min-height: var(--gp-tap-min);
+}
+
+/* Reveal the in-view goal progress where the status bar is unavailable. */
+body.is-mobile .gp-goal-progress,
+body.is-tablet .gp-goal-progress {
+  display: block;
+}
+
+/* Tap-to-peek: on devices without hover, the running countdown can't be
+   revealed by hovering the shape. A tap toggles the .gp-peek class (see
+   GentlePomoView), mirroring the desktop hover reveal. Scoped to no-hover so
+   it never interferes with the desktop :hover behavior. */
+@media (hover: none) and (pointer: coarse) {
+  .gp-timer-visual.gp-peek .gp-timer-time {
+    opacity: 1;
+  }
+
+  .gp-timer-visual.gp-peek .gp-total-time {
+    opacity: 0.8;
   }
 }

@@ -10,11 +10,13 @@ export class GentlePomoView extends ItemView {
   plugin: GentlePomoPlugin;
   timer: TimerEngine;
   timerShape!: HTMLDivElement;
+  timerVisual!: HTMLDivElement;
   dayNightIndicator!: HTMLDivElement;
   private dayNightIconEls: Partial<Record<DayNightIcon, HTMLSpanElement>> = {};
   timeLabel!: HTMLDivElement;
   totalTimeLabel!: HTMLDivElement;
   modeLabel!: HTMLDivElement;
+  goalProgressEl!: HTMLDivElement;
   settingsPanel!: HTMLDivElement;
   settingsVisible = false;
 
@@ -55,6 +57,15 @@ export class GentlePomoView extends ItemView {
 
     // --- Timer Visual Area ---
     const visual = container.createDiv("gp-timer-visual");
+    this.timerVisual = visual;
+
+    // Tap-to-peek: touch devices have no hover, so tapping the shape toggles
+    // the .gp-peek class — the touch equivalent of the desktop hover reveal
+    // that shows the running countdown (see styles.css). Harmless on desktop,
+    // where the :hover rule drives the reveal instead.
+    this.registerDomEvent(visual, "click", () => {
+      visual.toggleClass("gp-peek", !visual.hasClass("gp-peek"));
+    });
 
     // Create Shape
     this.timerShape = visual.createDiv("gp-timer-shape");
@@ -190,18 +201,42 @@ export class GentlePomoView extends ItemView {
     const btnText = this.taskBtn.createDiv("gp-task-btn-text");
     btnText.setText("Select a task...");
 
-    this.taskBtn.onclick = async () => {
+    this.registerDomEvent(this.taskBtn, "click", () => {
       this.taskListVisible = !this.taskListVisible;
       if (this.taskListVisible) {
         this.taskListContainer.addClass("gp-visible");
-        await this.loadTasks();
+        void this.loadTasks();
       } else {
         this.taskListContainer.removeClass("gp-visible");
       }
-    };
+    });
 
     // --- Task List Container ---
     this.taskListContainer = controls.createDiv("gp-task-list");
+
+    // Daily-goal progress, mirrored from the status bar. Hidden on desktop via
+    // CSS; revealed on mobile, where Obsidian hides the status bar. Updated by
+    // main.ts through setGoalProgress().
+    this.goalProgressEl = container.createDiv("gp-goal-progress");
+
+    // Force the control-button glyph size inline. On iPad, Safari's flexbox bug
+    // collapses an SVG flex item's main-axis (width) to ~min-content (8px) while
+    // honoring height — so the glyphs render as thin slivers. A `min-width` /
+    // `min-height` floor (plus `flex-shrink: 0`) is the hard limit the flex
+    // algorithm can't cross; inline `!important` also keeps it above Obsidian's own
+    // `.svg-icon` rules. Value comes from the --gp-icon-svg-size token (20px desktop
+    // / 32px mobile). The 8 icon buttons are built once above and not re-rendered.
+    this.containerEl.querySelectorAll<SVGElement>(".gp-icon-btn svg").forEach((svg) => {
+      /* eslint-disable obsidianmd/no-static-styles-assignment -- a CSS class can beat
+         neither Obsidian's icon rules nor Safari's SVG-in-flex main-axis collapse; only
+         an inline !important min-width floor does, which is the whole point here. */
+      svg.style.setProperty("width", "var(--gp-icon-svg-size)", "important");
+      svg.style.setProperty("height", "var(--gp-icon-svg-size)", "important");
+      svg.style.setProperty("min-width", "var(--gp-icon-svg-size)", "important");
+      svg.style.setProperty("min-height", "var(--gp-icon-svg-size)", "important");
+      svg.style.setProperty("flex-shrink", "0", "important");
+      /* eslint-enable obsidianmd/no-static-styles-assignment */
+    });
 
     // --- State Updates ---
     this.timerListener = (state) => {
@@ -315,6 +350,17 @@ export class GentlePomoView extends ItemView {
     return Promise.resolve();
   }
 
+  /**
+   * Update the in-view daily-goal progress line. Called from main.ts alongside
+   * the status-bar update so mobile (no status bar) still sees goal progress.
+   * The element is hidden on desktop via CSS, so this is a cheap no-op there.
+   */
+  setGoalProgress(text: string, met: boolean) {
+    if (!this.goalProgressEl) return;
+    this.goalProgressEl.setText(text);
+    this.goalProgressEl.toggleClass("gp-goal-met", met);
+  }
+
   applySettings() {
     const theme = this.plugin.settings.theme;
     this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
@@ -353,11 +399,11 @@ export class GentlePomoView extends ItemView {
     setIcon(clearItem, "x-circle");
     clearItem.createSpan({ text: "Unlink Current Task" });
 
-    clearItem.onclick = () => {
+    this.registerDomEvent(clearItem, "click", () => {
       this.timer.setTask(NO_TASK_LABEL);
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
-    };
+    });
 
     const tasks = await fetchTasks(this.plugin.app, {
       tasksPath: this.plugin.settings.tasksPath,
@@ -388,11 +434,11 @@ export class GentlePomoView extends ItemView {
           setIcon(iconContainer, "check");
         }
 
-        item.onclick = () => {
+        this.registerDomEvent(item, "click", () => {
           this.timer.setTask(task.cleanText, task.path, task.taskId);
           this.taskListVisible = false;
           this.taskListContainer.removeClass("gp-visible");
-        };
+        });
       }
     }
   }

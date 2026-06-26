@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.2.1 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.3.0 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -38,6 +38,13 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 - Compact mode/time indicator with today's total focus.
 - Click the dot to open the timer; click the label to toggle the time-left display.
+
+### 📱 Mobile (iPad & phone)
+
+- Touch-friendly layout: larger buttons and tap targets, and the controls reflow to fit the screen instead of scrolling sideways.
+- **Tap the timer shape to peek** at the running countdown (the touch equivalent of hovering on desktop — the countdown stays hidden by default so you don't fixate on the clock).
+- The daily-goal progress appears in the timer view, since Obsidian hides the status bar on mobile.
+- **Sound note:** completion cues need a prior tap (pressing **Start** unlocks audio), and iOS's hardware **silent/ring switch** mutes them when it's on — both are platform constraints, not plugin bugs.
 
 ## Install
 
