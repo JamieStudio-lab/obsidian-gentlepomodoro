@@ -4,6 +4,21 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-06-26
+
+### Changed
+
+- **Mobile side panel now scrolls as a single surface.** Previously the view nested three independent scroll regions (the panel itself plus the capped task list and settings panel). With a mouse that's fine, but on touch a drag that landed inside an inner box scrolled that box and not the page — so you had to "find" a working place to scroll. On mobile/tablet the task list and settings panel no longer cap their height or scroll internally; the whole view grows and scrolls as one. (Open/close on these two becomes instant on mobile, since an uncapped height can't be animated.)
+- **The sticky timer shrinks on short viewports.** It was a fixed 280px on mobile, which dominated a phone screen (and any landscape view) and crowded out the task list. It's now capped against viewport height (`min(280px, 38vh)`), so it stays full-size on a tall iPad but gives the list room elsewhere.
+
+### Fixed
+
+- **The collapsed panel now vertically centres on mobile.** On first load with the settings and task list collapsed, the timer + controls sat packed at the top of the panel with empty space below, instead of centred. The view's root element is the leaf-content itself, and its `height: 100%` doesn't resolve on mobile (no definite ancestor height), so it shrank to its content height. The root now fills the leaf via flex and centres its content with `justify-content: safe center` — the desktop centring spacers are dropped on mobile because Obsidian's mobile styles touch the leaf-content's own `::after` and break them. `safe` keeps the standard fallback: top-aligned + scroll when content is taller than the leaf.
+- **The in-view focus-goal meter now shows on iPhone.** The "Today 2h / 4h" focus-time + goal line below the task selector was blank on iPhone (it worked on iPad and desktop). It was only ever filled from the status-bar update path, which on mobile races against the view opening — on iPhone the value landed before the view existed and nothing re-pushed it. The meter is now driven by the view's own timer subscription plus a push when the view opens, so it appears immediately (even idle), ticks up live during a session, and no longer depends on the status bar existing (so it also shows when "Show in status bar" is off).
+- **The timer no longer covers the controls in iPhone landscape.** When an iPhone is rotated to landscape the panel is short, and the pinned, opaque timer covered the buttons and task list as they scrolled underneath it. On a short panel the timer now shrinks to a small fixed square and un-pins, so it scrolls away with the page and the controls stay visible. The short panel is detected by measuring the panel directly (a `ResizeObserver` toggles a `gp-compact` class), because Obsidian's mobile webview doesn't expose reliable viewport media queries (`max-height`/`orientation`) for this view. iPad and portrait phones keep the larger pinned clock.
+- **Mobile layout no longer reads as off-centre.** The panel reserved a permanent scrollbar gutter even on touch (where there's no persistent scrollbar), nudging content sideways; the gutter is dropped on mobile so the column re-centres. With the smaller timer, content fits more often and the vertical-centring spacers engage.
+- Reaching the end of a list on mobile no longer bounces/scrolls the Obsidian app behind the panel (`overscroll-behavior` containment), and the bottom row now clears the iPhone home indicator / mobile nav (safe-area padding). Stray sideways drift from horizontal overscroll is suppressed.
+
 ## [0.3.0] — 2026-06-25
 
 ### Added

@@ -1301,10 +1301,33 @@ body.is-tablet .gp-icon-btn svg.svg-icon {
   flex-shrink: 0;
 }
 
-/* Let the timer visual use a little more width on mobile. */
+/* Let the timer visual use a little more width on mobile, but cap it against
+   viewport height so the sticky clock never dominates a short screen (phone
+   portrait, or any landscape) and crowds out the list below it. aspect-ratio
+   is 1/1, so width drives height; min() yields 280px on a tall iPad and shrinks
+   proportionally on short viewports, freeing room for the centering spacers. */
 body.is-mobile .gp-timer-visual,
 body.is-tablet .gp-timer-visual {
-  max-width: 280px;
+  max-width: min(280px, 38vh);
+}
+
+/* Compact panel (e.g. iPhone landscape — a short, wide leaf). Detection is done in
+   JS: GentlePomoView observes the panel with a ResizeObserver and toggles
+   .gp-root.gp-compact when it's short, because Obsidian's mobile webview does NOT
+   expose reliable viewport media queries for this view — both @media (max-height)
+   and @media (orientation) were tried and neither engaged on iPhone rotation. With a
+   short panel, a sticky ~280px timer covers the controls as they scroll under it, so
+   here we shrink it to a small fixed square and un-pin it: it scrolls away with the
+   page instead of covering the play-button row. The body.is-mobile prefix lifts
+   specificity above the min(280px, 38vh) rule above. */
+body.is-mobile .gp-root.gp-compact .gp-timer-visual {
+  /* position: relative (NOT static) un-pins from sticky while still establishing a
+     containing block — .gp-timer-shape is position:absolute;inset:0, so static would
+     let it escape the 150px box and fill the panel. */
+  position: relative;
+  max-width: 150px;
+  min-width: 0;
+  margin-bottom: 1rem;
 }
 
 /* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor
@@ -1359,6 +1382,72 @@ body.is-tablet .gp-task-item {
 body.is-mobile .gp-goal-progress,
 body.is-tablet .gp-goal-progress {
   display: block;
+}
+
+/* Single scroll surface. On desktop the view nests three independent scroll
+   regions (.gp-root + the capped .gp-task-list + the capped .gp-settings-panel),
+   which is fine with a mouse but a trap on touch: a drag landing inside an inner
+   box scrolls that box, not the page, so the user has to "find" the right place
+   to scroll. On mobile we make .gp-root the only scroller. */
+body.is-mobile .gp-root,
+body.is-tablet .gp-root {
+  /* The mobile reflow above already drops the fixed-260px horizontal-scroll
+     model, so horizontal scroll only enables accidental sideways drift. */
+  overflow-x: hidden;
+  /* No persistent scrollbar on touch — the reserved gutter just shifts content
+     off-centre. Drop it so the column re-centres. */
+  scrollbar-gutter: auto;
+  /* Don't chain the bounce out to the Obsidian app shell behind the drawer when
+     the list reaches its end. */
+  overscroll-behavior-y: contain;
+  /* Keep the last row clear of the iPhone home indicator / Obsidian mobile nav. */
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  /* .gp-root is the leaf-content element itself (the view empties containerEl and
+     uses it directly). On mobile its height:100% doesn't resolve — the leaf chain
+     gives no definite ancestor height — so it collapses to content height, the
+     panel sits at the top of a taller drawer, and the ::before/::after centering
+     spacers get no room. Fill the flex leaf directly instead. min-height:0 keeps it
+     shrinkable so overflow-y still scrolls when collapsed content is taller than the
+     leaf (the intended top-align + scroll fallback). */
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Center the content column natively. The ::before/::after spacer trick that
+     centers on desktop is unreliable here because .gp-root is the framework's
+     .workspace-leaf-content element and Obsidian's mobile styles neutralize its
+     ::after (so only the top spacer grows → content drops to the bottom). We drop
+     the spacers on mobile (below) and center directly. "safe" falls back to
+     start-alignment when content is taller than the leaf, keeping the top reachable
+     (top-align + scroll); plain "center" would push overflow off the top. */
+  justify-content: safe center;
+}
+
+/* Drop the desktop pseudo-element centering spacers on mobile — Obsidian styles
+   the leaf-content's own ::after, breaking them. justify-content above handles it. */
+body.is-mobile .gp-root::before,
+body.is-tablet .gp-root::before,
+body.is-mobile .gp-root::after,
+body.is-tablet .gp-root::after {
+  content: none;
+}
+
+/* Remove the inner max-height caps so neither the task list nor the open
+   settings panel creates its own scrollbar — the whole page grows and .gp-root
+   scrolls it as one surface. max-height: none can't be animated, so disable the
+   transition on mobile (instant open/close); the collapsed max-height: 0 state
+   is untouched, so the toggle still works. */
+body.is-mobile .gp-settings-panel,
+body.is-tablet .gp-settings-panel,
+body.is-mobile .gp-task-list,
+body.is-tablet .gp-task-list {
+  transition: none;
+}
+
+body.is-mobile .gp-settings-panel.gp-visible,
+body.is-tablet .gp-settings-panel.gp-visible,
+body.is-mobile .gp-task-list.gp-visible,
+body.is-tablet .gp-task-list.gp-visible {
+  max-height: none;
+  overflow: visible;
 }
 
 /* Tap-to-peek: on devices without hover, the running countdown can't be

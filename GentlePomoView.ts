@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import { DEFAULT_SETTINGS, VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
@@ -31,6 +31,7 @@ export class GentlePomoView extends ItemView {
 
   private timerListener: TimerListener | null = null;
   private lastState: TimerState | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -54,6 +55,15 @@ export class GentlePomoView extends ItemView {
     const container = this.containerEl;
     container.empty();
     container.addClass("gp-root");
+
+    // Toggle .gp-compact when the panel is a short, wide leaf (e.g. iPhone landscape),
+    // measured directly off the panel element. We can't use viewport media queries
+    // here: Obsidian's mobile webview doesn't expose reliable @media for this leaf.
+    // ResizeObserver catches the leaf resize; the window "resize" listener is a
+    // belt-and-suspenders catch for rotation. See updateCompactClass + styles.css.
+    this.resizeObserver = new ResizeObserver(() => this.updateCompactClass());
+    this.resizeObserver.observe(container);
+    this.registerDomEvent(window, "resize", () => this.updateCompactClass());
 
     // --- Timer Visual Area ---
     const visual = container.createDiv("gp-timer-visual");
@@ -214,10 +224,14 @@ export class GentlePomoView extends ItemView {
     // --- Task List Container ---
     this.taskListContainer = controls.createDiv("gp-task-list");
 
-    // Daily-goal progress, mirrored from the status bar. Hidden on desktop via
-    // CSS; revealed on mobile, where Obsidian hides the status bar. Updated by
-    // main.ts through setGoalProgress().
+    // Daily-goal progress. Hidden on desktop via CSS (the status bar carries it
+    // there); revealed on mobile, where Obsidian hides the status bar. Populated by
+    // the plugin via refreshViewGoalProgress() — once now (so it shows immediately,
+    // even idle) and again on every timer tick (in timerListener below). Driving it
+    // from the view's own subscription rather than the status-bar update path is what
+    // makes it appear on mobile, where the status bar (and its update loop) is absent.
     this.goalProgressEl = container.createDiv("gp-goal-progress");
+    this.plugin.refreshViewGoalProgress(this);
 
     // (Control-button glyph sizing — including the iPad min-width floor — lives in
     // styles.css; see the `.gp-icon-btn svg.svg-icon` rule in the Mobile & touch section.)
@@ -226,6 +240,7 @@ export class GentlePomoView extends ItemView {
     this.timerListener = (state) => {
       this.lastState = state;
       this.applySettings();
+      this.plugin.refreshViewGoalProgress(this, state);
 
       if (state.isRunning) {
         startBtn.addClass("gp-hidden");
@@ -331,7 +346,25 @@ export class GentlePomoView extends ItemView {
       this.plugin.timer.offChange(this.timerListener);
       this.timerListener = null;
     }
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     return Promise.resolve();
+  }
+
+  /**
+   * Add .gp-compact to the panel when it's a short, wide leaf (e.g. iPhone
+   * landscape), so styles.css can shrink + un-pin the timer. Detection keys off the
+   * panel's measured *aspect ratio* (wider than tall) rather than an absolute height
+   * threshold — Obsidian's mobile webview reports unreliable viewport state, and an
+   * earlier `< 480px` height guess never matched. `h < 600` still excludes iPad
+   * landscape (~760px+); `Platform.isMobile` keeps desktop out. Measured off the real
+   * panel element, not a media query.
+   */
+  private updateCompactClass() {
+    const w = this.containerEl.clientWidth;
+    const h = this.containerEl.clientHeight;
+    const compact = Platform.isMobile && h < w && h < 600;
+    this.containerEl.toggleClass("gp-compact", compact);
   }
 
   /**

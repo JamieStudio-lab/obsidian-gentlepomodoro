@@ -311,19 +311,14 @@ export default class GentlePomoPlugin extends Plugin {
     this.statusTimeEl.setText(timeText);
 
     const focusTotalSeconds = this.statusFocusBaseSeconds + this.getLiveFocusSeconds(state);
-    const goalMinutes = this.settings.dailyFocusGoalMinutes;
-    let totalText = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
-    let goalMet = false;
-    if (goalMinutes > 0) {
-      totalText += ` / ${this.formatHoursMinutes(goalMinutes * 60)}`;
-      goalMet = focusTotalSeconds >= goalMinutes * 60;
-    }
+    const { text: totalText, met: goalMet } = this.focusGoalText(state);
     this.statusFocusTotal.setText(totalText);
     this.statusFocusTotal.toggleClass("gp-status-goal-met", goalMet);
 
-    // Mirror the same goal progress into the view, which surfaces it on mobile
-    // (where Obsidian hides the status bar). The view element is CSS-hidden on
-    // desktop, so this is a cheap no-op there.
+    // Mirror the same goal progress into the view (which surfaces it on mobile,
+    // where Obsidian hides the status bar). The view also pushes this from its own
+    // timer subscription, so this is just a belt-and-suspenders refresh during
+    // status-bar updates; the view element is CSS-hidden on desktop.
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
       if (leaf.view instanceof GentlePomoView) {
         leaf.view.setGoalProgress(totalText, goalMet);
@@ -337,6 +332,28 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.maybeFireGoalNotice(focusTotalSeconds);
     void this.maybeRefreshFocusTotal();
+  }
+
+  /** "Today Xh / Yh" focus-time + goal text and whether the goal is met, from the
+   *  current focus total. Shared by the status bar and the in-view mobile meter. */
+  private focusGoalText(state: TimerState): { text: string; met: boolean } {
+    const focusTotalSeconds = this.statusFocusBaseSeconds + this.getLiveFocusSeconds(state);
+    const goalMinutes = this.settings.dailyFocusGoalMinutes;
+    let text = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
+    let met = false;
+    if (goalMinutes > 0) {
+      text += ` / ${this.formatHoursMinutes(goalMinutes * 60)}`;
+      met = focusTotalSeconds >= goalMinutes * 60;
+    }
+    return { text, met };
+  }
+
+  /** Push the current focus-goal text into a view's in-view meter. Independent of the
+   *  status bar, so the goal renders on mobile (where the status bar is hidden) and even
+   *  when "Show in status bar" is off. Called by the view on open and on every timer tick. */
+  refreshViewGoalProgress(view: GentlePomoView, state: TimerState = this.timer.getState()): void {
+    const { text, met } = this.focusGoalText(state);
+    view.setGoalProgress(text, met);
   }
 
   private maybeFireGoalNotice(currentSeconds: number) {
