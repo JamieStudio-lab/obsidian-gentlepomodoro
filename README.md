@@ -41,12 +41,9 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 ### 📱 Mobile (iPad & phone)
 
-- Touch-friendly layout: larger buttons and tap targets, and the controls reflow to fit the screen instead of scrolling sideways.
-- **Smooth scrolling**: the whole panel scrolls as one surface — no getting stuck scrolling an inner task list or settings box — and the last row clears the iPhone home indicator.
-- **Adapts to the panel size**: the timer and controls stay vertically centered when there's room; on a short panel (e.g. iPhone landscape) the timer shrinks and scrolls out of the way instead of covering the buttons.
-- **Tap the timer shape to peek** at the running countdown (the touch equivalent of hovering on desktop — the countdown stays hidden by default so you don't fixate on the clock).
-- The daily-goal progress (`Today 1h 12m / 2h`) shows in the timer view, since Obsidian hides the status bar on mobile.
-- **Sound note:** completion cues need a prior tap (pressing **Start** unlocks audio), and iOS's hardware **silent/ring switch** mutes them when it's on — both are platform constraints, not plugin bugs.
+- Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
+- **Tap the timer shape** to peek at the hidden countdown; the daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
+- **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — both are platform constraints, not bugs.
 
 ## Install
 
