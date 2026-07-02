@@ -266,9 +266,14 @@
   opacity: 0;
 }
 
-/* ...unless hovering over the shape */
-.gp-timer-visual:hover .gp-timer-time {
-  opacity: 1;
+/* ...unless hovering over the shape. Gated to hover-capable devices: on touch, iOS
+   applies a "sticky" :hover on tap that persists until you tap elsewhere, which would
+   pin the number open and defeat the tap-to-peek auto-hide. Touch reveals via the
+   auto-hiding .gp-peek class instead (see the Mobile & touch section). */
+@media (hover: hover) {
+  .gp-timer-visual:hover .gp-timer-time {
+    opacity: 1;
+  }
 }
 
 .gp-mode-label {
@@ -357,16 +362,23 @@
   pointer-events: none;
 }
 
+/* Both wrappers hold exactly 2 icon buttons. Size the cap off the button
+   tokens (+ gap + 4px buffer) so it scales with the mobile bump automatically:
+   ~100px desktop (42px buttons), ~130px mobile (56px buttons). Kept on the base
+   rule (not a mobile override) so .gp-animated-wrapper.gp-hidden-animated
+   (max-width: 0, specificity 0,2,0) still beats it and the collapse animation
+   survives. */
+
 /* Specifics for Adjust Wrapper (+/-) */
 .gp-adjust-wrapper {
-  max-width: 120px; /* Sufficient for 2 buttons */
+  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
   /* Removed margin-right to keep spacing consistent via flex gap */
 }
 
 /* Specifics for Secondary Controls (Stop/Reset) */
 .gp-secondary-controls {
-  max-width: 120px; /* Adjusted for 2 buttons (Stop, Reset) / 
-    Removed margin-left to keep spacing consistent via flex gap */
+  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
+  /* Removed margin-left to keep spacing consistent via flex gap */
 }
 
 /* Base Button Style */
@@ -407,7 +419,7 @@
 }
 
 .gp-icon-btn svg {
-  /* Absolute px, deliberately. The button is a stable size (42px desktop / 48px
+  /* Absolute px, deliberately. The button is a stable size (42px desktop / 56px
      mobile), so a fixed glyph gives a predictable ratio. Relative units don't
      survive here: `em` resolves against the svg's font-size, which Obsidian's
      per-device button styles override (small on iPad/tablet); `%` collapses a
@@ -1220,9 +1232,11 @@
   opacity: 0;
 }
 
-/* ...unless hovering over the shape */
-.gp-timer-visual:hover .gp-total-time {
-  opacity: 0.8;
+/* ...unless hovering over the shape (hover-capable devices only; touch uses .gp-peek). */
+@media (hover: hover) {
+  .gp-timer-visual:hover .gp-total-time {
+    opacity: 0.8;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1275,17 +1289,19 @@
    ========================================================================= */
 body.is-mobile,
 body.is-tablet {
-  --gp-tap-min: 44px; /* Apple HIG minimum touch target */
+  --gp-tap-min: 50px; /* Comfortable touch target (above the 44px Apple HIG minimum) */
 }
 
 /* Obsidian mobile renders the app at a larger base scale, so the desktop glyph
-   looks small inside the touch-sized button. Bump the button and the glyph.
-   32px ≈ 66% of the 48px button. 2×48 + 12px gap = 108px, still under the 120px
-   max-width of the two-button wrappers. */
+   looks small inside the touch-sized button. Bump the button, the glyph, and the
+   inter-button gap (wider spacing → fewer fat-finger mis-taps). 36px ≈ 64% of the
+   56px button. The two-button wrappers' max-width is a calc() off these tokens, so
+   it grows to fit (2×56 + 14px gap = 126px) automatically. */
 body.is-mobile .gp-controls-row,
 body.is-tablet .gp-controls-row {
-  --gp-icon-btn-size: 48px;
-  --gp-icon-svg-size: 32px;
+  --gp-icon-btn-size: 56px;
+  --gp-icon-svg-size: 36px;
+  --gp-control-gap: 14px;
 }
 
 /* iPad/Safari collapses an SVG flex item's main-axis (width) to ~min-content (~8px),
@@ -1330,19 +1346,49 @@ body.is-mobile .gp-root.gp-compact .gp-timer-visual {
   margin-bottom: 1rem;
 }
 
-/* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor
-   of a full-width column whose button rows wrap, so the larger touch targets
-   never push the leaf into sideways scrolling. */
+/* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor of a
+   full-width column. Rather than wrapping the button rows (which split into two rows
+   in a narrow iPad sidebar), the buttons auto-shrink to fit — see the rules below. */
 body.is-mobile .gp-controls,
 body.is-tablet .gp-controls {
   width: 100%;
   max-width: 360px;
 }
 
+/* The row never wraps: it shrinks its buttons to fit the panel width instead. */
 body.is-mobile .gp-controls-row,
 body.is-tablet .gp-controls-row {
-  flex-wrap: wrap;
-  row-gap: var(--gp-control-gap, 12px);
+  flex-wrap: nowrap;
+}
+
+/* Let the row's children shrink. The base rule locks them at flex-shrink: 0 (so the
+   leaf scrolls horizontally on desktop); on touch we shrink to fit the sidebar. */
+body.is-mobile .gp-controls-row > *,
+body.is-tablet .gp-controls-row > * {
+  flex-shrink: 1;
+}
+
+/* Icon buttons flex between the 44px tap floor and the 56px token, staying square.
+   Applies to standalone buttons and the two-button wrappers' children alike, so the
+   whole row shrinks together. A full-width phone drawer keeps them at 56px; a narrow
+   iPad sidebar shrinks them toward 44px instead of wrapping. The SVG min-width floor
+   (36px) above still protects the glyph from the WebKit sliver bug — now only the
+   button shrinks, not the glyph (44 > 36). */
+body.is-mobile .gp-icon-btn,
+body.is-tablet .gp-icon-btn {
+  flex: 0 1 var(--gp-icon-btn-size);
+  width: auto;
+  min-width: 44px;
+  max-width: var(--gp-icon-btn-size);
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+/* iPad's sidebar is narrow — trim side padding so buttons stay nearer full size and
+   the row fits even at Obsidian's minimum sidebar width. iPhone keeps the 20px base. */
+body.is-tablet .gp-root {
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
 /* Touch-target floors (≥44px) for the smaller interactive elements. */
@@ -1372,9 +1418,17 @@ body.is-tablet .gp-settings-row input[type="number"] {
   height: var(--gp-tap-min);
 }
 
+/* Bigger task-picker button and dropdown rows — the primary touch targets for
+   linking a task. min-height on both tracks --gp-tap-min; extra padding on the
+   rows gives the text room and lifts single-line rows to a comfortable size. */
+body.is-mobile .gp-btn-full,
+body.is-tablet .gp-btn-full {
+  min-height: 60px;
+}
+
 body.is-mobile .gp-task-item,
 body.is-tablet .gp-task-item {
-  padding: 10px 12px;
+  padding: 14px;
   min-height: var(--gp-tap-min);
 }
 
@@ -1461,5 +1515,44 @@ body.is-tablet .gp-task-list.gp-visible {
 
   .gp-timer-visual.gp-peek .gp-total-time {
     opacity: 0.8;
+  }
+}
+
+/* Give the countdown number its own GPU layer on touch so its opacity fade composites
+   independently of the frosted-glass backdrop-filter's continuous repaints and the ~1Hz
+   ancestor style recalcs — otherwise iOS intermittently drops the 0.3s fade (abrupt hide)
+   and mis-rasterizes the text-shadow at the bottom of the digits. Safe: .gp-timer-time
+   has no other transform. */
+body.is-mobile .gp-timer-time,
+body.is-tablet .gp-timer-time {
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+/* Mobile (iPhone + iPad) + frosted glass: the size-pulse (gp-gentle-pulse) scales the
+   shape, which clips a backdrop-filter with border-radius + overflow: hidden — scaling that
+   rounded clip re-rasterizes the blurred edge every frame and flickers on iOS (constant on
+   iPhone, occasional on iPad). Swap in a shadow-only breath so the shape no longer scales;
+   the drop shadow lives outside the clip, so animating it never touches the backdrop edge.
+   Scoped to frosted glass (classic has no backdrop, so it keeps its pulse); desktop keeps
+   the full size-pulse. */
+@keyframes gp-gentle-pulse-glow {
+  0%,
+  100% {
+    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  }
+  50% {
+    box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+  }
+}
+
+/* Gated to no-preference: this selector out-specifies the reduced-motion `animation: none`
+   rule (0,4,1 vs 0,2,0), so without this gate it would re-enable motion for reduced-motion
+   users. Under reduce, this rule is absent and that block disables the shape animation. */
+@media (prefers-reduced-motion: no-preference) {
+  body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape,
+  body.is-tablet .gp-theme-frosted-glass .gp-state-running .gp-timer-shape {
+    animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
   }
 }

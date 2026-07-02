@@ -4,6 +4,19 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-07-01
+
+### Fixed
+
+- **The tapped-to-peek countdown now hides itself on iOS.** On touch, tapping the timer reveals the hidden countdown — but it stayed up until you tapped elsewhere. Two things were at play: there was no auto-hide, and iOS "sticks" the hover state on a tapped element, which pinned the number open. The number now fades away about 2 seconds after your last tap (tapping again keeps it visible and restarts the countdown), and the hover-reveal is limited to devices that actually hover, so the stuck-hover no longer overrides it. Desktop hover-to-peek is unchanged.
+- **The frosted-glass timer background no longer flickers on mobile during a session.** Two things made it shimmer (badly on iPhone, occasionally on iPad): the timer redrew its gradient ~20×/second, and the shape's gentle size-pulse continuously rescaled the frosted blur — both forcing the expensive blur to recompute far too often, including a blink right at the rounded inner edge. The gradient now updates about once per second (visually identical, since the colour transition already spans a full second), and on phone and tablet the shape breathes via its soft shadow instead of changing size, so the blurred edge stays still. Desktop keeps the full size-pulse.
+- **The peeked countdown now fades smoothly on iPad and iPhone.** Tapping to reveal/hide the number sometimes snapped instead of fading, occasionally with a small glitch at the bottom of the digits. The number is now drawn on its own layer, so its fade is independent of the animated background and stays consistently smooth.
+
+### Changed
+
+- **Larger mobile touch targets.** Icon buttons (48→56px) and their glyphs, the task-picker button and dropdown rows, and the settings controls are all bigger and easier to hit, with a little more space between adjacent buttons so a stray finger is less likely to trigger the wrong one. iPhone and iPad only; desktop is unchanged.
+- **The control buttons now shrink to fit a narrow panel instead of wrapping.** In a narrow iPad sidebar the first button row used to wrap onto two lines. The buttons now scale down to fit the width in a single row (staying square, down to a comfortable minimum), and grow back to full size on a wider panel or on iPhone.
+
 ## [0.3.1] — 2026-06-26
 
 ### Changed

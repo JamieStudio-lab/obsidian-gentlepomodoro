@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.3.1 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.3.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -42,7 +42,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 ### 📱 Mobile (iPad & phone)
 
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
-- **Tap the timer shape** to peek at the hidden countdown; the daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
+- **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
 - **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — both are platform constraints, not bugs.
 
 ## Install
@@ -104,6 +104,10 @@ Each session appends one line to the day's log file:
 
 - **[Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks)** — the task picker reads its emoji-marker format.
 - **[Dataview](https://github.com/blacksmithgu/obsidian-dataview)** — daily log lines use inline fields, ready to query.
+
+## Issues & feedback
+
+Found a bug or have an idea? Please open an issue on the [GitHub issue tracker](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues) — bug reports and feature requests are welcome.
 
 ## Development
 

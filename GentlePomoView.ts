@@ -1,7 +1,13 @@
 import { ItemView, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
-import { DEFAULT_SETTINGS, VIEW_TYPE_GENTLE_POMO, NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
+import {
+  DEFAULT_SETTINGS,
+  VIEW_TYPE_GENTLE_POMO,
+  NO_TASK_LABEL,
+  ONE_MINUTE_MS,
+  PEEK_REVEAL_MS,
+} from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
@@ -32,6 +38,10 @@ export class GentlePomoView extends ItemView {
   private timerListener: TimerListener | null = null;
   private lastState: TimerState | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private peekTimeout: number | null = null;
+  // Last countdown string rendered; used to skip the ~20Hz text/gradient writes on
+  // ticks where the displayed second didn't change (avoids iPhone backdrop flicker).
+  private lastTimeText: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -69,12 +79,18 @@ export class GentlePomoView extends ItemView {
     const visual = container.createDiv("gp-timer-visual");
     this.timerVisual = visual;
 
-    // Tap-to-peek: touch devices have no hover, so tapping the shape toggles
-    // the .gp-peek class — the touch equivalent of the desktop hover reveal
-    // that shows the running countdown (see styles.css). Harmless on desktop,
-    // where the :hover rule drives the reveal instead.
+    // Tap-to-peek: touch devices have no hover, so tapping the shape reveals
+    // the running countdown via the .gp-peek class — the touch equivalent of
+    // the desktop hover reveal (see styles.css). Since there's no hover-out to
+    // re-hide it, auto-hide after a short peek; each tap restarts the countdown.
+    // Harmless on desktop, where the :hover rule drives the reveal instead.
     this.registerDomEvent(visual, "click", () => {
-      visual.toggleClass("gp-peek", !visual.hasClass("gp-peek"));
+      visual.addClass("gp-peek");
+      if (this.peekTimeout !== null) window.clearTimeout(this.peekTimeout);
+      this.peekTimeout = window.setTimeout(() => {
+        visual.removeClass("gp-peek");
+        this.peekTimeout = null;
+      }, PEEK_REVEAL_MS);
     });
 
     // Create Shape
@@ -283,16 +299,9 @@ export class GentlePomoView extends ItemView {
       if (isOvertime) {
         timeText = "+" + timeText;
         this.timeLabel.addClass("gp-overtime");
-        const actualTotalMs = state.totalMs + absMs;
-        const tSec = Math.floor(actualTotalMs / 1000);
-        const tM = Math.floor(tSec / 60);
-        const tS = tSec % 60;
-        this.totalTimeLabel.setText(`Total: ${tM}:${tS.toString().padStart(2, "0")}`);
       } else {
         this.timeLabel.removeClass("gp-overtime");
-        this.totalTimeLabel.setText("");
       }
-      this.timeLabel.setText(timeText);
 
       this.modeLabel.setText(state.mode === "focus" ? "Focus" : "Rest");
       visual.toggleClass("gp-state-running", state.isRunning);
@@ -306,35 +315,55 @@ export class GentlePomoView extends ItemView {
         }
       }
 
-      // --- Gradient Transition Logic ---
-      let progress = 0;
-      if (state.totalMs > 0) {
-        progress = 1 - state.remainingMs / state.totalMs;
-      }
-      progress = Math.max(0, Math.min(1, progress));
+      // The timer ticks every 50ms (see TimerEngine), but the displayed second — and
+      // the gradient driven off it — only changes ~1×/sec. Writing the countdown text
+      // and the gradient CSS variables on every tick makes the frosted-glass
+      // backdrop-filter re-blur ~20×/sec, which flickers on iPhone. Gate those writes
+      // on the second actually changing; the 0.8s CSS transitions bridge the steps.
+      if (timeText !== this.lastTimeText) {
+        this.lastTimeText = timeText;
 
-      let skyPhase = 0;
-      if (state.mode === "focus") {
-        skyPhase = progress;
-      } else {
-        skyPhase = 1 - progress;
-      }
+        this.timeLabel.setText(timeText);
+        if (isOvertime) {
+          const actualTotalMs = state.totalMs + absMs;
+          const tSec = Math.floor(actualTotalMs / 1000);
+          const tM = Math.floor(tSec / 60);
+          const tS = tSec % 60;
+          this.totalTimeLabel.setText(`Total: ${tM}:${tS.toString().padStart(2, "0")}`);
+        } else {
+          this.totalTimeLabel.setText("");
+        }
 
-      let duskOpacity = 0;
-      let nightOpacity = 0;
-      if (skyPhase < 0.5) {
-        duskOpacity = skyPhase * 2;
-        nightOpacity = 0;
-      } else {
-        duskOpacity = 1;
-        nightOpacity = (skyPhase - 0.5) * 2;
+        // --- Gradient Transition Logic ---
+        let progress = 0;
+        if (state.totalMs > 0) {
+          progress = 1 - state.remainingMs / state.totalMs;
+        }
+        progress = Math.max(0, Math.min(1, progress));
+
+        let skyPhase = 0;
+        if (state.mode === "focus") {
+          skyPhase = progress;
+        } else {
+          skyPhase = 1 - progress;
+        }
+
+        let duskOpacity = 0;
+        let nightOpacity = 0;
+        if (skyPhase < 0.5) {
+          duskOpacity = skyPhase * 2;
+          nightOpacity = 0;
+        } else {
+          duskOpacity = 1;
+          nightOpacity = (skyPhase - 0.5) * 2;
+        }
+        visual.style.setProperty("--gp-dusk-opacity", duskOpacity.toString());
+        visual.style.setProperty("--gp-night-opacity", nightOpacity.toString());
+        // Consumed by frosted-glass orb color-mix() in styles.css. Uses skyPhase
+        // (not raw progress) so orbs warm→cool on focus and cool→warm on break,
+        // matching the classic theme's narrative arc.
+        visual.style.setProperty("--gp-progress", skyPhase.toString());
       }
-      visual.style.setProperty("--gp-dusk-opacity", duskOpacity.toString());
-      visual.style.setProperty("--gp-night-opacity", nightOpacity.toString());
-      // Consumed by frosted-glass orb color-mix() in styles.css. Uses skyPhase
-      // (not raw progress) so orbs warm→cool on focus and cool→warm on break,
-      // matching the classic theme's narrative arc.
-      visual.style.setProperty("--gp-progress", skyPhase.toString());
     };
 
     this.plugin.timer.onChange(this.timerListener);
@@ -348,6 +377,10 @@ export class GentlePomoView extends ItemView {
     }
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    if (this.peekTimeout !== null) {
+      window.clearTimeout(this.peekTimeout);
+      this.peekTimeout = null;
+    }
     return Promise.resolve();
   }
 
