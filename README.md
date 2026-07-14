@@ -66,6 +66,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **Settings tab** (Settings → Gentle Pomodoro):
 
 - Tasks folder path, log folder path.
+- **Show task selector**: show or hide the in-view task picker (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task).
 - Auto-open on startup, show status bar, day/night indicator.
 - **Theme**: `Classic` (default) or `Frosted glass`.
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).

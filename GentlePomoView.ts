@@ -31,6 +31,7 @@ export class GentlePomoView extends ItemView {
   secondaryControlsWrapper!: HTMLDivElement;
 
   // Task List Elements
+  taskSelectorRow!: HTMLDivElement;
   taskListContainer!: HTMLDivElement;
   taskListVisible = false;
   taskBtn!: HTMLButtonElement;
@@ -219,6 +220,7 @@ export class GentlePomoView extends ItemView {
 
     // ROW 3: Task Selector
     const row3 = controls.createDiv("gp-controls-row");
+    this.taskSelectorRow = row3;
     this.taskBtn = row3.createEl("button", { cls: "gp-btn gp-btn-full" });
 
     const btnLabel = this.taskBtn.createDiv("gp-task-btn-label");
@@ -415,6 +417,17 @@ export class GentlePomoView extends ItemView {
     const theme = this.plugin.settings.theme;
     this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
     this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
+
+    // Task-selector visibility. Idempotent, so safe to run on every tick. The
+    // unlink-on-hide side effect lives in the settings toggle's onChange (calling
+    // setTask here would fire every tick); on load no task is ever pre-linked.
+    const showSelector = this.plugin.settings.showTaskSelector;
+    this.taskSelectorRow?.toggleClass("gp-hidden", !showSelector);
+    this.taskListContainer?.toggleClass("gp-hidden", !showSelector);
+    if (!showSelector && this.taskListVisible) {
+      this.taskListVisible = false;
+      this.taskListContainer.removeClass("gp-visible");
+    }
 
     if (!this.dayNightIndicator) return;
     const enabled = this.plugin.settings.showDayNightIndicator;

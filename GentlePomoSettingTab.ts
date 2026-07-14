@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type GentlePomoPlugin from "./main";
-import { VIEW_TYPE_GENTLE_POMO } from "./constants";
+import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
@@ -43,6 +43,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             this.plugin.settings.tasksPath = value;
             await this.plugin.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName("Show task selector")
+      .setDesc(
+        "Show the task picker in the timer panel. Turning this off unlinks the current task."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
+          this.plugin.settings.showTaskSelector = value;
+          await this.plugin.saveSettings();
+          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
+            this.plugin.timer.setTask(NO_TASK_LABEL);
+          }
+          applySettingsToOpenViews();
+        })
       );
 
     new Setting(containerEl)

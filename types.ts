@@ -32,6 +32,9 @@ export interface GentlePomoSettings {
   tasksPath: string;
   logFolderPath: string;
 
+  // Show the task picker (button + dropdown) in the timer panel.
+  showTaskSelector: boolean;
+
   // Daily focus goal (set to 0 to disable)
   dailyFocusGoalMinutes: number;
   goalNoticeEnabled: boolean;

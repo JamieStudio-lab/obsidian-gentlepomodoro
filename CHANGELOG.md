@@ -4,6 +4,12 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-07-14
+
+### Added
+
+- **Show/hide the task selector.** A new **Show task selector** toggle in the plugin settings (Settings → Gentle Pomodoro) lets you remove the "Current task" picker and its dropdown from the timer panel if you don't link sessions to tasks. It's smart about the default: hidden when you haven't set a **Tasks folder path**, shown when you have — so a fresh install stays uncluttered while existing users keep their picker. After that, your explicit choice is always respected. Turning the selector off also unlinks the current task (there'd be no UI to change it otherwise).
+
 ## [0.3.2] — 2026-07-01
 
 ### Fixed
