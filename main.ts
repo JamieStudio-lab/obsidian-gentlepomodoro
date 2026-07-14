@@ -171,7 +171,15 @@ export default class GentlePomoPlugin extends Plugin {
       loaded.theme = "classic";
       migrated = true;
     }
+    // First-run/upgrade default for the task-selector toggle: derive it once from
+    // the tasks path (hidden when no path is set, shown when a path exists), then
+    // persist so the user's explicit choice sticks on later loads.
+    const deriveTaskSelector = !loaded || loaded.showTaskSelector === undefined;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
+    if (deriveTaskSelector) {
+      this.settings.showTaskSelector = this.settings.tasksPath.trim() !== "";
+      migrated = true;
+    }
     if (migrated) {
       await this.saveSettings();
     }

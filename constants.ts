@@ -29,6 +29,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   soundVolume: 0.7,
   tasksPath: "",
   logFolderPath: "",
+  showTaskSelector: true,
   dailyFocusGoalMinutes: 120,
   goalNoticeEnabled: true,
   incrementPomodoroCountOnFinish: false,
