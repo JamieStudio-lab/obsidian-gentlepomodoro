@@ -30,6 +30,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       }
     };
 
+    new Setting(containerEl).setName("Task selector").setHeading();
+
     new Setting(containerEl)
       .setName("Tasks folder path")
       .setDesc(
@@ -60,6 +62,30 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           applySettingsToOpenViews();
         })
       );
+
+    new Setting(containerEl)
+      .setName("Task lookahead window")
+      .setDesc(
+        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("3", "3 Days")
+          .addOption("5", "5 Days")
+          .addOption("7", "7 Days")
+          .addOption("14", "14 Days")
+          .addOption("30", "30 Days")
+          .setValue(this.plugin.settings.taskSelectorDays.toString())
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n > 0) {
+              this.plugin.settings.taskSelectorDays = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl).setName("Display & behavior").setHeading();
 
     new Setting(containerEl)
       .setName("Pomodoro logs folder")

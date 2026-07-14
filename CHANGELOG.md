@@ -4,6 +4,16 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-07-14
+
+### Added
+
+- **Configurable task lookahead window.** A new **Task lookahead window** dropdown in the plugin settings (Settings → Gentle Pomodoro) lets you choose how many days ahead the task selector reaches — **3, 5, 7, 14, or 30 days** — instead of the previous fixed 3-day view. Overdue tasks always appear regardless of the window, and tasks stay grouped by date (Overdue / Today / Tomorrow / weekday). Defaults to 3 days, so existing setups are unchanged until you widen it.
+
+### Changed
+
+- **Settings tab is now grouped.** The plugin settings page organizes its previously-ungrouped top settings under **Task selector** (tasks folder, show selector, lookahead window) and **Display & behavior** (logs folder, auto-open, status bar, day/night, theme) headings, so related options are easier to find.
+
 ## [0.4.1] — 2026-07-14
 
 ### Added
