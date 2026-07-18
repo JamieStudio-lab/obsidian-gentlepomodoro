@@ -4,10 +4,11 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.2] — 2026-07-14
+## [0.4.2] — 2026-07-18
 
 ### Added
 
+- **Settings now appear in Obsidian's settings search (Obsidian 1.13+).** The plugin settings tab adopts Obsidian's declarative settings API (`getSettingDefinitions()`), so every Gentle Pomodoro setting is indexed by the global settings search introduced in Obsidian 1.13. All groups, names, and behaviors are unchanged; on Obsidian 1.13+ the numeric fields (long break duration/frequency, daily focus goal) additionally render as proper number inputs with minimum-value enforcement. Older Obsidian versions keep the previous settings page as-is — the minimum app version stays 1.7.2.
 - **Configurable task lookahead window.** A new **Task lookahead window** dropdown in the plugin settings (Settings → Gentle Pomodoro) lets you choose how many days ahead the task selector reaches — **3, 5, 7, 14, or 30 days** — instead of the previous fixed 3-day view. Overdue tasks always appear regardless of the window, and tasks stay grouped by date (Overdue / Today / Tomorrow / weekday). Defaults to 3 days, so existing setups are unchanged until you widen it.
 
 ### Changed

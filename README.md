@@ -63,7 +63,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 ## Configure
 
-**Settings tab** (Settings → Gentle Pomodoro), grouped into sections:
+**Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
 - **Display & behavior**: log folder path, auto-open on startup, show status bar, day/night indicator, and **theme** (`Classic` default or `Frosted glass`).
