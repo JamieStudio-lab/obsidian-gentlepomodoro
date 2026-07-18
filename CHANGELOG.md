@@ -4,6 +4,12 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-07-18
+
+### Changed
+
+- **The task picker's empty state has a proper design.** When no tasks fall inside the lookahead window, the dropdown used to show a bare, unpadded line of plain text. It's now a centred empty state that matches the rest of the panel: a soft calendar icon, an "All clear" title, and a muted hint naming the window — "No tasks scheduled or due in the next N days." (The hint says _scheduled or due_ because that's exactly what the picker filters on; overdue tasks always show, so an empty list really does mean nothing is pending.)
+
 ## [0.4.2] — 2026-07-18
 
 ### Added

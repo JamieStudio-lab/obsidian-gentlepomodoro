@@ -857,6 +857,47 @@
   stroke-width: 3px;
 }
 
+/* Empty state — no dated tasks inside the lookahead window. A centered,
+   padded block (soft icon + title + hint) instead of a bare text line. */
+.gp-task-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 18px 14px 20px;
+  text-align: center;
+}
+
+.gp-task-empty-icon {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 6px;
+  color: var(--text-faint);
+}
+
+.gp-task-empty-icon svg {
+  width: 26px;
+  height: 26px;
+  /* min-* floor + no-shrink: WebKit collapses an SVG flex item's width to
+     ~min-content on iPad (same bug as the control glyphs — see Mobile & touch). */
+  min-width: 26px;
+  min-height: 26px;
+  flex-shrink: 0;
+  stroke-width: 1.75px;
+}
+
+.gp-task-empty-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.gp-task-empty-hint {
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
 /* --- Frosted-glass theme ---
    A "3D" frosted pane in front of three drifting color orbs. The orb
    colors interpolate through the sunrise→sunset palette as --gp-progress

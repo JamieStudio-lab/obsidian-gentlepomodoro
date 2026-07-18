@@ -475,9 +475,12 @@ export class GentlePomoView extends ItemView {
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {
-      this.taskListContainer.createDiv({
-        cls: "gp-task-item-empty",
-        text: `No tasks found for the next ${this.plugin.settings.taskSelectorDays} days.`,
+      const empty = this.taskListContainer.createDiv("gp-task-empty");
+      setIcon(empty.createDiv("gp-task-empty-icon"), "calendar-check");
+      empty.createDiv({ cls: "gp-task-empty-title", text: "All clear" });
+      empty.createDiv({
+        cls: "gp-task-empty-hint",
+        text: `No tasks scheduled or due in the next ${this.plugin.settings.taskSelectorDays} days.`,
       });
       return;
     }
