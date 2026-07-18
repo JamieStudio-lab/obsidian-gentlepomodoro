@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.3.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.4.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -18,7 +18,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 ### ✅ Task integration
 
 - Pick tasks straight from your vault. Compatible with the [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) format: `- [ ] Task ⏳ 2025-12-23 🆔 abc123`.
-- Smart filtering: Overdue, Today, Tomorrow, upcoming (next 3 days).
+- Smart filtering: Overdue, Today, Tomorrow, and upcoming tasks. Choose the lookahead window (3 / 5 / 7 / 14 / 30 days) in settings; overdue tasks always show.
 - One-click **Unlink current task**.
 - **Opt-in**: increment `🍅 N` on the task line each time you finish a focus session for it. Lifetime count per task; legacy `🍅 N (date)` markers from earlier builds are read correctly and migrate on next write.
 
@@ -63,12 +63,10 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 ## Configure
 
-**Settings tab** (Settings → Gentle Pomodoro):
+**Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
-- Tasks folder path, log folder path.
-- **Show task selector**: show or hide the in-view task picker (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task).
-- Auto-open on startup, show status bar, day/night indicator.
-- **Theme**: `Classic` (default) or `Frosted glass`.
+- **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
+- **Display & behavior**: log folder path, auto-open on startup, show status bar, day/night indicator, and **theme** (`Classic` default or `Frosted glass`).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).

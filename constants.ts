@@ -30,6 +30,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   tasksPath: "",
   logFolderPath: "",
   showTaskSelector: true,
+  taskSelectorDays: 3,
   dailyFocusGoalMinutes: 120,
   goalNoticeEnabled: true,
   incrementPomodoroCountOnFinish: false,

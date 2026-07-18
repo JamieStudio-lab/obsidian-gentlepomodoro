@@ -470,13 +470,14 @@ export class GentlePomoView extends ItemView {
 
     const tasks = await fetchTasks(this.plugin.app, {
       tasksPath: this.plugin.settings.tasksPath,
+      limitDays: this.plugin.settings.taskSelectorDays,
     });
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {
       this.taskListContainer.createDiv({
         cls: "gp-task-item-empty",
-        text: "No tasks found for next 3 days.",
+        text: `No tasks found for the next ${this.plugin.settings.taskSelectorDays} days.`,
       });
       return;
     }

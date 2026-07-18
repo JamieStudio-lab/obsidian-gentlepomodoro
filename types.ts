@@ -35,6 +35,10 @@ export interface GentlePomoSettings {
   // Show the task picker (button + dropdown) in the timer panel.
   showTaskSelector: boolean;
 
+  // How many days ahead the task selector shows scheduled/due tasks.
+  // Overdue tasks always appear regardless of this window.
+  taskSelectorDays: number;
+
   // Daily focus goal (set to 0 to disable)
   dailyFocusGoalMinutes: number;
   goalNoticeEnabled: boolean;

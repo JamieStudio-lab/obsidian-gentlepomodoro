@@ -1,6 +1,9 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
+import type { GentlePomoSettings } from "./types";
+
+type SettingsKey = keyof GentlePomoSettings;
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
@@ -10,25 +13,223 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  display(): void {
+  private applySettingsToOpenViews(): void {
+    const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
+      if (!view || typeof view !== "object") return false;
+      return (
+        "applySettings" in view &&
+        typeof (view as { applySettings?: unknown }).applySettings === "function"
+      );
+    };
+
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO);
+    for (const leaf of leaves) {
+      const view: unknown = leaf.view;
+      if (hasApplySettings(view)) view.applySettings();
+    }
+  }
+
+  override getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
+    return [
+      {
+        type: "group",
+        heading: "Task selector",
+        items: [
+          {
+            name: "Tasks folder path",
+            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
+            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
+          },
+          {
+            name: "Show task selector",
+            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
+            control: { type: "toggle", key: "showTaskSelector" },
+          },
+          {
+            name: "Task lookahead window",
+            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
+            control: {
+              type: "dropdown",
+              key: "taskSelectorDays",
+              options: {
+                "3": "3 Days",
+                "5": "5 Days",
+                "7": "7 Days",
+                "14": "14 Days",
+                "30": "30 Days",
+              },
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Display & behavior",
+        items: [
+          {
+            name: "Pomodoro logs folder",
+            desc: "Folder to store daily log files (e.g., 'pomodoro_logs').",
+            control: { type: "text", key: "logFolderPath", placeholder: "Example: pomodoro_logs" },
+          },
+          {
+            name: "Auto-open on startup",
+            desc: "Open the view in the right panel when Obsidian starts.",
+            control: { type: "toggle", key: "autoOpenOnStartup" },
+          },
+          {
+            name: "Show status bar",
+            desc: "Show the status bar indicator.",
+            control: { type: "toggle", key: "showInStatusBar" },
+          },
+          {
+            name: "Day/night indicator",
+            desc: "Show a subtle sun/moon indicator above the timer.",
+            control: { type: "toggle", key: "showDayNightIndicator" },
+          },
+          {
+            name: "Theme",
+            desc: "Visual style for the timer.",
+            control: {
+              type: "dropdown",
+              key: "theme",
+              options: { classic: "Classic", "frosted-glass": "Frosted glass" },
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Long break",
+        items: [
+          {
+            name: "Long break duration (minutes)",
+            desc: "Length of the long break that replaces a regular break.",
+            control: { type: "number", key: "longBreakMinutes", min: 1 },
+          },
+          {
+            name: "Long break frequency",
+            desc: "Number of focus sessions before each long break (classic technique uses 4).",
+            control: { type: "number", key: "longBreakEvery", min: 1 },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Daily focus goal",
+        items: [
+          {
+            name: "Daily focus goal (minutes)",
+            desc: "Set to 0 to disable. The status bar shows today's progress against this goal.",
+            control: { type: "number", key: "dailyFocusGoalMinutes", min: 0 },
+          },
+          {
+            name: "Goal-hit notice",
+            desc: "Show a one-time notice when today's focus first crosses the daily goal.",
+            control: { type: "toggle", key: "goalNoticeEnabled" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Task integration",
+        items: [
+          {
+            name: "Increment task pomodoro count on finish",
+            desc: "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task.",
+            control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
+          },
+        ],
+      },
+    ];
+  }
+
+  override getControlValue(key: string): unknown {
+    // The lookahead dropdown persists a number but renders string option keys.
+    if (key === "taskSelectorDays") return this.plugin.settings.taskSelectorDays.toString();
+    return this.plugin.settings[key as SettingsKey];
+  }
+
+  override async setControlValue(key: string, value: unknown): Promise<void> {
+    const settings = this.plugin.settings;
+    switch (key as SettingsKey) {
+      case "tasksPath":
+        settings.tasksPath = String(value);
+        break;
+      case "showTaskSelector": {
+        const show = Boolean(value);
+        settings.showTaskSelector = show;
+        await this.plugin.saveSettings();
+        if (!show && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
+          this.plugin.timer.setTask(NO_TASK_LABEL);
+        }
+        this.applySettingsToOpenViews();
+        return;
+      }
+      case "taskSelectorDays": {
+        const n = parseInt(String(value), 10);
+        if (!Number.isFinite(n) || n <= 0) return;
+        settings.taskSelectorDays = n;
+        break;
+      }
+      case "logFolderPath":
+        settings.logFolderPath = String(value);
+        break;
+      case "autoOpenOnStartup":
+        settings.autoOpenOnStartup = Boolean(value);
+        break;
+      case "showInStatusBar":
+        await this.plugin.setStatusBarVisibility(Boolean(value));
+        return;
+      case "showDayNightIndicator":
+        settings.showDayNightIndicator = Boolean(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "theme":
+        settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "longBreakMinutes": {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n <= 0) return;
+        settings.longBreakMinutes = Math.floor(n);
+        break;
+      }
+      case "longBreakEvery": {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 1) return;
+        settings.longBreakEvery = Math.floor(n);
+        break;
+      }
+      case "dailyFocusGoalMinutes": {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) return;
+        settings.dailyFocusGoalMinutes = Math.floor(n);
+        break;
+      }
+      case "goalNoticeEnabled":
+        settings.goalNoticeEnabled = Boolean(value);
+        break;
+      case "incrementPomodoroCountOnFinish":
+        settings.incrementPomodoroCountOnFinish = Boolean(value);
+        break;
+      default:
+        return;
+    }
+    await this.plugin.saveSettings();
+  }
+
+  // Fallback for Obsidian < 1.13.0 (minAppVersion is below that). Never called
+  // on 1.13+, where the tab renders declaratively from getSettingDefinitions()
+  // — keep both paths in sync when adding or changing a setting.
+  override display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
-    const applySettingsToOpenViews = () => {
-      const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
-        if (!view || typeof view !== "object") return false;
-        return (
-          "applySettings" in view &&
-          typeof (view as { applySettings?: unknown }).applySettings === "function"
-        );
-      };
+    const applySettingsToOpenViews = () => this.applySettingsToOpenViews();
 
-      const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO);
-      for (const leaf of leaves) {
-        const view: unknown = leaf.view;
-        if (hasApplySettings(view)) view.applySettings();
-      }
-    };
+    new Setting(containerEl).setName("Task selector").setHeading();
 
     new Setting(containerEl)
       .setName("Tasks folder path")
@@ -60,6 +261,30 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           applySettingsToOpenViews();
         })
       );
+
+    new Setting(containerEl)
+      .setName("Task lookahead window")
+      .setDesc(
+        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("3", "3 Days")
+          .addOption("5", "5 Days")
+          .addOption("7", "7 Days")
+          .addOption("14", "14 Days")
+          .addOption("30", "30 Days")
+          .setValue(this.plugin.settings.taskSelectorDays.toString())
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n > 0) {
+              this.plugin.settings.taskSelectorDays = n;
+              await this.plugin.saveSettings();
+            }
+          })
+      );
+
+    new Setting(containerEl).setName("Display & behavior").setHeading();
 
     new Setting(containerEl)
       .setName("Pomodoro logs folder")

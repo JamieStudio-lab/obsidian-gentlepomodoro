@@ -14,7 +14,7 @@ declare const moment: MomentFactory;
 const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
 export default class GentlePomoPlugin extends Plugin {
-  settings!: GentlePomoSettings;
+  override settings!: GentlePomoSettings;
   timer!: TimerEngine;
   logManager!: LogManager;
   private statusBarEl: HTMLElement | null = null;
