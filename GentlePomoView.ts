@@ -475,12 +475,23 @@ export class GentlePomoView extends ItemView {
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {
+      // An empty tasksPath scans the whole vault, so "no path + no results"
+      // almost always means task linking was never set up — nudge instead.
+      const configured = this.plugin.settings.tasksPath.trim() !== "";
       const empty = this.taskListContainer.createDiv("gp-task-empty");
-      setIcon(empty.createDiv("gp-task-empty-icon"), "calendar-check");
-      empty.createDiv({ cls: "gp-task-empty-title", text: "All clear" });
+      setIcon(
+        empty.createDiv("gp-task-empty-icon"),
+        configured ? "calendar-check" : "folder-search"
+      );
+      empty.createDiv({
+        cls: "gp-task-empty-title",
+        text: configured ? "All clear" : "Nothing here yet",
+      });
       empty.createDiv({
         cls: "gp-task-empty-hint",
-        text: `No tasks scheduled or due in the next ${this.plugin.settings.taskSelectorDays} days.`,
+        text: configured
+          ? `No tasks scheduled or due in the next ${this.plugin.settings.taskSelectorDays} days.`
+          : "Set a Tasks folder path in the plugin settings to pick tasks here.",
       });
       return;
     }

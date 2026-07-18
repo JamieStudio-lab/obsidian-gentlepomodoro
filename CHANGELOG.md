@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **The task picker's empty state has a proper design.** When no tasks fall inside the lookahead window, the dropdown used to show a bare, unpadded line of plain text. It's now a centred empty state that matches the rest of the panel: a soft calendar icon, an "All clear" title, and a muted hint naming the window — "No tasks scheduled or due in the next N days." (The hint says _scheduled or due_ because that's exactly what the picker filters on; overdue tasks always show, so an empty list really does mean nothing is pending.)
+- **The task picker's empty state has a proper design.** When no tasks fall inside the lookahead window, the dropdown used to show a bare, unpadded line of plain text. It's now a centred empty state that matches the rest of the panel: a soft calendar icon, an "All clear" title, and a muted hint naming the window — "No tasks scheduled or due in the next N days." (The hint says _scheduled or due_ because that's exactly what the picker filters on; overdue tasks always show, so an empty list really does mean nothing is pending.) And when no **Tasks folder path** is configured at all, the empty state becomes a gentle setup nudge instead — a folder icon, "Nothing here yet", and a hint pointing at the plugin settings.
 
 ## [0.4.2] — 2026-07-18
 
