@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.4.3 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.4.4 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -12,6 +12,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Ambient shape that transitions through warm → cool colors as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
+- **Estimated end time** — while a session runs, the timer shows the wall-clock time you'll finish (e.g. `Ends 15:30`, with `(+1 day)` if it crosses midnight): a calm way to know when you're free without watching the countdown. Toggle in settings.
 - Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
 - Respects `prefers-reduced-motion`: timer animations soften when the OS requests it.
 
@@ -66,7 +67,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
-- **Display & behavior**: log folder path, auto-open on startup, show status bar, day/night indicator, and **theme** (`Classic` default or `Frosted glass`).
+- **Display & behavior**: log folder path, auto-open on startup, show status bar, day/night indicator, **estimated end time** (shown while a session runs), and **theme** (`Classic` default or `Frosted glass`).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).

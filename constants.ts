@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   showInStatusBar: true,
   showStatusBarTimeLeft: false,
   showDayNightIndicator: true,
+  showEndTime: true,
   theme: "classic",
   soundEnabled: true,
   soundVolume: 0.7,

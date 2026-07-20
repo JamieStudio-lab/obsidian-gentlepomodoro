@@ -87,6 +87,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "showDayNightIndicator" },
           },
           {
+            name: "Show estimated end time",
+            desc: "Show the projected finish time on the timer while a session is running.",
+            control: { type: "toggle", key: "showEndTime" },
+          },
+          {
             name: "Theme",
             desc: "Visual style for the timer.",
             control: {
@@ -182,6 +187,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       case "showDayNightIndicator":
         settings.showDayNightIndicator = Boolean(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "showEndTime":
+        settings.showEndTime = Boolean(value);
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
@@ -324,6 +334,17 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
           this.plugin.settings.showDayNightIndicator = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Show estimated end time")
+      .setDesc("Show the projected finish time on the timer while a session is running.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
+          this.plugin.settings.showEndTime = value;
           await this.plugin.saveSettings();
           applySettingsToOpenViews();
         })

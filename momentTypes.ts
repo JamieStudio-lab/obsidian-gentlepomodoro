@@ -7,11 +7,11 @@ export interface MomentLike {
   add(amount: number, unit: MomentUnit): MomentLike;
 
   format(formatString: string): string;
-  diff(other: MomentLike): number;
+  diff(other: MomentLike, unit?: MomentUnit): number;
 
   isSameOrBefore(other: MomentLike): boolean;
   isBefore(other: MomentLike): boolean;
   isSame(other: MomentLike, unit?: MomentUnit): boolean;
 }
 
-export type MomentFactory = (input?: string) => MomentLike;
+export type MomentFactory = (input?: string | number) => MomentLike;
