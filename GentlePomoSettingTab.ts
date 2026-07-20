@@ -64,6 +64,31 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: "Timer appearance",
+        items: [
+          {
+            name: "Theme",
+            desc: "Visual style for the timer.",
+            control: {
+              type: "dropdown",
+              key: "theme",
+              options: { classic: "Classic", "frosted-glass": "Frosted glass" },
+            },
+          },
+          {
+            name: "Day/night indicator",
+            desc: "Show a subtle sun/moon indicator above the timer.",
+            control: { type: "toggle", key: "showDayNightIndicator" },
+          },
+          {
+            name: "Show estimated end time",
+            desc: "Show the projected finish time on the timer while a session is running.",
+            control: { type: "toggle", key: "showEndTime" },
+          },
+        ],
+      },
+      {
+        type: "group",
         heading: "Display & behavior",
         items: [
           {
@@ -80,25 +105,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Show status bar",
             desc: "Show the status bar indicator.",
             control: { type: "toggle", key: "showInStatusBar" },
-          },
-          {
-            name: "Day/night indicator",
-            desc: "Show a subtle sun/moon indicator above the timer.",
-            control: { type: "toggle", key: "showDayNightIndicator" },
-          },
-          {
-            name: "Show estimated end time",
-            desc: "Show the projected finish time on the timer while a session is running.",
-            control: { type: "toggle", key: "showEndTime" },
-          },
-          {
-            name: "Theme",
-            desc: "Visual style for the timer.",
-            control: {
-              type: "dropdown",
-              key: "theme",
-              options: { classic: "Classic", "frosted-glass": "Frosted glass" },
-            },
           },
         ],
       },
@@ -294,6 +300,45 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           })
       );
 
+    new Setting(containerEl).setName("Timer appearance").setHeading();
+
+    new Setting(containerEl)
+      .setName("Theme")
+      .setDesc("Visual style for the timer.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("classic", "Classic")
+          .addOption("frosted-glass", "Frosted glass")
+          .setValue(this.plugin.settings.theme)
+          .onChange(async (value) => {
+            this.plugin.settings.theme = value as "classic" | "frosted-glass";
+            await this.plugin.saveSettings();
+            applySettingsToOpenViews();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Day/night indicator")
+      .setDesc("Show a subtle sun/moon indicator above the timer.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
+          this.plugin.settings.showDayNightIndicator = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Show estimated end time")
+      .setDesc("Show the projected finish time on the timer while a session is running.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
+          this.plugin.settings.showEndTime = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
     new Setting(containerEl).setName("Display & behavior").setHeading();
 
     new Setting(containerEl)
@@ -326,43 +371,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         toggle.setValue(this.plugin.settings.showInStatusBar).onChange(async (value) => {
           await this.plugin.setStatusBarVisibility(value);
         })
-      );
-
-    new Setting(containerEl)
-      .setName("Day/night indicator")
-      .setDesc("Show a subtle sun/moon indicator above the timer.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
-          this.plugin.settings.showDayNightIndicator = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Show estimated end time")
-      .setDesc("Show the projected finish time on the timer while a session is running.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
-          this.plugin.settings.showEndTime = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Theme")
-      .setDesc("Visual style for the timer.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("classic", "Classic")
-          .addOption("frosted-glass", "Frosted glass")
-          .setValue(this.plugin.settings.theme)
-          .onChange(async (value) => {
-            this.plugin.settings.theme = value as "classic" | "frosted-glass";
-            await this.plugin.saveSettings();
-            applySettingsToOpenViews();
-          })
       );
 
     new Setting(containerEl).setName("Long break").setHeading();
