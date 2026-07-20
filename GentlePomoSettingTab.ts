@@ -33,32 +33,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: "Task selector",
+        heading: "Display & behavior",
         items: [
           {
-            name: "Tasks folder path",
-            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
-            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
+            name: "Pomodoro logs folder",
+            desc: "Folder to store daily log files (e.g., 'pomodoro_logs').",
+            control: { type: "text", key: "logFolderPath", placeholder: "Example: pomodoro_logs" },
           },
           {
-            name: "Show task selector",
-            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
-            control: { type: "toggle", key: "showTaskSelector" },
+            name: "Auto-open on startup",
+            desc: "Open the view in the right panel when Obsidian starts.",
+            control: { type: "toggle", key: "autoOpenOnStartup" },
           },
           {
-            name: "Task lookahead window",
-            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
-            control: {
-              type: "dropdown",
-              key: "taskSelectorDays",
-              options: {
-                "3": "3 Days",
-                "5": "5 Days",
-                "7": "7 Days",
-                "14": "14 Days",
-                "30": "30 Days",
-              },
-            },
+            name: "Show status bar",
+            desc: "Show the status bar indicator.",
+            control: { type: "toggle", key: "showInStatusBar" },
           },
         ],
       },
@@ -84,27 +74,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Show estimated end time",
             desc: "Show the projected finish time on the timer while a session is running.",
             control: { type: "toggle", key: "showEndTime" },
-          },
-        ],
-      },
-      {
-        type: "group",
-        heading: "Display & behavior",
-        items: [
-          {
-            name: "Pomodoro logs folder",
-            desc: "Folder to store daily log files (e.g., 'pomodoro_logs').",
-            control: { type: "text", key: "logFolderPath", placeholder: "Example: pomodoro_logs" },
-          },
-          {
-            name: "Auto-open on startup",
-            desc: "Open the view in the right panel when Obsidian starts.",
-            control: { type: "toggle", key: "autoOpenOnStartup" },
-          },
-          {
-            name: "Show status bar",
-            desc: "Show the status bar indicator.",
-            control: { type: "toggle", key: "showInStatusBar" },
           },
         ],
       },
@@ -137,6 +106,37 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Goal-hit notice",
             desc: "Show a one-time notice when today's focus first crosses the daily goal.",
             control: { type: "toggle", key: "goalNoticeEnabled" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Task selector",
+        items: [
+          {
+            name: "Tasks folder path",
+            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
+            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
+          },
+          {
+            name: "Show task selector",
+            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
+            control: { type: "toggle", key: "showTaskSelector" },
+          },
+          {
+            name: "Task lookahead window",
+            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
+            control: {
+              type: "dropdown",
+              key: "taskSelectorDays",
+              options: {
+                "3": "3 Days",
+                "5": "5 Days",
+                "7": "7 Days",
+                "14": "14 Days",
+                "30": "30 Days",
+              },
+            },
           },
         ],
       },
@@ -245,59 +245,38 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     const applySettingsToOpenViews = () => this.applySettingsToOpenViews();
 
-    new Setting(containerEl).setName("Task selector").setHeading();
+    new Setting(containerEl).setName("Display & behavior").setHeading();
 
     new Setting(containerEl)
-      .setName("Tasks folder path")
-      .setDesc(
-        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
-      )
+      .setName("Pomodoro logs folder")
+      .setDesc("Folder to store daily log files (e.g., 'pomodoro_logs').")
       .addText((text) =>
         text
-          .setPlaceholder("Example: projects/active")
-          .setValue(this.plugin.settings.tasksPath)
+          .setPlaceholder("Example: pomodoro_logs")
+          .setValue(this.plugin.settings.logFolderPath)
           .onChange(async (value) => {
-            this.plugin.settings.tasksPath = value;
+            this.plugin.settings.logFolderPath = value;
             await this.plugin.saveSettings();
           })
       );
 
     new Setting(containerEl)
-      .setName("Show task selector")
-      .setDesc(
-        "Show the task picker in the timer panel. Turning this off unlinks the current task."
-      )
+      .setName("Auto-open on startup")
+      .setDesc("Open the view in the right panel when Obsidian starts.")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
-          this.plugin.settings.showTaskSelector = value;
+        toggle.setValue(this.plugin.settings.autoOpenOnStartup).onChange(async (value) => {
+          this.plugin.settings.autoOpenOnStartup = value;
           await this.plugin.saveSettings();
-          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
-            this.plugin.timer.setTask(NO_TASK_LABEL);
-          }
-          applySettingsToOpenViews();
         })
       );
 
     new Setting(containerEl)
-      .setName("Task lookahead window")
-      .setDesc(
-        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
-      )
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("3", "3 Days")
-          .addOption("5", "5 Days")
-          .addOption("7", "7 Days")
-          .addOption("14", "14 Days")
-          .addOption("30", "30 Days")
-          .setValue(this.plugin.settings.taskSelectorDays.toString())
-          .onChange(async (value) => {
-            const n = parseInt(value, 10);
-            if (Number.isFinite(n) && n > 0) {
-              this.plugin.settings.taskSelectorDays = n;
-              await this.plugin.saveSettings();
-            }
-          })
+      .setName("Show status bar")
+      .setDesc("Show the status bar indicator.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showInStatusBar).onChange(async (value) => {
+          await this.plugin.setStatusBarVisibility(value);
+        })
       );
 
     new Setting(containerEl).setName("Timer appearance").setHeading();
@@ -336,40 +315,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           this.plugin.settings.showEndTime = value;
           await this.plugin.saveSettings();
           applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl).setName("Display & behavior").setHeading();
-
-    new Setting(containerEl)
-      .setName("Pomodoro logs folder")
-      .setDesc("Folder to store daily log files (e.g., 'pomodoro_logs').")
-      .addText((text) =>
-        text
-          .setPlaceholder("Example: pomodoro_logs")
-          .setValue(this.plugin.settings.logFolderPath)
-          .onChange(async (value) => {
-            this.plugin.settings.logFolderPath = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Auto-open on startup")
-      .setDesc("Open the view in the right panel when Obsidian starts.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.autoOpenOnStartup).onChange(async (value) => {
-          this.plugin.settings.autoOpenOnStartup = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Show status bar")
-      .setDesc("Show the status bar indicator.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showInStatusBar).onChange(async (value) => {
-          await this.plugin.setStatusBarVisibility(value);
         })
       );
 
@@ -426,6 +371,61 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           this.plugin.settings.goalNoticeEnabled = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl).setName("Task selector").setHeading();
+
+    new Setting(containerEl)
+      .setName("Tasks folder path")
+      .setDesc(
+        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Example: projects/active")
+          .setValue(this.plugin.settings.tasksPath)
+          .onChange(async (value) => {
+            this.plugin.settings.tasksPath = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show task selector")
+      .setDesc(
+        "Show the task picker in the timer panel. Turning this off unlinks the current task."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
+          this.plugin.settings.showTaskSelector = value;
+          await this.plugin.saveSettings();
+          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
+            this.plugin.timer.setTask(NO_TASK_LABEL);
+          }
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Task lookahead window")
+      .setDesc(
+        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("3", "3 Days")
+          .addOption("5", "5 Days")
+          .addOption("7", "7 Days")
+          .addOption("14", "14 Days")
+          .addOption("30", "30 Days")
+          .setValue(this.plugin.settings.taskSelectorDays.toString())
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n > 0) {
+              this.plugin.settings.taskSelectorDays = n;
+              await this.plugin.saveSettings();
+            }
+          })
       );
 
     new Setting(containerEl).setName("Task integration").setHeading();

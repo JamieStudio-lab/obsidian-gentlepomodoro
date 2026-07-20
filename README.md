@@ -66,11 +66,11 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 **Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
-- **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
-- **Timer appearance**: **theme** (`Classic` default or `Frosted glass`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
+- **Timer appearance**: **theme** (`Classic` default or `Frosted glass`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
+- **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
 - **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).
 
 **In-view panel** (gear icon on the timer) — grouped into sections:
