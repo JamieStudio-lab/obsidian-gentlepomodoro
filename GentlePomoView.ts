@@ -445,7 +445,7 @@ export class GentlePomoView extends ItemView {
     // the DOM write to ~once/minute. See formatEndTime for the day-rollover suffix.
     if (this.endTimeLabel) {
       const showEnd = this.plugin.settings.showEndTime && state.isRunning && state.remainingMs > 0;
-      this.endTimeLabel.toggleClass("gp-hidden", !showEnd);
+      this.endTimeLabel.toggleClass("gp-visible", showEnd);
       if (showEnd) {
         const endText = this.formatEndTime(Date.now() + state.remainingMs);
         if (endText !== this.lastEndText) {
