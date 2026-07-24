@@ -4,6 +4,16 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] — 2026-07-20
+
+### Added
+
+- **Estimated end time on the timer.** While a session is running, the timer now shows the wall-clock time you'll finish — for example "Ends 15:30" — right under the Focus/Rest label. It's the calm counterpart to the countdown the timer deliberately hides: a static "you're free at 15:30" you can glance at, rather than a ticking clock. If a session would finish after midnight (a late start plus a long focus block), the line reads "Ends 00:15 (+1 day)". The time follows your locale's format (24-hour or AM/PM). It appears only while running and disappears when you pause, stop, or run into overtime. A new **Show estimated end time** toggle in the plugin settings (Settings → Gentle Pomodoro → Timer appearance, on by default) turns it off if you'd rather not see it. It fades and gently slides into place when a session starts, and eases back out when you pause, stop, or finish — instantly, with no motion, if you use the "reduce motion" accessibility setting.
+
+### Changed
+
+- **Timer-visual settings have their own group.** The plugin settings tab now has a **Timer appearance** section — theme, day/night indicator, and the estimated-end-time toggle — split out of the former catch-all **Display & behavior** group (which keeps the logs folder, auto-open, and status-bar options). Same settings, easier to find.
+
 ## [0.4.3] — 2026-07-18
 
 ### Changed

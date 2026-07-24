@@ -33,37 +33,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     return [
       {
         type: "group",
-        heading: "Task selector",
-        items: [
-          {
-            name: "Tasks folder path",
-            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
-            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
-          },
-          {
-            name: "Show task selector",
-            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
-            control: { type: "toggle", key: "showTaskSelector" },
-          },
-          {
-            name: "Task lookahead window",
-            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
-            control: {
-              type: "dropdown",
-              key: "taskSelectorDays",
-              options: {
-                "3": "3 Days",
-                "5": "5 Days",
-                "7": "7 Days",
-                "14": "14 Days",
-                "30": "30 Days",
-              },
-            },
-          },
-        ],
-      },
-      {
-        type: "group",
         heading: "Display & behavior",
         items: [
           {
@@ -81,11 +50,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: "Show the status bar indicator.",
             control: { type: "toggle", key: "showInStatusBar" },
           },
-          {
-            name: "Day/night indicator",
-            desc: "Show a subtle sun/moon indicator above the timer.",
-            control: { type: "toggle", key: "showDayNightIndicator" },
-          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Timer appearance",
+        items: [
           {
             name: "Theme",
             desc: "Visual style for the timer.",
@@ -94,6 +64,16 @@ export class GentlePomoSettingTab extends PluginSettingTab {
               key: "theme",
               options: { classic: "Classic", "frosted-glass": "Frosted glass" },
             },
+          },
+          {
+            name: "Day/night indicator",
+            desc: "Show a subtle sun/moon indicator above the timer.",
+            control: { type: "toggle", key: "showDayNightIndicator" },
+          },
+          {
+            name: "Show estimated end time",
+            desc: "Show the projected finish time on the timer while a session is running.",
+            control: { type: "toggle", key: "showEndTime" },
           },
         ],
       },
@@ -126,6 +106,37 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Goal-hit notice",
             desc: "Show a one-time notice when today's focus first crosses the daily goal.",
             control: { type: "toggle", key: "goalNoticeEnabled" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Task selector",
+        items: [
+          {
+            name: "Tasks folder path",
+            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
+            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
+          },
+          {
+            name: "Show task selector",
+            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
+            control: { type: "toggle", key: "showTaskSelector" },
+          },
+          {
+            name: "Task lookahead window",
+            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
+            control: {
+              type: "dropdown",
+              key: "taskSelectorDays",
+              options: {
+                "3": "3 Days",
+                "5": "5 Days",
+                "7": "7 Days",
+                "14": "14 Days",
+                "30": "30 Days",
+              },
+            },
           },
         ],
       },
@@ -185,6 +196,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
+      case "showEndTime":
+        settings.showEndTime = Boolean(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
       case "theme":
         settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
         await this.plugin.saveSettings();
@@ -229,61 +245,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     const applySettingsToOpenViews = () => this.applySettingsToOpenViews();
 
-    new Setting(containerEl).setName("Task selector").setHeading();
-
-    new Setting(containerEl)
-      .setName("Tasks folder path")
-      .setDesc(
-        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("Example: projects/active")
-          .setValue(this.plugin.settings.tasksPath)
-          .onChange(async (value) => {
-            this.plugin.settings.tasksPath = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show task selector")
-      .setDesc(
-        "Show the task picker in the timer panel. Turning this off unlinks the current task."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
-          this.plugin.settings.showTaskSelector = value;
-          await this.plugin.saveSettings();
-          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
-            this.plugin.timer.setTask(NO_TASK_LABEL);
-          }
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Task lookahead window")
-      .setDesc(
-        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
-      )
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("3", "3 Days")
-          .addOption("5", "5 Days")
-          .addOption("7", "7 Days")
-          .addOption("14", "14 Days")
-          .addOption("30", "30 Days")
-          .setValue(this.plugin.settings.taskSelectorDays.toString())
-          .onChange(async (value) => {
-            const n = parseInt(value, 10);
-            if (Number.isFinite(n) && n > 0) {
-              this.plugin.settings.taskSelectorDays = n;
-              await this.plugin.saveSettings();
-            }
-          })
-      );
-
     new Setting(containerEl).setName("Display & behavior").setHeading();
 
     new Setting(containerEl)
@@ -318,16 +279,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl)
-      .setName("Day/night indicator")
-      .setDesc("Show a subtle sun/moon indicator above the timer.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
-          this.plugin.settings.showDayNightIndicator = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
+    new Setting(containerEl).setName("Timer appearance").setHeading();
 
     new Setting(containerEl)
       .setName("Theme")
@@ -342,6 +294,28 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
             applySettingsToOpenViews();
           })
+      );
+
+    new Setting(containerEl)
+      .setName("Day/night indicator")
+      .setDesc("Show a subtle sun/moon indicator above the timer.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
+          this.plugin.settings.showDayNightIndicator = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Show estimated end time")
+      .setDesc("Show the projected finish time on the timer while a session is running.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
+          this.plugin.settings.showEndTime = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
       );
 
     new Setting(containerEl).setName("Long break").setHeading();
@@ -397,6 +371,61 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           this.plugin.settings.goalNoticeEnabled = value;
           await this.plugin.saveSettings();
         })
+      );
+
+    new Setting(containerEl).setName("Task selector").setHeading();
+
+    new Setting(containerEl)
+      .setName("Tasks folder path")
+      .setDesc(
+        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Example: projects/active")
+          .setValue(this.plugin.settings.tasksPath)
+          .onChange(async (value) => {
+            this.plugin.settings.tasksPath = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show task selector")
+      .setDesc(
+        "Show the task picker in the timer panel. Turning this off unlinks the current task."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
+          this.plugin.settings.showTaskSelector = value;
+          await this.plugin.saveSettings();
+          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
+            this.plugin.timer.setTask(NO_TASK_LABEL);
+          }
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Task lookahead window")
+      .setDesc(
+        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("3", "3 Days")
+          .addOption("5", "5 Days")
+          .addOption("7", "7 Days")
+          .addOption("14", "14 Days")
+          .addOption("30", "30 Days")
+          .setValue(this.plugin.settings.taskSelectorDays.toString())
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (Number.isFinite(n) && n > 0) {
+              this.plugin.settings.taskSelectorDays = n;
+              await this.plugin.saveSettings();
+            }
+          })
       );
 
     new Setting(containerEl).setName("Task integration").setHeading();

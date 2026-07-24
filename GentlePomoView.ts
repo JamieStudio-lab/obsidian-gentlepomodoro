@@ -11,6 +11,9 @@ import {
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
+import type { MomentFactory } from "./momentTypes";
+
+declare const moment: MomentFactory;
 
 export class GentlePomoView extends ItemView {
   plugin: GentlePomoPlugin;
@@ -22,6 +25,7 @@ export class GentlePomoView extends ItemView {
   timeLabel!: HTMLDivElement;
   totalTimeLabel!: HTMLDivElement;
   modeLabel!: HTMLDivElement;
+  endTimeLabel!: HTMLDivElement;
   goalProgressEl!: HTMLDivElement;
   settingsPanel!: HTMLDivElement;
   settingsVisible = false;
@@ -43,6 +47,8 @@ export class GentlePomoView extends ItemView {
   // Last countdown string rendered; used to skip the ~20Hz text/gradient writes on
   // ticks where the displayed second didn't change (avoids iPhone backdrop flicker).
   private lastTimeText: string | null = null;
+  // Last end-time string rendered; gates the ~once/minute DOM write (mirrors lastTimeText).
+  private lastEndText: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -125,6 +131,7 @@ export class GentlePomoView extends ItemView {
     this.timeLabel = content.createDiv("gp-timer-time");
     this.totalTimeLabel = content.createDiv("gp-total-time");
     this.modeLabel = content.createDiv("gp-mode-label");
+    this.endTimeLabel = content.createDiv("gp-end-time");
 
     // --- Controls ---
     const controls = container.createDiv("gp-controls");
@@ -418,6 +425,8 @@ export class GentlePomoView extends ItemView {
     this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
     this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
 
+    const state = this.lastState ?? this.timer.getState();
+
     // Task-selector visibility. Idempotent, so safe to run on every tick. The
     // unlink-on-hide side effect lives in the settings toggle's onChange (calling
     // setTask here would fire every tick); on load no task is ever pre-linked.
@@ -429,16 +438,52 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.removeClass("gp-visible");
     }
 
+    // Estimated end time. Shown only while running and before overtime — a static
+    // "you'll finish at 15:30", the calm counterpart to the hidden countdown.
+    // Driven from here (not just the tick listener, which calls applySettings) so
+    // toggling the setting updates open views at once; the lastEndText guard keeps
+    // the DOM write to ~once/minute. See formatEndTime for the day-rollover suffix.
+    if (this.endTimeLabel) {
+      const showEnd = this.plugin.settings.showEndTime && state.isRunning && state.remainingMs > 0;
+      this.endTimeLabel.toggleClass("gp-visible", showEnd);
+      if (showEnd) {
+        const endText = this.formatEndTime(Date.now() + state.remainingMs);
+        if (endText !== this.lastEndText) {
+          this.lastEndText = endText;
+          this.endTimeLabel.setText(endText);
+        }
+      } else {
+        this.lastEndText = null;
+      }
+    }
+
     if (!this.dayNightIndicator) return;
     const enabled = this.plugin.settings.showDayNightIndicator;
     this.dayNightIndicator.toggleClass("gp-hidden", !enabled);
     if (!enabled) return;
 
-    const state = this.lastState ?? this.timer.getState();
     const icon = this.getDayNightIcon(state);
     for (const key of DAY_NIGHT_ICON_ORDER) {
       this.dayNightIconEls[key]?.toggleClass("is-active", key === icon);
     }
+  }
+
+  /**
+   * Format a projected end timestamp as a localized wall-clock time — "Ends
+   * 15:30" (or "Ends 3:30 PM" per locale, via moment's LT). When the session
+   * finishes on a later calendar day than now (a late start plus a long
+   * session), append "(+1 day)" — or "(+N days)" in the extreme. The delta is
+   * measured on local-midnight boundaries (startOf("day")), so it counts
+   * calendar days and stays correct across DST rather than counting 24h chunks.
+   */
+  private formatEndTime(endMs: number): string {
+    const end = moment(endMs);
+    const time = end.format("LT");
+    // startOf mutates `end` in place; it isn't read again after this.
+    const dayDelta = end.startOf("day").diff(moment().startOf("day"), "days");
+    if (dayDelta <= 0) return `Ends ${time}`;
+    const suffix = dayDelta === 1 ? "+1 day" : `+${dayDelta} days`;
+    return `Ends ${time} (${suffix})`;
   }
 
   private getDayNightIcon(state: TimerState): DayNightIcon {

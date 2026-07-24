@@ -287,6 +287,46 @@
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
+/* Estimated end time ("Ends 15:30"). The calm counterpart to the countdown:
+   unlike .gp-timer-time it stays visible while running (a static finish time,
+   not a ticking clock), so it needs no hover/peek reveal. White-with-shadow so
+   it reads on both the classic gradient and the frosted-glass pane, like the
+   mode label above it. Hidden by default; the view toggles .gp-visible (shown
+   only while running, before overtime). It fades + slides + grows in via the
+   same recipe as .gp-total-time — and because .gp-timer-visual is a fixed square,
+   the reveal grows inside it, so the controls below never shift. */
+.gp-end-time {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: rgba(255, 255, 255, 0.82);
+  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  /* Hidden/animated resting state (collapsed + faded + nudged up). */
+  margin-top: 0;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  transform: translateY(-6px);
+  will-change: max-height, opacity, transform;
+  transition:
+    max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    margin-top 260ms ease;
+}
+
+/* Revealed while a session is running (before overtime). */
+.gp-end-time.gp-visible {
+  margin-top: 0.4rem;
+  opacity: 1;
+  max-height: 2.5em;
+  transform: translateY(0);
+}
+
 /* --- Controls --- */
 .gp-controls {
   display: flex;
@@ -1282,11 +1322,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .gp-timer-time,
-  .gp-total-time {
+  .gp-total-time,
+  .gp-end-time {
     transition: none;
   }
 
-  .gp-total-time {
+  .gp-total-time,
+  .gp-end-time {
     transform: none;
   }
 

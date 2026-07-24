@@ -20,6 +20,8 @@ export interface GentlePomoSettings {
   showInStatusBar: boolean;
   showStatusBarTimeLeft: boolean;
   showDayNightIndicator: boolean;
+  // Show the projected wall-clock end time on the timer while a session runs.
+  showEndTime: boolean;
 
   // Appearance
   theme: "classic" | "frosted-glass";
