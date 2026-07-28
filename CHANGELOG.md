@@ -8,7 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **A one-click repair for already-affected tasks.** If you used the counter before 0.5.1, some of your task lines may still have the marker in the old, harmful position. A **Repair misplaced pomodoro count markers** action — available both as a button in the plugin settings (Task integration section) and as a command in the command palette — scans your tasks folder (or the whole vault if no folder is set) and moves misplaced markers back in front of the Tasks fields. It is deliberately conservative: only task lines whose marker actually sits in a harmful position (after the date fields, or after a `^block-id` reference) are rewritten — everything else, including a `🍅 N` that happens to appear mid-description on a line without dates, is left byte-for-byte untouched. Files that need no change are never written. A notice reports exactly what was done (or that nothing needed fixing), and running it again is always safe.
+- **A recovery toolkit for already-affected tasks.** If you used the counter before 0.5.1, some of your task lines may still have the marker in the old, harmful position. Three actions — each a button in the plugin settings (Task integration section) and a command in the command palette — cover the whole recovery flow, scanning your tasks folder (or the whole vault if no folder is set):
+  - **Check** counts the misplaced markers _without changing anything_ and lists the affected files in the developer console — run it first, and if the number is larger than you expect, inspect those files before going further.
+  - **Repair** moves misplaced markers back in front of the Tasks fields, keeping their counts.
+  - **Remove** deletes the misplaced markers instead — because the old bug only ever _appended_ the marker, this restores affected lines to exactly how they looked before the counter wrote to them (the lifetime counts on those lines are lost). The escape hatch for anyone who'd rather not have the markers at all.
+
+  All three are deliberately conservative: only task lines whose marker actually sits in a harmful position (after the date fields, or after a `^block-id` reference) are considered — everything else, including a correctly placed marker or a `🍅 N` that happens to appear mid-description on a line without dates, is left byte-for-byte untouched. Files that need no change are never written, a notice reports exactly what was done (or that nothing needed fixing), and running any of them again is always safe.
+
 - **The counter toggle now says what it does to your files.** The **Increment task pomodoro count on finish** setting is marked as beta and its description now states plainly that it edits your task files, where the marker is written, and that backups/sync are worth having if your task notes are precious — so opting in is an informed choice.
 
 ### Changed

@@ -125,18 +125,17 @@ function placePomodoroMarker(stripped: string, count: number): string {
 }
 
 /**
- * Repair a task line whose 🍅 marker sits in a *harmful* position — after the
- * first Tasks metadata token (the ≤0.5.0 append bug, which hides every field
- * from the Tasks plugin) or after a trailing `^block-id` (which breaks the
- * block reference). The count is preserved; only placement changes.
+ * Locate a 🍅 marker in a *harmful* position — after the first Tasks metadata
+ * token (the ≤0.5.0 append bug, which hides every field from the Tasks
+ * plugin) or after a trailing `^block-id` (which breaks the block reference).
  *
  * Deliberately conservative: a marker that is merely unusual but harmless
- * (e.g. `🍅 2` mid-description on a line with no Tasks fields) is left
- * byte-for-byte untouched, as is any line without a marker.
+ * (e.g. `🍅 2` mid-description on a line with no Tasks fields) does not
+ * count, nor does a line without a marker — both return null.
  */
-export function repairPomodoroMarkerPlacement(line: string): string {
+function findMisplacedPomodoroMarker(line: string): { count: number; stripped: string } | null {
   const match = line.match(POMO_MARKER_REGEX);
-  if (!match || match.index === undefined) return line;
+  if (!match || match.index === undefined) return null;
 
   const meta = line.match(TASKS_METADATA_TOKEN_REGEX);
   const afterFields = meta?.index !== undefined && match.index > meta.index;
@@ -151,67 +150,138 @@ export function repairPomodoroMarkerPlacement(line: string): string {
     }
   }
 
-  if (!afterFields && !afterBlockRef) return line;
-  return placePomodoroMarker(stripped, parseInt(match[1], 10));
-}
-
-export interface PomodoroMarkerRepairResult {
-  content: string;
-  linesRepaired: number;
-}
-
-/** Run {@link repairPomodoroMarkerPlacement} over every task line (open or completed). */
-export function repairPomodoroMarkersInContent(content: string): PomodoroMarkerRepairResult {
-  const lines = content.split("\n");
-  let linesRepaired = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (!TASK_LINE_REGEX.test(lines[i])) continue;
-    const fixed = repairPomodoroMarkerPlacement(lines[i]);
-    if (fixed !== lines[i]) {
-      lines[i] = fixed;
-      linesRepaired++;
-    }
-  }
-
-  return { content: lines.join("\n"), linesRepaired };
-}
-
-export interface VaultRepairResult {
-  filesScanned: number;
-  filesChanged: number;
-  linesRepaired: number;
+  if (!afterFields && !afterBlockRef) return null;
+  return { count: parseInt(match[1], 10), stripped };
 }
 
 /**
- * Repair misplaced 🍅 markers across the tasks folder (whole vault when the
- * path is empty — same scope the task picker scans). Files that need no
- * change are never written; changed files are rewritten atomically via
- * `Vault.process`.
+ * Repair a task line whose 🍅 marker is misplaced (see
+ * {@link findMisplacedPomodoroMarker}): re-insert it at the canonical
+ * position. The count is preserved; anything else is left byte-for-byte
+ * untouched.
  */
-export async function repairPomodoroMarkersInVault(
+export function repairPomodoroMarkerPlacement(line: string): string {
+  const misplaced = findMisplacedPomodoroMarker(line);
+  if (!misplaced) return line;
+  return placePomodoroMarker(misplaced.stripped, misplaced.count);
+}
+
+/**
+ * Delete a misplaced 🍅 marker outright instead of relocating it. Because the
+ * ≤0.5.0 bug only ever *appended* the marker, removal restores the line to
+ * exactly its pre-bug form (the lifetime count is lost). Correctly placed or
+ * harmless markers and marker-less lines are left byte-for-byte untouched.
+ */
+export function removeMisplacedPomodoroMarker(line: string): string {
+  const misplaced = findMisplacedPomodoroMarker(line);
+  if (!misplaced) return line;
+  return misplaced.stripped;
+}
+
+export interface PomodoroMarkerContentResult {
+  content: string;
+  linesChanged: number;
+}
+
+/** Apply a line transform to every task line (open or completed) in a note. */
+function transformTaskLines(
+  content: string,
+  transform: (line: string) => string
+): PomodoroMarkerContentResult {
+  const lines = content.split("\n");
+  let linesChanged = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!TASK_LINE_REGEX.test(lines[i])) continue;
+    const next = transform(lines[i]);
+    if (next !== lines[i]) {
+      lines[i] = next;
+      linesChanged++;
+    }
+  }
+
+  return { content: lines.join("\n"), linesChanged };
+}
+
+/** Run {@link repairPomodoroMarkerPlacement} over every task line. */
+export function repairPomodoroMarkersInContent(content: string): PomodoroMarkerContentResult {
+  return transformTaskLines(content, repairPomodoroMarkerPlacement);
+}
+
+/** Run {@link removeMisplacedPomodoroMarker} over every task line. */
+export function removeMisplacedPomodoroMarkersInContent(
+  content: string
+): PomodoroMarkerContentResult {
+  return transformTaskLines(content, removeMisplacedPomodoroMarker);
+}
+
+export interface PomodoroMarkerVaultResult {
+  filesScanned: number;
+  filesAffected: number;
+  linesAffected: number;
+  /** Per-file breakdown, for logging so users can inspect before acting. */
+  affected: { path: string; lines: number }[];
+}
+
+/**
+ * Walk the tasks folder (whole vault when the path is empty — same scope the
+ * task picker scans) applying a marker transform. With `write: false` this is
+ * a pure dry run. With `write: true`, files that need no change are never
+ * written; changed files are rewritten atomically via `Vault.process`.
+ */
+async function processPomodoroMarkersInVault(
   app: App,
-  tasksPath: string
-): Promise<VaultRepairResult> {
+  tasksPath: string,
+  transform: (line: string) => string,
+  write: boolean
+): Promise<PomodoroMarkerVaultResult> {
   const files = app.vault
     .getFiles()
     .filter((f) => isPathInFolder(f.path, tasksPath) && f.extension === "md");
 
-  let filesChanged = 0;
-  let linesRepaired = 0;
+  let filesAffected = 0;
+  let linesAffected = 0;
+  const affected: { path: string; lines: number }[] = [];
 
   for (const file of files) {
     const content = await app.vault.cachedRead(file);
     if (!content.includes("🍅")) continue;
-    const probe = repairPomodoroMarkersInContent(content);
-    if (probe.linesRepaired === 0) continue;
+    const probe = transformTaskLines(content, transform);
+    if (probe.linesChanged === 0) continue;
 
-    await app.vault.process(file, (data) => repairPomodoroMarkersInContent(data).content);
-    filesChanged++;
-    linesRepaired += probe.linesRepaired;
+    if (write) {
+      await app.vault.process(file, (data) => transformTaskLines(data, transform).content);
+    }
+    filesAffected++;
+    linesAffected += probe.linesChanged;
+    affected.push({ path: file.path, lines: probe.linesChanged });
   }
 
-  return { filesScanned: files.length, filesChanged, linesRepaired };
+  return { filesScanned: files.length, filesAffected, linesAffected, affected };
+}
+
+/** Dry run: count misplaced 🍅 markers without changing any file. */
+export function scanMisplacedPomodoroMarkersInVault(
+  app: App,
+  tasksPath: string
+): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, tasksPath, repairPomodoroMarkerPlacement, false);
+}
+
+/** Relocate misplaced 🍅 markers in front of the Tasks fields (counts kept). */
+export function repairPomodoroMarkersInVault(
+  app: App,
+  tasksPath: string
+): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, tasksPath, repairPomodoroMarkerPlacement, true);
+}
+
+/** Delete misplaced 🍅 markers, restoring affected lines to their pre-bug form. */
+export function removeMisplacedPomodoroMarkersInVault(
+  app: App,
+  tasksPath: string
+): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, tasksPath, removeMisplacedPomodoroMarker, true);
 }
 
 export function isPathInFolder(filePath: string, folderPath: string): boolean {

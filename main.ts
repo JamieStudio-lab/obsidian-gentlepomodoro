@@ -4,7 +4,11 @@ import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
 import { logger } from "./logger";
-import { repairPomodoroMarkersInVault } from "./taskLoader";
+import {
+  removeMisplacedPomodoroMarkersInVault,
+  repairPomodoroMarkersInVault,
+  scanMisplacedPomodoroMarkersInVault,
+} from "./taskLoader";
 import { TimerEngine } from "./TimerEngine";
 import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
@@ -131,10 +135,26 @@ export default class GentlePomoPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "check-task-pomodoro-markers",
+      name: "Check for misplaced pomodoro count markers",
+      callback: () => {
+        void this.checkPomodoroMarkers();
+      },
+    });
+
+    this.addCommand({
       id: "repair-task-pomodoro-markers",
       name: "Repair misplaced pomodoro count markers",
       callback: () => {
         void this.repairPomodoroMarkers();
+      },
+    });
+
+    this.addCommand({
+      id: "remove-task-pomodoro-markers",
+      name: "Remove misplaced pomodoro count markers",
+      callback: () => {
+        void this.removeMisplacedPomodoroMarkers();
       },
     });
 
@@ -147,31 +167,84 @@ export default class GentlePomoPlugin extends Plugin {
   }
 
   /**
-   * One-shot fix for task lines written by ≤0.5.0, whose 🍅 marker landed
-   * after the Tasks fields and hid them from the Tasks plugin (issue #2).
-   * Scans the tasks folder (whole vault when unset), rewrites only lines
-   * whose marker is in a harmful position, and reports what it did.
+   * Shared runner for the marker-maintenance actions (check / repair /
+   * remove): one at a time, failures reported instead of thrown.
    */
-  async repairPomodoroMarkers(): Promise<void> {
+  private async runMarkerMaintenance(label: string, action: () => Promise<void>): Promise<void> {
     if (this.repairInFlight) return;
     this.repairInFlight = true;
     try {
+      await action();
+    } catch (e) {
+      logger.error(`Failed to ${label} pomodoro markers`, e);
+      new Notice(`Gentle pomodoro: ${label} failed — see the developer console for details.`);
+    } finally {
+      this.repairInFlight = false;
+    }
+  }
+
+  /**
+   * Dry run for the ≤0.5.0 marker misplacement (issue #2): count affected
+   * lines without changing any file, and log the per-file breakdown so the
+   * user can inspect before repairing or removing.
+   */
+  async checkPomodoroMarkers(): Promise<void> {
+    await this.runMarkerMaintenance("check", async () => {
+      const result = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (result.linesAffected === 0) {
+        new Notice(
+          `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned). Nothing to repair.`
+        );
+        return;
+      }
+      for (const f of result.affected) {
+        logger.warn(`Misplaced 🍅 marker check: ${f.lines} line(s) in "${f.path}"`);
+      }
+      new Notice(
+        `Gentle pomodoro: found ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} of ${result.filesScanned} file(s). Nothing was changed — the affected files are listed in the developer console.`
+      );
+    });
+  }
+
+  /**
+   * One-shot fix for task lines written by ≤0.5.0, whose 🍅 marker landed
+   * after the Tasks fields and hid them from the Tasks plugin (issue #2).
+   * Rewrites only lines whose marker is in a harmful position, keeping the
+   * counts, and reports what it did.
+   */
+  async repairPomodoroMarkers(): Promise<void> {
+    await this.runMarkerMaintenance("repair", async () => {
       const result = await repairPomodoroMarkersInVault(this.app, this.settings.tasksPath);
-      if (result.linesRepaired === 0) {
+      if (result.linesAffected === 0) {
         new Notice(
           `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned).`
         );
       } else {
         new Notice(
-          `Gentle pomodoro: repaired ${result.linesRepaired} task line(s) in ${result.filesChanged} file(s).`
+          `Gentle pomodoro: repaired ${result.linesAffected} task line(s) in ${result.filesAffected} file(s).`
         );
       }
-    } catch (e) {
-      logger.error("Failed to repair pomodoro markers", e);
-      new Notice("Gentle pomodoro: repair failed — see the developer console for details.");
-    } finally {
-      this.repairInFlight = false;
-    }
+    });
+  }
+
+  /**
+   * Alternative to repair: delete misplaced 🍅 markers, restoring affected
+   * lines to their pre-bug form (their lifetime counts are lost). Correctly
+   * placed markers are never touched.
+   */
+  async removeMisplacedPomodoroMarkers(): Promise<void> {
+    await this.runMarkerMaintenance("remove", async () => {
+      const result = await removeMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (result.linesAffected === 0) {
+        new Notice(
+          `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned).`
+        );
+      } else {
+        new Notice(
+          `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
+        );
+      }
+    });
   }
 
   override onunload() {

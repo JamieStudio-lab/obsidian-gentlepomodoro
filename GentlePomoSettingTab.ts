@@ -10,9 +10,15 @@ type SettingsKey = keyof GentlePomoSettings;
 // the two can't drift.
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. When a focus session linked to a task ends, adds or updates a lifetime '🍅 N' marker on the task line, at the end of the task's description and in front of any Tasks fields (dates, priority, ID) so they keep working. Consider backups or sync if your task notes are precious.";
+const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
+const CHECK_MARKERS_DESC =
+  "Versions before 0.5.1 wrote the 🍅 marker after the task's dates, which hid them from the Tasks plugin. This counts affected task lines in the tasks folder (or the whole vault if no folder is set) without changing anything — run it first. If the number is larger than you expect, inspect the files listed in the developer console before repairing or removing.";
 const REPAIR_MARKERS_NAME = "Repair misplaced pomodoro count markers";
 const REPAIR_MARKERS_DESC =
-  "Versions before 0.5.1 wrote the 🍅 marker after the task's dates, which hid them from the Tasks plugin. This scans the tasks folder (or the whole vault if no folder is set) and moves misplaced markers back in front of the fields. Only task lines with a misplaced marker are rewritten; every other line is left untouched.";
+  "Moves misplaced 🍅 markers back in front of the Tasks fields, keeping their counts. Only task lines with a misplaced marker are rewritten; every other line is left untouched. Run the check above first to preview what this will touch.";
+const REMOVE_MARKERS_NAME = "Remove misplaced pomodoro count markers";
+const REMOVE_MARKERS_DESC =
+  "Deletes misplaced 🍅 markers instead of moving them, restoring affected task lines to exactly how they looked before the counter wrote to them — the lifetime counts on those lines are lost. Correctly placed markers are never touched. Run the check above first to preview what this will touch.";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
@@ -185,10 +191,24 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
           },
           {
+            name: CHECK_MARKERS_NAME,
+            desc: CHECK_MARKERS_DESC,
+            action: () => {
+              void this.plugin.checkPomodoroMarkers();
+            },
+          },
+          {
             name: REPAIR_MARKERS_NAME,
             desc: REPAIR_MARKERS_DESC,
             action: () => {
               void this.plugin.repairPomodoroMarkers();
+            },
+          },
+          {
+            name: REMOVE_MARKERS_NAME,
+            desc: REMOVE_MARKERS_DESC,
+            action: () => {
+              void this.plugin.removeMisplacedPomodoroMarkers();
             },
           },
         ],
@@ -550,12 +570,37 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName(CHECK_MARKERS_NAME)
+      .setDesc(CHECK_MARKERS_DESC)
+      .addButton((btn) =>
+        btn.setButtonText("Check").onClick(() => {
+          void this.plugin.checkPomodoroMarkers();
+        })
+      );
+
+    new Setting(containerEl)
       .setName(REPAIR_MARKERS_NAME)
       .setDesc(REPAIR_MARKERS_DESC)
       .addButton((btn) =>
         btn.setButtonText("Repair").onClick(() => {
           void this.plugin.repairPomodoroMarkers();
         })
+      );
+
+    new Setting(containerEl)
+      .setName(REMOVE_MARKERS_NAME)
+      .setDesc(REMOVE_MARKERS_DESC)
+      .addButton((btn) =>
+        btn
+          .setButtonText("Remove")
+          // The replacement, setDestructive(), is 1.13+ only; this imperative
+          // path runs exclusively on pre-1.13 Obsidian, where only
+          // setWarning() exists.
+          // eslint-disable-next-line @typescript-eslint/no-deprecated
+          .setWarning()
+          .onClick(() => {
+            void this.plugin.removeMisplacedPomodoroMarkers();
+          })
       );
   }
 }
