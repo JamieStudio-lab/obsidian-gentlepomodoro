@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.4.4 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.1 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -22,7 +22,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Smart filtering: Overdue, Today, Tomorrow, and upcoming tasks. Choose the lookahead window (3 / 5 / 7 / 14 / 30 days) in settings; overdue tasks always show.
 - One-click **Unlink current task**.
 - **Opt-in (beta — edits your task files)**: increment `🍅 N` on the task line each time you finish a focus session for it. Lifetime count per task. The marker is written at the end of the task description, _before_ the Tasks date fields (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`), so Tasks keeps parsing the dates correctly; legacy markers from earlier builds — including ones a pre-0.5.1 version appended after the dates — are read correctly and migrate into place on the next write.
-- **Recovery actions**: if a pre-0.5.1 version left markers after your task dates (hiding them from the Tasks plugin), three actions — buttons in the plugin settings and command-palette commands — put you back in control. **Check** counts the misplaced markers without changing anything (run it first; it lists the affected files in the developer console). **Repair** moves them back in front of the fields, keeping the counts. **Remove** deletes them instead, restoring the lines to exactly how they looked before the counter wrote to them. **Remove all** goes further and deletes every marker the counter has written — the feature's full uninstall (a `🍅 N` you typed yourself mid-description is never touched). The writing actions show a confirmation with the exact counts first, only touch plugin-written markers, report what they did, and are safe to run repeatedly.
+- **Recovery actions**: if a pre-0.5.1 version left markers after your task dates (hiding them from the Tasks plugin), four actions — buttons in the plugin settings and command-palette commands — put you back in control. **Check** counts the misplaced markers without changing anything (run it first; it lists the affected files in the developer console). **Repair** moves them back in front of the fields, keeping the counts. **Remove** deletes them instead, restoring the lines to exactly how they looked before the counter wrote to them. **Remove all** goes further and deletes every marker the counter has written — the feature's full uninstall (a `🍅 N` you typed yourself mid-description is never touched; back up your vault first, since the lost counts can't be recovered). The writing actions show a confirmation with the exact counts first, only touch plugin-written markers, report what they did, and are safe to run repeatedly.
 
 ### 📊 Daily focus goal
 
@@ -80,7 +80,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
-- **Task integration**: increment-task-pomodoro-count-on-finish (opt-in).
+- **Task integration**: increment task pomodoro count on finish (opt-in, beta — edits your task files), plus the marker recovery actions: check / repair / remove misplaced / remove all.
 
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
@@ -109,6 +109,7 @@ Each session appends one line to the day's log file:
 - `Start` / `Pause` / `Finish & next` / `Skip to next`
 - `Refresh log task names by ID`
 - `Show status bar` / `Hide status bar`
+- `Check for misplaced pomodoro count markers` / `Repair misplaced pomodoro count markers` / `Remove misplaced pomodoro count markers` / `Remove all pomodoro count markers`
 
 ## Compatible plugins
 
