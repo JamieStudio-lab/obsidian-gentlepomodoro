@@ -364,6 +364,17 @@ export default class GentlePomoPlugin extends Plugin {
     view.setGoalProgress(text, met);
   }
 
+  /** Ask every open view to duck its lofi music under a sound cue. Called by
+   *  TimerEngine.playSound (the engine can't touch the DOM); views without an
+   *  active, playing music iframe no-op. */
+  duckMusicInOpenViews(cueDurationSec: number): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+      if (leaf.view instanceof GentlePomoView) {
+        leaf.view.duckMusic(cueDurationSec);
+      }
+    }
+  }
+
   private maybeFireGoalNotice(currentSeconds: number) {
     const today = todayLocalStr();
     if (

@@ -48,6 +48,12 @@ export interface GentlePomoSettings {
   // Pomodoro-per-task tracking (opt-in)
   incrementPomodoroCountOnFinish: boolean;
 
+  // Music (audio-only lofi playback via a hidden YouTube embed in the timer panel)
+  musicUrl: string; // user-pasted YouTube URL; "" = feature unset
+  showMusicPlayer: boolean; // feature switch: off hides the controls and stops playback
+  musicVolume: number; // 0-1, mapped ×100 for the embed's setVolume
+  musicLoop: boolean; // replay the video/playlist when it ends (no effect on live streams)
+
   // Internal state (not user-editable; persisted to data.json across reloads)
   lastGoalHitDate: string | null;
   sessionsSinceLongBreak: number;

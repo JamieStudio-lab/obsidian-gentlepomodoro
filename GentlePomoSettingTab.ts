@@ -2,6 +2,7 @@ import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsi
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
+import { validateMusicUrl } from "./youtubeMusic";
 
 type SettingsKey = keyof GentlePomoSettings;
 
@@ -74,6 +75,32 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Show estimated end time",
             desc: "Show the projected finish time on the timer while a session is running.",
             control: { type: "toggle", key: "showEndTime" },
+          },
+        ],
+      },
+      {
+        type: "group",
+        heading: "Music",
+        items: [
+          {
+            name: "YouTube music URL",
+            desc: "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown.",
+            control: {
+              type: "text",
+              key: "musicUrl",
+              placeholder: "Paste a YouTube link",
+              validate: (value) => validateMusicUrl(String(value ?? "")),
+            },
+          },
+          {
+            name: "Show music player",
+            desc: "Show the music controls in the timer panel. Turning this off also stops playback.",
+            control: { type: "toggle", key: "showMusicPlayer" },
+          },
+          {
+            name: "Loop music",
+            desc: "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player.",
+            control: { type: "toggle", key: "musicLoop" },
           },
         ],
       },
@@ -201,6 +228,27 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
+      case "musicUrl":
+        // Invalid URLs never reach here on 1.13+ — the control's validate hook
+        // rejects them inline. The view rebuilds its iframe via applySettings.
+        settings.musicUrl = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "showMusicPlayer":
+        // The view-side reconciliation removes the iframe when this goes off —
+        // that removal is what stops playback (no timer/engine side effect).
+        settings.showMusicPlayer = Boolean(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicLoop":
+        // Loop is baked into the embed URL, so the view rebuilds the iframe
+        // (stopping any current playback) when this flips.
+        settings.musicLoop = Boolean(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
       case "theme":
         settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
         await this.plugin.saveSettings();
@@ -313,6 +361,50 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
           this.plugin.settings.showEndTime = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl).setName("Music").setHeading();
+
+    new Setting(containerEl)
+      .setName("YouTube music URL")
+      .setDesc(
+        "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown."
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Paste a YouTube link")
+          .setValue(this.plugin.settings.musicUrl)
+          .onChange(async (value) => {
+            // No validate hook pre-1.13 — an unparsable URL simply hides the
+            // music section view-side (parseYouTubeUrl returns null).
+            this.plugin.settings.musicUrl = value.trim();
+            await this.plugin.saveSettings();
+            applySettingsToOpenViews();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show music player")
+      .setDesc("Show the music controls in the timer panel. Turning this off also stops playback.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.showMusicPlayer).onChange(async (value) => {
+          this.plugin.settings.showMusicPlayer = value;
+          await this.plugin.saveSettings();
+          applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Loop music")
+      .setDesc(
+        "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player."
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.musicLoop).onChange(async (value) => {
+          this.plugin.settings.musicLoop = value;
           await this.plugin.saveSettings();
           applySettingsToOpenViews();
         })

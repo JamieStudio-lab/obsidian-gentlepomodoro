@@ -40,11 +40,18 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Compact mode/time indicator with today's total focus.
 - Click the dot to open the timer; click the label to toggle the time-left display.
 
+### 🎵 Lofi study music
+
+- Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ♪ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
+- **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
+- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
+- Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
+
 ### 📱 Mobile (iPad & phone)
 
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
 - **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
-- **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — both are platform constraints, not bugs.
+- **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it; music pauses when the app is backgrounded or the screen locks — all platform constraints, not bugs.
 
 ## Install
 
@@ -68,6 +75,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default or `Frosted glass`), day/night indicator, and **estimated end time** (shown while a session runs).
+- **Music**: **YouTube music URL** (video, live stream, or playlist — audio-only playback in the timer panel), **show music player** (turning it off also stops playback), and **loop music** (replay from the start when it ends; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
@@ -76,7 +84,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
 - **Timing**: focus / short break / long break durations (press Enter to apply).
-- **Audio**: sound toggle and **Low / Mid / High** volume.
+- **Audio**: sound toggle, **Low / Mid / High** volume, and **Low / Mid / High** music volume.
 - **Auto-start**: auto-start break, auto-start focus. When on, a session that runs out automatically plays the end cue and starts the next one. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
 - Full-width **Reset to defaults** button at the bottom.
 
@@ -105,6 +113,12 @@ Each session appends one line to the day's log file:
 
 - **[Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks)** — the task picker reads its emoji-marker format.
 - **[Dataview](https://github.com/blacksmithgu/obsidian-dataview)** — daily log lines use inline fields, ready to query.
+
+## Network use
+
+The plugin makes **no network requests on its own** — timers, logs, and sounds are all local (audio cues are bundled into `main.js`).
+
+The one exception is the optional lofi-music feature: when you paste a YouTube URL into **YouTube music URL** (and **Show music player** is on), the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. Requests happen only while the timer panel is open with that feature configured; clearing the URL or turning the toggle off stops them entirely. YouTube's handling of those requests is covered by [Google's privacy policy](https://policies.google.com/privacy).
 
 ## Issues & feedback
 
