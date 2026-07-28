@@ -130,9 +130,41 @@ describe("parsePomodoroCount", () => {
 });
 
 describe("incrementPomodoroCount", () => {
-  it("appends `🍅 1` when no marker is present", () => {
+  it("inserts `🍅 1` before the Tasks fields, not after them (issue #2)", () => {
     const line = "- [ ] Write docs ⏳ 2025-12-23";
-    expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs ⏳ 2025-12-23 🍅 1");
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 1 ⏳ 2025-12-23");
+  });
+
+  it("inserts before the first of several Tasks fields", () => {
+    const line = "- [ ] Write docs ⏳ 2025-12-23 📅 2025-12-24 🆔 abcd12";
+    expect(incrementPomodoroCount(line)).toBe(
+      "- [ ] Write docs 🍅 1 ⏳ 2025-12-23 📅 2025-12-24 🆔 abcd12"
+    );
+  });
+
+  it("relocates a ≤0.5.0 trailing marker in front of the fields when incrementing", () => {
+    const line = "- [ ] Write docs ⏳ 2025-12-23 📅 2025-12-24 🍅 3";
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 4 ⏳ 2025-12-23 📅 2025-12-24");
+  });
+
+  it("inserts before a priority emoji", () => {
+    const line = "- [ ] Write docs ⏫ 📅 2025-12-24";
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 1 ⏫ 📅 2025-12-24");
+  });
+
+  it("keeps a trailing block reference at the very end", () => {
+    expect(incrementPomodoroCount("- [ ] Write docs ^abc123")).toBe(
+      "- [ ] Write docs 🍅 1 ^abc123"
+    );
+    expect(incrementPomodoroCount("- [ ] Write docs 📅 2025-12-24 ^abc123")).toBe(
+      "- [ ] Write docs 🍅 1 📅 2025-12-24 ^abc123"
+    );
+  });
+
+  it("preserves the indentation of nested tasks", () => {
+    expect(incrementPomodoroCount("    - [ ] Nested ⏳ 2025-12-23")).toBe(
+      "    - [ ] Nested 🍅 1 ⏳ 2025-12-23"
+    );
   });
 
   it("increments N on an existing lifetime marker", () => {

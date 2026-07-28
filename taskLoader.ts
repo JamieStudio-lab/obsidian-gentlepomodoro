@@ -24,6 +24,15 @@ const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 // 0.1.0 today-only format (`🍅 N (YYYY-MM-DD)`) so existing markers are still
 // readable — the parens (and any content) get stripped on the next write.
 const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\([^)]*\))?/;
+// First Tasks-plugin metadata token on a line (dates, priorities, recurrence,
+// ID, plus the Tasks 8.x field emojis this plugin doesn't otherwise read:
+// ❌ cancelled, ⛔ depends-on, 🏁 on-completion). The 🍅 marker must be
+// inserted BEFORE the first of these: the Tasks plugin only recognizes its
+// emoji fields at the end of the line, so any text placed after them silently
+// demotes every field to plain description text (GitHub issue #2).
+const TASKS_METADATA_TOKEN_REGEX = /[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]/u;
+// Trailing Obsidian block reference (`^block-id`) — must stay at the very end.
+const BLOCK_ID_REGEX = /\s+\^[A-Za-z0-9-]+\s*$/;
 const PRIORITY_REGEX = /[🔺🔽🔥⏫⏬🔼]\uFE0F?/gu;
 const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 
@@ -67,17 +76,44 @@ export function parsePomodoroCount(line: string): number {
 
 /**
  * Returns the line with the lifetime pomodoro count incremented by 1.
- * - If marker exists (with or without legacy parens): increment N. The
- *   parens are stripped on write, so legacy markers migrate to plain `🍅 N`.
- * - If no marker: append ` 🍅 1` at the end of the line.
+ *
+ * The marker is written at the end of the task *description* — before the
+ * first Tasks-plugin metadata token (⏳ 📅 🆔 priority …) — never after the
+ * fields: the Tasks plugin only parses its emoji fields off the end of the
+ * line, so a trailing marker turns every field into plain description text
+ * and the task's dates vanish from queries and Edit Task (GitHub issue #2).
+ *
+ * - If marker exists (with or without legacy parens): increment N and
+ *   re-insert at the correct position — lines written by ≤0.5.0 (marker
+ *   trailing the fields) heal on their next increment. Legacy parens are
+ *   stripped on write, so `🍅 N (date)` markers migrate to plain `🍅 N`.
+ * - If no marker: insert ` 🍅 1` before the first metadata token, keeping a
+ *   trailing block reference (`^block-id`) at the very end of the line.
  */
 export function incrementPomodoroCount(line: string): string {
   const match = line.match(POMO_MARKER_REGEX);
-  if (match) {
-    const next = parseInt(match[1], 10) + 1;
-    return line.replace(POMO_MARKER_REGEX, `🍅 ${next}`);
+  let next = 1;
+  let stripped = line;
+  if (match && match.index !== undefined) {
+    next = parseInt(match[1], 10) + 1;
+    stripped = line.slice(0, match.index).trimEnd() + line.slice(match.index + match[0].length);
   }
-  return `${line.trimEnd()} 🍅 1`;
+
+  const marker = `🍅 ${next}`;
+
+  const metaMatch = stripped.match(TASKS_METADATA_TOKEN_REGEX);
+  if (metaMatch && metaMatch.index !== undefined) {
+    const head = stripped.slice(0, metaMatch.index).trimEnd();
+    return `${head} ${marker} ${stripped.slice(metaMatch.index)}`;
+  }
+
+  const blockMatch = stripped.match(BLOCK_ID_REGEX);
+  if (blockMatch && blockMatch.index !== undefined) {
+    const head = stripped.slice(0, blockMatch.index).trimEnd();
+    return `${head} ${marker}${stripped.slice(blockMatch.index)}`;
+  }
+
+  return `${stripped.trimEnd()} ${marker}`;
 }
 
 export function isPathInFolder(filePath: string, folderPath: string): boolean {

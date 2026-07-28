@@ -4,6 +4,12 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-07-27
+
+### Fixed
+
+- **The `🍅 N` counter no longer breaks the Tasks plugin's dates.** With the opt-in **Increment task pomodoro count on finish** setting enabled, the counter was appended to the very end of the task line — _after_ the Tasks plugin's emoji fields (`⏳` scheduled, `📅` due, `🆔` id, …). The Tasks plugin only recognizes those fields when nothing but other fields follows them, so the appended marker silently turned them into plain description text: the line still _looked_ right, but the dates vanished from Edit Task and from date-based queries ([#2](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/2) — thanks for the detailed report). The counter is now written at the end of the task _description_, before the first Tasks field — e.g. `- [ ] Write docs 🍅 3 ⏳ 2026-07-27 📅 2026-07-28` — which Tasks parses correctly. Tasks that were already affected heal automatically: the next finished focus session relocates the misplaced marker as it increments (or you can move the `🍅 N` in front of the date fields by hand to fix a line immediately). Block references (`^id`) stay at the very end of the line, and nested-task indentation is preserved.
+
 ## [0.5.0] — 2026-07-27
 
 ### Added
