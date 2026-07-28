@@ -21,7 +21,7 @@ const REMOVE_MARKERS_DESC =
   "Deletes misplaced markers instead, losing their counts. Asks for confirmation first.";
 const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
 const REMOVE_ALL_MARKERS_DESC =
-  "Deletes every 🍅 marker the counter has written, losing all counts. Asks for confirmation first.";
+  "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;

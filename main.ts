@@ -292,7 +292,7 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Remove all pomodoro markers?",
-        body: `Delete ${scan.linesAffected} 🍅 marker(s) in ${scan.filesAffected} file(s)? All lifetime counts will be lost.`,
+        body: `Delete ${scan.linesAffected} 🍅 marker(s) in ${scan.filesAffected} file(s)? All lifetime counts will be lost and this cannot be undone — consider backing up your vault first.`,
         ctaText: `Remove ${scan.linesAffected} marker(s)`,
         destructive: true,
       });
