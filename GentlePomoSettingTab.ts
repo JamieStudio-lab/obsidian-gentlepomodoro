@@ -1,10 +1,28 @@
 import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
+import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
 import { validateMusicUrl } from "./youtubeMusic";
 
 type SettingsKey = keyof GentlePomoSettings;
+
+// Shared between the declarative (1.13+) and imperative (pre-1.13) paths so
+// the two can't drift.
+const POMO_COUNT_TOGGLE_DESC =
+  "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
+const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
+const CHECK_MARKERS_DESC =
+  "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
+const REPAIR_MARKERS_NAME = "Repair misplaced pomodoro count markers";
+const REPAIR_MARKERS_DESC =
+  "Moves misplaced markers back in front of the Tasks fields, keeping their counts. Asks for confirmation first.";
+const REMOVE_MARKERS_NAME = "Remove misplaced pomodoro count markers";
+const REMOVE_MARKERS_DESC =
+  "Deletes misplaced markers instead, losing their counts. Asks for confirmation first.";
+const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
+const REMOVE_ALL_MARKERS_DESC =
+  "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
@@ -173,8 +191,36 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         items: [
           {
             name: "Increment task pomodoro count on finish",
-            desc: "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task.",
+            desc: POMO_COUNT_TOGGLE_DESC,
             control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
+          },
+          {
+            name: CHECK_MARKERS_NAME,
+            desc: CHECK_MARKERS_DESC,
+            action: () => {
+              void this.plugin.checkPomodoroMarkers();
+            },
+          },
+          {
+            name: REPAIR_MARKERS_NAME,
+            desc: REPAIR_MARKERS_DESC,
+            action: () => {
+              void this.plugin.repairPomodoroMarkers();
+            },
+          },
+          {
+            name: REMOVE_MARKERS_NAME,
+            desc: REMOVE_MARKERS_DESC,
+            action: () => {
+              void this.plugin.removeMisplacedPomodoroMarkers();
+            },
+          },
+          {
+            name: REMOVE_ALL_MARKERS_NAME,
+            desc: REMOVE_ALL_MARKERS_DESC,
+            action: () => {
+              void this.plugin.removeAllPomodoroMarkers();
+            },
           },
         ],
       },
@@ -524,9 +570,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Increment task pomodoro count on finish")
-      .setDesc(
-        "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task."
-      )
+      .setDesc(POMO_COUNT_TOGGLE_DESC)
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.incrementPomodoroCountOnFinish)
@@ -535,5 +579,43 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           })
       );
+
+    new Setting(containerEl)
+      .setName(CHECK_MARKERS_NAME)
+      .setDesc(CHECK_MARKERS_DESC)
+      .addButton((btn) =>
+        btn.setButtonText("Check").onClick(() => {
+          void this.plugin.checkPomodoroMarkers();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName(REPAIR_MARKERS_NAME)
+      .setDesc(REPAIR_MARKERS_DESC)
+      .addButton((btn) =>
+        btn.setButtonText("Repair").onClick(() => {
+          void this.plugin.repairPomodoroMarkers();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName(REMOVE_MARKERS_NAME)
+      .setDesc(REMOVE_MARKERS_DESC)
+      .addButton((btn) => {
+        btn.setButtonText("Remove").onClick(() => {
+          void this.plugin.removeMisplacedPomodoroMarkers();
+        });
+        markDestructive(btn);
+      });
+
+    new Setting(containerEl)
+      .setName(REMOVE_ALL_MARKERS_NAME)
+      .setDesc(REMOVE_ALL_MARKERS_DESC)
+      .addButton((btn) => {
+        btn.setButtonText("Remove all").onClick(() => {
+          void this.plugin.removeAllPomodoroMarkers();
+        });
+        markDestructive(btn);
+      });
   }
 }

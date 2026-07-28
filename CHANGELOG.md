@@ -4,6 +4,28 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-07-28
+
+### Added
+
+- **A recovery toolkit for already-affected tasks.** If you used the counter before 0.5.1, some of your task lines may still have the marker in the old, harmful position. Three actions — each a button in the plugin settings (Task integration section) and a command in the command palette — cover the whole recovery flow, scanning your tasks folder (or the whole vault if no folder is set):
+  - **Check** counts the misplaced markers _without changing anything_ and lists the affected files in the developer console — run it first, and if the number is larger than you expect, inspect those files before going further.
+  - **Repair** moves misplaced markers back in front of the Tasks fields, keeping their counts.
+  - **Remove** deletes the misplaced markers instead — because the old bug only ever _appended_ the marker, this restores affected lines to exactly how they looked before the counter wrote to them (the lifetime counts on those lines are lost). The escape hatch for anyone who'd rather not have the markers at all.
+  - **Remove all** is the counter's full uninstall: it deletes every `🍅 N` marker the plugin has written — correctly placed or misplaced — losing all lifetime counts. It only touches markers in positions the plugin itself writes (followed by nothing but Tasks fields, a block reference, or the end of the line); a `🍅 N` you typed yourself in the middle of a task description is never removed. Its setting and confirmation both warn that the deletion cannot be undone and that backing up the vault first is a good idea.
+
+  All three are deliberately conservative: only task lines whose marker actually sits in a harmful position (after the date fields, or after a `^block-id` reference) are considered — everything else, including a correctly placed marker or a `🍅 N` that happens to appear mid-description on a line without dates, is left byte-for-byte untouched. Repair and Remove first run the same read-only scan as Check and show a **confirmation dialog with the exact counts** ("This will move 12 misplaced 🍅 marker(s) in 3 file(s)…") before writing anything — Cancel, Esc, or clicking outside backs out without a single change, and when nothing is misplaced no dialog appears at all. Files that need no change are never written, a notice reports exactly what was done (or that nothing needed fixing), and running any of them again is always safe.
+
+- **The counter toggle now says what it does to your files.** The **Increment task pomodoro count on finish** setting is marked as beta and its description states plainly that it edits your task files — so opting in is an informed choice.
+
+### Changed
+
+- **Task-line writes are now atomic.** The per-task counter previously read the task file and wrote it back as two separate steps, leaving a small window where a concurrent write (sync, another plugin) could be lost. The increment — and the new repair action — now rewrite the file through Obsidian's atomic `Vault.process`, closing that window.
+
+### Fixed
+
+- **The `🍅 N` counter no longer breaks the Tasks plugin's dates.** With the opt-in **Increment task pomodoro count on finish** setting enabled, the counter was appended to the very end of the task line — _after_ the Tasks plugin's emoji fields (`⏳` scheduled, `📅` due, `🆔` id, …). The Tasks plugin only recognizes those fields when nothing but other fields follows them, so the appended marker silently turned them into plain description text: the line still _looked_ right, but the dates vanished from Edit Task and from date-based queries ([#2](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/2) — thanks for the detailed report). The counter is now written at the end of the task _description_, before the first Tasks field — e.g. `- [ ] Write docs 🍅 3 ⏳ 2026-07-27 📅 2026-07-28` — which Tasks parses correctly. Tasks that were already affected heal automatically: the next finished focus session relocates the misplaced marker as it increments (or you can move the `🍅 N` in front of the date fields by hand to fix a line immediately). Block references (`^id`) stay at the very end of the line, and nested-task indentation is preserved.
+
 ## [0.5.0] — 2026-07-27
 
 ### Added
