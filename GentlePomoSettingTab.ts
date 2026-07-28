@@ -15,10 +15,10 @@ const CHECK_MARKERS_DESC =
   "Versions before 0.5.1 wrote the 🍅 marker after the task's dates, which hid them from the Tasks plugin. This counts affected task lines in the tasks folder (or the whole vault if no folder is set) without changing anything — run it first. If the number is larger than you expect, inspect the files listed in the developer console before repairing or removing.";
 const REPAIR_MARKERS_NAME = "Repair misplaced pomodoro count markers";
 const REPAIR_MARKERS_DESC =
-  "Moves misplaced 🍅 markers back in front of the Tasks fields, keeping their counts. Only task lines with a misplaced marker are rewritten; every other line is left untouched. Run the check above first to preview what this will touch.";
+  "Moves misplaced 🍅 markers back in front of the Tasks fields, keeping their counts. Only task lines with a misplaced marker are rewritten; every other line is left untouched. A confirmation with the affected counts is shown before anything is written — run the check above to list the affected files first.";
 const REMOVE_MARKERS_NAME = "Remove misplaced pomodoro count markers";
 const REMOVE_MARKERS_DESC =
-  "Deletes misplaced 🍅 markers instead of moving them, restoring affected task lines to exactly how they looked before the counter wrote to them — the lifetime counts on those lines are lost. Correctly placed markers are never touched. Run the check above first to preview what this will touch.";
+  "Deletes misplaced 🍅 markers instead of moving them, restoring affected task lines to exactly how they looked before the counter wrote to them — the lifetime counts on those lines are lost. Correctly placed markers are never touched. A confirmation with the affected counts is shown before anything is written — run the check above to list the affected files first.";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;

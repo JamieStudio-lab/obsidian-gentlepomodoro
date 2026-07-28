@@ -1,5 +1,6 @@
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 
+import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
@@ -214,16 +215,25 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async repairPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("repair", async () => {
-      const result = await repairPomodoroMarkersInVault(this.app, this.settings.tasksPath);
-      if (result.linesAffected === 0) {
+      const scan = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (scan.linesAffected === 0) {
         new Notice(
-          `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned).`
+          `Gentle pomodoro: no misplaced 🍅 markers found (${scan.filesScanned} file(s) scanned).`
         );
-      } else {
-        new Notice(
-          `Gentle pomodoro: repaired ${result.linesAffected} task line(s) in ${result.filesAffected} file(s).`
-        );
+        return;
       }
+
+      const confirmed = await confirmAction(this.app, {
+        title: "Repair misplaced pomodoro markers?",
+        body: `This will move ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields, keeping their counts. No other lines are touched. Tip: the check action lists the affected files in the developer console.`,
+        ctaText: `Repair ${scan.linesAffected} marker(s)`,
+      });
+      if (!confirmed) return;
+
+      const result = await repairPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      new Notice(
+        `Gentle pomodoro: repaired ${result.linesAffected} task line(s) in ${result.filesAffected} file(s).`
+      );
     });
   }
 
@@ -234,16 +244,26 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async removeMisplacedPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("remove", async () => {
-      const result = await removeMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
-      if (result.linesAffected === 0) {
+      const scan = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (scan.linesAffected === 0) {
         new Notice(
-          `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned).`
+          `Gentle pomodoro: no misplaced 🍅 markers found (${scan.filesScanned} file(s) scanned).`
         );
-      } else {
-        new Notice(
-          `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
-        );
+        return;
       }
+
+      const confirmed = await confirmAction(this.app, {
+        title: "Remove misplaced pomodoro markers?",
+        body: `This will delete ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s), restoring those task lines to how they looked before the counter wrote to them. Their lifetime counts will be lost. Correctly placed markers are kept. Tip: the check action lists the affected files in the developer console.`,
+        ctaText: `Remove ${scan.linesAffected} marker(s)`,
+        destructive: true,
+      });
+      if (!confirmed) return;
+
+      const result = await removeMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      new Notice(
+        `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
+      );
     });
   }
 
