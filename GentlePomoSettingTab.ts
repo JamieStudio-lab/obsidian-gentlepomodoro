@@ -6,6 +6,14 @@ import { validateMusicUrl } from "./youtubeMusic";
 
 type SettingsKey = keyof GentlePomoSettings;
 
+// Shared between the declarative (1.13+) and imperative (pre-1.13) paths so
+// the two can't drift.
+const POMO_COUNT_TOGGLE_DESC =
+  "Beta — edits your task files. When a focus session linked to a task ends, adds or updates a lifetime '🍅 N' marker on the task line, at the end of the task's description and in front of any Tasks fields (dates, priority, ID) so they keep working. Consider backups or sync if your task notes are precious.";
+const REPAIR_MARKERS_NAME = "Repair misplaced pomodoro count markers";
+const REPAIR_MARKERS_DESC =
+  "Versions before 0.5.1 wrote the 🍅 marker after the task's dates, which hid them from the Tasks plugin. This scans the tasks folder (or the whole vault if no folder is set) and moves misplaced markers back in front of the fields. Only task lines with a misplaced marker are rewritten; every other line is left untouched.";
+
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
 
@@ -173,8 +181,15 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         items: [
           {
             name: "Increment task pomodoro count on finish",
-            desc: "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task.",
+            desc: POMO_COUNT_TOGGLE_DESC,
             control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
+          },
+          {
+            name: REPAIR_MARKERS_NAME,
+            desc: REPAIR_MARKERS_DESC,
+            action: () => {
+              void this.plugin.repairPomodoroMarkers();
+            },
           },
         ],
       },
@@ -524,9 +539,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Increment task pomodoro count on finish")
-      .setDesc(
-        "When a focus session linked to a task ends, append or update a 'pomodoro count' marker on the task line. Counts the lifetime total of focus sessions spent on each task."
-      )
+      .setDesc(POMO_COUNT_TOGGLE_DESC)
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.incrementPomodoroCountOnFinish)
@@ -534,6 +547,15 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             this.plugin.settings.incrementPomodoroCountOnFinish = value;
             await this.plugin.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName(REPAIR_MARKERS_NAME)
+      .setDesc(REPAIR_MARKERS_DESC)
+      .addButton((btn) =>
+        btn.setButtonText("Repair").onClick(() => {
+          void this.plugin.repairPomodoroMarkers();
+        })
       );
   }
 }

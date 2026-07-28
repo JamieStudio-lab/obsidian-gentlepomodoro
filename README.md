@@ -21,7 +21,8 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Pick tasks straight from your vault. Compatible with the [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) format: `- [ ] Task ⏳ 2025-12-23 🆔 abc123`.
 - Smart filtering: Overdue, Today, Tomorrow, and upcoming tasks. Choose the lookahead window (3 / 5 / 7 / 14 / 30 days) in settings; overdue tasks always show.
 - One-click **Unlink current task**.
-- **Opt-in**: increment `🍅 N` on the task line each time you finish a focus session for it. Lifetime count per task. The marker is written at the end of the task description, _before_ the Tasks date fields (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`), so Tasks keeps parsing the dates correctly; legacy markers from earlier builds — including ones a pre-0.5.1 version appended after the dates — are read correctly and migrate into place on the next write.
+- **Opt-in (beta — edits your task files)**: increment `🍅 N` on the task line each time you finish a focus session for it. Lifetime count per task. The marker is written at the end of the task description, _before_ the Tasks date fields (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`), so Tasks keeps parsing the dates correctly; legacy markers from earlier builds — including ones a pre-0.5.1 version appended after the dates — are read correctly and migrate into place on the next write.
+- **Repair action**: if a pre-0.5.1 version left markers after your task dates (hiding them from the Tasks plugin), run **Repair misplaced pomodoro count markers** — a button in the plugin settings and a command-palette command. It only rewrites task lines whose marker is in a harmful position and reports what it changed; running it twice is safe.
 
 ### 📊 Daily focus goal
 

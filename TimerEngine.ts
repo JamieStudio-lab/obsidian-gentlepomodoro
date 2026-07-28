@@ -224,33 +224,36 @@ export class TimerEngine {
     if (!(file instanceof TFile)) return;
 
     try {
-      const content = await this.plugin.app.vault.read(file);
-      const lines = content.split("\n");
-      let updatedIndex = -1;
+      // Atomic read-modify-write: `process` locks the file, so a concurrent
+      // sync/plugin write can't be clobbered between our read and write.
+      await this.plugin.app.vault.process(file, (content) => {
+        const lines = content.split("\n");
+        let updatedIndex = -1;
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // Prefer ID match when available.
-        if (this.currentTaskId) {
-          const idMatch = line.match(TASK_ID_REGEX);
-          if (idMatch && idMatch[1] === this.currentTaskId) {
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          // Prefer ID match when available.
+          if (this.currentTaskId) {
+            const idMatch = line.match(TASK_ID_REGEX);
+            if (idMatch && idMatch[1] === this.currentTaskId) {
+              updatedIndex = i;
+              break;
+            }
+            continue;
+          }
+          // Fallback: match by normalized text on a task line (open or completed).
+          const taskMatch = line.match(/^\s*-\s*\[( |x)\]\s+(.*)$/i);
+          if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
             updatedIndex = i;
             break;
           }
-          continue;
         }
-        // Fallback: match by normalized text on a task line (open or completed).
-        const taskMatch = line.match(/^\s*-\s*\[( |x)\]\s+(.*)$/i);
-        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
-          updatedIndex = i;
-          break;
-        }
-      }
 
-      if (updatedIndex === -1) return;
+        if (updatedIndex === -1) return content;
 
-      lines[updatedIndex] = incrementPomodoroCount(lines[updatedIndex]);
-      await this.plugin.app.vault.modify(file, lines.join("\n"));
+        lines[updatedIndex] = incrementPomodoroCount(lines[updatedIndex]);
+        return lines.join("\n");
+      });
     } catch (e) {
       logger.warn("Failed to increment task pomodoro count", e);
     }

@@ -3,6 +3,8 @@ import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
+import { logger } from "./logger";
+import { repairPomodoroMarkersInVault } from "./taskLoader";
 import { TimerEngine } from "./TimerEngine";
 import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
@@ -29,6 +31,7 @@ export default class GentlePomoPlugin extends Plugin {
   private statusFocusFetchInFlight = false;
   private statusTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
+  private repairInFlight = false;
 
   override async onload() {
     await this.loadSettings();
@@ -127,12 +130,48 @@ export default class GentlePomoPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "repair-task-pomodoro-markers",
+      name: "Repair misplaced pomodoro count markers",
+      callback: () => {
+        void this.repairPomodoroMarkers();
+      },
+    });
+
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
 
     // Defer auto-open until Obsidian has finished initial layout setup.
     this.app.workspace.onLayoutReady(() => {
       this.maybeAutoOpenView();
     });
+  }
+
+  /**
+   * One-shot fix for task lines written by ≤0.5.0, whose 🍅 marker landed
+   * after the Tasks fields and hid them from the Tasks plugin (issue #2).
+   * Scans the tasks folder (whole vault when unset), rewrites only lines
+   * whose marker is in a harmful position, and reports what it did.
+   */
+  async repairPomodoroMarkers(): Promise<void> {
+    if (this.repairInFlight) return;
+    this.repairInFlight = true;
+    try {
+      const result = await repairPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (result.linesRepaired === 0) {
+        new Notice(
+          `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned).`
+        );
+      } else {
+        new Notice(
+          `Gentle pomodoro: repaired ${result.linesRepaired} task line(s) in ${result.filesChanged} file(s).`
+        );
+      }
+    } catch (e) {
+      logger.error("Failed to repair pomodoro markers", e);
+      new Notice("Gentle pomodoro: repair failed — see the developer console for details.");
+    } finally {
+      this.repairInFlight = false;
+    }
   }
 
   override onunload() {

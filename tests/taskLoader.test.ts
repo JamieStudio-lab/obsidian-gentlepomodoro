@@ -6,6 +6,8 @@ import {
   findTaskNameByIdInContent,
   parsePomodoroCount,
   incrementPomodoroCount,
+  repairPomodoroMarkerPlacement,
+  repairPomodoroMarkersInContent,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -189,5 +191,85 @@ describe("incrementPomodoroCount", () => {
 
   it("trims trailing whitespace before appending", () => {
     expect(incrementPomodoroCount("- [ ] Write docs   ")).toBe("- [ ] Write docs 🍅 1");
+  });
+});
+
+describe("repairPomodoroMarkerPlacement", () => {
+  it("moves a ≤0.5.0 trailing marker in front of the fields, preserving the count", () => {
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs ⏳ 2025-12-23 📅 2025-12-24 🍅 3")).toBe(
+      "- [ ] Write docs 🍅 3 ⏳ 2025-12-23 📅 2025-12-24"
+    );
+  });
+
+  it("strips legacy parens while relocating", () => {
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs ⏳ 2025-12-23 🍅 5 (2024-01-01)")).toBe(
+      "- [ ] Write docs 🍅 5 ⏳ 2025-12-23"
+    );
+  });
+
+  it("moves a marker that landed after a trailing block reference", () => {
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs ^abc123 🍅 1")).toBe(
+      "- [ ] Write docs 🍅 1 ^abc123"
+    );
+  });
+
+  it("leaves a correctly placed marker byte-for-byte untouched", () => {
+    const line = "- [ ] Write docs 🍅 3 ⏳ 2025-12-23";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("leaves a trailing marker untouched when the line has no fields (harmless)", () => {
+    const line = "- [ ] Write docs 🍅 4";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("leaves a harmless mid-description marker untouched (never invents moves)", () => {
+    const line = "- [ ] Buy 🍅 2 kg of tomatoes";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("leaves lines without a marker untouched", () => {
+    const line = "- [ ] Write docs ⏳ 2025-12-23";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("is idempotent", () => {
+    const once = repairPomodoroMarkerPlacement("- [ ] Write docs ⏳ 2025-12-23 🍅 3");
+    expect(repairPomodoroMarkerPlacement(once)).toBe(once);
+  });
+});
+
+describe("repairPomodoroMarkersInContent", () => {
+  it("repairs only broken task lines and counts them", () => {
+    const content = [
+      "# Tasks",
+      "- [ ] Broken ⏳ 2025-12-23 🍅 2",
+      "- [x] Done but broken 📅 2025-12-20 🍅 7",
+      "- [ ] Fine 🍅 1 ⏳ 2025-12-24",
+      "- [ ] No marker ⏳ 2025-12-25",
+      "- 🍅 Focus | Task:: [[a.md|A]] | Start:: 2025-12-23 10:00:00",
+      "Plain prose mentioning 🍅 3 stays as is.",
+    ].join("\n");
+
+    const result = repairPomodoroMarkersInContent(content);
+    expect(result.linesRepaired).toBe(2);
+    expect(result.content).toBe(
+      [
+        "# Tasks",
+        "- [ ] Broken 🍅 2 ⏳ 2025-12-23",
+        "- [x] Done but broken 🍅 7 📅 2025-12-20",
+        "- [ ] Fine 🍅 1 ⏳ 2025-12-24",
+        "- [ ] No marker ⏳ 2025-12-25",
+        "- 🍅 Focus | Task:: [[a.md|A]] | Start:: 2025-12-23 10:00:00",
+        "Plain prose mentioning 🍅 3 stays as is.",
+      ].join("\n")
+    );
+  });
+
+  it("returns the content unchanged when nothing needs repair", () => {
+    const content = "- [ ] Fine 🍅 1 ⏳ 2025-12-24\n- [ ] Also fine ⏳ 2025-12-25";
+    const result = repairPomodoroMarkersInContent(content);
+    expect(result.linesRepaired).toBe(0);
+    expect(result.content).toBe(content);
   });
 });

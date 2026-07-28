@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.5.1] — 2026-07-27
 
+### Added
+
+- **A one-click repair for already-affected tasks.** If you used the counter before 0.5.1, some of your task lines may still have the marker in the old, harmful position. A **Repair misplaced pomodoro count markers** action — available both as a button in the plugin settings (Task integration section) and as a command in the command palette — scans your tasks folder (or the whole vault if no folder is set) and moves misplaced markers back in front of the Tasks fields. It is deliberately conservative: only task lines whose marker actually sits in a harmful position (after the date fields, or after a `^block-id` reference) are rewritten — everything else, including a `🍅 N` that happens to appear mid-description on a line without dates, is left byte-for-byte untouched. Files that need no change are never written. A notice reports exactly what was done (or that nothing needed fixing), and running it again is always safe.
+- **The counter toggle now says what it does to your files.** The **Increment task pomodoro count on finish** setting is marked as beta and its description now states plainly that it edits your task files, where the marker is written, and that backups/sync are worth having if your task notes are precious — so opting in is an informed choice.
+
+### Changed
+
+- **Task-line writes are now atomic.** The per-task counter previously read the task file and wrote it back as two separate steps, leaving a small window where a concurrent write (sync, another plugin) could be lost. The increment — and the new repair action — now rewrite the file through Obsidian's atomic `Vault.process`, closing that window.
+
 ### Fixed
 
 - **The `🍅 N` counter no longer breaks the Tasks plugin's dates.** With the opt-in **Increment task pomodoro count on finish** setting enabled, the counter was appended to the very end of the task line — _after_ the Tasks plugin's emoji fields (`⏳` scheduled, `📅` due, `🆔` id, …). The Tasks plugin only recognizes those fields when nothing but other fields follows them, so the appended marker silently turned them into plain description text: the line still _looked_ right, but the dates vanished from Edit Task and from date-based queries ([#2](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/2) — thanks for the detailed report). The counter is now written at the end of the task _description_, before the first Tasks field — e.g. `- [ ] Write docs 🍅 3 ⏳ 2026-07-27 📅 2026-07-28` — which Tasks parses correctly. Tasks that were already affected heal automatically: the next finished focus session relocates the misplaced marker as it increments (or you can move the `🍅 N` in front of the date fields by hand to fix a line immediately). Block references (`^id`) stay at the very end of the line, and nested-task indentation is preserved.
