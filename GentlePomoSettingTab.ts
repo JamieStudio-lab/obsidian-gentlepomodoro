@@ -1,4 +1,5 @@
 import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
+import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
@@ -600,31 +601,21 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName(REMOVE_MARKERS_NAME)
       .setDesc(REMOVE_MARKERS_DESC)
-      .addButton((btn) =>
-        btn
-          .setButtonText("Remove")
-          // The replacement, setDestructive(), is 1.13+ only; this imperative
-          // path runs exclusively on pre-1.13 Obsidian, where only
-          // setWarning() exists.
-          // eslint-disable-next-line @typescript-eslint/no-deprecated
-          .setWarning()
-          .onClick(() => {
-            void this.plugin.removeMisplacedPomodoroMarkers();
-          })
-      );
+      .addButton((btn) => {
+        btn.setButtonText("Remove").onClick(() => {
+          void this.plugin.removeMisplacedPomodoroMarkers();
+        });
+        markDestructive(btn);
+      });
 
     new Setting(containerEl)
       .setName(REMOVE_ALL_MARKERS_NAME)
       .setDesc(REMOVE_ALL_MARKERS_DESC)
-      .addButton((btn) =>
-        btn
-          .setButtonText("Remove all")
-          // Same pre-1.13 setWarning() rationale as the button above.
-          // eslint-disable-next-line @typescript-eslint/no-deprecated
-          .setWarning()
-          .onClick(() => {
-            void this.plugin.removeAllPomodoroMarkers();
-          })
-      );
+      .addButton((btn) => {
+        btn.setButtonText("Remove all").onClick(() => {
+          void this.plugin.removeAllPomodoroMarkers();
+        });
+        markDestructive(btn);
+      });
   }
 }

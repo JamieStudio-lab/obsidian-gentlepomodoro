@@ -63,14 +63,19 @@ class ConfirmModal extends Modal {
   }
 }
 
-// setDestructive() only exists on Obsidian 1.13+, so probe for it at runtime;
-// older versions fall back to setWarning(), their only destructive styling.
-function markDestructive(btn: ButtonComponent): void {
-  const probe = btn as unknown as { setDestructive?: () => void };
+/**
+ * Style a button as destructive across Obsidian versions. setDestructive()
+ * only exists on 1.13+, so probe for it at runtime; older versions fall back
+ * to setWarning(), their only destructive styling. Both are called through a
+ * structural probe type rather than the typed members, so the (1.13-only)
+ * deprecation of setWarning never applies to code that runs only where it is
+ * the sole option.
+ */
+export function markDestructive(btn: ButtonComponent): void {
+  const probe = btn as unknown as { setDestructive?: () => void; setWarning?: () => void };
   if (probe.setDestructive) {
     probe.setDestructive();
-  } else {
-    // eslint-disable-next-line @typescript-eslint/no-deprecated
-    btn.setWarning();
+  } else if (probe.setWarning) {
+    probe.setWarning();
   }
 }
