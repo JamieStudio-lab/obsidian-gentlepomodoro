@@ -1389,15 +1389,15 @@
   color: var(--text-muted);
 }
 
-/* Visually-hidden iframe host. Clipped-but-rendered (NOT display:none): a
+/* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
    rendered frame is the safe cross-webview way to keep the embed's media
-   pipeline alive while nothing is shown. */
+   pipeline alive while nothing is shown. 1×1 + overflow + opacity fully hide
+   it — no clip-path, which Obsidian review flags as partially supported. */
 .gp-music-player {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip-path: inset(50%);
   opacity: 0;
   pointer-events: none;
 }
