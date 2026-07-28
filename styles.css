@@ -1410,6 +1410,18 @@
 }
 
 /* =========================================================================
+   Confirmation modal
+   -------------------------------------------------------------------------
+   The marker repair/remove confirmations are a short question + two buttons,
+   so the default dialog width looks oversized. Desktop-only: mobile Obsidian
+   renders modals as bottom sheets and should keep its native sizing.
+   ========================================================================= */
+body:not(.is-mobile) .modal.gp-confirm-modal {
+  width: auto;
+  max-width: min(24em, 90vw);
+}
+
+/* =========================================================================
    Mobile & touch
    -------------------------------------------------------------------------
    The single home for mobile/touch adaptations. Two query strategies, used

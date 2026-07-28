@@ -225,7 +225,7 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Repair misplaced pomodoro markers?",
-        body: `This will move ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields, keeping their counts. No other lines are touched. Tip: the check action lists the affected files in the developer console.`,
+        body: `Move ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields? Their counts are kept.`,
         ctaText: `Repair ${scan.linesAffected} marker(s)`,
       });
       if (!confirmed) return;
@@ -254,7 +254,7 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Remove misplaced pomodoro markers?",
-        body: `This will delete ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s), restoring those task lines to how they looked before the counter wrote to them. Their lifetime counts will be lost. Correctly placed markers are kept. Tip: the check action lists the affected files in the developer console.`,
+        body: `Delete ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s)? Their lifetime counts will be lost.`,
         ctaText: `Remove ${scan.linesAffected} marker(s)`,
         destructive: true,
       });

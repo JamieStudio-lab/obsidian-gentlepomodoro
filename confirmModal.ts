@@ -33,6 +33,7 @@ class ConfirmModal extends Modal {
   }
 
   override onOpen(): void {
+    this.modalEl.addClass("gp-confirm-modal");
     this.titleEl.setText(this.options.title);
     this.contentEl.createEl("p", { text: this.options.body });
 

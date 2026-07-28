@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
   All three are deliberately conservative: only task lines whose marker actually sits in a harmful position (after the date fields, or after a `^block-id` reference) are considered — everything else, including a correctly placed marker or a `🍅 N` that happens to appear mid-description on a line without dates, is left byte-for-byte untouched. Repair and Remove first run the same read-only scan as Check and show a **confirmation dialog with the exact counts** ("This will move 12 misplaced 🍅 marker(s) in 3 file(s)…") before writing anything — Cancel, Esc, or clicking outside backs out without a single change, and when nothing is misplaced no dialog appears at all. Files that need no change are never written, a notice reports exactly what was done (or that nothing needed fixing), and running any of them again is always safe.
 
-- **The counter toggle now says what it does to your files.** The **Increment task pomodoro count on finish** setting is marked as beta and its description now states plainly that it edits your task files, where the marker is written, and that backups/sync are worth having if your task notes are precious — so opting in is an informed choice.
+- **The counter toggle now says what it does to your files.** The **Increment task pomodoro count on finish** setting is marked as beta and its description states plainly that it edits your task files — so opting in is an informed choice.
 
 ### Changed
 
