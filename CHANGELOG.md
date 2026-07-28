@@ -4,6 +4,20 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-27
+
+### Added
+
+- **Lofi study music, right in the timer panel.** Paste a YouTube link — a video, a 24/7 live stream like Lofi Girl, or a playlist — into the new **YouTube music URL** setting (Settings → Gentle Pomodoro → Music), and a small ♪ play/pause/stop row appears in the timer panel. It's audio-only by design: no video ever appears, keeping the panel as calm as the rest of the timer. A **Music volume** control (Low/Mid/High) sits next to the existing sound volume in the in-view settings panel. Playback is fully manual — it doesn't start or stop with your sessions — and stops when you close the timer panel. A **Show music player** toggle hides the controls (and stops playback) if you'd rather not see them; if a pasted video turns out not to allow embedding, a notice tells you instead of leaving a silent play button.
+- **The music ducks under the session sounds.** When a cue plays while music is streaming — the war drum on a focus start, the bell at a focus end, the ding at a break end — the music smoothly dips to about a third of your set volume for exactly the length of the cue, then eases back up over a second or so. The cues stay clearly audible without the timer ever jolting your mix; changing the music volume mid-dip always wins immediately.
+- **Loop music, and a heads-up when it truly stops.** A new **Loop music** toggle (Settings → Gentle Pomodoro → Music, on by default) replays a video or playlist from the start when it ends, so background music keeps going through long sessions; live streams play continuously either way. And because the player is invisible, silence used to be the only sign that playback had stopped — now, when the music genuinely ends (a finished video with loop off, or a live stream going offline), a notice tells you so you can press ♪ play again or paste a new link. Playlist track changes and loop restarts don't trigger it.
+- **Notices for network trouble.** If the music buffers for more than ~10 seconds — a slow or dropped connection — a notice says so and explains that playback resumes by itself once the network is back (with a manual reload tip if it doesn't). Brief rebuffers and normal track starts never trigger it, and it won't repeat more than once every five minutes on a flaky connection. And pressing ♪ play before the player has loaded (for example, offline) now tells you why nothing is happening instead of silently doing nothing.
+- **Privacy note:** the plugin makes no network requests on its own. Only when you paste a URL (and the music player is shown) does the panel embed YouTube's privacy-enhanced player (`youtube-nocookie.com`) to stream the audio — see the README's **Network use** section.
+
+### Changed
+
+- **Smoother focus-session sounds.** The war drum that marks a fresh focus start and the singing bell that marks the end of a focus session (whether it completes naturally or you press Stop or Skip) have been replaced with higher-quality recordings that fade out naturally — the old clips cut off abruptly, which felt at odds with a gentle timer (thanks to the GitHub feedback that pointed this out). Break sessions keep their existing ding.
+
 ## [0.4.4] — 2026-07-20
 
 ### Added

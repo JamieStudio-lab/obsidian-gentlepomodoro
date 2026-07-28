@@ -382,6 +382,9 @@ export class TimerEngine {
 
       source.connect(gain);
       gain.connect(ctx.destination);
+      // Dip any playing lofi music under the cue for exactly the clip's length
+      // (view-side; no-op when nothing is playing).
+      this.plugin.duckMusicInOpenViews(audioBuffer.duration);
       source.start(0);
     } catch (e) {
       logger.error(`Failed to play sound ${filename}:`, e);

@@ -1,4 +1,4 @@
-import { ItemView, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import {
@@ -7,11 +7,31 @@ import {
   NO_TASK_LABEL,
   ONE_MINUTE_MS,
   PEEK_REVEAL_MS,
+  MUSIC_LISTENING_DELAY_MS,
+  MUSIC_DUCK_FACTOR,
+  MUSIC_DUCK_DOWN_MS,
+  MUSIC_DUCK_UP_MS,
+  MUSIC_DUCK_STEP_MS,
+  MUSIC_ENDED_NOTICE_DELAY_MS,
+  MUSIC_STALL_NOTICE_DELAY_MS,
+  MUSIC_STALL_RENOTIFY_MS,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
 import type { MomentFactory } from "./momentTypes";
+import {
+  YT_EMBED_ORIGIN,
+  YT_ALLOWED_MESSAGE_ORIGINS,
+  YT_STATE,
+  parseYouTubeUrl,
+  buildEmbedUrl,
+  buildPlayerCommand,
+  buildListeningMessage,
+  parsePlayerMessage,
+  musicVolumeTo100,
+  buildVolumeRamp,
+} from "./youtubeMusic";
 
 declare const moment: MomentFactory;
 
@@ -40,6 +60,29 @@ export class GentlePomoView extends ItemView {
   taskListVisible = false;
   taskBtn!: HTMLButtonElement;
 
+  // Music (audio-only lofi playback; the YouTube iframe is a hidden audio engine)
+  musicSection!: HTMLDivElement;
+  private musicDivider!: HTMLDivElement;
+  private musicSectionVisible = false; // mirrors musicSection's gp-hidden; feeds the divider rule
+  private musicPlayBtn!: HTMLButtonElement;
+  private musicPauseBtn!: HTMLButtonElement;
+  private musicPlayerContainer!: HTMLDivElement; // visually-hidden iframe host
+  private musicIframe: HTMLIFrameElement | null = null;
+  private musicListenTimeout: number | null = null;
+  private musicPlayerReady = false;
+  private musicPlayerState: number = YT_STATE.UNSTARTED;
+  private musicErrorNotified = false; // one Notice per iframe build
+  private musicEndedTimeout: number | null = null; // pending "music ended" Notice
+  private musicStallTimeout: number | null = null; // pending "music is buffering" Notice
+  private musicStallNotifiedAt = 0; // rate-limits stall notices (0 = never fired)
+  // Music ducking (the music dips under a sound cue, then eases back).
+  // duckLevel is the last 0–1 volume actually posted while ducking — the start
+  // point for the next ramp (so overlapping cues never double-dip or jump) and,
+  // when non-null, the "duck in progress" marker.
+  private duckRampInterval: number | null = null;
+  private duckRestoreTimeout: number | null = null;
+  private duckLevel: number | null = null;
+
   private timerListener: TimerListener | null = null;
   private lastState: TimerState | null = null;
   private resizeObserver: ResizeObserver | null = null;
@@ -49,6 +92,12 @@ export class GentlePomoView extends ItemView {
   private lastTimeText: string | null = null;
   // Last end-time string rendered; gates the ~once/minute DOM write (mirrors lastTimeText).
   private lastEndText: string | null = null;
+  // Music reconciliation guards (same write-guard family). lastMusicKey gates the
+  // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl gates iframe
+  // rebuilds; lastAppliedMusicVolume gates setVolume posts.
+  private lastMusicKey: string | null = null;
+  private lastMusicEmbedUrl: string | null = null;
+  private lastAppliedMusicVolume: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -249,6 +298,78 @@ export class GentlePomoView extends ItemView {
     // --- Task List Container ---
     this.taskListContainer = controls.createDiv("gp-task-list");
 
+    // --- Music (audio-only lofi playback) ---
+    // Hairline between the task selector and the music row. Reconciled in
+    // applySettings — visible only when both neighbors are visible, so it
+    // never dangles under a hidden selector or above a hidden music row.
+    this.musicDivider = controls.createDiv("gp-music-divider");
+
+    // The ♪ row is the only playback UI — the YouTube iframe below is a
+    // visually-hidden audio engine (see .gp-music-player in styles.css). The
+    // iframe itself is (re)built in applySettings(), which reconciles the
+    // showMusicPlayer/musicUrl settings against the DOM.
+    this.musicSection = controls.createDiv("gp-music-section");
+    const musicRow = this.musicSection.createDiv("gp-controls-row");
+
+    // Decorative glyph so the row reads as the music row, not more timer buttons.
+    const musicGlyph = musicRow.createSpan("gp-music-row-icon");
+    setIcon(musicGlyph, "music");
+    musicGlyph.setAttribute("aria-hidden", "true");
+
+    this.musicPlayBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn" });
+    setIcon(this.musicPlayBtn, "play");
+    this.musicPlayBtn.setAttribute("aria-label", "Play music");
+    this.registerDomEvent(this.musicPlayBtn, "click", (evt) => {
+      evt.preventDefault();
+      // Pre-handshake commands are silently dropped by the embed — without
+      // this, playing while offline (or mid-boot) is just a dead button.
+      if (!this.musicPlayerReady) {
+        new Notice(
+          "Gentle pomodoro: the music player hasn't loaded yet — wait a moment, or check your connection if you're offline."
+        );
+        return;
+      }
+      this.postToMusicPlayer(buildPlayerCommand("playVideo"));
+    });
+
+    this.musicPauseBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn gp-hidden" });
+    setIcon(this.musicPauseBtn, "pause");
+    this.musicPauseBtn.setAttribute("aria-label", "Pause music");
+    this.registerDomEvent(this.musicPauseBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.postToMusicPlayer(buildPlayerCommand("pauseVideo"));
+    });
+
+    const musicStopBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn" });
+    setIcon(musicStopBtn, "square");
+    musicStopBtn.setAttribute("aria-label", "Stop music");
+    this.registerDomEvent(musicStopBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.postToMusicPlayer(buildPlayerCommand("stopVideo"));
+    });
+
+    this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
+
+    // The embed talks back over the shared window message bus. Source and
+    // origin are checked before parsing — everything else on the bus is noise.
+    this.registerDomEvent(window, "message", (evt: MessageEvent) => {
+      if (!this.musicIframe || evt.source !== this.musicIframe.contentWindow) return;
+      if (!YT_ALLOWED_MESSAGE_ORIGINS.includes(evt.origin)) return;
+      const msg = parsePlayerMessage(evt.data);
+      if (!msg) return;
+      if (msg.type === "ready") {
+        this.musicPlayerReady = true;
+        // Apply the saved volume as soon as the player can take commands.
+        this.postMusicVolume();
+      } else if (msg.type === "error") {
+        this.notifyMusicError(msg.code);
+      } else {
+        this.maybeNotifyMusicStalled(msg.state);
+        this.maybeNotifyMusicEnded(msg.state);
+        this.updateMusicButtons(msg.state);
+      }
+    });
+
     // Daily-goal progress. Hidden on desktop via CSS (the status bar carries it
     // there); revealed on mobile, where Obsidian hides the status bar. Populated by
     // the plugin via refreshViewGoalProgress() — once now (so it shows immediately,
@@ -390,6 +511,9 @@ export class GentlePomoView extends ItemView {
       window.clearTimeout(this.peekTimeout);
       this.peekTimeout = null;
     }
+    // The iframe would die with the view DOM anyway, but explicit teardown
+    // clears the pending handshake timeout and nulls the refs.
+    this.destroyMusicIframe();
     return Promise.resolve();
   }
 
@@ -438,6 +562,36 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.removeClass("gp-visible");
     }
 
+    // Music player reconciliation. Runs here so the per-tick call and the settings
+    // tab's applySettingsToOpenViews() converge on the same DOM. The lastMusicKey
+    // string guard keeps the ~20Hz hot path to one concat + compare — the URL is
+    // only parsed when the (toggle, loop, url) triple actually changes. Removing
+    // the iframe is what stops playback, which implements "toggle off = hide + stop".
+    // Loop is baked into the embed URL, so flipping it rebuilds the iframe too.
+    const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${this.plugin.settings.musicUrl}`;
+    if (musicKey !== this.lastMusicKey) {
+      this.lastMusicKey = musicKey;
+      const target = this.plugin.settings.showMusicPlayer
+        ? parseYouTubeUrl(this.plugin.settings.musicUrl)
+        : null;
+      const embedUrl = target ? buildEmbedUrl(target, this.plugin.settings.musicLoop) : null;
+      this.musicSectionVisible = embedUrl !== null;
+      this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
+      if (embedUrl !== this.lastMusicEmbedUrl) {
+        this.lastMusicEmbedUrl = embedUrl;
+        this.destroyMusicIframe();
+        if (embedUrl !== null) this.buildMusicIframe(embedUrl);
+      }
+    }
+    // The task-selector/music divider needs both neighbors visible. Outside the
+    // musicKey guard because showTaskSelector can change independently of it.
+    this.musicDivider?.toggleClass("gp-hidden", !showSelector || !this.musicSectionVisible);
+    // Volume convergence (settings changed from another view or a reload while
+    // the player was still booting). No-op per tick once applied.
+    if (this.musicPlayerReady && this.plugin.settings.musicVolume !== this.lastAppliedMusicVolume) {
+      this.postMusicVolume();
+    }
+
     // Estimated end time. Shown only while running and before overtime — a static
     // "you'll finish at 15:30", the calm counterpart to the hidden countdown.
     // Driven from here (not just the tick listener, which calls applySettings) so
@@ -466,6 +620,237 @@ export class GentlePomoView extends ItemView {
     for (const key of DAY_NIGHT_ICON_ORDER) {
       this.dayNightIconEls[key]?.toggleClass("is-active", key === icon);
     }
+  }
+
+  /**
+   * Create the hidden YouTube iframe and start the postMessage handshake:
+   * after the iframe's load event, wait a beat (the embed isn't ready the
+   * instant it loads), then announce {"event":"listening"} so it starts
+   * streaming onReady/onStateChange/infoDelivery/onError back to us.
+   */
+  private buildMusicIframe(embedUrl: string) {
+    const iframe = this.musicPlayerContainer.createEl("iframe", {
+      attr: {
+        src: embedUrl,
+        allow: "autoplay; encrypted-media; picture-in-picture; fullscreen",
+        referrerpolicy: "strict-origin-when-cross-origin", // YouTube needs a Referer or it throws error 153
+        allowfullscreen: "",
+        title: "Lofi music player",
+      },
+    });
+    this.musicIframe = iframe;
+    this.registerDomEvent(iframe, "load", () => {
+      if (this.musicListenTimeout !== null) window.clearTimeout(this.musicListenTimeout);
+      this.musicListenTimeout = window.setTimeout(() => {
+        this.musicListenTimeout = null;
+        this.postToMusicPlayer(buildListeningMessage());
+      }, MUSIC_LISTENING_DELAY_MS);
+    });
+  }
+
+  /**
+   * Tear the iframe down — removal from the DOM is what stops playback.
+   * Also resets the handshake/volume state so a rebuilt iframe starts fresh.
+   */
+  private destroyMusicIframe() {
+    this.cancelMusicDuck();
+    if (this.musicListenTimeout !== null) {
+      window.clearTimeout(this.musicListenTimeout);
+      this.musicListenTimeout = null;
+    }
+    if (this.musicEndedTimeout !== null) {
+      window.clearTimeout(this.musicEndedTimeout);
+      this.musicEndedTimeout = null;
+    }
+    if (this.musicStallTimeout !== null) {
+      window.clearTimeout(this.musicStallTimeout);
+      this.musicStallTimeout = null;
+    }
+    this.musicIframe?.remove();
+    this.musicIframe = null;
+    this.musicPlayerReady = false;
+    this.musicErrorNotified = false;
+    this.lastAppliedMusicVolume = null;
+    this.updateMusicButtons(YT_STATE.UNSTARTED);
+  }
+
+  private postToMusicPlayer(payload: string) {
+    this.musicIframe?.contentWindow?.postMessage(payload, YT_EMBED_ORIGIN);
+  }
+
+  private postMusicVolume() {
+    // An explicit volume set (segmented control, reset, cross-view reconcile)
+    // always wins over an in-flight duck.
+    this.cancelMusicDuck();
+    this.postToMusicPlayer(
+      buildPlayerCommand("setVolume", [musicVolumeTo100(this.plugin.settings.musicVolume)])
+    );
+    this.lastAppliedMusicVolume = this.plugin.settings.musicVolume;
+  }
+
+  /**
+   * Dip the music under a sound cue: a quick stepped ramp down to
+   * MUSIC_DUCK_FACTOR × the user's volume, hold for the cue's duration, then a
+   * slower ease back up. Called (via the plugin) from TimerEngine.playSound with
+   * the decoded clip's length. A cue landing mid-duck restarts the hold from the
+   * current level — extend, never double-dip. No-op unless the player is ready
+   * and actually playing (pre-handshake commands are dropped by the embed anyway).
+   */
+  duckMusic(cueDurationSec: number) {
+    const playing =
+      this.musicPlayerState === YT_STATE.PLAYING || this.musicPlayerState === YT_STATE.BUFFERING;
+    if (!this.musicPlayerReady || !playing) return;
+
+    const base = this.plugin.settings.musicVolume;
+    const target = base * MUSIC_DUCK_FACTOR;
+    const from = this.duckLevel ?? base;
+    this.clearDuckTimers();
+    this.runDuckRamp(from, target, MUSIC_DUCK_DOWN_MS);
+    // The down-ramp runs under the cue's attack; restore starts when the clip ends.
+    const holdMs = Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
+    this.duckRestoreTimeout = window.setTimeout(() => {
+      this.duckRestoreTimeout = null;
+      this.restoreDuckedMusic();
+    }, holdMs);
+  }
+
+  /** Ease the music back to the user's volume (re-read at restore time) and end the duck. */
+  private restoreDuckedMusic() {
+    const userVolume = this.plugin.settings.musicVolume;
+    const from = this.duckLevel ?? userVolume * MUSIC_DUCK_FACTOR;
+    this.runDuckRamp(from, userVolume, MUSIC_DUCK_UP_MS, () => {
+      this.duckLevel = null;
+      // Exact landing + lastAppliedMusicVolume bookkeeping (cancel inside is a no-op here).
+      this.postMusicVolume();
+    });
+  }
+
+  /** Post a stepped volume ramp — one setVolume per MUSIC_DUCK_STEP_MS. Replaces any running ramp. */
+  private runDuckRamp(from01: number, to01: number, durationMs: number, onDone?: () => void) {
+    if (this.duckRampInterval !== null) window.clearInterval(this.duckRampInterval);
+    const steps = Math.max(1, Math.round(durationMs / MUSIC_DUCK_STEP_MS));
+    const levels = buildVolumeRamp(from01, to01, steps);
+    let i = 0;
+    this.duckRampInterval = window.setInterval(() => {
+      const level = levels[i++];
+      this.duckLevel = level;
+      this.postToMusicPlayer(buildPlayerCommand("setVolume", [musicVolumeTo100(level)]));
+      if (i >= levels.length && this.duckRampInterval !== null) {
+        window.clearInterval(this.duckRampInterval);
+        this.duckRampInterval = null;
+        onDone?.();
+      }
+    }, MUSIC_DUCK_STEP_MS);
+  }
+
+  /** Drop any in-flight duck (timers + state). Restores nothing — callers either
+   *  post the user volume next (postMusicVolume) or are tearing the iframe down. */
+  private cancelMusicDuck() {
+    this.clearDuckTimers();
+    this.duckLevel = null;
+  }
+
+  private clearDuckTimers() {
+    if (this.duckRampInterval !== null) {
+      window.clearInterval(this.duckRampInterval);
+      this.duckRampInterval = null;
+    }
+    if (this.duckRestoreTimeout !== null) {
+      window.clearTimeout(this.duckRestoreTimeout);
+      this.duckRestoreTimeout = null;
+    }
+  }
+
+  /**
+   * Swap the ♪ play/pause buttons to match the reported player state (the
+   * same .gp-hidden swap the main start/pause buttons use). Guarded so the
+   * ~4Hz infoDelivery stream doesn't produce redundant DOM writes.
+   */
+  private updateMusicButtons(state: number) {
+    if (state === this.musicPlayerState) return;
+    this.musicPlayerState = state;
+    const playing = state === YT_STATE.PLAYING || state === YT_STATE.BUFFERING;
+    this.musicPlayBtn?.toggleClass("gp-hidden", playing);
+    this.musicPauseBtn?.toggleClass("gp-hidden", !playing);
+  }
+
+  /**
+   * Surface a *lasting* BUFFERING state as a Notice — a network stall is just
+   * silence with the player hidden. Armed once per stall episode (on the
+   * transition into BUFFERING), disarmed the moment any other state arrives;
+   * normal track starts and brief rebuffers stay under the delay. The player
+   * self-recovers when the connection returns, so this only informs — it never
+   * pauses or reloads anything. Rate-limited so a flapping connection doesn't
+   * nag: at most one notice per MUSIC_STALL_RENOTIFY_MS.
+   */
+  private maybeNotifyMusicStalled(state: number) {
+    if (state !== YT_STATE.BUFFERING) {
+      if (this.musicStallTimeout !== null) {
+        window.clearTimeout(this.musicStallTimeout);
+        this.musicStallTimeout = null;
+      }
+      return;
+    }
+    // Arm only on the transition into BUFFERING — the ~4Hz infoDelivery stream
+    // repeats the state, and after the timeout fires (timeout null, state still
+    // BUFFERING) those repeats must not re-arm it within the same episode.
+    if (this.musicStallTimeout !== null || this.musicPlayerState === YT_STATE.BUFFERING) return;
+    this.musicStallTimeout = window.setTimeout(() => {
+      this.musicStallTimeout = null;
+      const now = Date.now();
+      if (
+        now - this.musicStallNotifiedAt < MUSIC_STALL_RENOTIFY_MS &&
+        this.musicStallNotifiedAt !== 0
+      )
+        return;
+      this.musicStallNotifiedAt = now;
+      new Notice(
+        "Gentle pomodoro: the music is buffering — slow or lost connection. It resumes by itself once the network is back; if it stays silent, press ⏹ then ♪ to reload."
+      );
+    }, MUSIC_STALL_NOTICE_DELAY_MS);
+  }
+
+  /**
+   * Surface a *lasting* ENDED state as a Notice — with the player hidden there
+   * is nothing to show that playback truly stopped (a finished video with loop
+   * off, or a live stream going offline). Playlist auto-advance and loop
+   * restarts pass through ENDED and resume within ~a second, so the Notice is
+   * armed on a playing→ENDED transition and disarmed if playback resumes
+   * before MUSIC_ENDED_NOTICE_DELAY_MS.
+   */
+  private maybeNotifyMusicEnded(state: number) {
+    if (state === YT_STATE.PLAYING || state === YT_STATE.BUFFERING) {
+      if (this.musicEndedTimeout !== null) {
+        window.clearTimeout(this.musicEndedTimeout);
+        this.musicEndedTimeout = null;
+      }
+      return;
+    }
+    const wasAudible =
+      this.musicPlayerState === YT_STATE.PLAYING || this.musicPlayerState === YT_STATE.BUFFERING;
+    if (state === YT_STATE.ENDED && wasAudible && this.musicEndedTimeout === null) {
+      this.musicEndedTimeout = window.setTimeout(() => {
+        this.musicEndedTimeout = null;
+        new Notice(
+          "Gentle pomodoro: the music ended — a live stream may have gone offline. Press ♪ to play again or paste a new link."
+        );
+      }, MUSIC_ENDED_NOTICE_DELAY_MS);
+    }
+  }
+
+  /**
+   * Surface an embed error as a Notice — with the player hidden there is no
+   * visible error screen, so without this a broken URL is just a dead Play
+   * button. Once per iframe build (the embed can re-emit onError).
+   */
+  private notifyMusicError(code: number) {
+    if (this.musicErrorNotified) return;
+    this.musicErrorNotified = true;
+    const message =
+      code === 101 || code === 150
+        ? "Gentle pomodoro: this video doesn't allow embedding — try another URL."
+        : "Gentle pomodoro: the music video can't be played (unavailable or restricted).";
+    new Notice(message);
   }
 
   /**
@@ -678,6 +1063,22 @@ export class GentlePomoView extends ItemView {
         await this.plugin.saveSettings();
       }
     );
+    segmentedRow(
+      "Music volume",
+      [
+        { label: "Low", value: 0.3 },
+        { label: "Mid", value: 0.7 },
+        { label: "High", value: 1.0 },
+      ],
+      settings.musicVolume,
+      async (v) => {
+        settings.musicVolume = v;
+        await this.plugin.saveSettings();
+        // Live-apply to this view's playing iframe; other open views converge
+        // via the lastAppliedMusicVolume guard in their applySettings.
+        this.postMusicVolume();
+      }
+    );
 
     section("Auto-start");
     toggleRow("Auto-start break", settings.autoStartBreak, async (v) => {
@@ -700,11 +1101,13 @@ export class GentlePomoView extends ItemView {
       settings.breakMinutes = DEFAULT_SETTINGS.breakMinutes;
       settings.soundEnabled = DEFAULT_SETTINGS.soundEnabled;
       settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
+      settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
       await this.plugin.saveSettings();
       this.timer.updateDuration("focus", settings.focusMinutes);
       this.timer.updateDuration("break", settings.breakMinutes);
+      this.postMusicVolume();
       this.renderSettingsPanel();
     });
   }

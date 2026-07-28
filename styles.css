@@ -1359,6 +1359,57 @@
 }
 
 /* =========================================================================
+   Music (audio-only lofi playback)
+   -------------------------------------------------------------------------
+   The ♪ controls row is the entire visible UI; the YouTube iframe below it is
+   a hidden audio engine. Buttons are .gp-icon-btn inside a .gp-controls-row,
+   so they inherit the desktop tokens and every Mobile & touch rule (56px bump,
+   WebKit svg min-width floor, tap-target sizing) with no extra rules here.
+   ========================================================================= */
+/* Hairline between the task selector and the ♪ row. Toggled with .gp-hidden in
+   applySettings() — shown only when both neighbors are visible. The .gp-controls
+   column gap (0.75rem) sits above it; the margin-bottom adds extra breathing room
+   before the music row — on the divider itself, so hiding it (display: none)
+   removes the extra space along with the line. */
+.gp-music-divider {
+  width: 100%;
+  height: 1px;
+  margin-bottom: 0.5rem;
+  background: var(--background-modifier-border);
+}
+
+.gp-music-section {
+  width: 100%;
+}
+
+/* Decorative row glyph so the row reads as "music", not more timer buttons. */
+.gp-music-row-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
+   rendered frame is the safe cross-webview way to keep the embed's media
+   pipeline alive while nothing is shown. 1×1 + overflow + opacity fully hide
+   it — no clip-path, which Obsidian review flags as partially supported. */
+.gp-music-player {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gp-music-player iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* =========================================================================
    Mobile & touch
    -------------------------------------------------------------------------
    The single home for mobile/touch adaptations. Two query strategies, used
