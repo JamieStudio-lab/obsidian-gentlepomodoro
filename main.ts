@@ -6,8 +6,10 @@ import { GentlePomoView } from "./GentlePomoView";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
 import { logger } from "./logger";
 import {
+  removeAllPomodoroMarkersInVault,
   removeMisplacedPomodoroMarkersInVault,
   repairPomodoroMarkersInVault,
+  scanAllPomodoroMarkersInVault,
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
 import { TimerEngine } from "./TimerEngine";
@@ -159,6 +161,14 @@ export default class GentlePomoPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "remove-all-task-pomodoro-markers",
+      name: "Remove all pomodoro count markers",
+      callback: () => {
+        void this.removeAllPomodoroMarkers();
+      },
+    });
+
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
 
     // Defer auto-open until Obsidian has finished initial layout setup.
@@ -263,6 +273,34 @@ export default class GentlePomoPlugin extends Plugin {
       const result = await removeMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
       new Notice(
         `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
+      );
+    });
+  }
+
+  /**
+   * The counter's "uninstall": delete every plugin-written 🍅 marker,
+   * correctly placed or misplaced. A `🍅 N` the user typed mid-description
+   * is never touched (see removeAnyPomodoroMarker).
+   */
+  async removeAllPomodoroMarkers(): Promise<void> {
+    await this.runMarkerMaintenance("remove", async () => {
+      const scan = await scanAllPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      if (scan.linesAffected === 0) {
+        new Notice(`Gentle pomodoro: no 🍅 markers found (${scan.filesScanned} file(s) scanned).`);
+        return;
+      }
+
+      const confirmed = await confirmAction(this.app, {
+        title: "Remove all pomodoro markers?",
+        body: `Delete ${scan.linesAffected} 🍅 marker(s) in ${scan.filesAffected} file(s)? All lifetime counts will be lost.`,
+        ctaText: `Remove ${scan.linesAffected} marker(s)`,
+        destructive: true,
+      });
+      if (!confirmed) return;
+
+      const result = await removeAllPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      new Notice(
+        `Gentle pomodoro: removed ${result.linesAffected} 🍅 marker(s) in ${result.filesAffected} file(s).`
       );
     });
   }

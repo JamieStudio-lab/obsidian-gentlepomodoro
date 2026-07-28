@@ -33,6 +33,11 @@ const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\([^)]*\))?/;
 const TASKS_METADATA_TOKEN_REGEX = /[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]/u;
 // Trailing Obsidian block reference (`^block-id`) — must stay at the very end.
 const BLOCK_ID_REGEX = /\s+\^[A-Za-z0-9-]+\s*$/;
+// Everything that may legitimately follow a plugin-written 🍅 marker: the end
+// of the line, a Tasks metadata token, or a trailing block reference. Used to
+// tell plugin-written markers (removable) from a `🍅 N` the user typed
+// mid-description (kept — ordinary text after the marker rules the plugin out).
+const MARKER_TAIL_REGEX = /^\s*(?:$|[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]|\^[A-Za-z0-9-]+\s*$)/u;
 const PRIORITY_REGEX = /[🔺🔽🔥⏫⏬🔼]\uFE0F?/gu;
 const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 
@@ -178,6 +183,20 @@ export function removeMisplacedPomodoroMarker(line: string): string {
   return misplaced.stripped;
 }
 
+/**
+ * Delete a 🍅 marker whether it is correctly placed or misplaced — the
+ * "uninstall" for the counter's data. Only markers in a position the plugin
+ * itself writes (followed by nothing but Tasks fields, a block reference, or
+ * the end of the line — see MARKER_TAIL_REGEX) are removed; a `🍅 N` the
+ * user typed mid-description is left byte-for-byte untouched.
+ */
+export function removeAnyPomodoroMarker(line: string): string {
+  const match = line.match(POMO_MARKER_REGEX);
+  if (!match || match.index === undefined) return line;
+  if (!MARKER_TAIL_REGEX.test(line.slice(match.index + match[0].length))) return line;
+  return removePomodoroMarker(line, match);
+}
+
 export interface PomodoroMarkerContentResult {
   content: string;
   linesChanged: number;
@@ -213,6 +232,11 @@ export function removeMisplacedPomodoroMarkersInContent(
   content: string
 ): PomodoroMarkerContentResult {
   return transformTaskLines(content, removeMisplacedPomodoroMarker);
+}
+
+/** Run {@link removeAnyPomodoroMarker} over every task line. */
+export function removeAllPomodoroMarkersInContent(content: string): PomodoroMarkerContentResult {
+  return transformTaskLines(content, removeAnyPomodoroMarker);
 }
 
 export interface PomodoroMarkerVaultResult {
@@ -282,6 +306,22 @@ export function removeMisplacedPomodoroMarkersInVault(
   tasksPath: string
 ): Promise<PomodoroMarkerVaultResult> {
   return processPomodoroMarkersInVault(app, tasksPath, removeMisplacedPomodoroMarker, true);
+}
+
+/** Dry run: count every plugin-written 🍅 marker without changing any file. */
+export function scanAllPomodoroMarkersInVault(
+  app: App,
+  tasksPath: string
+): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, tasksPath, removeAnyPomodoroMarker, false);
+}
+
+/** Delete every plugin-written 🍅 marker, correctly placed or misplaced. */
+export function removeAllPomodoroMarkersInVault(
+  app: App,
+  tasksPath: string
+): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, tasksPath, removeAnyPomodoroMarker, true);
 }
 
 export function isPathInFolder(filePath: string, folderPath: string): boolean {

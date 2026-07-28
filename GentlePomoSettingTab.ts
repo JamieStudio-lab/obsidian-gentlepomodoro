@@ -19,6 +19,9 @@ const REPAIR_MARKERS_DESC =
 const REMOVE_MARKERS_NAME = "Remove misplaced pomodoro count markers";
 const REMOVE_MARKERS_DESC =
   "Deletes misplaced markers instead, losing their counts. Asks for confirmation first.";
+const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
+const REMOVE_ALL_MARKERS_DESC =
+  "Deletes every 🍅 marker the counter has written, losing all counts. Asks for confirmation first.";
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
@@ -209,6 +212,13 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: REMOVE_MARKERS_DESC,
             action: () => {
               void this.plugin.removeMisplacedPomodoroMarkers();
+            },
+          },
+          {
+            name: REMOVE_ALL_MARKERS_NAME,
+            desc: REMOVE_ALL_MARKERS_DESC,
+            action: () => {
+              void this.plugin.removeAllPomodoroMarkers();
             },
           },
         ],
@@ -600,6 +610,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           .setWarning()
           .onClick(() => {
             void this.plugin.removeMisplacedPomodoroMarkers();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName(REMOVE_ALL_MARKERS_NAME)
+      .setDesc(REMOVE_ALL_MARKERS_DESC)
+      .addButton((btn) =>
+        btn
+          .setButtonText("Remove all")
+          // Same pre-1.13 setWarning() rationale as the button above.
+          // eslint-disable-next-line @typescript-eslint/no-deprecated
+          .setWarning()
+          .onClick(() => {
+            void this.plugin.removeAllPomodoroMarkers();
           })
       );
   }

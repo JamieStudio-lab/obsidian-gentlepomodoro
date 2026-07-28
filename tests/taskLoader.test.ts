@@ -10,6 +10,8 @@ import {
   repairPomodoroMarkersInContent,
   removeMisplacedPomodoroMarker,
   removeMisplacedPomodoroMarkersInContent,
+  removeAnyPomodoroMarker,
+  removeAllPomodoroMarkersInContent,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -310,6 +312,68 @@ describe("removeMisplacedPomodoroMarker", () => {
   it("leaves lines without a marker untouched", () => {
     const line = "- [ ] Write docs ⏳ 2025-12-23";
     expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+  });
+});
+
+describe("removeAnyPomodoroMarker", () => {
+  it("deletes a correctly placed marker (before the fields)", () => {
+    expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 3 ⏳ 2025-12-23")).toBe(
+      "- [ ] Write docs ⏳ 2025-12-23"
+    );
+  });
+
+  it("deletes a misplaced trailing marker", () => {
+    expect(removeAnyPomodoroMarker("- [ ] Write docs ⏳ 2025-12-23 🍅 1")).toBe(
+      "- [ ] Write docs ⏳ 2025-12-23"
+    );
+  });
+
+  it("deletes a trailing marker on a field-less line", () => {
+    expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 4")).toBe("- [ ] Write docs");
+  });
+
+  it("deletes a marker before a trailing block reference", () => {
+    expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 1 ^abc123")).toBe(
+      "- [ ] Write docs ^abc123"
+    );
+  });
+
+  it("deletes a trailing legacy `🍅 N (date)` marker", () => {
+    expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 5 (2024-01-01)")).toBe("- [ ] Write docs");
+  });
+
+  it("keeps a `🍅 N` the user typed mid-description (text after it)", () => {
+    const noFields = "- [ ] Buy 🍅 2 kg of tomatoes";
+    expect(removeAnyPomodoroMarker(noFields)).toBe(noFields);
+    const withFields = "- [ ] Buy 🍅 2 kg of tomatoes ⏳ 2025-12-23";
+    expect(removeAnyPomodoroMarker(withFields)).toBe(withFields);
+  });
+
+  it("leaves lines without a marker untouched", () => {
+    const line = "- [ ] Write docs ⏳ 2025-12-23";
+    expect(removeAnyPomodoroMarker(line)).toBe(line);
+  });
+});
+
+describe("removeAllPomodoroMarkersInContent", () => {
+  it("removes placed and misplaced markers but keeps mid-description ones", () => {
+    const content = [
+      "- [ ] Placed 🍅 3 ⏳ 2025-12-23",
+      "- [ ] Misplaced ⏳ 2025-12-23 🍅 2",
+      "- [ ] Buy 🍅 2 kg of tomatoes ⏳ 2025-12-23",
+      "Plain prose mentioning 🍅 3 stays as is.",
+    ].join("\n");
+
+    const result = removeAllPomodoroMarkersInContent(content);
+    expect(result.linesChanged).toBe(2);
+    expect(result.content).toBe(
+      [
+        "- [ ] Placed ⏳ 2025-12-23",
+        "- [ ] Misplaced ⏳ 2025-12-23",
+        "- [ ] Buy 🍅 2 kg of tomatoes ⏳ 2025-12-23",
+        "Plain prose mentioning 🍅 3 stays as is.",
+      ].join("\n")
+    );
   });
 });
 
