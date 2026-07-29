@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TFile } from "obsidian";
 import {
+  effectiveFocusBaseSeconds,
   formatLogLine,
   parseFocusTotalSeconds,
   shouldFireGoalNotice,
@@ -269,6 +270,41 @@ describe("shouldFireGoalNotice", () => {
 
   it("fires again on the next day even if lastGoalHitDate is set", () => {
     // lastGoalHitDate is yesterday, today is new -> fires
+    expect(shouldFireGoalNotice(7200, 120, true, "2025-05-17", TODAY)).toBe(true);
+  });
+});
+
+describe("effectiveFocusBaseSeconds", () => {
+  const TODAY = "2025-05-18";
+
+  it("counts a base fetched today", () => {
+    expect(effectiveFocusBaseSeconds(7200, TODAY, TODAY)).toBe(7200);
+  });
+
+  it("zeroes a base fetched yesterday (app kept open across midnight)", () => {
+    expect(effectiveFocusBaseSeconds(7200, "2025-05-17", TODAY)).toBe(0);
+  });
+
+  it("zeroes a base that was never fetched", () => {
+    expect(effectiveFocusBaseSeconds(0, null, TODAY)).toBe(0);
+    expect(effectiveFocusBaseSeconds(7200, null, TODAY)).toBe(0);
+  });
+
+  it("keeps yesterday's total from firing a spurious day-2 goal notice", () => {
+    // Day 1: 3h focused, 2h goal hit, lastGoalHitDate = day 1. The app stays
+    // open across midnight, so the cached base still holds day 1's total when
+    // day 2's first short session starts. Unguarded, 10800 + 60 crossed the
+    // goal and lastGoalHitDate !== today, so the notice fired spuriously.
+    const staleBase = 10800;
+    const liveSeconds = 60;
+    const current = effectiveFocusBaseSeconds(staleBase, "2025-05-17", TODAY) + liveSeconds;
+    expect(shouldFireGoalNotice(current, 120, true, "2025-05-17", TODAY)).toBe(false);
+  });
+
+  it("still fires once the fresh fetch crosses the goal for real", () => {
+    // Later on day 2 the refetched base is today's own total and the goal is
+    // genuinely met — the notice must not have been consumed by the rollover.
+    expect(effectiveFocusBaseSeconds(7200, TODAY, TODAY)).toBe(7200);
     expect(shouldFireGoalNotice(7200, 120, true, "2025-05-17", TODAY)).toBe(true);
   });
 });

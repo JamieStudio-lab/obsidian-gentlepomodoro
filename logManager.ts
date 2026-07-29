@@ -76,6 +76,23 @@ export function shouldFireGoalNotice(
   return true;
 }
 
+/**
+ * Pure helper: seconds to count from the cached focus-total base.
+ *
+ * The base was summed from the log file of `baseDate`, so it only describes
+ * that local day. Once midnight rolls over it is yesterday's total and must
+ * count as 0 until a fresh fetch lands — otherwise an app kept open across
+ * midnight feeds yesterday's seconds into the goal math and fires a spurious
+ * "goal hit" notice on the first session of the new day.
+ */
+export function effectiveFocusBaseSeconds(
+  baseSeconds: number,
+  baseDate: string | null,
+  today: string
+): number {
+  return baseDate === today ? baseSeconds : 0;
+}
+
 // Pure helper: sum Total:: seconds across all focus lines in a log file's content.
 export function parseFocusTotalSeconds(content: string): number {
   const lines = content.split("\n");
