@@ -4,7 +4,12 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] — 2026-07-28
+## [0.5.2] — 2026-07-29
+
+### Fixed
+
+- **No more phantom "goal hit" notice on the first session of a new day.** If Obsidian stayed open (or your laptop just slept) across midnight, the timer still held _yesterday's_ focus total in its cached "today" number when the new day's first session started. One short pomodoro was enough to trigger the **Daily focus goal hit** notice — and because the notice only fires once per day, it then stayed silent when you genuinely reached your goal later that day. The cached total is now stamped with the day it was read for and counts as zero the moment the date rolls over, so the notice only ever fires from the new day's real minutes. (The timezone handling was audited along the way and is consistent: every "today" in the plugin — the goal notice, the daily log file name, the long-break counter — uses your local date; UTC is never involved.)
+- **The goal notice and "Today X / Y" meter no longer need the status bar.** Both were driven from inside the status-bar update, so with **Show in status bar** switched off the notice could never fire and the in-view meter never picked up the day's logged total (it only counted the session in progress). The goal bookkeeping now subscribes to the timer directly and works exactly the same with the bar hidden — on desktop and mobile.
 
 ### Added
 
