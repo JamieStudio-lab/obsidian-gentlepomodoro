@@ -12,6 +12,12 @@ export const PEEK_REVEAL_MS = 2000;
 // refresh loop in main.ts and the public method on LogManager.
 export const FOCUS_TOTAL_CACHE_TTL_MS = 30_000;
 
+// Idle heartbeat for the focus-total display. The engine only emits while
+// running or on user actions, so without this an app left open across local
+// midnight keeps yesterday's "Today X / Y" on screen until the first
+// interaction of the new day. Quiet beats are two compares (TTL + date stamp).
+export const FOCUS_TOTAL_HEARTBEAT_MS = 60_000;
+
 // Delay between the music iframe's load event and the "listening" handshake.
 // The embed isn't ready to register listeners the instant it loads (Vidstack
 // ships the same ~100ms wait).

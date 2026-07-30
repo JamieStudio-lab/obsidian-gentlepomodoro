@@ -13,7 +13,12 @@ import {
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
 import { TimerEngine } from "./TimerEngine";
-import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
+import {
+  DEFAULT_SETTINGS,
+  FOCUS_TOTAL_CACHE_TTL_MS,
+  FOCUS_TOTAL_HEARTBEAT_MS,
+  VIEW_TYPE_GENTLE_POMO,
+} from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 
@@ -181,6 +186,23 @@ export default class GentlePomoPlugin extends Plugin {
     };
     this.timer.onChange(this.goalTimerListener);
     this.goalTimerListener(this.timer.getState());
+
+    // Idle heartbeat: every trigger above is engine-emit-driven, and the engine
+    // is silent while idle — so an app left open across local midnight keeps
+    // yesterday's total on screen until the first interaction of the new day.
+    // The refetch is fully guarded (30s TTL, stale-date bypass), so quiet beats
+    // are nearly free; when the date stamp is stale it refetches, and the
+    // landing force-renders the status bar and pushes into open views. The
+    // window-focus kick corrects a laptop waking from overnight sleep
+    // immediately instead of within a minute.
+    this.registerInterval(
+      window.setInterval(() => {
+        void this.maybeRefreshFocusTotal();
+      }, FOCUS_TOTAL_HEARTBEAT_MS)
+    );
+    this.registerDomEvent(window, "focus", () => {
+      void this.maybeRefreshFocusTotal();
+    });
 
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
 
