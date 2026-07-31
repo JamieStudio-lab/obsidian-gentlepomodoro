@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The goal notice now arrives with the end-of-session bell, not mid-focus.** It used to fire the instant the running session's live minutes crossed the daily goal — a popup in the middle of deep work, and if that session never made it into the log (Obsidian quit mid-session), the once-per-day notice had already been spent on time the log never recorded, so the real crossing later that day stayed silent. The notice now counts logged sessions only and fires right after the crossing session's line is written — landing together with the bell, at the natural break point. Skipped sessions still count (their focus time is logged), and the status bar and in-view meter still tick up live during a session.
 - **Task-line writes are now atomic.** The per-task counter previously read the task file and wrote it back as two separate steps, leaving a small window where a concurrent write (sync, another plugin) could be lost. The increment — and the new repair action — now rewrite the file through Obsidian's atomic `Vault.process`, closing that window.
 
 ### Fixed

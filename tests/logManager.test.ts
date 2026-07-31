@@ -229,6 +229,17 @@ describe("parseFocusTotalSeconds", () => {
     expect(parseFocusTotalSeconds(content)).toBe(2700);
   });
 
+  it("counts cancelled focus lines that carry a Total:: (skipped sessions still count)", () => {
+    // The goal notice fires from logged totals only (0.5.2) — this locks in
+    // that a skipped-but-logged session's minutes still count toward the goal.
+    const content = [
+      "- 🍅 Focus | Task:: A | Start:: ... | Total:: 1500 | Status:: finished",
+      "- 🍅 Focus | Task:: B | Start:: ... | Total:: 600 | Status:: cancelled",
+    ].join("\n");
+
+    expect(parseFocusTotalSeconds(content)).toBe(2100);
+  });
+
   it("ignores rest lines and lines without a Total:: field", () => {
     const content = [
       "- ☕ Rest | Start:: ... | Total:: 300",
@@ -408,6 +419,36 @@ describe("LogManager.writeLog — daily-log write robustness", () => {
     await runBreakSession(vault);
 
     expect(createFolder).toHaveBeenCalledWith("Logs");
+  });
+
+  it("invalidates the plugin focus-total TTL when a focus line lands", async () => {
+    // The goal notice fires from the refetch landing; this invalidation is what
+    // makes that refetch happen at the session boundary (with the end bell)
+    // instead of up to a TTL later.
+    const invalidate = vi.fn();
+    const vault = {
+      adapter: { exists: vi.fn().mockResolvedValue(true), append: vi.fn() },
+      getAbstractFileByPath: vi.fn().mockReturnValue(null),
+      append: vi.fn(),
+      create: vi.fn().mockResolvedValue(undefined),
+      createFolder: vi.fn(),
+    };
+    const plugin = {
+      settings: { logFolderPath: "Logs" },
+      app: { vault },
+      invalidateFocusTotalCache: invalidate,
+    } as unknown as GentlePomoPlugin;
+    const lm = new LogManager(plugin);
+
+    // A skipped (cancelled) focus session invalidates too — its time is logged.
+    lm.startSession("focus", "No Task", 25);
+    await lm.endSession("cancelled");
+    expect(invalidate).toHaveBeenCalledTimes(1);
+
+    // Break sessions don't touch the focus-total caches.
+    lm.startSession("break", "No Task", 5, undefined, undefined, "short");
+    await lm.endSession("finished");
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
 
   it("does not throw out of endSession when every write attempt fails", async () => {

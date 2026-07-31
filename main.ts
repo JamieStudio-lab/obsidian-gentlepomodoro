@@ -177,15 +177,17 @@ export default class GentlePomoPlugin extends Plugin {
       },
     });
 
-    // Goal bookkeeping (fire-the-notice + refresh today's total) subscribes to
-    // the engine directly, independent of the status bar — it must keep working
-    // with "Show in status bar" off, where updateStatusBar early-returns.
-    this.goalTimerListener = (state) => {
-      this.maybeFireGoalNotice(this.currentFocusSeconds(state));
+    // Goal bookkeeping subscribes to the engine directly, independent of the
+    // status bar — it must keep working with "Show in status bar" off, where
+    // the status-bar listener is unregistered. Emits only kick the guarded
+    // refetch; the once-per-day goal notice fires from the refetch landing in
+    // maybeRefreshFocusTotal, against logged totals only (see
+    // maybeFireGoalNotice for why). onChange invokes the listener immediately,
+    // so no extra bootstrap call is needed.
+    this.goalTimerListener = () => {
       void this.maybeRefreshFocusTotal();
     };
     this.timer.onChange(this.goalTimerListener);
-    this.goalTimerListener(this.timer.getState());
 
     // Idle heartbeat: every trigger above is engine-emit-driven, and the engine
     // is silent while idle — so an app left open across local midnight keeps
@@ -596,11 +598,20 @@ export default class GentlePomoPlugin extends Plugin {
     }
   }
 
-  private maybeFireGoalNotice(currentSeconds: number) {
+  /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —
+   *  deliberately no live in-progress time: the notice lands at the session
+   *  boundary alongside the end bell instead of interrupting mid-focus, and
+   *  time that never reaches the log (Obsidian quit or plugin disabled
+   *  mid-session) can never consume the once-per-day flag. The status bar and
+   *  in-view meter still count live seconds — display is reversible, the
+   *  notice is not. Called only from maybeRefreshFocusTotal's landing: the
+   *  logged total is this check's sole input, and it only changes when a
+   *  fetch lands, so that is the one place the crossing can newly become true. */
+  private maybeFireGoalNotice(loggedSeconds: number) {
     const today = todayLocalStr();
     if (
       !shouldFireGoalNotice(
-        currentSeconds,
+        loggedSeconds,
         this.settings.dailyFocusGoalMinutes,
         this.settings.goalNoticeEnabled,
         this.settings.lastGoalHitDate,
@@ -623,6 +634,16 @@ export default class GentlePomoPlugin extends Plugin {
     return elapsedSeconds;
   }
 
+  /** Drop the focus-total TTL so the next check refetches immediately. Called
+   *  by LogManager.writeLog the moment a focus line lands, so the refetch —
+   *  and the goal notice riding on its landing — arrives with the
+   *  end-of-session bell rather than up to a TTL later. (If a fetch is
+   *  already in flight at that instant, its landing re-stamps the TTL and the
+   *  fresh line waits for the next beat — worst case ~90s, self-healing.) */
+  invalidateFocusTotalCache(): void {
+    this.statusFocusLastFetchMs = 0;
+  }
+
   private async maybeRefreshFocusTotal() {
     if (this.statusFocusFetchInFlight) return;
     const now = Date.now();
@@ -640,6 +661,13 @@ export default class GentlePomoPlugin extends Plugin {
       this.statusFocusBaseSeconds = totalSeconds;
       this.statusFocusBaseDate = today;
       this.statusFocusLastFetchMs = Date.now();
+      // Goal-notice check rides on the landing. Guard: if midnight passed
+      // during the await, `totalSeconds` describes yesterday's file — don't
+      // feed it to today's check (the now-stale stamp forces a refetch on the
+      // next beat, which re-lands with the new day's total).
+      if (today === todayLocalStr()) {
+        this.maybeFireGoalNotice(totalSeconds);
+      }
       const state = this.timer.getState();
       this.updateStatusBar(state, true);
       // The status-bar path mirrors into open views only while the bar exists;

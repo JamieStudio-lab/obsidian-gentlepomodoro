@@ -377,7 +377,12 @@ export class LogManager {
     }
 
     if (session.mode === "focus") {
+      // Invalidate both total caches: the inner one here, and the plugin-level
+      // TTL, so the next emit's refetch reads the fresh file immediately and
+      // the goal notice (which fires from that refetch's landing) arrives with
+      // the end-of-session bell instead of up to a TTL later.
       this.focusTotalCacheAt = 0;
+      this.plugin.invalidateFocusTotalCache();
     }
   }
 
