@@ -93,12 +93,18 @@ export function effectiveFocusBaseSeconds(
   return baseDate === today ? baseSeconds : 0;
 }
 
-// Pure helper: sum Total:: seconds across all focus lines in a log file's content.
+// Pure helper: sum Total:: seconds across focus lines in a log file's content.
+// Skipped sessions (Status:: cancelled) are forfeited — they don't count toward
+// the daily goal (classic pomodoro: an interrupted session doesn't count; Stop
+// logs `finished` and still counts, Skip is the discard gesture). Only an
+// explicit `cancelled` is excluded, so hand-edited lines without a Status::
+// field still count.
 export function parseFocusTotalSeconds(content: string): number {
   const lines = content.split("\n");
   let total = 0;
   for (const line of lines) {
     if (!line.includes("🍅 Focus")) continue;
+    if (/Status::\s*cancelled/.test(line)) continue;
     const totalMatch = line.match(/Total::\s*(\d+)/);
     if (!totalMatch) continue;
     const seconds = parseInt(totalMatch[1], 10);

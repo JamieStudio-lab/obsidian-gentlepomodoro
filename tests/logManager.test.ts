@@ -229,15 +229,22 @@ describe("parseFocusTotalSeconds", () => {
     expect(parseFocusTotalSeconds(content)).toBe(2700);
   });
 
-  it("counts cancelled focus lines that carry a Total:: (skipped sessions still count)", () => {
-    // The goal notice fires from logged totals only (0.5.2) — this locks in
-    // that a skipped-but-logged session's minutes still count toward the goal.
+  it("excludes cancelled focus lines from the total (skipped sessions are forfeited)", () => {
+    // Skip = discard: a skipped session's minutes count toward neither the
+    // meter nor the goal notice. Stop logs `finished` and still counts.
     const content = [
       "- 🍅 Focus | Task:: A | Start:: ... | Total:: 1500 | Status:: finished",
       "- 🍅 Focus | Task:: B | Start:: ... | Total:: 600 | Status:: cancelled",
     ].join("\n");
 
-    expect(parseFocusTotalSeconds(content)).toBe(2100);
+    expect(parseFocusTotalSeconds(content)).toBe(1500);
+  });
+
+  it("counts focus lines without a Status:: field (hand-edited entries)", () => {
+    // Only an explicit `cancelled` is excluded — manual additions keep working.
+    const content = "- 🍅 Focus | Task:: A | Start:: ... | Total:: 900";
+
+    expect(parseFocusTotalSeconds(content)).toBe(900);
   });
 
   it("ignores rest lines and lines without a Total:: field", () => {
@@ -440,7 +447,9 @@ describe("LogManager.writeLog — daily-log write robustness", () => {
     } as unknown as GentlePomoPlugin;
     const lm = new LogManager(plugin);
 
-    // A skipped (cancelled) focus session invalidates too — its time is logged.
+    // A skipped (cancelled) focus session invalidates too — its line is still
+    // written, and the prompt refetch is what drops the forfeited minutes from
+    // the meter right away.
     lm.startSession("focus", "No Task", 25);
     await lm.endSession("cancelled");
     expect(invalidate).toHaveBeenCalledTimes(1);
