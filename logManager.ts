@@ -76,12 +76,35 @@ export function shouldFireGoalNotice(
   return true;
 }
 
-// Pure helper: sum Total:: seconds across all focus lines in a log file's content.
+/**
+ * Pure helper: seconds to count from the cached focus-total base.
+ *
+ * The base was summed from the log file of `baseDate`, so it only describes
+ * that local day. Once midnight rolls over it is yesterday's total and must
+ * count as 0 until a fresh fetch lands — otherwise an app kept open across
+ * midnight feeds yesterday's seconds into the goal math and fires a spurious
+ * "goal hit" notice on the first session of the new day.
+ */
+export function effectiveFocusBaseSeconds(
+  baseSeconds: number,
+  baseDate: string | null,
+  today: string
+): number {
+  return baseDate === today ? baseSeconds : 0;
+}
+
+// Pure helper: sum Total:: seconds across focus lines in a log file's content.
+// Skipped sessions (Status:: cancelled) are forfeited — they don't count toward
+// the daily goal (classic pomodoro: an interrupted session doesn't count; Stop
+// logs `finished` and still counts, Skip is the discard gesture). Only an
+// explicit `cancelled` is excluded, so hand-edited lines without a Status::
+// field still count.
 export function parseFocusTotalSeconds(content: string): number {
   const lines = content.split("\n");
   let total = 0;
   for (const line of lines) {
     if (!line.includes("🍅 Focus")) continue;
+    if (/Status::\s*cancelled/.test(line)) continue;
     const totalMatch = line.match(/Total::\s*(\d+)/);
     if (!totalMatch) continue;
     const seconds = parseInt(totalMatch[1], 10);
@@ -360,7 +383,12 @@ export class LogManager {
     }
 
     if (session.mode === "focus") {
+      // Invalidate both total caches: the inner one here, and the plugin-level
+      // TTL, so the next emit's refetch reads the fresh file immediately and
+      // the goal notice (which fires from that refetch's landing) arrives with
+      // the end-of-session bell instead of up to a TTL later.
       this.focusTotalCacheAt = 0;
+      this.plugin.invalidateFocusTotalCache();
     }
   }
 

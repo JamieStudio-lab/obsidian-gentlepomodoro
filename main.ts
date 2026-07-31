@@ -3,7 +3,7 @@ import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
-import { LogManager, shouldFireGoalNotice } from "./logManager";
+import { LogManager, effectiveFocusBaseSeconds, shouldFireGoalNotice } from "./logManager";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -13,7 +13,12 @@ import {
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
 import { TimerEngine } from "./TimerEngine";
-import { DEFAULT_SETTINGS, FOCUS_TOTAL_CACHE_TTL_MS, VIEW_TYPE_GENTLE_POMO } from "./constants";
+import {
+  DEFAULT_SETTINGS,
+  FOCUS_TOTAL_CACHE_TTL_MS,
+  FOCUS_TOTAL_HEARTBEAT_MS,
+  VIEW_TYPE_GENTLE_POMO,
+} from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 
@@ -34,9 +39,12 @@ export default class GentlePomoPlugin extends Plugin {
   private statusFocusTotal: HTMLElement | null = null;
   private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
   private statusFocusBaseSeconds = 0;
+  /** Local date (YYYY-MM-DD) the cached base was fetched for; other days count as 0. */
+  private statusFocusBaseDate: string | null = null;
   private statusFocusLastFetchMs = 0;
   private statusFocusFetchInFlight = false;
   private statusTimerListener: TimerListener | null = null;
+  private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
   private repairInFlight = false;
 
@@ -167,6 +175,35 @@ export default class GentlePomoPlugin extends Plugin {
       callback: () => {
         void this.removeAllPomodoroMarkers();
       },
+    });
+
+    // Goal bookkeeping subscribes to the engine directly, independent of the
+    // status bar — it must keep working with "Show in status bar" off, where
+    // the status-bar listener is unregistered. Emits only kick the guarded
+    // refetch; the once-per-day goal notice fires from the refetch landing in
+    // maybeRefreshFocusTotal, against logged totals only (see
+    // maybeFireGoalNotice for why). onChange invokes the listener immediately,
+    // so no extra bootstrap call is needed.
+    this.goalTimerListener = () => {
+      void this.maybeRefreshFocusTotal();
+    };
+    this.timer.onChange(this.goalTimerListener);
+
+    // Idle heartbeat: every trigger above is engine-emit-driven, and the engine
+    // is silent while idle — so an app left open across local midnight keeps
+    // yesterday's total on screen until the first interaction of the new day.
+    // The refetch is fully guarded (30s TTL, stale-date bypass), so quiet beats
+    // are nearly free; when the date stamp is stale it refetches, and the
+    // landing force-renders the status bar and pushes into open views. The
+    // window-focus kick corrects a laptop waking from overnight sleep
+    // immediately instead of within a minute.
+    this.registerInterval(
+      window.setInterval(() => {
+        void this.maybeRefreshFocusTotal();
+      }, FOCUS_TOTAL_HEARTBEAT_MS)
+    );
+    this.registerDomEvent(window, "focus", () => {
+      void this.maybeRefreshFocusTotal();
     });
 
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
@@ -309,6 +346,11 @@ export default class GentlePomoPlugin extends Plugin {
     if (this.autoOpenObserver) {
       this.autoOpenObserver.disconnect();
       this.autoOpenObserver = null;
+    }
+
+    if (this.goalTimerListener) {
+      this.timer.offChange(this.goalTimerListener);
+      this.goalTimerListener = null;
     }
 
     this.destroyStatusBar();
@@ -488,7 +530,6 @@ export default class GentlePomoPlugin extends Plugin {
     this.statusModeEl.setText(modeLabel);
     this.statusTimeEl.setText(timeText);
 
-    const focusTotalSeconds = this.statusFocusBaseSeconds + this.getLiveFocusSeconds(state);
     const { text: totalText, met: goalMet } = this.focusGoalText(state);
     this.statusFocusTotal.setText(totalText);
     this.statusFocusTotal.toggleClass("gp-status-goal-met", goalMet);
@@ -508,14 +549,25 @@ export default class GentlePomoPlugin extends Plugin {
       showTimeLeft ? `${modeLabel} ${timeText}` : `${modeLabel} (time hidden)`
     );
 
-    this.maybeFireGoalNotice(focusTotalSeconds);
     void this.maybeRefreshFocusTotal();
+  }
+
+  /** Focus seconds counted toward today's goal: the date-guarded cached base
+   *  (a base fetched on an earlier day counts as 0 until the refetch lands)
+   *  plus the live in-progress focus session. */
+  private currentFocusSeconds(state: TimerState): number {
+    const base = effectiveFocusBaseSeconds(
+      this.statusFocusBaseSeconds,
+      this.statusFocusBaseDate,
+      todayLocalStr()
+    );
+    return base + this.getLiveFocusSeconds(state);
   }
 
   /** "Today Xh / Yh" focus-time + goal text and whether the goal is met, from the
    *  current focus total. Shared by the status bar and the in-view mobile meter. */
   private focusGoalText(state: TimerState): { text: string; met: boolean } {
-    const focusTotalSeconds = this.statusFocusBaseSeconds + this.getLiveFocusSeconds(state);
+    const focusTotalSeconds = this.currentFocusSeconds(state);
     const goalMinutes = this.settings.dailyFocusGoalMinutes;
     let text = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
     let met = false;
@@ -532,6 +584,7 @@ export default class GentlePomoPlugin extends Plugin {
   refreshViewGoalProgress(view: GentlePomoView, state: TimerState = this.timer.getState()): void {
     const { text, met } = this.focusGoalText(state);
     view.setGoalProgress(text, met);
+    void this.maybeRefreshFocusTotal();
   }
 
   /** Ask every open view to duck its lofi music under a sound cue. Called by
@@ -545,11 +598,20 @@ export default class GentlePomoPlugin extends Plugin {
     }
   }
 
-  private maybeFireGoalNotice(currentSeconds: number) {
+  /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —
+   *  deliberately no live in-progress time: the notice lands at the session
+   *  boundary alongside the end bell instead of interrupting mid-focus, and
+   *  time that never reaches the log (Obsidian quit or plugin disabled
+   *  mid-session) can never consume the once-per-day flag. The status bar and
+   *  in-view meter still count live seconds — display is reversible, the
+   *  notice is not. Called only from maybeRefreshFocusTotal's landing: the
+   *  logged total is this check's sole input, and it only changes when a
+   *  fetch lands, so that is the one place the crossing can newly become true. */
+  private maybeFireGoalNotice(loggedSeconds: number) {
     const today = todayLocalStr();
     if (
       !shouldFireGoalNotice(
-        currentSeconds,
+        loggedSeconds,
         this.settings.dailyFocusGoalMinutes,
         this.settings.goalNoticeEnabled,
         this.settings.lastGoalHitDate,
@@ -572,17 +634,49 @@ export default class GentlePomoPlugin extends Plugin {
     return elapsedSeconds;
   }
 
+  /** Drop the focus-total TTL so the next check refetches immediately. Called
+   *  by LogManager.writeLog the moment a focus line lands, so the refetch —
+   *  and the goal notice riding on its landing — arrives with the
+   *  end-of-session bell rather than up to a TTL later. (If a fetch is
+   *  already in flight at that instant, its landing re-stamps the TTL and the
+   *  fresh line waits for the next beat — worst case ~90s, self-healing.) */
+  invalidateFocusTotalCache(): void {
+    this.statusFocusLastFetchMs = 0;
+  }
+
   private async maybeRefreshFocusTotal() {
     if (this.statusFocusFetchInFlight) return;
     const now = Date.now();
-    if (now - this.statusFocusLastFetchMs < FOCUS_TOTAL_CACHE_TTL_MS) return;
+    const today = todayLocalStr();
+    // Midnight rollover invalidates the base immediately; the TTL alone would
+    // let yesterday's total linger into the new day.
+    const baseStale = this.statusFocusBaseDate !== today;
+    if (!baseStale && now - this.statusFocusLastFetchMs < FOCUS_TOTAL_CACHE_TTL_MS) return;
 
     this.statusFocusFetchInFlight = true;
     try {
+      // `today` is resolved before the read so the stamp matches the day the
+      // log file was picked, even if midnight passes during the await.
       const totalSeconds = await this.logManager.getTodayFocusSeconds();
       this.statusFocusBaseSeconds = totalSeconds;
+      this.statusFocusBaseDate = today;
       this.statusFocusLastFetchMs = Date.now();
-      this.updateStatusBar(this.timer.getState(), true);
+      // Goal-notice check rides on the landing. Guard: if midnight passed
+      // during the await, `totalSeconds` describes yesterday's file — don't
+      // feed it to today's check (the now-stale stamp forces a refetch on the
+      // next beat, which re-lands with the new day's total).
+      if (today === todayLocalStr()) {
+        this.maybeFireGoalNotice(totalSeconds);
+      }
+      const state = this.timer.getState();
+      this.updateStatusBar(state, true);
+      // The status-bar path mirrors into open views only while the bar exists;
+      // push directly so the in-view meter corrects with the bar hidden too.
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+        if (leaf.view instanceof GentlePomoView) {
+          this.refreshViewGoalProgress(leaf.view, state);
+        }
+      }
     } finally {
       this.statusFocusFetchInFlight = false;
     }

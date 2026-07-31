@@ -4,6 +4,19 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — 2026-07-31
+
+### Fixed
+
+- **No more phantom "goal hit" notice on the first session of a new day.** If Obsidian stayed open (or your laptop just slept) across midnight, the timer still held _yesterday's_ focus total in its cached "today" number when the new day's first session started. One short pomodoro was enough to trigger the **Daily focus goal hit** notice — and because the notice only fires once per day, it then stayed silent when you genuinely reached your goal later that day. The cached total is now stamped with the day it was read for and counts as zero the moment the date rolls over, so the notice only ever fires from the new day's real minutes. (The timezone handling was audited along the way and is consistent: every "today" in the plugin — the goal notice, the daily log file name, the long-break counter — uses your local date; UTC is never involved.)
+- **The goal notice and "Today X / Y" meter no longer need the status bar.** Both were driven from inside the status-bar update, so with **Show in status bar** switched off the notice could never fire and the in-view meter never picked up the day's logged total (it only counted the session in progress). The goal bookkeeping now subscribes to the timer directly and works exactly the same with the bar hidden — on desktop and mobile.
+- **The status bar no longer shows yesterday's focus total on a new day.** The "Today X / Y" text only refreshed while the timer was doing something, so an app left open (or a laptop asleep) across midnight kept yesterday's number — and its goal-met highlight — on screen until the day's first interaction. The plugin now re-checks the total about once a minute while idle, and immediately when the window regains focus, so the meter resets shortly after midnight (and also picks up manual edits to today's log note within a couple of minutes, even while idle).
+
+### Changed
+
+- **The goal notice now arrives with the end-of-session bell, not mid-focus.** It used to fire the instant the running session's live minutes crossed the daily goal — a popup in the middle of deep work, and if that session never made it into the log (Obsidian quit mid-session), the once-per-day notice had already been spent on time the log never recorded, so the real crossing later that day stayed silent. The notice now counts logged sessions only and fires right after the crossing session's line is written — landing together with the bell, at the natural break point. The goal threshold is your **Daily focus goal (minutes)** setting, as always. The status bar and in-view meter still tick up live during a session.
+- **Skipped sessions no longer count toward the daily goal.** In the classic pomodoro spirit, **Skip** now forfeits the session's minutes: they count toward neither the "Today X / Y" meter nor the goal notice (so skipping the session that would have crossed your goal fires nothing). The line is still written to the daily log — marked `Status:: cancelled` — so your records and Dataview queries keep the full history; the meter simply drops back when the forfeited minutes leave it. **Stop is different: stopping early keeps the time.** Stop logs the session as `finished` and it counts in full — Stop is "end early, keep the time," Skip is "discard, move on." Hand-added log lines without a `Status::` field still count.
+
 ## [0.5.1] — 2026-07-28
 
 ### Added
