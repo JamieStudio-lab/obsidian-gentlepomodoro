@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.5.3 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.4 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -44,6 +44,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 ### 🎵 Lofi study music
 
 - Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ♪ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
+- **Fades in and out**: ♪ eases the music up from silence, ⏸ and ⏹ ease it down before stopping — no snapping in mid-bar. Change your mind mid-fade and it simply carries on.
 - **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
 - **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
 - **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** clears the position so the mix starts from the top instead.

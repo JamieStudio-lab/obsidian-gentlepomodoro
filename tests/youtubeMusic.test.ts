@@ -12,6 +12,7 @@ import {
   parsePlayerMessage,
   musicVolumeTo100,
   buildVolumeRamp,
+  buildFadeRamp,
   isResumablePosition,
   planResume,
   MUSIC_RESUME_MIN_SECONDS,
@@ -399,6 +400,68 @@ describe("buildVolumeRamp", () => {
 
   it("handles a zero-distance ramp (from === to)", () => {
     expect(buildVolumeRamp(0.5, 0.5, 3)).toEqual([0.5, 0.5, 0.5]);
+  });
+});
+
+describe("buildFadeRamp", () => {
+  it("lands exactly on the target — a fade-out must reach true silence", () => {
+    expect(buildFadeRamp(0.7, 0, 9).at(-1)).toBe(0);
+    expect(buildFadeRamp(0, 0.7, 16).at(-1)).toBe(0.7);
+  });
+
+  it("returns `steps` values and excludes the starting level", () => {
+    const ramp = buildFadeRamp(0, 0.7, 4);
+    expect(ramp).toHaveLength(4);
+    expect(ramp[0]).not.toBe(0);
+  });
+
+  it("is monotonic in both directions", () => {
+    const up = buildFadeRamp(0, 0.7, 16);
+    for (let i = 1; i < up.length; i++) expect(up[i]).toBeGreaterThan(up[i - 1]);
+    const down = buildFadeRamp(0.7, 0, 9);
+    for (let i = 1; i < down.length; i++) expect(down[i]).toBeLessThan(down[i - 1]);
+  });
+
+  it("weights the curve toward the quiet end — halfway is a quarter of the way up", () => {
+    // This is the whole point of the curve: a linear ramp would sit at 0.35
+    // here, spending half the fade inside the top 6 dB.
+    expect(buildFadeRamp(0, 0.7, 4)[1]).toBeCloseTo(0.175, 10);
+    expect(buildFadeRamp(0.7, 0, 4)[1]).toBeCloseTo(0.175, 10);
+  });
+
+  it("makes a fade-out the mirror image of the fade-in that undid it", () => {
+    const up = buildFadeRamp(0, 0.7, 8);
+    const down = buildFadeRamp(0.7, 0, 8);
+    // up = [l1..l8] rising to 0.7; down = [l7..l1, 0] — the same levels reversed,
+    // offset by one because both exclude their own starting level.
+    for (let i = 0; i < 7; i++) expect(down[i]).toBeCloseTo(up[6 - i], 10);
+  });
+
+  it("stays inside the target range at every step", () => {
+    for (const level of buildFadeRamp(0, 0.7, 16)) {
+      expect(level).toBeGreaterThan(0);
+      expect(level).toBeLessThanOrEqual(0.7);
+    }
+  });
+
+  it("floors steps to at least one and still lands on the target", () => {
+    expect(buildFadeRamp(0.7, 0, 0)).toEqual([0]);
+    expect(buildFadeRamp(0.7, 0, -3)).toEqual([0]);
+    expect(buildFadeRamp(0, 0.7, 1)).toEqual([0.7]);
+  });
+
+  it("clamps endpoints to the 0-1 volume range", () => {
+    expect(buildFadeRamp(2, -1, 2)).toEqual([0.25, 0]);
+  });
+
+  it("handles a zero-distance fade (from === to)", () => {
+    expect(buildFadeRamp(0.5, 0.5, 3)).toEqual([0.5, 0.5, 0.5]);
+  });
+
+  it("never posts a level a duck would have to undo — silence is exactly 0", () => {
+    // musicVolumeTo100 rounds, so a near-zero float would still post as 0; the
+    // exact landing is what guarantees the pause lands on true silence.
+    expect(musicVolumeTo100(buildFadeRamp(0.7, 0, 9).at(-1) as number)).toBe(0);
   });
 });
 

@@ -4,6 +4,15 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] — 2026-08-12
+
+### Changed
+
+- **The music now fades in and out instead of snapping.** Press ♪ and the lofi track eases up from silence over about eight-tenths of a second rather than arriving at full volume mid-bar; press ⏸ or ⏹ and it eases down to silence before the player actually pauses or stops. The curve is weighted toward the quiet end, so the change sounds even all the way through rather than rushing in and then hanging — the same "gentle" idea as the timer's own animations, applied to the one part of the panel that was still abrupt. The buttons still respond the instant you press them.
+  - **Changing your mind mid-fade works.** Press ♪ while a pause is still fading out and the music simply carries on, easing back up from wherever it had got to — it never pauses a moment later.
+  - **Everything the fades touch keeps its old behaviour.** ⏸ still remembers your place and ⏹ still forgets it — and if you press ♪ before a ⏹ has finished fading, the stop is called off completely, position and all. The session sounds still duck the music under them, changing the music volume still wins immediately (even mid-fade), looping and playlists are unchanged, and closing the panel still stops playback at once.
+  - A fade-in waits for the audio to actually start, so it isn't spent on a buffering gap — and if a track needs to rebuffer part-way in (resuming where you left off does exactly that), the fade waits with it instead of finishing over the silence.
+
 ## [0.5.3] — 2026-08-12
 
 ### Added
