@@ -12,10 +12,17 @@ import {
   parsePlayerMessage,
   musicVolumeTo100,
   buildVolumeRamp,
+  isResumablePosition,
+  resumeTarget,
+  MUSIC_RESUME_MIN_SECONDS,
+  MUSIC_RESUME_END_MARGIN_SECONDS,
+  type MusicTarget,
 } from "../youtubeMusic";
 
 // Lofi Girl's stream ID — a real-shaped 11-char ID for readable tests.
 const ID = "jfKfPfyJRdk";
+// A second real-shaped ID, for "the playlist moved on" / "the URL changed" cases.
+const OTHER_ID = "5qap5aO4i9A";
 
 describe("parseYouTubeUrl", () => {
   it("parses a standard watch URL", () => {
@@ -264,7 +271,61 @@ describe("parsePlayerMessage", () => {
 
   it("decodes infoDelivery playerState", () => {
     const data = JSON.stringify({ event: "infoDelivery", info: { playerState: 2 } });
-    expect(parsePlayerMessage(data)).toEqual({ type: "state", state: 2 });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: 2,
+      currentTime: null,
+      duration: null,
+      videoId: null,
+    });
+  });
+
+  it("decodes an infoDelivery carrying clock, duration and video metadata", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: {
+        playerState: 1,
+        currentTime: 1234.56,
+        duration: 10800,
+        loadedFraction: 0.4,
+        videoData: { video_id: ID, title: "lofi" },
+      },
+    });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: 1,
+      currentTime: 1234.56,
+      duration: 10800,
+      videoId: ID,
+    });
+  });
+
+  it("decodes a clock-only infoDelivery (no player state)", () => {
+    const data = JSON.stringify({ event: "infoDelivery", info: { currentTime: 12.3 } });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: null,
+      currentTime: 12.3,
+      duration: null,
+      videoId: null,
+    });
+  });
+
+  it("ignores a malformed video_id rather than trusting it as a key", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { currentTime: 5, videoData: { video_id: "too-short" } },
+    });
+    expect(parsePlayerMessage(data)).toMatchObject({ videoId: null });
+  });
+
+  it("drops non-finite clock values", () => {
+    // JSON has no Infinity/NaN, but a hostile or odd sender can pass a string.
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { currentTime: "12.3", duration: null, playerState: 1 },
+    });
+    expect(parsePlayerMessage(data)).toMatchObject({ currentTime: null, duration: null, state: 1 });
   });
 
   it("decodes onError codes", () => {
@@ -279,8 +340,8 @@ describe("parsePlayerMessage", () => {
     });
   });
 
-  it("returns null for infoDelivery without a playerState", () => {
-    const data = JSON.stringify({ event: "infoDelivery", info: { currentTime: 12.3 } });
+  it("returns null for an infoDelivery carrying nothing we track", () => {
+    const data = JSON.stringify({ event: "infoDelivery", info: { volume: 70, muted: false } });
     expect(parsePlayerMessage(data)).toBeNull();
   });
 
@@ -338,5 +399,120 @@ describe("buildVolumeRamp", () => {
 
   it("handles a zero-distance ramp (from === to)", () => {
     expect(buildVolumeRamp(0.5, 0.5, 3)).toEqual([0.5, 0.5, 0.5]);
+  });
+});
+
+describe("isResumablePosition", () => {
+  it("accepts an ordinary mid-track position", () => {
+    expect(isResumablePosition(1500, 10800)).toBe(true);
+  });
+
+  it("accepts the opening seconds, so a restarted track overwrites a stale offset", () => {
+    // The "too early to bother" floor is applied on the resume side, not here.
+    expect(isResumablePosition(0, 10800)).toBe(true);
+    expect(isResumablePosition(1, 10800)).toBe(true);
+  });
+
+  it("rejects a live stream, which reports no positive duration", () => {
+    expect(isResumablePosition(1500, 0)).toBe(false);
+    expect(isResumablePosition(1500, null)).toBe(false);
+  });
+
+  it("rejects the final seconds — a finished track opens at the top next time", () => {
+    const duration = 600;
+    expect(isResumablePosition(duration - MUSIC_RESUME_END_MARGIN_SECONDS, duration)).toBe(true);
+    expect(isResumablePosition(duration - MUSIC_RESUME_END_MARGIN_SECONDS + 1, duration)).toBe(
+      false
+    );
+    expect(isResumablePosition(duration, duration)).toBe(false);
+  });
+
+  it("rejects nonsense values", () => {
+    expect(isResumablePosition(-5, 600)).toBe(false);
+    expect(isResumablePosition(Number.NaN, 600)).toBe(false);
+    expect(isResumablePosition(Number.POSITIVE_INFINITY, 600)).toBe(false);
+    expect(isResumablePosition(100, Number.NaN)).toBe(false);
+  });
+});
+
+describe("resumeTarget", () => {
+  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
+  const inList: MusicTarget = { videoId: ID, playlistId: "PLabc123", startSeconds: null };
+  const listOnly: MusicTarget = { videoId: null, playlistId: "PLabc123", startSeconds: null };
+
+  it("applies a saved position to the same standalone video", () => {
+    const saved = { videoId: ID, playlistId: null, seconds: 1500.87 };
+    expect(resumeTarget(video, saved)).toEqual({
+      videoId: ID,
+      playlistId: null,
+      startSeconds: 1500, // floored — the embed's start= is whole seconds
+    });
+  });
+
+  it("returns the target untouched when there is nothing saved", () => {
+    expect(resumeTarget(video, null)).toBe(video);
+  });
+
+  it("never carries a position onto a different video", () => {
+    const saved = { videoId: OTHER_ID, playlistId: null, seconds: 1500 };
+    expect(resumeTarget(video, saved)).toBe(video);
+  });
+
+  it("keeps a URL's own t= offset when the saved state doesn't apply", () => {
+    const withStart: MusicTarget = { videoId: ID, playlistId: null, startSeconds: 90 };
+    const saved = { videoId: OTHER_ID, playlistId: null, seconds: 1500 };
+    expect(resumeTarget(withStart, saved)).toEqual(withStart);
+  });
+
+  it("resumes the playlist on the item the embed had reached", () => {
+    // A playlist-only URL embeds as /embed/videoseries; resuming by video ID
+    // reopens the right item and survives the playlist being reordered.
+    const saved = { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 };
+    expect(resumeTarget(listOnly, saved)).toEqual({
+      videoId: OTHER_ID,
+      playlistId: "PLabc123",
+      startSeconds: 200,
+    });
+  });
+
+  it("lets the saved item win over the video a watch+list URL names", () => {
+    const saved = { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 };
+    expect(resumeTarget(inList, saved)).toEqual({
+      videoId: OTHER_ID,
+      playlistId: "PLabc123",
+      startSeconds: 200,
+    });
+  });
+
+  it("requires the playlist context to match", () => {
+    expect(resumeTarget(listOnly, { videoId: ID, playlistId: "PLother", seconds: 200 })).toBe(
+      listOnly
+    );
+    // Played standalone before, now pasted inside a list (and the reverse).
+    expect(resumeTarget(inList, { videoId: ID, playlistId: null, seconds: 200 })).toBe(inList);
+    expect(resumeTarget(video, { videoId: ID, playlistId: "PLabc123", seconds: 200 })).toBe(video);
+  });
+
+  it("ignores a position too near the start to be worth resuming", () => {
+    const at = (seconds: number) => resumeTarget(video, { videoId: ID, playlistId: null, seconds });
+    expect(at(MUSIC_RESUME_MIN_SECONDS - 1)).toBe(video);
+    expect(at(0)).toBe(video);
+    expect(at(MUSIC_RESUME_MIN_SECONDS)).toMatchObject({
+      startSeconds: MUSIC_RESUME_MIN_SECONDS,
+    });
+  });
+
+  it("ignores corrupt saved state — data.json is hand-editable", () => {
+    expect(resumeTarget(video, { videoId: null, playlistId: null, seconds: 1500 })).toBe(video);
+    expect(resumeTarget(video, { videoId: "nope", playlistId: null, seconds: 1500 })).toBe(video);
+    expect(resumeTarget(video, { videoId: ID, playlistId: null, seconds: Number.NaN })).toBe(video);
+    expect(resumeTarget(video, { videoId: ID, playlistId: null, seconds: -20 })).toBe(video);
+  });
+
+  it("round-trips through buildEmbedUrl as a start= param", () => {
+    const saved = { videoId: ID, playlistId: null, seconds: 1500 };
+    const url = buildEmbedUrl(resumeTarget(video, saved));
+    expect(url).toContain(`/embed/${ID}?`);
+    expect(url).toContain("start=1500");
   });
 });

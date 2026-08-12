@@ -4,6 +4,16 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] — 2026-08-12
+
+### Added
+
+- **The music picks up where you left it.** Pause the lofi player — or just close the timer panel, or quit Obsidian entirely — and the next time the panel opens, the track is queued at the moment you stopped instead of back at the beginning. Press ♪ and it carries on. Nothing plays by itself: the position is restored, not the playback, so opening Obsidian is never a surprise burst of music (and on iPhone/iPad, where autoplay is blocked outright, the behaviour is identical).
+  - **⏹ Stop is how you forget it.** Pause remembers, Stop clears — press it whenever you'd rather start the mix from the top next time.
+  - **Playlists resume on the right track**, not back at track 1: the position is remembered against the video that was actually playing, so it stays correct even if you reorder the playlist later.
+  - Pasting a different URL never inherits the old position, a finished track opens at the top again, and **live streams always start live** (a saved offset would be meaningless on a stream).
+  - New **Resume where you left off** toggle in the Music section of the plugin settings, on by default. Turning it off forgets the stored position immediately.
+
 ## [0.5.2] — 2026-07-31
 
 ### Fixed

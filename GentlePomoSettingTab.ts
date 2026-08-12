@@ -11,6 +11,8 @@ type SettingsKey = keyof GentlePomoSettings;
 // the two can't drift.
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
+const MUSIC_RESUME_DESC =
+  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ to start from the top next time. Live streams always start live.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -119,6 +121,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             name: "Loop music",
             desc: "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player.",
             control: { type: "toggle", key: "musicLoop" },
+          },
+          {
+            name: "Resume where you left off",
+            desc: MUSIC_RESUME_DESC,
+            control: { type: "toggle", key: "musicResume" },
           },
         ],
       },
@@ -295,6 +302,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
+      case "musicResume":
+        settings.musicResume = Boolean(value);
+        // Turning it off drops the remembered position (which also saves).
+        if (settings.musicResume) await this.plugin.saveSettings();
+        else this.plugin.clearMusicPosition();
+        return;
       case "theme":
         settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
         await this.plugin.saveSettings();
@@ -453,6 +466,18 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           this.plugin.settings.musicLoop = value;
           await this.plugin.saveSettings();
           applySettingsToOpenViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Resume where you left off")
+      .setDesc(MUSIC_RESUME_DESC)
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.musicResume).onChange(async (value) => {
+          this.plugin.settings.musicResume = value;
+          // Turning it off drops the remembered position (which also saves).
+          if (value) await this.plugin.saveSettings();
+          else this.plugin.clearMusicPosition();
         })
       );
 

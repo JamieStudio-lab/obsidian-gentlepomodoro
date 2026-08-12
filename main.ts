@@ -17,9 +17,11 @@ import {
   DEFAULT_SETTINGS,
   FOCUS_TOTAL_CACHE_TTL_MS,
   FOCUS_TOTAL_HEARTBEAT_MS,
+  MUSIC_POSITION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
+import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -47,6 +49,8 @@ export default class GentlePomoPlugin extends Plugin {
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
   private repairInFlight = false;
+  /** Set when the remembered music position has moved since the last save. */
+  private musicPositionDirty = false;
 
   override async onload() {
     await this.loadSettings();
@@ -206,6 +210,15 @@ export default class GentlePomoPlugin extends Plugin {
       void this.maybeRefreshFocusTotal();
     });
 
+    // Safety net for the remembered music position. Every deliberate save is a
+    // boundary (pause, stop, track end, panel close, unload); this catches the
+    // force-quit/crash case, and writes nothing unless the position moved.
+    this.registerInterval(
+      window.setInterval(() => {
+        this.flushMusicPosition();
+      }, MUSIC_POSITION_SAVE_MS)
+    );
+
     void this.setStatusBarVisibility(this.settings.showInStatusBar, false);
 
     // Defer auto-open until Obsidian has finished initial layout setup.
@@ -343,6 +356,10 @@ export default class GentlePomoPlugin extends Plugin {
   }
 
   override onunload() {
+    // Best effort — saveSettings is async and a hard quit may cut it short,
+    // which is what the MUSIC_POSITION_SAVE_MS interval backstops.
+    this.flushMusicPosition();
+
     if (this.autoOpenObserver) {
       this.autoOpenObserver.disconnect();
       this.autoOpenObserver = null;
@@ -596,6 +613,68 @@ export default class GentlePomoPlugin extends Plugin {
         leaf.view.duckMusic(cueDurationSec);
       }
     }
+  }
+
+  /**
+   * The remembered music position, or null when the feature is off or nothing
+   * is stored. Read once per iframe build — never on the render hot path.
+   */
+  musicResumeState(): MusicResumeState | null {
+    if (!this.settings.musicResume || this.settings.lastMusicVideoId === null) return null;
+    return {
+      videoId: this.settings.lastMusicVideoId,
+      playlistId: this.settings.lastMusicPlaylistId,
+      seconds: this.settings.lastMusicSeconds,
+    };
+  }
+
+  /**
+   * Track where the music has reached. Called from the embed's ~4Hz message
+   * stream, so it stays three field writes and a dirty flag — the disk write is
+   * deferred to flushMusicPosition (boundaries + the slow interval), because
+   * data.json lives in the vault and every save is sync traffic.
+   */
+  recordMusicPosition(position: MusicResumeState): void {
+    if (!this.settings.musicResume) return;
+    const seconds = Math.floor(position.seconds);
+    if (
+      this.settings.lastMusicVideoId === position.videoId &&
+      this.settings.lastMusicPlaylistId === position.playlistId &&
+      this.settings.lastMusicSeconds === seconds
+    ) {
+      return; // same whole second — the 4Hz stream collapses to ~1 update/sec
+    }
+    this.settings.lastMusicVideoId = position.videoId;
+    this.settings.lastMusicPlaylistId = position.playlistId;
+    this.settings.lastMusicSeconds = seconds;
+    this.musicPositionDirty = true;
+  }
+
+  /**
+   * Forget the position — ⏹ Stop, a finished track, and turning resume off all
+   * mean "open this from the top next time". Saved at once rather than on the
+   * next boundary: it answers a deliberate action, not a background sample.
+   */
+  clearMusicPosition(): void {
+    this.musicPositionDirty = false;
+    if (
+      this.settings.lastMusicVideoId === null &&
+      this.settings.lastMusicPlaylistId === null &&
+      this.settings.lastMusicSeconds === 0
+    ) {
+      return;
+    }
+    this.settings.lastMusicVideoId = null;
+    this.settings.lastMusicPlaylistId = null;
+    this.settings.lastMusicSeconds = 0;
+    void this.saveSettings();
+  }
+
+  /** Persist a moved position. No-op when it hasn't changed since the last save. */
+  flushMusicPosition(): void {
+    if (!this.musicPositionDirty) return;
+    this.musicPositionDirty = false;
+    void this.saveSettings();
   }
 
   /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —

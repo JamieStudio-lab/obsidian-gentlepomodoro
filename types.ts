@@ -53,11 +53,17 @@ export interface GentlePomoSettings {
   showMusicPlayer: boolean; // feature switch: off hides the controls and stops playback
   musicVolume: number; // 0-1, mapped ×100 for the embed's setVolume
   musicLoop: boolean; // replay the video/playlist when it ends (no effect on live streams)
+  musicResume: boolean; // reopen the music where it was paused/left off
 
   // Internal state (not user-editable; persisted to data.json across reloads)
   lastGoalHitDate: string | null;
   sessionsSinceLongBreak: number;
   sessionCounterDate: string | null;
+  // Remembered music position (see musicResume). Cleared by ⏹ Stop and when a
+  // track finishes; keyed by video so a new URL never inherits an old offset.
+  lastMusicVideoId: string | null;
+  lastMusicPlaylistId: string | null;
+  lastMusicSeconds: number;
 }
 
 // Runtime snapshot of the timer used by the UI.
