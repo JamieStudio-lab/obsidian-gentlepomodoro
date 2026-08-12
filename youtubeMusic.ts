@@ -45,6 +45,25 @@ export interface MusicTarget {
   startSeconds: number | null; // normalized t=/start= offset (ignored by live streams)
 }
 
+// A remembered playback position, persisted across app restarts so the next
+// iframe can be built pre-seeked. `videoId` is the video the offset belongs to
+// (the one the embed reported playing, which inside a playlist is not
+// necessarily the one the pasted URL named); `playlistId` is the list context
+// it was played in, or null.
+export interface MusicResumeState {
+  videoId: string | null;
+  playlistId: string | null;
+  seconds: number;
+}
+
+// Positions below this are not worth resuming — the user effectively just
+// started the track, and `start=1` only adds noise to the embed URL.
+export const MUSIC_RESUME_MIN_SECONDS = 5;
+
+// Don't remember a position this close to the end: the track is finished for
+// all practical purposes, so the next session should open it from the top.
+export const MUSIC_RESUME_END_MARGIN_SECONDS = 10;
+
 // Video IDs are exactly 11 chars from this alphabet.
 const VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 // Playlist IDs vary in length (PL/RD/UU/OL prefixes); validate loosely.
@@ -200,14 +219,84 @@ export function buildEmbedUrl(target: MusicTarget, loop = false): string {
   return `${YT_EMBED_ORIGIN}${path}?${params.toString()}`;
 }
 
+/**
+ * Whether a reported playback position is worth *recording*. Rejects the last
+ * few seconds of a track (it's finished — the next session should open it at
+ * the top) and anything whose duration is not positive, which is how the embed
+ * reports a live stream: a DVR offset means nothing on a stream, and `start=`
+ * is ignored for one anyway.
+ *
+ * Note there is no floor here — the "too near the start to bother resuming"
+ * rule belongs to planResume, on the apply side. Recording the opening
+ * seconds is what lets a restarted or looped track immediately overwrite a
+ * stale offset instead of leaving it standing for the first few seconds.
+ */
+export function isResumablePosition(seconds: number, duration: number | null): boolean {
+  if (!Number.isFinite(seconds) || seconds < 0) return false;
+  if (duration === null || !Number.isFinite(duration) || duration <= 0) return false;
+  return seconds <= duration - MUSIC_RESUME_END_MARGIN_SECONDS;
+}
+
+// How a remembered position is applied to a fresh embed.
+export interface ResumePlan {
+  // The target to embed. Identical to the input except inside a playlist, where
+  // the saved *item* replaces the one the URL names.
+  target: MusicTarget;
+  // Seconds to seek to once playback starts, or null for "start normally".
+  seekSeconds: number | null;
+}
+
+/**
+ * Work out how to reopen `target` at a remembered position.
+ *
+ * The offset is deliberately **not** folded into the embed URL as `start=`.
+ * That was 0.5.3's first cut and it broke playback: an embed loaded with
+ * `start=` (alongside the loop feature's `loop=1&playlist=<self>`) stops
+ * responding to `playVideo` after a pause — the player only recovers on
+ * `stopVideo`. Keeping the URL byte-identical to what 0.5.2 built means
+ * playback, looping, stop and close-the-panel all behave exactly as before,
+ * and resume becomes purely additive: one `seekTo` once the player is running,
+ * which is also the only state YouTube documents as safe to seek from.
+ *
+ * The playlist *item* still has to come from the URL, since seeking cannot
+ * cross items — but `/embed/<id>?list=<list>` is the same shape a watch+list
+ * URL already produced in 0.5.0, so it is not new ground. Resume is keyed by
+ * video ID rather than playlist index: the ID still identifies the right item
+ * after the playlist is reordered, and it avoids `index=` being 1-based while
+ * the embed reports `playlistIndex` 0-based.
+ */
+export function planResume(target: MusicTarget, saved: MusicResumeState | null): ResumePlan {
+  const none: ResumePlan = { target, seekSeconds: null };
+  if (saved === null) return none;
+  const { videoId, seconds } = saved;
+  // Defensive: data.json is user-editable and survives across versions.
+  if (videoId === null || !VIDEO_ID_REGEX.test(videoId)) return none;
+  if (!Number.isFinite(seconds) || seconds < MUSIC_RESUME_MIN_SECONDS) return none;
+  // The playlist context must match exactly — both standalone, or the same list.
+  if (saved.playlistId !== target.playlistId) return none;
+  // Outside a playlist the saved video must be the one the URL names. Inside
+  // one the saved video wins: the list has advanced past the URL's own video.
+  if (target.playlistId === null && target.videoId !== videoId) return none;
+
+  const seekSeconds = Math.floor(seconds);
+  // Same video: hand back the very same target object, so callers can use an
+  // identity check to see whether the embed URL itself changed.
+  if (target.videoId === videoId) return { target, seekSeconds };
+  return { target: { ...target, videoId }, seekSeconds };
+}
+
 // Commands the plugin sends. Same names as the documented IFrame API funcs.
-export type PlayerCommandFunc = "playVideo" | "pauseVideo" | "stopVideo" | "setVolume";
+// seekTo takes [seconds, allowSeekAhead].
+export type PlayerCommandFunc = "playVideo" | "pauseVideo" | "stopVideo" | "setVolume" | "seekTo";
 
 /**
  * Serialize a player command. The embed expects a JSON *string*, not an
  * object: {"event":"command","func":"playVideo","args":[]}.
  */
-export function buildPlayerCommand(func: PlayerCommandFunc, args?: (number | string)[]): string {
+export function buildPlayerCommand(
+  func: PlayerCommandFunc,
+  args?: (number | string | boolean)[]
+): string {
   return JSON.stringify({ event: "command", func, args: args ?? [] });
 }
 
@@ -220,10 +309,28 @@ export function buildListeningMessage(): string {
 }
 
 // Decoded inbound message, reduced to what the view cares about.
+//
+// "info" is the infoDelivery stream (~4Hz while playing). Its payload varies
+// message to message — some carry a player state, some the clock, some the
+// loaded video's metadata, some a combination — so every field is nullable and
+// the view merges them into its own running picture.
 export type PlayerMessage =
   | { type: "ready" }
   | { type: "state"; state: number } // a YT_STATE value
+  | {
+      type: "info";
+      state: number | null; // YT_STATE value when this message carried one
+      currentTime: number | null; // seconds into the current video
+      duration: number | null; // total seconds; 0 or absent for a live stream
+      videoId: string | null; // the video actually loaded (playlists advance)
+    }
   | { type: "error"; code: number }; // 2 invalid, 5 html5, 100 unavailable, 101/150 embed-disabled, 153 config
+
+/** Read a finite number field off an infoDelivery payload, else null. */
+function numberField(fields: Record<string, unknown>, key: string): number | null {
+  const value = fields[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 /**
  * Decode a `message` event payload from the embed. Anything that isn't a JSON
@@ -252,11 +359,27 @@ export function parsePlayerMessage(data: unknown): PlayerMessage | null {
       return Number.isFinite(code) ? { type: "error", code } : null;
     }
     case "infoDelivery": {
-      // The workhorse event: fires continuously with {info:{playerState,…}}.
+      // The workhorse event: fires continuously with {info:{playerState,
+      // currentTime, duration, videoData:{video_id}, …}} — never all at once.
       const info = msg.info;
       if (typeof info !== "object" || info === null) return null;
-      const playerState = (info as Record<string, unknown>).playerState;
-      return typeof playerState === "number" ? { type: "state", state: playerState } : null;
+      const fields = info as Record<string, unknown>;
+      const state = numberField(fields, "playerState");
+      const currentTime = numberField(fields, "currentTime");
+      const duration = numberField(fields, "duration");
+
+      let videoId: string | null = null;
+      const videoData = fields.videoData;
+      if (typeof videoData === "object" && videoData !== null) {
+        const id = (videoData as Record<string, unknown>).video_id;
+        if (typeof id === "string" && VIDEO_ID_REGEX.test(id)) videoId = id;
+      }
+
+      // Nothing we track — a volume/quality/loadedFraction-only delivery.
+      if (state === null && currentTime === null && duration === null && videoId === null) {
+        return null;
+      }
+      return { type: "info", state, currentTime, duration, videoId };
     }
     default:
       return null;

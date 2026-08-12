@@ -15,6 +15,7 @@ import {
   MUSIC_ENDED_NOTICE_DELAY_MS,
   MUSIC_STALL_NOTICE_DELAY_MS,
   MUSIC_STALL_RENOTIFY_MS,
+  RESUME_SEEK_LANDING_TOLERANCE_S,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
@@ -31,6 +32,9 @@ import {
   parsePlayerMessage,
   musicVolumeTo100,
   buildVolumeRamp,
+  isResumablePosition,
+  planResume,
+  type ResumePlan,
 } from "./youtubeMusic";
 
 declare const moment: MomentFactory;
@@ -75,6 +79,14 @@ export class GentlePomoView extends ItemView {
   private musicEndedTimeout: number | null = null; // pending "music ended" Notice
   private musicStallTimeout: number | null = null; // pending "music is buffering" Notice
   private musicStallNotifiedAt = 0; // rate-limits stall notices (0 = never fired)
+  // Resume bookkeeping. The embed reports its clock/metadata piecemeal over
+  // infoDelivery, so the view keeps the running picture and hands whole
+  // positions to the plugin (which owns persistence).
+  private musicCurrentVideoId: string | null = null; // seeded from the URL, corrected by videoData
+  private musicCurrentDuration: number | null = null; // null/0 ⇒ live stream: nothing to resume
+  private musicTargetPlaylistId: string | null = null; // list context of the loaded embed
+  private pendingResumeSeconds: number | null = null; // one-shot: seek here once playback starts
+  private resumeSeekLanding: number | null = null; // seek posted, waiting for the clock to catch up
   // Music ducking (the music dips under a sound cue, then eases back).
   // duckLevel is the last 0–1 volume actually posted while ducking — the start
   // point for the next ramp (so overlapping cues never double-dip or jump) and,
@@ -346,6 +358,12 @@ export class GentlePomoView extends ItemView {
     this.registerDomEvent(musicStopBtn, "click", (evt) => {
       evt.preventDefault();
       this.postToMusicPlayer(buildPlayerCommand("stopVideo"));
+      // Stop means "start from the top next time" — pause is what remembers.
+      // Dropping the pending seek is what makes that true within this session
+      // too; the embed URL itself never carried the offset.
+      this.plugin.clearMusicPosition();
+      this.pendingResumeSeconds = null;
+      this.musicCurrentDuration = null;
     });
 
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
@@ -363,10 +381,15 @@ export class GentlePomoView extends ItemView {
         this.postMusicVolume();
       } else if (msg.type === "error") {
         this.notifyMusicError(msg.code);
+      } else if (msg.type === "state") {
+        this.handleMusicState(msg.state);
       } else {
-        this.maybeNotifyMusicStalled(msg.state);
-        this.maybeNotifyMusicEnded(msg.state);
-        this.updateMusicButtons(msg.state);
+        // infoDelivery: merge whatever this message carried, position before
+        // state so a transition into PAUSED flushes the freshest clock value.
+        if (msg.videoId !== null) this.musicCurrentVideoId = msg.videoId;
+        if (msg.duration !== null) this.musicCurrentDuration = msg.duration;
+        if (msg.currentTime !== null) this.trackMusicPosition(msg.currentTime);
+        if (msg.state !== null) this.handleMusicState(msg.state);
       }
     });
 
@@ -574,13 +597,18 @@ export class GentlePomoView extends ItemView {
       const target = this.plugin.settings.showMusicPlayer
         ? parseYouTubeUrl(this.plugin.settings.musicUrl)
         : null;
-      const embedUrl = target ? buildEmbedUrl(target, this.plugin.settings.musicLoop) : null;
+      // Work out the remembered position here, at build time — deliberately NOT
+      // part of musicKey, since keying on a value that moves every second would
+      // rebuild the iframe ~20×/sec. The offset is carried as a pending seek,
+      // not baked into the URL, so the embed stays exactly what 0.5.2 built.
+      const plan = target ? planResume(target, this.plugin.musicResumeState()) : null;
+      const embedUrl = plan ? buildEmbedUrl(plan.target, this.plugin.settings.musicLoop) : null;
       this.musicSectionVisible = embedUrl !== null;
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
       if (embedUrl !== this.lastMusicEmbedUrl) {
         this.lastMusicEmbedUrl = embedUrl;
         this.destroyMusicIframe();
-        if (embedUrl !== null) this.buildMusicIframe(embedUrl);
+        if (embedUrl !== null && plan !== null) this.buildMusicIframe(embedUrl, plan);
       }
     }
     // The task-selector/music divider needs both neighbors visible. Outside the
@@ -628,7 +656,16 @@ export class GentlePomoView extends ItemView {
    * instant it loads), then announce {"event":"listening"} so it starts
    * streaming onReady/onStateChange/infoDelivery/onError back to us.
    */
-  private buildMusicIframe(embedUrl: string) {
+  private buildMusicIframe(embedUrl: string, plan: ResumePlan) {
+    // Seed the resume bookkeeping from the target. videoId matters for a plain
+    // video, where the embed's videoData may never tell us anything we don't
+    // already know; inside a playlist the stream corrects it as items advance.
+    this.musicCurrentVideoId = plan.target.videoId;
+    this.musicTargetPlaylistId = plan.target.playlistId;
+    this.musicCurrentDuration = null;
+    this.pendingResumeSeconds = plan.seekSeconds;
+    this.resumeSeekLanding = null;
+
     const iframe = this.musicPlayerContainer.createEl("iframe", {
       attr: {
         src: embedUrl,
@@ -653,6 +690,15 @@ export class GentlePomoView extends ItemView {
    * Also resets the handshake/volume state so a rebuilt iframe starts fresh.
    */
   private destroyMusicIframe() {
+    // Teardown is a boundary: closing the panel, moving the leaf, or changing
+    // the URL all end playback. The pending position is keyed by the video it
+    // came from, so saving the *outgoing* one here is correct even mid-swap.
+    this.plugin.flushMusicPosition();
+    this.pendingResumeSeconds = null;
+    this.resumeSeekLanding = null;
+    this.musicCurrentVideoId = null;
+    this.musicCurrentDuration = null;
+    this.musicTargetPlaylistId = null;
     this.cancelMusicDuck();
     if (this.musicListenTimeout !== null) {
       window.clearTimeout(this.musicListenTimeout);
@@ -759,6 +805,80 @@ export class GentlePomoView extends ItemView {
       window.clearTimeout(this.duckRestoreTimeout);
       this.duckRestoreTimeout = null;
     }
+  }
+
+  /**
+   * React to a reported player state, from either onStateChange or an
+   * infoDelivery that carried one.
+   *
+   * Ordering is load-bearing: updateMusicButtons is what advances
+   * musicPlayerState, and both the stall notice and the transition checks here
+   * read it as the *previous* state, so it must stay last.
+   */
+  private handleMusicState(state: number) {
+    if (state !== this.musicPlayerState) {
+      if (state === YT_STATE.PAUSED) {
+        // The position only lives in memory while playing — pausing is the
+        // boundary that has to reach disk, and it's the main way users leave.
+        this.plugin.flushMusicPosition();
+      } else if (state === YT_STATE.ENDED) {
+        // Finished: next time this track opens at the top. With loop on, the
+        // restart re-records from ~0 a moment later.
+        this.plugin.clearMusicPosition();
+      } else if (this.pendingResumeSeconds !== null && this.isAudibleState(state)) {
+        // Resume, the moment playback actually starts. Seeking is documented as
+        // safe only from a running player (from a *cued* one it would start
+        // playback, which is exactly the auto-play this feature must not do), so
+        // the offset waits here rather than riding along in the embed URL.
+        // BUFFERING usually arrives first, so the jump lands before any audio.
+        const seconds = this.pendingResumeSeconds;
+        this.pendingResumeSeconds = null;
+        this.resumeSeekLanding = seconds;
+        this.postToMusicPlayer(buildPlayerCommand("seekTo", [seconds, true]));
+      }
+    }
+    this.maybeNotifyMusicStalled(state);
+    this.maybeNotifyMusicEnded(state);
+    this.updateMusicButtons(state);
+  }
+
+  /** Playing or buffering — i.e. the player is running, not cued or paused. */
+  private isAudibleState(state: number): boolean {
+    return state === YT_STATE.PLAYING || state === YT_STATE.BUFFERING;
+  }
+
+  /**
+   * Hand a reported playback position to the plugin's store. Live streams and
+   * the final seconds of a track are filtered out by isResumablePosition; the
+   * "too early to bother resuming" floor lives on the *apply* side instead, so
+   * that a restarted track immediately overwrites a stale offset here.
+   *
+   * Only an audibly-running player is recorded. A cued one also reports a clock
+   * (at 0), which would otherwise let a second, idle panel — or the moment just
+   * after ⏹ Stop — reset a position the playing panel had banked. Note the
+   * state read here is the *previous* one (updateMusicButtons advances it after
+   * this runs), which is also what keeps the first 0 of a resumed track from
+   * overwriting the very offset it was built with.
+   */
+  private trackMusicPosition(seconds: number) {
+    if (!this.isAudibleState(this.musicPlayerState)) return;
+    // A resume seek is posted while the embed is still reporting the old clock,
+    // so ignore readings until it lands — otherwise the first ~second of
+    // playback overwrites the very position we just asked it to jump to. If the
+    // seek is never honoured nothing is recorded, which leaves the stored
+    // position intact and the next open resumes from it again.
+    if (this.resumeSeekLanding !== null) {
+      if (seconds < this.resumeSeekLanding - RESUME_SEEK_LANDING_TOLERANCE_S) return;
+      this.resumeSeekLanding = null;
+    }
+    const videoId = this.musicCurrentVideoId;
+    if (videoId === null) return;
+    if (!isResumablePosition(seconds, this.musicCurrentDuration)) return;
+    this.plugin.recordMusicPosition({
+      videoId,
+      playlistId: this.musicTargetPlaylistId,
+      seconds,
+    });
   }
 
   /**

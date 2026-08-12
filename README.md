@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.5.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.3 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -46,6 +46,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ♪ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
 - **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
 - **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
+- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** clears the position so the mix starts from the top instead.
 - Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
 
 ### 📱 Mobile (iPad & phone)
@@ -76,7 +77,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default or `Frosted glass`), day/night indicator, and **estimated end time** (shown while a session runs).
-- **Music**: **YouTube music URL** (video, live stream, or playlist — audio-only playback in the timer panel), **show music player** (turning it off also stops playback), and **loop music** (replay from the start when it ends; on by default).
+- **Music**: **YouTube music URL** (video, live stream, or playlist — audio-only playback in the timer panel), **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen the music at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.

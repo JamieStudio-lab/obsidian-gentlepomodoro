@@ -12,10 +12,17 @@ import {
   parsePlayerMessage,
   musicVolumeTo100,
   buildVolumeRamp,
+  isResumablePosition,
+  planResume,
+  MUSIC_RESUME_MIN_SECONDS,
+  MUSIC_RESUME_END_MARGIN_SECONDS,
+  type MusicTarget,
 } from "../youtubeMusic";
 
 // Lofi Girl's stream ID — a real-shaped 11-char ID for readable tests.
 const ID = "jfKfPfyJRdk";
+// A second real-shaped ID, for "the playlist moved on" / "the URL changed" cases.
+const OTHER_ID = "5qap5aO4i9A";
 
 describe("parseYouTubeUrl", () => {
   it("parses a standard watch URL", () => {
@@ -264,7 +271,61 @@ describe("parsePlayerMessage", () => {
 
   it("decodes infoDelivery playerState", () => {
     const data = JSON.stringify({ event: "infoDelivery", info: { playerState: 2 } });
-    expect(parsePlayerMessage(data)).toEqual({ type: "state", state: 2 });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: 2,
+      currentTime: null,
+      duration: null,
+      videoId: null,
+    });
+  });
+
+  it("decodes an infoDelivery carrying clock, duration and video metadata", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: {
+        playerState: 1,
+        currentTime: 1234.56,
+        duration: 10800,
+        loadedFraction: 0.4,
+        videoData: { video_id: ID, title: "lofi" },
+      },
+    });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: 1,
+      currentTime: 1234.56,
+      duration: 10800,
+      videoId: ID,
+    });
+  });
+
+  it("decodes a clock-only infoDelivery (no player state)", () => {
+    const data = JSON.stringify({ event: "infoDelivery", info: { currentTime: 12.3 } });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: null,
+      currentTime: 12.3,
+      duration: null,
+      videoId: null,
+    });
+  });
+
+  it("ignores a malformed video_id rather than trusting it as a key", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { currentTime: 5, videoData: { video_id: "too-short" } },
+    });
+    expect(parsePlayerMessage(data)).toMatchObject({ videoId: null });
+  });
+
+  it("drops non-finite clock values", () => {
+    // JSON has no Infinity/NaN, but a hostile or odd sender can pass a string.
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { currentTime: "12.3", duration: null, playerState: 1 },
+    });
+    expect(parsePlayerMessage(data)).toMatchObject({ currentTime: null, duration: null, state: 1 });
   });
 
   it("decodes onError codes", () => {
@@ -279,8 +340,8 @@ describe("parsePlayerMessage", () => {
     });
   });
 
-  it("returns null for infoDelivery without a playerState", () => {
-    const data = JSON.stringify({ event: "infoDelivery", info: { currentTime: 12.3 } });
+  it("returns null for an infoDelivery carrying nothing we track", () => {
+    const data = JSON.stringify({ event: "infoDelivery", info: { volume: 70, muted: false } });
     expect(parsePlayerMessage(data)).toBeNull();
   });
 
@@ -338,5 +399,128 @@ describe("buildVolumeRamp", () => {
 
   it("handles a zero-distance ramp (from === to)", () => {
     expect(buildVolumeRamp(0.5, 0.5, 3)).toEqual([0.5, 0.5, 0.5]);
+  });
+});
+
+describe("isResumablePosition", () => {
+  it("accepts an ordinary mid-track position", () => {
+    expect(isResumablePosition(1500, 10800)).toBe(true);
+  });
+
+  it("accepts the opening seconds, so a restarted track overwrites a stale offset", () => {
+    // The "too early to bother" floor is applied on the resume side, not here.
+    expect(isResumablePosition(0, 10800)).toBe(true);
+    expect(isResumablePosition(1, 10800)).toBe(true);
+  });
+
+  it("rejects a live stream, which reports no positive duration", () => {
+    expect(isResumablePosition(1500, 0)).toBe(false);
+    expect(isResumablePosition(1500, null)).toBe(false);
+  });
+
+  it("rejects the final seconds — a finished track opens at the top next time", () => {
+    const duration = 600;
+    expect(isResumablePosition(duration - MUSIC_RESUME_END_MARGIN_SECONDS, duration)).toBe(true);
+    expect(isResumablePosition(duration - MUSIC_RESUME_END_MARGIN_SECONDS + 1, duration)).toBe(
+      false
+    );
+    expect(isResumablePosition(duration, duration)).toBe(false);
+  });
+
+  it("rejects nonsense values", () => {
+    expect(isResumablePosition(-5, 600)).toBe(false);
+    expect(isResumablePosition(Number.NaN, 600)).toBe(false);
+    expect(isResumablePosition(Number.POSITIVE_INFINITY, 600)).toBe(false);
+    expect(isResumablePosition(100, Number.NaN)).toBe(false);
+  });
+});
+
+describe("planResume", () => {
+  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
+  const inList: MusicTarget = { videoId: ID, playlistId: "PLabc123", startSeconds: null };
+  const listOnly: MusicTarget = { videoId: null, playlistId: "PLabc123", startSeconds: null };
+
+  it("plans a seek for the same standalone video, leaving the embed URL alone", () => {
+    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500.87 });
+    expect(plan.seekSeconds).toBe(1500); // floored — seekTo takes whole seconds
+    // Same object back: the embed built from it is byte-identical to a cold one.
+    expect(plan.target).toBe(video);
+  });
+
+  it("never puts the offset in the embed URL", () => {
+    // 0.5.3's first cut used start=, and an embed loaded that way stopped
+    // responding to playVideo after a pause. The URL must stay untouched.
+    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500 });
+    expect(plan.target.startSeconds).toBeNull();
+    expect(buildEmbedUrl(plan.target, true)).not.toContain("start=");
+  });
+
+  it("plans nothing when there is nothing saved", () => {
+    expect(planResume(video, null)).toEqual({ target: video, seekSeconds: null });
+  });
+
+  it("never carries a position onto a different video", () => {
+    const plan = planResume(video, { videoId: OTHER_ID, playlistId: null, seconds: 1500 });
+    expect(plan).toEqual({ target: video, seekSeconds: null });
+  });
+
+  it("leaves a URL's own t= offset in place", () => {
+    const withStart: MusicTarget = { videoId: ID, playlistId: null, startSeconds: 90 };
+    // Not applicable: untouched, so the URL still opens at the pasted t=.
+    expect(planResume(withStart, { videoId: OTHER_ID, playlistId: null, seconds: 1500 })).toEqual({
+      target: withStart,
+      seekSeconds: null,
+    });
+    // Applicable: the URL keeps t=90 and the resume wins via the seek.
+    const resumed = planResume(withStart, { videoId: ID, playlistId: null, seconds: 1500 });
+    expect(resumed.target.startSeconds).toBe(90);
+    expect(resumed.seekSeconds).toBe(1500);
+  });
+
+  it("swaps in the playlist item the embed had reached", () => {
+    // Seeking cannot cross playlist items, so the item still comes from the URL
+    // — /embed/<id>?list=<list>, the shape a watch+list URL already produced.
+    const plan = planResume(listOnly, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    expect(plan).toEqual({
+      target: { videoId: OTHER_ID, playlistId: "PLabc123", startSeconds: null },
+      seekSeconds: 200,
+    });
+  });
+
+  it("lets the saved item win over the video a watch+list URL names", () => {
+    const plan = planResume(inList, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    expect(plan.target.videoId).toBe(OTHER_ID);
+    expect(plan.seekSeconds).toBe(200);
+  });
+
+  it("requires the playlist context to match", () => {
+    const cases: [MusicTarget, string | null][] = [
+      [listOnly, "PLother"],
+      [inList, null], // played standalone before, now pasted inside a list
+      [video, "PLabc123"], // and the reverse
+    ];
+    for (const [target, playlistId] of cases) {
+      expect(planResume(target, { videoId: ID, playlistId, seconds: 200 })).toEqual({
+        target,
+        seekSeconds: null,
+      });
+    }
+  });
+
+  it("ignores a position too near the start to be worth resuming", () => {
+    const at = (seconds: number) => planResume(video, { videoId: ID, playlistId: null, seconds });
+    expect(at(MUSIC_RESUME_MIN_SECONDS - 1).seekSeconds).toBeNull();
+    expect(at(0).seekSeconds).toBeNull();
+    expect(at(MUSIC_RESUME_MIN_SECONDS).seekSeconds).toBe(MUSIC_RESUME_MIN_SECONDS);
+  });
+
+  it("ignores corrupt saved state — data.json is hand-editable", () => {
+    const bad = [
+      { videoId: null, playlistId: null, seconds: 1500 },
+      { videoId: "nope", playlistId: null, seconds: 1500 },
+      { videoId: ID, playlistId: null, seconds: Number.NaN },
+      { videoId: ID, playlistId: null, seconds: -20 },
+    ];
+    for (const saved of bad) expect(planResume(video, saved).seekSeconds).toBeNull();
   });
 });

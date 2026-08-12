@@ -45,6 +45,20 @@ export const MUSIC_ENDED_NOTICE_DELAY_MS = 3000;
 export const MUSIC_STALL_NOTICE_DELAY_MS = 10_000;
 export const MUSIC_STALL_RENOTIFY_MS = 300_000;
 
+// How often a changed music position is written to data.json while playback
+// runs. The embed reports its clock ~4Hz, so the position is tracked in memory
+// and only *persisted* on boundaries (pause, stop, track end, panel close,
+// plugin unload) — this interval is the crash/force-quit safety net, and it
+// writes nothing when the position hasn't moved since the last save. Keeping it
+// slow matters: data.json lives in the vault, so every write is sync traffic.
+export const MUSIC_POSITION_SAVE_MS = 60_000;
+
+// How far below a posted resume seek the reported clock may be and still count
+// as "the seek landed". The embed keeps reporting the pre-seek position for a
+// beat after the command, and those readings must not overwrite the position
+// being resumed to.
+export const RESUME_SEEK_LANDING_TOLERANCE_S = 5;
+
 // Default settings used on first load or when a setting is missing.
 export const DEFAULT_SETTINGS: GentlePomoSettings = {
   focusMinutes: 25,
@@ -72,7 +86,11 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   showMusicPlayer: true,
   musicVolume: 0.7,
   musicLoop: true,
+  musicResume: true,
   lastGoalHitDate: null,
   sessionsSinceLongBreak: 0,
   sessionCounterDate: null,
+  lastMusicVideoId: null,
+  lastMusicPlaylistId: null,
+  lastMusicSeconds: 0,
 };
