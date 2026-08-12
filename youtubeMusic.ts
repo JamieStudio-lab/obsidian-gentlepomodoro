@@ -227,7 +227,7 @@ export function buildEmbedUrl(target: MusicTarget, loop = false): string {
  * is ignored for one anyway.
  *
  * Note there is no floor here — the "too near the start to bother resuming"
- * rule belongs to resumeTarget, on the apply side. Recording the opening
+ * rule belongs to planResume, on the apply side. Recording the opening
  * seconds is what lets a restarted or looped track immediately overwrite a
  * stale offset instead of leaving it standing for the first few seconds.
  */
@@ -237,27 +237,52 @@ export function isResumablePosition(seconds: number, duration: number | null): b
   return seconds <= duration - MUSIC_RESUME_END_MARGIN_SECONDS;
 }
 
+// How a remembered position is applied to a fresh embed.
+export interface ResumePlan {
+  // The target to embed. Identical to the input except inside a playlist, where
+  // the saved *item* replaces the one the URL names.
+  target: MusicTarget;
+  // Seconds to seek to once playback starts, or null for "start normally".
+  seekSeconds: number | null;
+}
+
 /**
- * Fold a remembered position into a freshly parsed target, so the embed built
- * from it loads pre-seeked. Returns `target` untouched whenever the saved state
- * doesn't belong to it — a changed URL must never inherit the old offset.
+ * Work out how to reopen `target` at a remembered position.
  *
- * Resume is keyed by *video ID*, not by playlist index: inside a playlist the
- * embed will have moved on to a later item, and its ID identifies that item
- * even if the playlist is reordered later (the `index=` param would not).
+ * The offset is deliberately **not** folded into the embed URL as `start=`.
+ * That was 0.5.3's first cut and it broke playback: an embed loaded with
+ * `start=` (alongside the loop feature's `loop=1&playlist=<self>`) stops
+ * responding to `playVideo` after a pause — the player only recovers on
+ * `stopVideo`. Keeping the URL byte-identical to what 0.5.2 built means
+ * playback, looping, stop and close-the-panel all behave exactly as before,
+ * and resume becomes purely additive: one `seekTo` once the player is running,
+ * which is also the only state YouTube documents as safe to seek from.
+ *
+ * The playlist *item* still has to come from the URL, since seeking cannot
+ * cross items — but `/embed/<id>?list=<list>` is the same shape a watch+list
+ * URL already produced in 0.5.0, so it is not new ground. Resume is keyed by
+ * video ID rather than playlist index: the ID still identifies the right item
+ * after the playlist is reordered, and it avoids `index=` being 1-based while
+ * the embed reports `playlistIndex` 0-based.
  */
-export function resumeTarget(target: MusicTarget, saved: MusicResumeState | null): MusicTarget {
-  if (saved === null) return target;
+export function planResume(target: MusicTarget, saved: MusicResumeState | null): ResumePlan {
+  const none: ResumePlan = { target, seekSeconds: null };
+  if (saved === null) return none;
   const { videoId, seconds } = saved;
   // Defensive: data.json is user-editable and survives across versions.
-  if (videoId === null || !VIDEO_ID_REGEX.test(videoId)) return target;
-  if (!Number.isFinite(seconds) || seconds < MUSIC_RESUME_MIN_SECONDS) return target;
+  if (videoId === null || !VIDEO_ID_REGEX.test(videoId)) return none;
+  if (!Number.isFinite(seconds) || seconds < MUSIC_RESUME_MIN_SECONDS) return none;
   // The playlist context must match exactly — both standalone, or the same list.
-  if (saved.playlistId !== target.playlistId) return target;
+  if (saved.playlistId !== target.playlistId) return none;
   // Outside a playlist the saved video must be the one the URL names. Inside
   // one the saved video wins: the list has advanced past the URL's own video.
-  if (target.playlistId === null && target.videoId !== videoId) return target;
-  return { videoId, playlistId: target.playlistId, startSeconds: Math.floor(seconds) };
+  if (target.playlistId === null && target.videoId !== videoId) return none;
+
+  const seekSeconds = Math.floor(seconds);
+  // Same video: hand back the very same target object, so callers can use an
+  // identity check to see whether the embed URL itself changed.
+  if (target.videoId === videoId) return { target, seekSeconds };
+  return { target: { ...target, videoId }, seekSeconds };
 }
 
 // Commands the plugin sends. Same names as the documented IFrame API funcs.

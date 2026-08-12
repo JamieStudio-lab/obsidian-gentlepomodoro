@@ -13,7 +13,7 @@ import {
   musicVolumeTo100,
   buildVolumeRamp,
   isResumablePosition,
-  resumeTarget,
+  planResume,
   MUSIC_RESUME_MIN_SECONDS,
   MUSIC_RESUME_END_MARGIN_SECONDS,
   type MusicTarget,
@@ -435,84 +435,92 @@ describe("isResumablePosition", () => {
   });
 });
 
-describe("resumeTarget", () => {
+describe("planResume", () => {
   const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
   const inList: MusicTarget = { videoId: ID, playlistId: "PLabc123", startSeconds: null };
   const listOnly: MusicTarget = { videoId: null, playlistId: "PLabc123", startSeconds: null };
 
-  it("applies a saved position to the same standalone video", () => {
-    const saved = { videoId: ID, playlistId: null, seconds: 1500.87 };
-    expect(resumeTarget(video, saved)).toEqual({
-      videoId: ID,
-      playlistId: null,
-      startSeconds: 1500, // floored — the embed's start= is whole seconds
-    });
+  it("plans a seek for the same standalone video, leaving the embed URL alone", () => {
+    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500.87 });
+    expect(plan.seekSeconds).toBe(1500); // floored — seekTo takes whole seconds
+    // Same object back: the embed built from it is byte-identical to a cold one.
+    expect(plan.target).toBe(video);
   });
 
-  it("returns the target untouched when there is nothing saved", () => {
-    expect(resumeTarget(video, null)).toBe(video);
+  it("never puts the offset in the embed URL", () => {
+    // 0.5.3's first cut used start=, and an embed loaded that way stopped
+    // responding to playVideo after a pause. The URL must stay untouched.
+    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500 });
+    expect(plan.target.startSeconds).toBeNull();
+    expect(buildEmbedUrl(plan.target, true)).not.toContain("start=");
+  });
+
+  it("plans nothing when there is nothing saved", () => {
+    expect(planResume(video, null)).toEqual({ target: video, seekSeconds: null });
   });
 
   it("never carries a position onto a different video", () => {
-    const saved = { videoId: OTHER_ID, playlistId: null, seconds: 1500 };
-    expect(resumeTarget(video, saved)).toBe(video);
+    const plan = planResume(video, { videoId: OTHER_ID, playlistId: null, seconds: 1500 });
+    expect(plan).toEqual({ target: video, seekSeconds: null });
   });
 
-  it("keeps a URL's own t= offset when the saved state doesn't apply", () => {
+  it("leaves a URL's own t= offset in place", () => {
     const withStart: MusicTarget = { videoId: ID, playlistId: null, startSeconds: 90 };
-    const saved = { videoId: OTHER_ID, playlistId: null, seconds: 1500 };
-    expect(resumeTarget(withStart, saved)).toEqual(withStart);
+    // Not applicable: untouched, so the URL still opens at the pasted t=.
+    expect(planResume(withStart, { videoId: OTHER_ID, playlistId: null, seconds: 1500 })).toEqual({
+      target: withStart,
+      seekSeconds: null,
+    });
+    // Applicable: the URL keeps t=90 and the resume wins via the seek.
+    const resumed = planResume(withStart, { videoId: ID, playlistId: null, seconds: 1500 });
+    expect(resumed.target.startSeconds).toBe(90);
+    expect(resumed.seekSeconds).toBe(1500);
   });
 
-  it("resumes the playlist on the item the embed had reached", () => {
-    // A playlist-only URL embeds as /embed/videoseries; resuming by video ID
-    // reopens the right item and survives the playlist being reordered.
-    const saved = { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 };
-    expect(resumeTarget(listOnly, saved)).toEqual({
-      videoId: OTHER_ID,
-      playlistId: "PLabc123",
-      startSeconds: 200,
+  it("swaps in the playlist item the embed had reached", () => {
+    // Seeking cannot cross playlist items, so the item still comes from the URL
+    // — /embed/<id>?list=<list>, the shape a watch+list URL already produced.
+    const plan = planResume(listOnly, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    expect(plan).toEqual({
+      target: { videoId: OTHER_ID, playlistId: "PLabc123", startSeconds: null },
+      seekSeconds: 200,
     });
   });
 
   it("lets the saved item win over the video a watch+list URL names", () => {
-    const saved = { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 };
-    expect(resumeTarget(inList, saved)).toEqual({
-      videoId: OTHER_ID,
-      playlistId: "PLabc123",
-      startSeconds: 200,
-    });
+    const plan = planResume(inList, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    expect(plan.target.videoId).toBe(OTHER_ID);
+    expect(plan.seekSeconds).toBe(200);
   });
 
   it("requires the playlist context to match", () => {
-    expect(resumeTarget(listOnly, { videoId: ID, playlistId: "PLother", seconds: 200 })).toBe(
-      listOnly
-    );
-    // Played standalone before, now pasted inside a list (and the reverse).
-    expect(resumeTarget(inList, { videoId: ID, playlistId: null, seconds: 200 })).toBe(inList);
-    expect(resumeTarget(video, { videoId: ID, playlistId: "PLabc123", seconds: 200 })).toBe(video);
+    const cases: [MusicTarget, string | null][] = [
+      [listOnly, "PLother"],
+      [inList, null], // played standalone before, now pasted inside a list
+      [video, "PLabc123"], // and the reverse
+    ];
+    for (const [target, playlistId] of cases) {
+      expect(planResume(target, { videoId: ID, playlistId, seconds: 200 })).toEqual({
+        target,
+        seekSeconds: null,
+      });
+    }
   });
 
   it("ignores a position too near the start to be worth resuming", () => {
-    const at = (seconds: number) => resumeTarget(video, { videoId: ID, playlistId: null, seconds });
-    expect(at(MUSIC_RESUME_MIN_SECONDS - 1)).toBe(video);
-    expect(at(0)).toBe(video);
-    expect(at(MUSIC_RESUME_MIN_SECONDS)).toMatchObject({
-      startSeconds: MUSIC_RESUME_MIN_SECONDS,
-    });
+    const at = (seconds: number) => planResume(video, { videoId: ID, playlistId: null, seconds });
+    expect(at(MUSIC_RESUME_MIN_SECONDS - 1).seekSeconds).toBeNull();
+    expect(at(0).seekSeconds).toBeNull();
+    expect(at(MUSIC_RESUME_MIN_SECONDS).seekSeconds).toBe(MUSIC_RESUME_MIN_SECONDS);
   });
 
   it("ignores corrupt saved state — data.json is hand-editable", () => {
-    expect(resumeTarget(video, { videoId: null, playlistId: null, seconds: 1500 })).toBe(video);
-    expect(resumeTarget(video, { videoId: "nope", playlistId: null, seconds: 1500 })).toBe(video);
-    expect(resumeTarget(video, { videoId: ID, playlistId: null, seconds: Number.NaN })).toBe(video);
-    expect(resumeTarget(video, { videoId: ID, playlistId: null, seconds: -20 })).toBe(video);
-  });
-
-  it("round-trips through buildEmbedUrl as a start= param", () => {
-    const saved = { videoId: ID, playlistId: null, seconds: 1500 };
-    const url = buildEmbedUrl(resumeTarget(video, saved));
-    expect(url).toContain(`/embed/${ID}?`);
-    expect(url).toContain("start=1500");
+    const bad = [
+      { videoId: null, playlistId: null, seconds: 1500 },
+      { videoId: "nope", playlistId: null, seconds: 1500 },
+      { videoId: ID, playlistId: null, seconds: Number.NaN },
+      { videoId: ID, playlistId: null, seconds: -20 },
+    ];
+    for (const saved of bad) expect(planResume(video, saved).seekSeconds).toBeNull();
   });
 });

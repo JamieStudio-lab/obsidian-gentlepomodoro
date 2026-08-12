@@ -53,6 +53,12 @@ export const MUSIC_STALL_RENOTIFY_MS = 300_000;
 // slow matters: data.json lives in the vault, so every write is sync traffic.
 export const MUSIC_POSITION_SAVE_MS = 60_000;
 
+// How far below a posted resume seek the reported clock may be and still count
+// as "the seek landed". The embed keeps reporting the pre-seek position for a
+// beat after the command, and those readings must not overwrite the position
+// being resumed to.
+export const RESUME_SEEK_LANDING_TOLERANCE_S = 5;
+
 // Default settings used on first load or when a setting is missing.
 export const DEFAULT_SETTINGS: GentlePomoSettings = {
   focusMinutes: 25,
