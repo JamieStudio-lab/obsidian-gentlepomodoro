@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - **Changing your mind mid-fade works.** Press ♪ while a pause is still fading out and the music simply carries on, easing back up from wherever it had got to — it never pauses a moment later.
   - **Everything the fades touch keeps its old behaviour.** ⏸ still remembers your place and ⏹ still forgets it — and if you press ♪ before a ⏹ has finished fading, the stop is called off completely, position and all. The session sounds still duck the music under them, changing the music volume still wins immediately (even mid-fade), looping and playlists are unchanged, and closing the panel still stops playback at once.
   - A fade-in waits for the audio to actually start, so it isn't spent on a buffering gap — and if a track needs to rebuffer part-way in (resuming where you left off does exactly that), the fade waits with it instead of finishing over the silence.
+  - Resuming from outside the panel — hardware media keys, Bluetooth controls — fades in too, instead of coming back silent or at a jump.
 
 ## [0.5.3] — 2026-08-12
 

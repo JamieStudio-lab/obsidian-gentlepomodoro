@@ -405,6 +405,14 @@ export class GentlePomoView extends ItemView {
         // all the way back to before recording anything.
         this.resumeSeekLanding = null;
         this.musicCurrentDuration = null;
+        // A stop that landed on an already-halted player is settled right here:
+        // no straggler clock can pass trackMusicPosition's audibility gate, and
+        // there may be no further state transition to settle it later. When the
+        // player was still running, the flag must survive until the embed
+        // reports the halt (handleMusicState clears it) — the embed keeps
+        // reporting PLAYING clocks for a beat after stopVideo, and those must
+        // not re-bank the position just cleared.
+        if (!this.isAudibleState(this.musicPlayerState)) this.musicStopPending = false;
       });
     });
 
@@ -643,7 +651,13 @@ export class GentlePomoView extends ItemView {
       // part of musicKey, since keying on a value that moves every second would
       // rebuild the iframe ~20×/sec. The offset is carried as a pending seek,
       // not baked into the URL, so the embed stays exactly what 0.5.2 built.
-      const plan = target ? planResume(target, this.plugin.musicResumeState()) : null;
+      // While a ⏹ is pending, plan as if the store were already empty: its
+      // clearMusicPosition rides in the fade landing, and a rebuild inside that
+      // window (flipping Loop, say) would otherwise snapshot the position the
+      // stop is in the middle of forgetting and seed the new iframe with it.
+      const plan = target
+        ? planResume(target, this.musicStopPending ? null : this.plugin.musicResumeState())
+        : null;
       const embedUrl = plan ? buildEmbedUrl(plan.target, this.plugin.settings.musicLoop) : null;
       this.musicSectionVisible = embedUrl !== null;
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
@@ -834,24 +848,31 @@ export class GentlePomoView extends ItemView {
     this.musicFadePhase = "armed";
     this.musicRampLevel = 0;
     this.postToMusicPlayer(buildPlayerCommand("setVolume", [0]));
-    // Backstop: if playback never starts, stand the fade down rather than leave
-    // the player silent with postMusicVolume locked out.
+    this.scheduleMusicFadeArmBackstop();
+    // A cancelled fade-out already flipped the buttons to "paused" — put back
+    // whatever the player is really doing.
+    this.setMusicButtonsPlaying(this.isAudibleState(this.musicPlayerState));
+  }
+
+  /**
+   * Backstop for the "armed" phase: if playback never starts, stand the fade
+   * down rather than leave the player silent with postMusicVolume locked out.
+   * A player that is merely buffering slowly hands over to the ramp instead,
+   * which holds itself until audio starts — cancelling there would make a slow
+   * connection snap in at full volume once it finally plays.
+   */
+  private scheduleMusicFadeArmBackstop() {
+    if (this.musicFadeArmTimeout !== null) window.clearTimeout(this.musicFadeArmTimeout);
     this.musicFadeArmTimeout = window.setTimeout(() => {
       this.musicFadeArmTimeout = null;
       if (this.musicFadePhase !== "armed") return;
       if (this.isAudibleState(this.musicPlayerState)) {
-        // Not stuck at the gate — just a slow buffer. Hand it to the ramp,
-        // which holds itself until audio starts, rather than cancelling the
-        // fade and letting the music snap in at full volume when it does.
         this.beginMusicFadeIn();
         return;
       }
       this.musicFadePhase = null;
       this.postMusicVolume();
     }, MUSIC_FADE_ARM_TIMEOUT_MS);
-    // A cancelled fade-out already flipped the buttons to "paused" — put back
-    // whatever the player is really doing.
-    this.setMusicButtonsPlaying(this.isAudibleState(this.musicPlayerState));
   }
 
   /** Run the armed fade-in, now that audio is actually flowing. */
@@ -944,6 +965,12 @@ export class GentlePomoView extends ItemView {
     const from = this.musicRampLevel ?? base;
     this.clearMusicRampTimers();
     this.musicFadePhase = null;
+    // The duck is aimed at the setting as it stands, so record that. A fade the
+    // duck just took over may have left the stamp stale (its skip path in
+    // postMusicVolume deliberately doesn't stamp), and a stale stamp here would
+    // have the ~20Hz convergence check cancel this duck on the very next tick —
+    // full volume under the cue, the exact thing ducking exists to prevent.
+    this.lastAppliedMusicVolume = base;
     this.runMusicRamp(
       buildVolumeRamp(from, target, rampSteps(MUSIC_DUCK_DOWN_MS, MUSIC_DUCK_STEP_MS)),
       MUSIC_DUCK_STEP_MS
@@ -1039,6 +1066,15 @@ export class GentlePomoView extends ItemView {
    */
   private handleMusicState(state: number) {
     if (state !== this.musicPlayerState) {
+      // A ⏹ whose stopVideo has gone out (no fade still running) is settled the
+      // moment the embed reports a halt: the straggler window musicStopPending
+      // exists for — PLAYING clocks arriving after the stop — closes on this
+      // transition, and from here the audibility gate blocks recording anyway.
+      // Leaving the flag up would keep position recording dead through a later
+      // resume (media keys never pass through ♪, which is the other clearer).
+      if (this.musicStopPending && this.musicFadePhase === null && !this.isAudibleState(state)) {
+        this.musicStopPending = false;
+      }
       if (state === YT_STATE.PAUSED) {
         // The position only lives in memory while playing — pausing is the
         // boundary that has to reach disk, and it's the main way users leave.
@@ -1059,15 +1095,45 @@ export class GentlePomoView extends ItemView {
         this.postToMusicPlayer(buildPlayerCommand("seekTo", [seconds, true]));
       }
       // The armed fade-in starts the moment audio does — PLAYING, not
-      // BUFFERING, which is still silence. It also stands down if the player
-      // reports a state that can't lead to audio (an embed error, a video that
-      // ends without ever playing), so it is never left parked at silence.
+      // BUFFERING, which is still silence. It stands down only on a genuine
+      // halt (PAUSED/ENDED — iOS pausing on background, an external pause):
+      // the embed can report transient UNSTARTED/CUED on its way to playing,
+      // and treating those as dead ends would cancel the fade and let the
+      // music snap in at full volume. A player that truly never starts is the
+      // arm timeout's job, and ⏸/⏹ pressed during the gap resolve the phase in
+      // their own handlers.
       if (this.musicFadePhase === "armed") {
         if (state === YT_STATE.PLAYING) {
           this.beginMusicFadeIn();
-        } else if (!this.isAudibleState(state)) {
+        } else if (state === YT_STATE.PAUSED || state === YT_STATE.ENDED) {
           this.musicFadePhase = null;
           this.postMusicVolume();
+        }
+      } else if (
+        this.musicFadePhase === null &&
+        this.isAudibleState(state) &&
+        !this.isAudibleState(this.musicPlayerState) &&
+        this.musicRampInterval === null &&
+        this.duckRestoreTimeout === null &&
+        this.musicRampLevel !== null
+      ) {
+        // The player left a halted state while the volume was parked below the
+        // setting with no ramp left to lift it — a landed ⏸/⏹ fade leaves the
+        // embed at 0, and hardware media keys can resume it without going
+        // through ♪. In 0.5.3 this was audible (pause kept the user volume);
+        // silent playback with ⏸ showing would be the regression. Requiring the
+        // *previous* state to be halted is what keeps this off the stragglers a
+        // landing races (a PLAYING report crossing the just-posted pauseVideo
+        // arrives from a still-audible previous state). Unreachable during a
+        // duck (its hold keeps duckRestoreTimeout set) and during our own ♪
+        // press (the phase is "armed" there).
+        if (state === YT_STATE.PLAYING) {
+          this.beginMusicFadeIn();
+        } else {
+          // BUFFERING: audio hasn't started — re-arm instead of fading through
+          // the silence, and the existing armed machinery finishes the job.
+          this.musicFadePhase = "armed";
+          this.scheduleMusicFadeArmBackstop();
         }
       }
     }
