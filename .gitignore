@@ -17,3 +17,7 @@ pomodoro_log_dev_doc.md
 
 # user data — Obsidian recreates this on first save; defaults live in constants.ts
 data.json
+
+# Claude Code process files (skills, workflows, local settings) — kept out of
+# the public repo; version-controlled separately in their own private repo
+.claude/

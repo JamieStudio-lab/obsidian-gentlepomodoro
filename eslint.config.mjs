@@ -17,6 +17,9 @@ export default defineConfig([
       // obsidianmd's recommended set applies type-aware rules globally, which crash
       // on package.json (no TS project for it). We only need it to lint our TS.
       "package.json",
+      // Claude Code process files (skills, workflow scripts) — not shippable
+      // code, and the workflow .js runs in a sandbox with its own globals.
+      ".claude/**",
     ],
   },
 
