@@ -411,3 +411,38 @@ export function buildVolumeRamp(from01: number, to01: number, steps: number): nu
   levels.push(to); // exact landing — no float drift on the final value
   return levels;
 }
+
+/**
+ * Volume levels for a *fade* between two 0–1 volumes. Same contract as
+ * buildVolumeRamp — `steps` values excluding `from01`, landing exactly on
+ * `to01` — but eased instead of linear.
+ *
+ * A fade runs all the way to or from silence, and loudness is perceived
+ * roughly logarithmically: a linear amplitude ramp spends half its time inside
+ * the top 6 dB, so it sounds like the music snaps in and then hangs there. The
+ * curve is therefore weighted quadratically toward the *quiet* end — halfway
+ * through, the level sits a quarter of the way up from it — which spreads the
+ * audible change evenly across the fade. A fade-out is the exact mirror of the
+ * fade-in that undoes it, since progress is always measured from the quiet end.
+ *
+ * Ducking deliberately keeps the linear buildVolumeRamp: it moves between two
+ * audible levels, where this curve would only make the dip feel late.
+ */
+export function buildFadeRamp(from01: number, to01: number, steps: number): number[] {
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const from = clamp(from01);
+  const to = clamp(to01);
+  const count = Math.max(1, Math.floor(steps));
+  const rising = to >= from;
+  const quiet = rising ? from : to;
+  const loud = rising ? to : from;
+  const levels: number[] = [];
+  for (let i = 1; i < count; i++) {
+    // Distance from the quiet end, in normalized time, squared.
+    const t = i / count;
+    const progress = rising ? t : 1 - t;
+    levels.push(quiet + (loud - quiet) * progress * progress);
+  }
+  levels.push(to); // exact landing — a fade-out must reach true silence
+  return levels;
+}

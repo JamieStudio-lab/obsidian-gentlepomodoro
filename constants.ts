@@ -32,6 +32,35 @@ export const MUSIC_DUCK_DOWN_MS = 240;
 export const MUSIC_DUCK_UP_MS = 800;
 export const MUSIC_DUCK_STEP_MS = 60;
 
+// Music fades: ♪ play eases the volume up from silence, ⏸ pause and ⏹ stop ease
+// it down to silence *before* the pause/stop command is posted (posting it
+// first would cut the audio dead, which is the jolt the fade exists to remove).
+// The out-fade therefore delays the actual pause, so it is the shorter of the
+// two — long enough to smooth the edge, short enough that the button still
+// feels immediate. (The duck's ramps are asymmetric too, but for its own
+// reason: its down-ramp is a race to get under the cue's attack, and it delays
+// nothing.) The curve is eased rather than linear — see buildFadeRamp in
+// youtubeMusic.ts. The step interval is shorter than the duck's, which is what
+// keeps a fade covering the whole volume range from stepping much more coarsely
+// than the duck's short dip does.
+export const MUSIC_FADE_IN_MS = 800;
+export const MUSIC_FADE_OUT_MS = 450;
+export const MUSIC_FADE_STEP_MS = 50;
+
+// A fade-in waits for playback to actually start before it runs, which means it
+// waits on the embed. If the embed never starts — iOS refusing a first play
+// without an in-iframe tap, a dropped command, a dead video — the wait must not
+// be forever: the player would sit silently at volume 0. After this long the
+// fade stands down and the user's volume goes back on (inaudible while nothing
+// is playing, and it puts the volume control back in charge).
+export const MUSIC_FADE_ARM_TIMEOUT_MS = 5000;
+
+// A fade-in only advances while audio is actually flowing, so a mid-fade
+// rebuffer stretches it rather than being spent on silence — the resume seek
+// from 0.5.3 rebuffers on exactly this boundary. Bounded so a player that never
+// comes back can't leave the ramp parked half-way up.
+export const MUSIC_FADE_HOLD_MAX_MS = 3000;
+
 // How long an ENDED player state must persist before the "music ended" Notice
 // fires. Playlist auto-advance and loop restarts pass through ENDED and resume
 // within ~a second — only a lone, lasting ENDED (finished video with loop off,
