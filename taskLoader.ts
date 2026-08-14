@@ -15,8 +15,13 @@ export interface TaskLoadOptions {
   limitDays?: number; // default 3
 }
 
-const TASK_REGEX = /^\s*-\s*\[ \]\s+(.*)$/;
-const TASK_LINE_REGEX = /^\s*-\s*\[( |x)\]\s+(.*)$/i;
+// Tasks-plugin checkbox line, on any bullet Obsidian's list syntax allows:
+// `-`, `*`, `+`, or a numbered `1.` / `1)`. The Tasks plugin treats all of
+// them as tasks, so a `* [ ]` line renders as a normal task in Obsidian —
+// hardcoding `-` here made such tasks silently invisible to the picker, the
+// ID lookup, and the 🍅 marker walkers. Group 1 is the status char, group 2
+// the text; exported so TimerEngine matches task lines identically.
+export const TASK_LINE_REGEX = /^\s*(?:[-*+]|\d+[.)])\s*\[( |x)\]\s+(.*)$/i;
 const SCHEDULED_REGEX = /⏳\s*(\d{4}-\d{2}-\d{2})/;
 const DUE_REGEX = /📅\s*(\d{4}-\d{2}-\d{2})/;
 const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
@@ -380,10 +385,10 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
     const lines = content.split("\n");
 
     for (const line of lines) {
-      const match = line.match(TASK_REGEX);
-      if (!match) continue;
+      const match = line.match(TASK_LINE_REGEX);
+      if (!match || match[1] !== " ") continue;
 
-      const originalText = match[1];
+      const originalText = match[2];
       const scheduledMatch = originalText.match(SCHEDULED_REGEX);
       const dueMatch = originalText.match(DUE_REGEX);
 

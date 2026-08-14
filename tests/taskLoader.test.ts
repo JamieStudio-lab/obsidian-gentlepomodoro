@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  TASK_LINE_REGEX,
   normalizeTaskText,
   normalizeTaskTextForDisplay,
   isPathInFolder,
@@ -85,6 +86,41 @@ describe("isPathInFolder", () => {
   });
 });
 
+describe("TASK_LINE_REGEX", () => {
+  it("matches every bullet form the Tasks plugin accepts", () => {
+    for (const bullet of ["-", "*", "+", "1.", "12)"]) {
+      const match = `${bullet} [ ] Write docs 📅 2026-08-14`.match(TASK_LINE_REGEX);
+      expect(match?.[1]).toBe(" ");
+      expect(match?.[2]).toBe("Write docs 📅 2026-08-14");
+    }
+  });
+
+  it("captures the completed status char on any bullet", () => {
+    expect("* [x] Done task".match(TASK_LINE_REGEX)?.[1]).toBe("x");
+    expect("2. [X] Done task".match(TASK_LINE_REGEX)?.[1]).toBe("X");
+  });
+
+  it("parses the asterisk-bulleted line that was invisible before 0.5.5", () => {
+    const line =
+      "* [ ] Dissertation - AI workflow - Update the skills and housekeeping 1 #task/research/dissertation 🆔 xy8ffp 🔼 ➕ 2026-08-13 📅 2026-08-14";
+    const match = line.match(TASK_LINE_REGEX);
+    expect(match?.[1]).toBe(" ");
+    expect(normalizeTaskText(match?.[2] ?? "")).toBe(
+      "Dissertation - AI workflow - Update the skills and housekeeping 1 #task/research/dissertation"
+    );
+  });
+
+  it("does not match non-task lines", () => {
+    expect(TASK_LINE_REGEX.test("Plain prose with * [ ] mid-line")).toBe(false);
+    expect(TASK_LINE_REGEX.test("- 🍅 Focus | Task:: [[a.md|A]] | Start:: 2025-12-23")).toBe(false);
+    expect(TASK_LINE_REGEX.test("- [ ]")).toBe(false);
+  });
+
+  it("keeps the historical leniency about the space between bullet and checkbox", () => {
+    expect(TASK_LINE_REGEX.test("-[ ] tight bullet")).toBe(true);
+  });
+});
+
 describe("findTaskNameByIdInContent", () => {
   const content = [
     "Some notes about the project.",
@@ -114,6 +150,17 @@ describe("findTaskNameByIdInContent", () => {
   it("returns null for empty inputs", () => {
     expect(findTaskNameByIdInContent("", "anything")).toBeNull();
     expect(findTaskNameByIdInContent(content, "")).toBeNull();
+  });
+
+  it("finds tasks on asterisk, plus, and numbered bullets", () => {
+    const altBullets = [
+      "* [ ] Star task ⏳ 2025-12-23 🆔 star-id",
+      "+ [ ] Plus task 🆔 plus-id",
+      "3. [ ] Numbered task 🆔 num-id",
+    ].join("\n");
+    expect(findTaskNameByIdInContent(altBullets, "star-id")).toBe("Star task");
+    expect(findTaskNameByIdInContent(altBullets, "plus-id")).toBe("Plus task");
+    expect(findTaskNameByIdInContent(altBullets, "num-id")).toBe("Numbered task");
   });
 });
 
@@ -275,6 +322,20 @@ describe("repairPomodoroMarkersInContent", () => {
     const result = repairPomodoroMarkersInContent(content);
     expect(result.linesChanged).toBe(0);
     expect(result.content).toBe(content);
+  });
+
+  it("repairs task lines on asterisk and numbered bullets too", () => {
+    const content = [
+      "* [ ] Broken star ⏳ 2025-12-23 🍅 2",
+      "2. [x] Broken numbered 📅 2025-12-20 🍅 5",
+    ].join("\n");
+    const result = repairPomodoroMarkersInContent(content);
+    expect(result.linesChanged).toBe(2);
+    expect(result.content).toBe(
+      ["* [ ] Broken star 🍅 2 ⏳ 2025-12-23", "2. [x] Broken numbered 🍅 5 📅 2025-12-20"].join(
+        "\n"
+      )
+    );
   });
 });
 

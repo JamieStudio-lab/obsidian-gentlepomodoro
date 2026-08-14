@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { TFile } from "obsidian";
 import { TimerEngine } from "../TimerEngine";
-import { DEFAULT_SETTINGS } from "../constants";
+import { DEFAULT_SETTINGS, NO_TASK_LABEL } from "../constants";
 import type { TimerState } from "../types";
 
 // TimerEngine uses `window.setInterval` / `window.clearInterval`. In Node those
@@ -30,6 +31,10 @@ interface PluginStubOptions {
   longBreakEvery?: number;
   sessionsSinceLongBreak?: number;
   sessionCounterDate?: string | null;
+  vault?: {
+    getAbstractFileByPath: (path: string) => unknown;
+    read: (file: unknown) => Promise<string>;
+  };
 }
 
 function makePluginStub(opts: PluginStubOptions = {}) {
@@ -69,7 +74,7 @@ function makePluginStub(opts: PluginStubOptions = {}) {
         updateTask: record("updateTask"),
       },
       app: {
-        vault: {
+        vault: opts.vault ?? {
           getAbstractFileByPath: () => null,
         },
       },
@@ -334,6 +339,43 @@ describe("TimerEngine — setTask", () => {
     expect(timer.currentTaskPath).toBe("Projects/Docs.md");
     expect(timer.currentTaskId).toBe("abc123");
     expect(stub.calls.some((c) => c.name === "updateTask")).toBe(true);
+  });
+});
+
+describe("TimerEngine — completion unlink", () => {
+  const makeVault = (content: string) => {
+    const file = new TFile();
+    file.path = "Projects/Docs.md";
+    return {
+      getAbstractFileByPath: () => file,
+      read: async () => content,
+    };
+  };
+
+  it("unlinks a completed 🆔-matched task on finish — CRLF file, asterisk bullet", async () => {
+    const stub = makePluginStub({
+      vault: makeVault("* [x] Write docs 🆔 abc123 ✅ 2026-08-13\r\n"),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.setTask("Write docs", "Projects/Docs.md", "abc123");
+
+    await timer.finish();
+
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("keeps the task linked while an open 🆔-matched line exists", async () => {
+    const stub = makePluginStub({
+      vault: makeVault("- [ ] Write docs 🆔 abc123 ⏳ 2026-08-14\n"),
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.setTask("Write docs", "Projects/Docs.md", "abc123");
+
+    await timer.finish();
+
+    expect(timer.getState().taskName).toBe("Write docs");
   });
 });
 
