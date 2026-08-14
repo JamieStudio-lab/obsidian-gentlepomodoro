@@ -4,6 +4,13 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] — 2026-08-13
+
+### Fixed
+
+- **Tasks on `*`, `+`, or numbered bullets are no longer invisible to the plugin.** Obsidian and the Tasks plugin treat any list bullet as a task line (`- [ ]`, `* [ ]`, `+ [ ]`, `1. [ ]`, `1) [ ]`), but Gentle Pomodoro only recognized the dash form — an asterisk-bulleted task never appeared in the side-panel task picker, its name couldn't be looked up by 🆔 for the daily log, completing it never unlinked it from the timer, the opt-in 🍅 per-task counter skipped it, and the marker Check/Repair/Remove maintenance actions walked right past it. All task-line parsing now goes through one shared pattern that accepts every bullet form.
+- **The completion check is line-ending-safe.** The check that auto-unlinks a completed linked task now reads files with Windows-style CRLF line endings correctly, so a completed task in such a file can't silently stay linked under the stricter full-line matcher above.
+
 ## [0.5.4] — 2026-08-13
 
 ### Changed

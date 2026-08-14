@@ -4,7 +4,12 @@ import type { PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
-import { findTaskNameById, incrementPomodoroCount, normalizeTaskText } from "./taskLoader";
+import {
+  TASK_LINE_REGEX,
+  findTaskNameById,
+  incrementPomodoroCount,
+  normalizeTaskText,
+} from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
 
 declare const moment: MomentFactory;
@@ -242,7 +247,7 @@ export class TimerEngine {
             continue;
           }
           // Fallback: match by normalized text on a task line (open or completed).
-          const taskMatch = line.match(/^\s*-\s*\[( |x)\]\s+(.*)$/i);
+          const taskMatch = line.match(TASK_LINE_REGEX);
           if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
             updatedIndex = i;
             break;
@@ -267,7 +272,10 @@ export class TimerEngine {
 
     try {
       const content = await this.plugin.app.vault.read(file);
-      const lines = content.split("\n");
+      // CRLF-safe split: this path only reads, and the $-anchored
+      // TASK_LINE_REGEX can't match a line with a trailing \r. Write paths
+      // (marker increment/repair) must keep split("\n") — they rejoin on "\n".
+      const lines = content.split(/\r?\n/);
 
       let foundIncomplete = false;
       let foundComplete = false;
@@ -277,11 +285,12 @@ export class TimerEngine {
         if (this.currentTaskId) {
           const idMatch = line.match(TASK_ID_REGEX);
           if (idMatch && idMatch[1] === this.currentTaskId) {
-            if (/^\s*-\s*\[ \]\s+/.test(line)) {
+            const taskMatch = line.match(TASK_LINE_REGEX);
+            if (taskMatch?.[1] === " ") {
               foundIncomplete = true;
               break;
             }
-            if (/^\s*-\s*\[x\]\s+/i.test(line)) {
+            if (taskMatch) {
               foundComplete = true;
             }
           }
@@ -289,21 +298,13 @@ export class TimerEngine {
         }
 
         // Fallback: match by normalized text
-        const incompleteMatch = line.match(/^\s*-\s*\[ \]\s+(.*)$/);
-        if (incompleteMatch) {
-          const clean = normalizeTaskText(incompleteMatch[1]);
-          if (clean === this.currentTaskName) {
+        const taskMatch = line.match(TASK_LINE_REGEX);
+        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
+          if (taskMatch[1] === " ") {
             foundIncomplete = true;
             break;
           }
-        }
-
-        const completeMatch = line.match(/^\s*-\s*\[x\]\s+(.*)$/i);
-        if (completeMatch) {
-          const clean = normalizeTaskText(completeMatch[1]);
-          if (clean === this.currentTaskName) {
-            foundComplete = true;
-          }
+          foundComplete = true;
         }
       }
 
