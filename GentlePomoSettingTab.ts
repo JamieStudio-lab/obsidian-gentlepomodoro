@@ -12,7 +12,7 @@ type SettingsKey = keyof GentlePomoSettings;
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
 const MUSIC_RESUME_DESC =
-  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ to start from the top next time. Live streams always start live.";
+  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the URL above — to start from the top next time. Live streams always start live.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -304,9 +304,13 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       case "musicResume":
         settings.musicResume = Boolean(value);
-        // Turning it off drops the remembered position (which also saves).
-        if (settings.musicResume) await this.plugin.saveSettings();
-        else this.plugin.clearMusicPosition();
+        // Turning it off drops the remembered position. clearMusicPosition
+        // saves too, but only when there was something to clear — so the save
+        // has to happen here unconditionally, or switching this off with no
+        // position stored (a fresh install, or any time after ⏹) would live in
+        // memory only and come back on at the next restart.
+        if (!settings.musicResume) this.plugin.clearMusicPosition();
+        await this.plugin.saveSettings();
         return;
       case "theme":
         settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
@@ -475,9 +479,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.musicResume).onChange(async (value) => {
           this.plugin.settings.musicResume = value;
-          // Turning it off drops the remembered position (which also saves).
-          if (value) await this.plugin.saveSettings();
-          else this.plugin.clearMusicPosition();
+          // Turning it off drops the remembered position. The save is
+          // unconditional because clearMusicPosition only saves when there was
+          // something to clear — see the declarative path for the full note.
+          if (!value) this.plugin.clearMusicPosition();
+          await this.plugin.saveSettings();
         })
       );
 

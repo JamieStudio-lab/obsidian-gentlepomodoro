@@ -49,11 +49,35 @@ export interface MusicTarget {
 // iframe can be built pre-seeked. `videoId` is the video the offset belongs to
 // (the one the embed reported playing, which inside a playlist is not
 // necessarily the one the pasted URL named); `playlistId` is the list context
-// it was played in, or null.
+// it was played in, or null. `url` is the music-URL *setting* it was recorded
+// under — the position belongs to that setting, not just to the video (see
+// musicPositionAppliesToUrl).
 export interface MusicResumeState {
   videoId: string | null;
   playlistId: string | null;
   seconds: number;
+  url: string | null;
+}
+
+/**
+ * Whether a stored position still belongs to the URL now configured.
+ *
+ * The video and playlist checks in planResume are not enough on their own: a
+ * user who edits the URL to a *different item of the same playlist* would
+ * otherwise have their edit overridden by the stored item, and one who edits
+ * the URL's own `t=` would have it overridden by the stored offset — in both
+ * cases stickily, since every later rebuild re-plans from the same store.
+ * Scoping the position to the exact setting string it was recorded under makes
+ * any edit to that setting retire it, while leaving an unchanged URL (the
+ * playlist advancing through items under a fixed URL, a reopened panel) to
+ * resume as before.
+ *
+ * A position stored before 0.5.6 has no URL stamp and is therefore retired
+ * once, on the first plan after the upgrade: its provenance is unknown, and
+ * guessing the current URL would guess wrong in exactly the case above.
+ */
+export function musicPositionAppliesToUrl(savedUrl: string | null, currentUrl: string): boolean {
+  return savedUrl !== null && savedUrl.trim() === currentUrl.trim();
 }
 
 // Positions below this are not worth resuming — the user effectively just
@@ -107,7 +131,8 @@ export function parseStartTime(raw: string): number | null {
  * Extract an embeddable target from a user-pasted YouTube URL. Handles all the
  * shapes people actually paste — watch?v=, youtu.be/, /live/ (live streams),
  * /shorts/, /embed/, legacy /v/, playlist?list=, music.youtube.com, m., and
- * scheme-less input — and returns null for anything that can't be resolved to
+ * scheme-less input, with a timestamp from `start=`, `t=`, or a legacy `#t=`
+ * fragment — and returns null for anything that can't be resolved to
  * a video or playlist ID client-side (non-YouTube hosts, channel /live pages,
  * malformed IDs).
  */
@@ -128,7 +153,14 @@ export function parseYouTubeUrl(raw: string): MusicTarget | null {
   if (!ALLOWED_HOSTS.has(host)) return null;
 
   const segments = url.pathname.split("/").filter((s) => s !== "");
-  const rawStart = url.searchParams.get("start") ?? url.searchParams.get("t");
+  // Offset, in the three places YouTube has put one. The legacy fragment form
+  // (youtu.be/<id>#t=1m30s) is read last and only for `t`: a query param is the
+  // modern share format, so an explicit one wins. Parsing the hash as a query
+  // string also covers `#t=90&…`; a fragment that isn't key=value yields null.
+  const rawStart =
+    url.searchParams.get("start") ??
+    url.searchParams.get("t") ??
+    new URLSearchParams(url.hash.replace(/^#/, "")).get("t");
   const startSeconds = rawStart !== null ? parseStartTime(rawStart) : null;
   const rawList = url.searchParams.get("list");
   const playlistId = rawList !== null && PLAYLIST_ID_REGEX.test(rawList) ? rawList : null;
@@ -206,9 +238,13 @@ export function buildEmbedUrl(target: MusicTarget, loop = false): string {
     controls: "0",
   });
   if (target.playlistId !== null) params.set("list", target.playlistId);
-  if (target.startSeconds !== null && target.startSeconds > 0) {
-    params.set("start", String(Math.floor(target.startSeconds)));
-  }
+  // Deliberately NO `start=`, for any offset from any source. An embed loaded
+  // with it — alongside the loop feature's `loop=1&playlist=<self>` — stops
+  // responding to `playVideo` after a `pauseVideo`, recovering only on
+  // `stopVideo`: press ▶️, ⏸, ▶️ and the music is simply gone. 0.5.3 found this
+  // with the resume offset and moved that to a seek; until 0.5.6 a URL the user
+  // pasted with its own `t=` still walked straight into it. Both now ride as a
+  // one-shot seekTo posted once playback starts (planResume → ResumePlan).
   if (loop) {
     params.set("loop", "1");
     if (target.playlistId === null && target.videoId !== null) {
@@ -247,9 +283,10 @@ export interface ResumePlan {
 }
 
 /**
- * Work out how to reopen `target` at a remembered position.
+ * Work out where to open `target`: at the position remembered for the
+ * currently-configured URL, or failing that at the URL's own `t=` offset.
  *
- * The offset is deliberately **not** folded into the embed URL as `start=`.
+ * Neither offset is folded into the embed URL as `start=`.
  * That was 0.5.3's first cut and it broke playback: an embed loaded with
  * `start=` (alongside the loop feature's `loop=1&playlist=<self>`) stops
  * responding to `playVideo` after a pause — the player only recovers on
@@ -264,19 +301,45 @@ export interface ResumePlan {
  * video ID rather than playlist index: the ID still identifies the right item
  * after the playlist is reordered, and it avoids `index=` being 1-based while
  * the embed reports `playlistIndex` 0-based.
+ *
+ * `currentUrl` is the music-URL setting as it stands now. A stored position
+ * that was recorded under a different one is not applied — see
+ * musicPositionAppliesToUrl for why the video/playlist checks alone are not
+ * enough — which is what lets an edited URL be honoured exactly as pasted.
  */
-export function planResume(target: MusicTarget, saved: MusicResumeState | null): ResumePlan {
-  const none: ResumePlan = { target, seekSeconds: null };
-  if (saved === null) return none;
+export function planResume(
+  target: MusicTarget,
+  saved: MusicResumeState | null,
+  currentUrl: string
+): ResumePlan {
+  // The fallback plan is the URL's own t=, which since 0.5.6 rides as a seek
+  // for the same reason the remembered position does — see buildEmbedUrl. No
+  // MUSIC_RESUME_MIN_SECONDS floor on this path: that floor exists to stop a
+  // barely-started track from being "resumed", while a pasted t= is an
+  // explicit instruction, however small.
+  const startSeconds = target.startSeconds;
+  const fromUrl: ResumePlan = {
+    target,
+    seekSeconds:
+      startSeconds !== null && Number.isFinite(startSeconds) && startSeconds > 0
+        ? Math.floor(startSeconds)
+        : null,
+  };
+  if (saved === null) return fromUrl;
   const { videoId, seconds } = saved;
+  // A position belongs to the URL setting it was recorded under; editing that
+  // setting retires it, so the pasted URL is honoured exactly as written.
+  if (!musicPositionAppliesToUrl(saved.url, currentUrl)) return fromUrl;
   // Defensive: data.json is user-editable and survives across versions.
-  if (videoId === null || !VIDEO_ID_REGEX.test(videoId)) return none;
-  if (!Number.isFinite(seconds) || seconds < MUSIC_RESUME_MIN_SECONDS) return none;
+  if (videoId === null || !VIDEO_ID_REGEX.test(videoId)) return fromUrl;
+  if (!Number.isFinite(seconds) || seconds < MUSIC_RESUME_MIN_SECONDS) return fromUrl;
   // The playlist context must match exactly — both standalone, or the same list.
-  if (saved.playlistId !== target.playlistId) return none;
+  if (saved.playlistId !== target.playlistId) return fromUrl;
   // Outside a playlist the saved video must be the one the URL names. Inside
   // one the saved video wins: the list has advanced past the URL's own video.
-  if (target.playlistId === null && target.videoId !== videoId) return none;
+  // Safe only because the URL check above has already passed — an *edited*
+  // playlist URL names an item the user chose, and this rule would override it.
+  if (target.playlistId === null && target.videoId !== videoId) return fromUrl;
 
   const seekSeconds = Math.floor(seconds);
   // Same video: hand back the very same target object, so callers can use an
@@ -383,6 +446,48 @@ export function parsePlayerMessage(data: unknown): PlayerMessage | null {
     }
     default:
       return null;
+  }
+}
+
+/**
+ * User-facing explanation for a YouTube onError code, without the plugin's
+ * Notice prefix.
+ *
+ * The numeric code is carried through for everything except the embedding
+ * refusal, which speaks for itself. There is no visible player to show
+ * YouTube's own error screen, so this Notice is the only thing a user ever
+ * sees — and one generic sentence covering codes 2, 5 and 100 made a real
+ * report ("plays on my Mac, not on my iPad") impossible to triage: 5 is the
+ * device's player refusing the video, 100 is the video being gone, and they
+ * lead opposite ways. Codes are quoted so a bug report can name one.
+ */
+export function describeMusicError(code: number, iosApp = false): string {
+  switch (code) {
+    case 153:
+      // Not the link's fault, and no other URL will do better: YouTube requires
+      // the embedding page to identify itself with an HTTP Referer, and iOS
+      // WKWebView sends none for a cross-origin iframe when the app is served
+      // from a custom scheme (which is how Obsidian runs there) — WebKit bug
+      // 169846, the same wall Tauri and Capacitor apps hit. Verified on an iPad
+      // against every embed shape we could build: with and without
+      // enablejsapi, nocookie and youtube.com, with and without referrerpolicy
+      // and origin — all 153, while all of them play on desktop.
+      return iosApp
+        ? "YouTube won't load its player inside Obsidian on iPhone or iPad, so the music player only works on desktop (YouTube error 153). Other links won't help."
+        : "YouTube wouldn't load its player here — it needs the page to identify itself and couldn't (YouTube error 153).";
+    case 101:
+    case 150:
+      return "this video doesn't allow embedding — try another URL.";
+    case 100:
+      return "that video is unavailable — it may be private or removed (YouTube error 100).";
+    case 5:
+      // Error 5 is the one that differs by platform: the same link can play in
+      // a desktop embed and be refused inside a mobile webview.
+      return "this device's player can't play this video — it may be restricted on mobile. Try another URL (YouTube error 5).";
+    case 2:
+      return "YouTube rejected this video link — try copying it again (YouTube error 2).";
+    default:
+      return `the music video can't be played (YouTube error ${String(code)}).`;
   }
 }
 

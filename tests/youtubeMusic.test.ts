@@ -11,19 +11,26 @@ import {
   buildListeningMessage,
   parsePlayerMessage,
   musicVolumeTo100,
+  describeMusicError,
   buildVolumeRamp,
   buildFadeRamp,
   isResumablePosition,
   planResume,
+  musicPositionAppliesToUrl,
   MUSIC_RESUME_MIN_SECONDS,
   MUSIC_RESUME_END_MARGIN_SECONDS,
   type MusicTarget,
+  type MusicResumeState,
 } from "../youtubeMusic";
 
 // Lofi Girl's stream ID — a real-shaped 11-char ID for readable tests.
 const ID = "jfKfPfyJRdk";
 // A second real-shaped ID, for "the playlist moved on" / "the URL changed" cases.
 const OTHER_ID = "5qap5aO4i9A";
+// Two settings values, for "the user edited the music URL" cases. What matters
+// is that the strings differ, not what they resolve to.
+const URL_A = `https://www.youtube.com/watch?v=${ID}`;
+const URL_B = `https://www.youtube.com/watch?v=${ID}&t=90`;
 
 describe("parseYouTubeUrl", () => {
   it("parses a standard watch URL", () => {
@@ -52,6 +59,23 @@ describe("parseYouTubeUrl", () => {
       startSeconds: null,
     });
     expect(parseYouTubeUrl(`https://youtu.be/${ID}?t=90`)?.startSeconds).toBe(90);
+  });
+
+  it("reads an offset from start=, t=, or a legacy #t= fragment", () => {
+    const at = (suffix: string) =>
+      parseYouTubeUrl(`https://www.youtube.com/watch?v=${ID}${suffix}`)?.startSeconds;
+    expect(at("&start=90")).toBe(90);
+    expect(at("&t=90")).toBe(90);
+    expect(at("#t=90")).toBe(90);
+    expect(at("#t=1m30s")).toBe(90);
+    expect(parseYouTubeUrl(`https://youtu.be/${ID}#t=90`)?.startSeconds).toBe(90);
+    // A query param is the modern share format, so it wins over the fragment.
+    expect(at("&t=90#t=300")).toBe(90);
+    expect(at("&start=90&t=300")).toBe(90);
+    // Fragments that carry no t= leave the offset unset rather than erroring.
+    expect(at("#somewhere")).toBeNull();
+    expect(at("#t=abc")).toBeNull();
+    expect(at("")).toBeNull();
   });
 
   it("parses /live/ URLs (live streams)", () => {
@@ -180,13 +204,14 @@ describe("buildEmbedUrl", () => {
     );
   });
 
-  it("appends start= for a positive offset and omits it otherwise", () => {
-    expect(buildEmbedUrl({ videoId: ID, playlistId: null, startSeconds: 90 })).toContain(
-      "&start=90"
-    );
-    expect(buildEmbedUrl({ videoId: ID, playlistId: null, startSeconds: 0 })).not.toContain(
-      "start="
-    );
+  it("never emits start=, whatever offset the target carries", () => {
+    // An embed loaded with start= stops responding to playVideo after a pause
+    // (0.5.3). Every offset — remembered position or the URL's own t= — rides
+    // as a seek instead, so this param must never come back.
+    for (const startSeconds of [90, 0, null]) {
+      const url = buildEmbedUrl({ videoId: ID, playlistId: null, startSeconds }, true);
+      expect(url).not.toContain("start=");
+    }
   });
 
   it("builds a videoseries embed for playlist-only targets", () => {
@@ -357,6 +382,42 @@ describe("parsePlayerMessage", () => {
   });
 });
 
+describe("describeMusicError", () => {
+  it("names the embedding refusal without a code", () => {
+    for (const code of [101, 150]) {
+      expect(describeMusicError(code)).toContain("doesn't allow embedding");
+      expect(describeMusicError(code)).not.toContain("error");
+    }
+  });
+
+  it("separates the codes the old single message ran together", () => {
+    // 5 is the device's player refusing the video (the same link can play in a
+    // desktop embed); 100 is the video being gone. They lead opposite ways.
+    expect(describeMusicError(5)).toContain("this device's player");
+    expect(describeMusicError(5)).toContain("error 5");
+    expect(describeMusicError(100)).toContain("unavailable");
+    expect(describeMusicError(100)).toContain("error 100");
+    expect(describeMusicError(2)).toContain("error 2");
+  });
+
+  it("still quotes the code for an unknown one", () => {
+    expect(describeMusicError(9999)).toContain("error 9999");
+  });
+
+  it("explains 153 as a platform limit on iOS, not a bad link", () => {
+    // Every embed shape fails this way on iPad — no other URL helps, so the
+    // message must not send the user off trying more of them.
+    const ios = describeMusicError(153, true);
+    expect(ios).toContain("iPhone or iPad");
+    expect(ios).toContain("only works on desktop");
+    expect(ios).toContain("error 153");
+    // Elsewhere it's a real configuration problem worth reporting as one.
+    const other = describeMusicError(153, false);
+    expect(other).toContain("error 153");
+    expect(other).not.toContain("iPhone");
+  });
+});
+
 describe("musicVolumeTo100", () => {
   it("maps the 0-1 scale to 0-100", () => {
     expect(musicVolumeTo100(0)).toBe(0);
@@ -498,13 +559,40 @@ describe("isResumablePosition", () => {
   });
 });
 
+describe("musicPositionAppliesToUrl", () => {
+  it("matches only the exact setting the position was recorded under", () => {
+    expect(musicPositionAppliesToUrl(URL_A, URL_A)).toBe(true);
+    expect(musicPositionAppliesToUrl(URL_A, URL_B)).toBe(false);
+  });
+
+  it("ignores surrounding whitespace — data.json is hand-editable", () => {
+    expect(musicPositionAppliesToUrl(`  ${URL_A}\n`, URL_A)).toBe(true);
+  });
+
+  it("retires a position stored before the stamp existed", () => {
+    // Pre-0.5.6 data.json has no lastMusicUrl. Its provenance is unknown, and
+    // guessing the current URL would guess wrong in exactly the case the stamp
+    // was added for, so it is retired once instead.
+    expect(musicPositionAppliesToUrl(null, URL_A)).toBe(false);
+  });
+});
+
 describe("planResume", () => {
   const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
   const inList: MusicTarget = { videoId: ID, playlistId: "PLabc123", startSeconds: null };
   const listOnly: MusicTarget = { videoId: null, playlistId: "PLabc123", startSeconds: null };
+  // A position recorded under URL_A, i.e. the URL still configured unless a
+  // test says otherwise.
+  const saved = (over: Partial<MusicResumeState> = {}): MusicResumeState => ({
+    videoId: ID,
+    playlistId: null,
+    seconds: 1500,
+    url: URL_A,
+    ...over,
+  });
 
   it("plans a seek for the same standalone video, leaving the embed URL alone", () => {
-    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500.87 });
+    const plan = planResume(video, saved({ seconds: 1500.87 }), URL_A);
     expect(plan.seekSeconds).toBe(1500); // floored — seekTo takes whole seconds
     // Same object back: the embed built from it is byte-identical to a cold one.
     expect(plan.target).toBe(video);
@@ -513,37 +601,78 @@ describe("planResume", () => {
   it("never puts the offset in the embed URL", () => {
     // 0.5.3's first cut used start=, and an embed loaded that way stopped
     // responding to playVideo after a pause. The URL must stay untouched.
-    const plan = planResume(video, { videoId: ID, playlistId: null, seconds: 1500 });
+    const plan = planResume(video, saved(), URL_A);
     expect(plan.target.startSeconds).toBeNull();
     expect(buildEmbedUrl(plan.target, true)).not.toContain("start=");
   });
 
   it("plans nothing when there is nothing saved", () => {
-    expect(planResume(video, null)).toEqual({ target: video, seekSeconds: null });
+    expect(planResume(video, null, URL_A)).toEqual({ target: video, seekSeconds: null });
   });
 
   it("never carries a position onto a different video", () => {
-    const plan = planResume(video, { videoId: OTHER_ID, playlistId: null, seconds: 1500 });
+    const plan = planResume(video, saved({ videoId: OTHER_ID }), URL_A);
     expect(plan).toEqual({ target: video, seekSeconds: null });
   });
 
-  it("leaves a URL's own t= offset in place", () => {
+  it("never applies a position recorded under a different URL", () => {
+    // Every other check passes — same video, same (absent) list, well past the
+    // floor. Only the provenance differs, and that alone must retire it.
+    expect(planResume(video, saved(), URL_B)).toEqual({ target: video, seekSeconds: null });
+  });
+
+  it("keeps the item an edited playlist URL names", () => {
+    // The regression this rule exists for: the user edits the URL to start at a
+    // different item of the SAME playlist. Under the old rule the stored item
+    // won and the edit was silently ignored — stickily, since every later
+    // rebuild re-planned from the same store.
+    const plan = planResume(inList, saved({ videoId: OTHER_ID, playlistId: "PLabc123" }), URL_B);
+    expect(plan.target.videoId).toBe(ID); // the pasted item, not the stored one
+    expect(plan.seekSeconds).toBeNull();
+  });
+
+  it("lets an edited t= win over the position it replaces", () => {
+    // Same video, new timestamp: the URL changed, so the stored offset is gone
+    // and the pasted one is what plays.
     const withStart: MusicTarget = { videoId: ID, playlistId: null, startSeconds: 90 };
-    // Not applicable: untouched, so the URL still opens at the pasted t=.
-    expect(planResume(withStart, { videoId: OTHER_ID, playlistId: null, seconds: 1500 })).toEqual({
-      target: withStart,
-      seekSeconds: null,
+    const plan = planResume(withStart, saved({ seconds: 1500 }), URL_B);
+    expect(plan.seekSeconds).toBe(90);
+  });
+
+  it("prefers a still-valid position over the same URL's t=", () => {
+    // Unchanged URL: the user has listened past the pasted timestamp, so the
+    // position they left off at is the better answer.
+    const withStart: MusicTarget = { videoId: ID, playlistId: null, startSeconds: 90 };
+    const plan = planResume(withStart, saved({ seconds: 1500 }), URL_A);
+    expect(plan.target.startSeconds).toBe(90); // target untouched
+    expect(plan.seekSeconds).toBe(1500);
+  });
+
+  it("falls back to the URL's own t= whenever no position applies", () => {
+    const withStart = (startSeconds: number | null): MusicTarget => ({
+      videoId: ID,
+      playlistId: null,
+      startSeconds,
     });
-    // Applicable: the URL keeps t=90 and the resume wins via the seek.
-    const resumed = planResume(withStart, { videoId: ID, playlistId: null, seconds: 1500 });
-    expect(resumed.target.startSeconds).toBe(90);
-    expect(resumed.seekSeconds).toBe(1500);
+    expect(planResume(withStart(90), null, URL_A).seekSeconds).toBe(90);
+    expect(planResume(withStart(90.9), null, URL_A).seekSeconds).toBe(90); // floored
+    // No MUSIC_RESUME_MIN_SECONDS floor here: that floor stops a barely-started
+    // track being "resumed", but a pasted t= is an explicit instruction.
+    expect(planResume(withStart(2), null, URL_A).seekSeconds).toBe(2);
+    // Nothing to seek to.
+    for (const bad of [0, -30, Number.NaN, null]) {
+      expect(planResume(withStart(bad), null, URL_A).seekSeconds).toBeNull();
+    }
   });
 
   it("swaps in the playlist item the embed had reached", () => {
     // Seeking cannot cross playlist items, so the item still comes from the URL
     // — /embed/<id>?list=<list>, the shape a watch+list URL already produced.
-    const plan = planResume(listOnly, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    const plan = planResume(
+      listOnly,
+      saved({ videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 }),
+      URL_A
+    );
     expect(plan).toEqual({
       target: { videoId: OTHER_ID, playlistId: "PLabc123", startSeconds: null },
       seekSeconds: 200,
@@ -551,7 +680,12 @@ describe("planResume", () => {
   });
 
   it("lets the saved item win over the video a watch+list URL names", () => {
-    const plan = planResume(inList, { videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 });
+    // Unchanged URL, so the list has simply advanced past the video it names.
+    const plan = planResume(
+      inList,
+      saved({ videoId: OTHER_ID, playlistId: "PLabc123", seconds: 200 }),
+      URL_A
+    );
     expect(plan.target.videoId).toBe(OTHER_ID);
     expect(plan.seekSeconds).toBe(200);
   });
@@ -563,7 +697,7 @@ describe("planResume", () => {
       [video, "PLabc123"], // and the reverse
     ];
     for (const [target, playlistId] of cases) {
-      expect(planResume(target, { videoId: ID, playlistId, seconds: 200 })).toEqual({
+      expect(planResume(target, saved({ playlistId, seconds: 200 }), URL_A)).toEqual({
         target,
         seekSeconds: null,
       });
@@ -571,19 +705,19 @@ describe("planResume", () => {
   });
 
   it("ignores a position too near the start to be worth resuming", () => {
-    const at = (seconds: number) => planResume(video, { videoId: ID, playlistId: null, seconds });
+    const at = (seconds: number) => planResume(video, saved({ seconds }), URL_A);
     expect(at(MUSIC_RESUME_MIN_SECONDS - 1).seekSeconds).toBeNull();
     expect(at(0).seekSeconds).toBeNull();
     expect(at(MUSIC_RESUME_MIN_SECONDS).seekSeconds).toBe(MUSIC_RESUME_MIN_SECONDS);
   });
 
   it("ignores corrupt saved state — data.json is hand-editable", () => {
-    const bad = [
-      { videoId: null, playlistId: null, seconds: 1500 },
-      { videoId: "nope", playlistId: null, seconds: 1500 },
-      { videoId: ID, playlistId: null, seconds: Number.NaN },
-      { videoId: ID, playlistId: null, seconds: -20 },
+    const bad: MusicResumeState[] = [
+      saved({ videoId: null }),
+      saved({ videoId: "nope" }),
+      saved({ seconds: Number.NaN }),
+      saved({ seconds: -20 }),
     ];
-    for (const saved of bad) expect(planResume(video, saved).seekSeconds).toBeNull();
+    for (const state of bad) expect(planResume(video, state, URL_A).seekSeconds).toBeNull();
   });
 });
