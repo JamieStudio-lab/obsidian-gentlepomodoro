@@ -105,6 +105,14 @@ export class GentlePomoView extends ItemView {
   // Resume bookkeeping. The embed reports its clock/metadata piecemeal over
   // infoDelivery, so the view keeps the running picture and hands whole
   // positions to the plugin (which owns persistence).
+  // The musicUrl *setting* this iframe was built from — the provenance stamped
+  // on any position it reports. Read at build time and frozen here on purpose:
+  // both settings paths assign settings.musicUrl and only then `await
+  // saveSettings()`, and the outgoing iframe keeps streaming its ~4Hz clock
+  // across that await. Reading the live setting when a sample lands would stamp
+  // the OLD track's position with the NEW URL, at which point both of 0.5.6's
+  // guards see a match and the offset is applied to a URL it never came from.
+  private musicSourceUrl: string | null = null;
   private musicCurrentVideoId: string | null = null; // seeded from the URL, corrected by videoData
   private musicCurrentDuration: number | null = null; // null/0 ⇒ live stream: nothing to resume
   private musicTargetPlaylistId: string | null = null; // list context of the loaded embed
@@ -138,11 +146,11 @@ export class GentlePomoView extends ItemView {
   private lastEndText: string | null = null;
   // Music reconciliation guards (same write-guard family). lastMusicKey gates the
   // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl and
-  // lastMusicSeekSeconds together gate iframe rebuilds (an offset no longer shows
+  // lastMusicSourceUrl together gate iframe rebuilds (an offset no longer shows
   // up in the URL); lastAppliedMusicVolume gates setVolume posts.
   private lastMusicKey: string | null = null;
   private lastMusicEmbedUrl: string | null = null;
-  private lastMusicSeekSeconds: number | null = null;
+  private lastMusicSourceUrl: string | null = null;
   private lastAppliedMusicVolume: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
@@ -666,13 +674,21 @@ export class GentlePomoView extends ItemView {
     const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${this.plugin.settings.musicUrl}`;
     if (musicKey !== this.lastMusicKey) {
       this.lastMusicKey = musicKey;
-      // An edited URL retires the position recorded under the old one. Runs
-      // before the plan is worked out, so the edit is honoured on the very
-      // rebuild it triggers rather than one change later.
-      this.plugin.retireMusicPositionOnUrlChange();
       const target = this.plugin.settings.showMusicPlayer
         ? parseYouTubeUrl(this.plugin.settings.musicUrl)
         : null;
+      // An edited URL retires the position recorded under the old one, before
+      // the plan is worked out so the edit is honoured on the very rebuild it
+      // triggers rather than one change later. Deliberately skipped while the
+      // setting holds an unparseable non-empty string: the pre-1.13 settings
+      // path commits on every keystroke, so a URL being typed or corrected
+      // arrives here one character at a time, and erasing is destructive and
+      // immediate — a half-typed string must not cost the user a position they
+      // are about to keep. An emptied field is a real decision, so it counts.
+      // Anything skipped here is still refused by planResume's own URL gate.
+      if (target !== null || this.plugin.settings.musicUrl.trim() === "") {
+        this.plugin.retireMusicPositionOnUrlChange();
+      }
       // Work out the remembered position here, at build time — deliberately NOT
       // part of musicKey, since keying on a value that moves every second would
       // rebuild the iframe ~20×/sec. The offset is carried as a pending seek,
@@ -689,16 +705,21 @@ export class GentlePomoView extends ItemView {
           )
         : null;
       const embedUrl = plan ? buildEmbedUrl(plan.target, this.plugin.settings.musicLoop) : null;
-      const seekSeconds = plan?.seekSeconds ?? null;
+      // The URL *setting* this build comes from, tracked alongside the embed URL
+      // in the rebuild decision because no offset reaches the embed URL any
+      // more: editing only a t= leaves the built URL byte-identical, and the
+      // embed URL alone would skip the rebuild and drop the fresh seek on the
+      // floor. Keying on the seek instead is not enough — a new t= that happens
+      // to equal the offset the last build used compares equal too, which is the
+      // same failure one step removed. Null when nothing is embedded, so a view
+      // that has never had a player doesn't rebuild on its first tick. Bounded
+      // by the musicKey guard, so it can only fire on a real edit.
+      const sourceUrl = embedUrl === null ? null : this.plugin.settings.musicUrl;
       this.musicSectionVisible = embedUrl !== null;
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
-      // The seek joins the URL in the rebuild decision because no offset reaches
-      // the embed URL any more: editing only a t= leaves the built URL identical,
-      // and without this the new offset would be computed and then dropped on the
-      // floor. Bounded by the musicKey guard, so it can only fire on a real edit.
-      if (embedUrl !== this.lastMusicEmbedUrl || seekSeconds !== this.lastMusicSeekSeconds) {
+      if (embedUrl !== this.lastMusicEmbedUrl || sourceUrl !== this.lastMusicSourceUrl) {
         this.lastMusicEmbedUrl = embedUrl;
-        this.lastMusicSeekSeconds = seekSeconds;
+        this.lastMusicSourceUrl = sourceUrl;
         this.destroyMusicIframe();
         if (embedUrl !== null && plan !== null) this.buildMusicIframe(embedUrl, plan);
       }
@@ -754,6 +775,8 @@ export class GentlePomoView extends ItemView {
     // already know; inside a playlist the stream corrects it as items advance.
     this.musicCurrentVideoId = plan.target.videoId;
     this.musicTargetPlaylistId = plan.target.playlistId;
+    // Frozen for this iframe's lifetime — see the field's comment.
+    this.musicSourceUrl = this.plugin.settings.musicUrl;
     this.musicCurrentDuration = null;
     this.pendingResumeSeconds = plan.seekSeconds;
     this.resumeSeekLanding = null;
@@ -795,6 +818,7 @@ export class GentlePomoView extends ItemView {
     this.musicCurrentVideoId = null;
     this.musicCurrentDuration = null;
     this.musicTargetPlaylistId = null;
+    this.musicSourceUrl = null;
     this.musicStopPending = false;
     // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on
     // one — the iframe is going away, and removing it is what stops playback.
@@ -1268,11 +1292,17 @@ export class GentlePomoView extends ItemView {
     }
     const videoId = this.musicCurrentVideoId;
     if (videoId === null) return;
+    // Provenance comes from the iframe, never from the live setting — see
+    // musicSourceUrl. Null means no iframe is playing, so there is nothing to
+    // attribute the position to.
+    const sourceUrl = this.musicSourceUrl;
+    if (sourceUrl === null) return;
     if (!isResumablePosition(seconds, this.musicCurrentDuration)) return;
     this.plugin.recordMusicPosition({
       videoId,
       playlistId: this.musicTargetPlaylistId,
       seconds,
+      url: sourceUrl,
     });
   }
 

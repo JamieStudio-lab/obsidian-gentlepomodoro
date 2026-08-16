@@ -55,7 +55,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
 - **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
-- **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it; music pauses when the app is backgrounded or the screen locks — all platform constraints, not bugs.
+- **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — platform constraints, not bugs.
 - **Lofi music doesn't play on iPhone or iPad** — YouTube won't load its player inside Obsidian there (error 153). See [Lofi study music](#-lofi-study-music) for why; it isn't the link, and no other link works.
 
 ## Install

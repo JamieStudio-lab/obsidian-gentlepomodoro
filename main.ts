@@ -655,24 +655,28 @@ export default class GentlePomoPlugin extends Plugin {
    * deferred to flushMusicPosition (boundaries + the slow interval), because
    * data.json lives in the vault and every save is sync traffic.
    */
-  recordMusicPosition(position: Omit<MusicResumeState, "url">): void {
+  recordMusicPosition(position: MusicResumeState): void {
     if (!this.settings.musicResume) return;
     const seconds = Math.floor(position.seconds);
     if (
       this.settings.lastMusicVideoId === position.videoId &&
       this.settings.lastMusicPlaylistId === position.playlistId &&
       this.settings.lastMusicSeconds === seconds &&
-      this.settings.lastMusicUrl === this.settings.musicUrl
+      this.settings.lastMusicUrl === position.url
     ) {
       return; // same whole second — the 4Hz stream collapses to ~1 update/sec
     }
     this.settings.lastMusicVideoId = position.videoId;
     this.settings.lastMusicPlaylistId = position.playlistId;
     this.settings.lastMusicSeconds = seconds;
-    // Provenance is stamped here rather than passed in: the view reports what
-    // the embed is playing, the plugin owns which setting that came from. It
-    // is part of the dedupe check above so a stale stamp is always rewritten.
-    this.settings.lastMusicUrl = this.settings.musicUrl;
+    // Provenance travels WITH the position, from the iframe that produced it —
+    // never read off this.settings here. Both settings paths assign
+    // settings.musicUrl and only then `await saveSettings()`, and the outgoing
+    // iframe keeps streaming across that await: stamping the live setting would
+    // relabel the old track's position with the new URL, and both URL guards
+    // would then wave it through onto a URL it never came from. Part of the
+    // dedupe above so a stale stamp is always rewritten.
+    this.settings.lastMusicUrl = position.url;
     this.musicPositionDirty = true;
   }
 
