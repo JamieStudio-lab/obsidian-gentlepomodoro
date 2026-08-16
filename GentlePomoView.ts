@@ -125,10 +125,12 @@ export class GentlePomoView extends ItemView {
   // Last end-time string rendered; gates the ~once/minute DOM write (mirrors lastTimeText).
   private lastEndText: string | null = null;
   // Music reconciliation guards (same write-guard family). lastMusicKey gates the
-  // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl gates iframe
-  // rebuilds; lastAppliedMusicVolume gates setVolume posts.
+  // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl and
+  // lastMusicSeekSeconds together gate iframe rebuilds (an offset no longer shows
+  // up in the URL); lastAppliedMusicVolume gates setVolume posts.
   private lastMusicKey: string | null = null;
   private lastMusicEmbedUrl: string | null = null;
+  private lastMusicSeekSeconds: number | null = null;
   private lastAppliedMusicVolume: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
@@ -644,6 +646,10 @@ export class GentlePomoView extends ItemView {
     const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${this.plugin.settings.musicUrl}`;
     if (musicKey !== this.lastMusicKey) {
       this.lastMusicKey = musicKey;
+      // An edited URL retires the position recorded under the old one. Runs
+      // before the plan is worked out, so the edit is honoured on the very
+      // rebuild it triggers rather than one change later.
+      this.plugin.retireMusicPositionOnUrlChange();
       const target = this.plugin.settings.showMusicPlayer
         ? parseYouTubeUrl(this.plugin.settings.musicUrl)
         : null;
@@ -656,13 +662,23 @@ export class GentlePomoView extends ItemView {
       // window (flipping Loop, say) would otherwise snapshot the position the
       // stop is in the middle of forgetting and seed the new iframe with it.
       const plan = target
-        ? planResume(target, this.musicStopPending ? null : this.plugin.musicResumeState())
+        ? planResume(
+            target,
+            this.musicStopPending ? null : this.plugin.musicResumeState(),
+            this.plugin.settings.musicUrl
+          )
         : null;
       const embedUrl = plan ? buildEmbedUrl(plan.target, this.plugin.settings.musicLoop) : null;
+      const seekSeconds = plan?.seekSeconds ?? null;
       this.musicSectionVisible = embedUrl !== null;
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
-      if (embedUrl !== this.lastMusicEmbedUrl) {
+      // The seek joins the URL in the rebuild decision because no offset reaches
+      // the embed URL any more: editing only a t= leaves the built URL identical,
+      // and without this the new offset would be computed and then dropped on the
+      // floor. Bounded by the musicKey guard, so it can only fire on a real edit.
+      if (embedUrl !== this.lastMusicEmbedUrl || seekSeconds !== this.lastMusicSeekSeconds) {
         this.lastMusicEmbedUrl = embedUrl;
+        this.lastMusicSeekSeconds = seekSeconds;
         this.destroyMusicIframe();
         if (embedUrl !== null && plan !== null) this.buildMusicIframe(embedUrl, plan);
       }
@@ -1091,8 +1107,18 @@ export class GentlePomoView extends ItemView {
         // BUFFERING usually arrives first, so the jump lands before any audio.
         const seconds = this.pendingResumeSeconds;
         this.pendingResumeSeconds = null;
-        this.resumeSeekLanding = seconds;
-        this.postToMusicPlayer(buildPlayerCommand("seekTo", [seconds, true]));
+        // Consumed either way — a seek that isn't posted now must not fire on
+        // some later transition. A non-positive duration is how the embed
+        // reports a live stream: an offset means nothing on one (YouTube
+        // ignored `start=` there outright), and seeking would land far outside
+        // the DVR window. Only skipped when we positively know it's live —
+        // duration stays null until the info stream carries one, and for an
+        // ordinary video the seek is the entire point. Stored positions are
+        // never live (isResumablePosition refuses them); a pasted t= can be.
+        if (this.musicCurrentDuration === null || this.musicCurrentDuration > 0) {
+          this.resumeSeekLanding = seconds;
+          this.postToMusicPlayer(buildPlayerCommand("seekTo", [seconds, true]));
+        }
       }
       // The armed fade-in starts the moment audio does — PLAYING, not
       // BUFFERING, which is still silence. It stands down only on a genuine

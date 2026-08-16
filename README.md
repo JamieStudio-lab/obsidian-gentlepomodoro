@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.5.5 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.6 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -47,7 +47,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - **Fades in and out**: ♪ eases the music up from silence, ⏸ and ⏹ ease it down before stopping — no snapping in mid-bar. Change your mind mid-fade and it simply carries on.
 - **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
 - **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
-- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** clears the position so the mix starts from the top instead.
+- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** — or changing the URL — clears the position so the mix starts from the top instead. A link with its own timestamp (`?t=90`) opens there.
 - Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
 
 ### 📱 Mobile (iPad & phone)

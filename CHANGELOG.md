@@ -4,6 +4,18 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] — 2026-08-16
+
+### Fixed
+
+- **A YouTube link with its own timestamp no longer breaks play-after-pause.** Pasting a music URL copied at a specific time (`…?t=90`, YouTube's "copy link at current time") put a `start=` parameter on the embed, and an embed loaded that way stops responding to play once it has been paused — press ♪, ⏸, then ♪ again and the music was simply gone until you pressed ⏹. The timestamp is now applied the same way the remembered position has been since 0.5.3: as a jump made once playback starts, with nothing added to the embed itself.
+- **Editing the music URL now takes effect exactly as pasted.** A remembered position belonged only to a video, not to the URL it came from, so two edits were quietly overridden by it: switching to a different video of the **same playlist** reopened the old item instead of the one you named, and changing only the `?t=` on the same video kept resuming at the old spot. Both were sticky — every later reopen re-applied the stored position. Changing the URL now forgets the position recorded under the previous one.
+- **Live streams ignore a pasted timestamp again** rather than seeking far outside the available window.
+
+### Notes
+
+- A position remembered before this version is forgotten once, on the first update: it carries no record of which URL it belonged to. The music simply starts from the top the first time you open it after updating.
+
 ## [0.5.5] — 2026-08-14
 
 ### Fixed

@@ -122,4 +122,5 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastMusicVideoId: null,
   lastMusicPlaylistId: null,
   lastMusicSeconds: 0,
+  lastMusicUrl: null,
 };

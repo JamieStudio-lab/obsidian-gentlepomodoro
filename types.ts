@@ -59,11 +59,14 @@ export interface GentlePomoSettings {
   lastGoalHitDate: string | null;
   sessionsSinceLongBreak: number;
   sessionCounterDate: string | null;
-  // Remembered music position (see musicResume). Cleared by ⏹ Stop and when a
-  // track finishes; keyed by video so a new URL never inherits an old offset.
+  // Remembered music position (see musicResume). Cleared by ⏹ Stop, when a
+  // track finishes, and when the music URL is edited — lastMusicUrl is the
+  // setting the offset was recorded under, and a position only ever applies
+  // back to that exact string (musicPositionAppliesToUrl).
   lastMusicVideoId: string | null;
   lastMusicPlaylistId: string | null;
   lastMusicSeconds: number;
+  lastMusicUrl: string | null;
 }
 
 // Runtime snapshot of the timer used by the UI.

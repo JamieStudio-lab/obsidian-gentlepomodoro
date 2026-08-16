@@ -21,6 +21,7 @@ import {
   VIEW_TYPE_GENTLE_POMO,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
+import { musicPositionAppliesToUrl } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
 
@@ -625,28 +626,53 @@ export default class GentlePomoPlugin extends Plugin {
       videoId: this.settings.lastMusicVideoId,
       playlistId: this.settings.lastMusicPlaylistId,
       seconds: this.settings.lastMusicSeconds,
+      url: this.settings.lastMusicUrl,
     };
   }
 
   /**
+   * Drop a position that belongs to a music URL the user has since edited.
+   *
+   * planResume would refuse to apply it anyway (musicPositionAppliesToUrl), so
+   * this is about not carrying a dead offset around: an edited URL means the
+   * old one is over, and leaving its position in data.json would have it
+   * silently spring back if the user ever pasted that URL again — from a
+   * listening session they may have abandoned months earlier.
+   *
+   * Called from the view's music reconciliation, which already runs exactly
+   * when the (toggle, loop, url) triple changes — so it catches an edit from
+   * either settings path, another open view, or a synced data.json alike.
+   */
+  retireMusicPositionOnUrlChange(): void {
+    if (this.settings.lastMusicVideoId === null && this.settings.lastMusicUrl === null) return;
+    if (musicPositionAppliesToUrl(this.settings.lastMusicUrl, this.settings.musicUrl)) return;
+    this.clearMusicPosition();
+  }
+
+  /**
    * Track where the music has reached. Called from the embed's ~4Hz message
-   * stream, so it stays three field writes and a dirty flag — the disk write is
+   * stream, so it stays four field writes and a dirty flag — the disk write is
    * deferred to flushMusicPosition (boundaries + the slow interval), because
    * data.json lives in the vault and every save is sync traffic.
    */
-  recordMusicPosition(position: MusicResumeState): void {
+  recordMusicPosition(position: Omit<MusicResumeState, "url">): void {
     if (!this.settings.musicResume) return;
     const seconds = Math.floor(position.seconds);
     if (
       this.settings.lastMusicVideoId === position.videoId &&
       this.settings.lastMusicPlaylistId === position.playlistId &&
-      this.settings.lastMusicSeconds === seconds
+      this.settings.lastMusicSeconds === seconds &&
+      this.settings.lastMusicUrl === this.settings.musicUrl
     ) {
       return; // same whole second — the 4Hz stream collapses to ~1 update/sec
     }
     this.settings.lastMusicVideoId = position.videoId;
     this.settings.lastMusicPlaylistId = position.playlistId;
     this.settings.lastMusicSeconds = seconds;
+    // Provenance is stamped here rather than passed in: the view reports what
+    // the embed is playing, the plugin owns which setting that came from. It
+    // is part of the dedupe check above so a stale stamp is always rewritten.
+    this.settings.lastMusicUrl = this.settings.musicUrl;
     this.musicPositionDirty = true;
   }
 
@@ -660,13 +686,15 @@ export default class GentlePomoPlugin extends Plugin {
     if (
       this.settings.lastMusicVideoId === null &&
       this.settings.lastMusicPlaylistId === null &&
-      this.settings.lastMusicSeconds === 0
+      this.settings.lastMusicSeconds === 0 &&
+      this.settings.lastMusicUrl === null
     ) {
       return;
     }
     this.settings.lastMusicVideoId = null;
     this.settings.lastMusicPlaylistId = null;
     this.settings.lastMusicSeconds = 0;
+    this.settings.lastMusicUrl = null;
     void this.saveSettings();
   }
 

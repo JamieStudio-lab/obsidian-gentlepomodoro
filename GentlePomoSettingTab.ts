@@ -12,7 +12,7 @@ type SettingsKey = keyof GentlePomoSettings;
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
 const MUSIC_RESUME_DESC =
-  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ to start from the top next time. Live streams always start live.";
+  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the URL above — to start from the top next time. Live streams always start live.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
