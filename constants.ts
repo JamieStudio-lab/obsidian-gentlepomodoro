@@ -23,6 +23,17 @@ export const FOCUS_TOTAL_HEARTBEAT_MS = 60_000;
 // ships the same ~100ms wait).
 export const MUSIC_LISTENING_DELAY_MS = 100;
 
+// The handshake is fire-and-forget: post it before the embed has installed its
+// own message listener and it is simply lost, after which the player never
+// streams an event and the panel reports "the music player hasn't loaded" for
+// as long as it stays open. 100ms after `load` is ample on desktop and a guess
+// everywhere else — a slower device, a cold cache or a heavy stream can boot
+// well past it — so it is re-sent on this cadence until the player answers.
+// Retries stop on the first message from the embed, so a healthy player costs
+// exactly one extra timer that never fires.
+export const MUSIC_HANDSHAKE_RETRY_MS = 600;
+export const MUSIC_HANDSHAKE_MAX_ATTEMPTS = 8;
+
 // Music ducking: while a sound cue plays, the lofi music dips to
 // MUSIC_DUCK_FACTOR × the user's volume (multiplicative, so "Low" never jumps
 // louder), then eases back. The embed's setVolume has no native fade, so both

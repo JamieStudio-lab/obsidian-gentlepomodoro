@@ -8,6 +8,8 @@ import {
   ONE_MINUTE_MS,
   PEEK_REVEAL_MS,
   MUSIC_LISTENING_DELAY_MS,
+  MUSIC_HANDSHAKE_RETRY_MS,
+  MUSIC_HANDSHAKE_MAX_ATTEMPTS,
   MUSIC_DUCK_FACTOR,
   MUSIC_DUCK_DOWN_MS,
   MUSIC_DUCK_UP_MS,
@@ -84,7 +86,15 @@ export class GentlePomoView extends ItemView {
   private musicPlayerContainer!: HTMLDivElement; // visually-hidden iframe host
   private musicIframe: HTMLIFrameElement | null = null;
   private musicListenTimeout: number | null = null;
+  private musicHandshakeInterval: number | null = null; // re-sends until the embed answers
+  private musicHandshakeAttempts = 0;
   private musicPlayerReady = false;
+  // Where to address commands. Depending on the video the embed bounces from
+  // the nocookie origin we loaded to www.youtube.com, and postMessage delivers
+  // nothing when targetOrigin doesn't match the frame's *current* origin — so
+  // this tracks the origin the player last spoke from (always one of
+  // YT_ALLOWED_MESSAGE_ORIGINS, checked on the way in) rather than assuming.
+  private musicPlayerOrigin: string = YT_EMBED_ORIGIN;
   private musicPlayerState: number = YT_STATE.UNSTARTED;
   private musicErrorNotified = false; // one Notice per iframe build
   private musicEndedTimeout: number | null = null; // pending "music ended" Notice
@@ -425,6 +435,14 @@ export class GentlePomoView extends ItemView {
     this.registerDomEvent(window, "message", (evt: MessageEvent) => {
       if (!this.musicIframe || evt.source !== this.musicIframe.contentWindow) return;
       if (!YT_ALLOWED_MESSAGE_ORIGINS.includes(evt.origin)) return;
+      // Address every later command to wherever the player actually is. Pinning
+      // to the origin we loaded meant that once a video bounced the frame to
+      // www.youtube.com, playVideo/setVolume/seekTo were all dropped by the
+      // browser — no error, no state change, and the player still looking ready.
+      this.musicPlayerOrigin = evt.origin;
+      // Any message at all means the embed heard the handshake — even one this
+      // parser goes on to discard. Stop re-sending it.
+      this.stopMusicHandshakeRetries();
       const msg = parsePlayerMessage(evt.data);
       if (!msg) return;
       if (msg.type === "ready") {
@@ -752,7 +770,7 @@ export class GentlePomoView extends ItemView {
       if (this.musicListenTimeout !== null) window.clearTimeout(this.musicListenTimeout);
       this.musicListenTimeout = window.setTimeout(() => {
         this.musicListenTimeout = null;
-        this.postToMusicPlayer(buildListeningMessage());
+        this.beginMusicHandshake();
       }, MUSIC_LISTENING_DELAY_MS);
     });
   }
@@ -783,6 +801,7 @@ export class GentlePomoView extends ItemView {
       window.clearTimeout(this.musicListenTimeout);
       this.musicListenTimeout = null;
     }
+    this.stopMusicHandshakeRetries();
     if (this.musicEndedTimeout !== null) {
       window.clearTimeout(this.musicEndedTimeout);
       this.musicEndedTimeout = null;
@@ -794,13 +813,57 @@ export class GentlePomoView extends ItemView {
     this.musicIframe?.remove();
     this.musicIframe = null;
     this.musicPlayerReady = false;
+    // Back to the origin the next iframe is loaded from — a learned one belongs
+    // to the frame that taught it, and the next video may not bounce at all.
+    this.musicPlayerOrigin = YT_EMBED_ORIGIN;
     this.musicErrorNotified = false;
     this.lastAppliedMusicVolume = null;
     this.updateMusicButtons(YT_STATE.UNSTARTED);
   }
 
   private postToMusicPlayer(payload: string) {
-    this.musicIframe?.contentWindow?.postMessage(payload, YT_EMBED_ORIGIN);
+    this.musicIframe?.contentWindow?.postMessage(payload, this.musicPlayerOrigin);
+  }
+
+  /**
+   * The handshake is the one message that goes out before the embed has told us
+   * anything, so there is no learned origin yet — and if the player has already
+   * bounced to www.youtube.com, a nocookie-addressed handshake is dropped and
+   * the embed never streams a single event (the panel then reports "the music
+   * player hasn't loaded" forever). Sent to every origin the embed may
+   * legitimately be on instead: only the frame's actual origin receives it, the
+   * browser drops the rest, so the player is never handed a duplicate.
+   */
+  private postMusicHandshake() {
+    const payload = buildListeningMessage();
+    for (const origin of YT_ALLOWED_MESSAGE_ORIGINS) {
+      this.musicIframe?.contentWindow?.postMessage(payload, origin);
+    }
+  }
+
+  /** Send the handshake and keep sending until the embed answers (or the
+   *  attempts run out). See MUSIC_HANDSHAKE_RETRY_MS for why one shot isn't
+   *  enough off the desktop. */
+  private beginMusicHandshake() {
+    this.stopMusicHandshakeRetries();
+    this.musicHandshakeAttempts = 0;
+    this.postMusicHandshake();
+    this.musicHandshakeInterval = window.setInterval(() => {
+      this.musicHandshakeAttempts++;
+      // The iframe check matters: teardown clears this interval, but a rebuild
+      // racing the tick would otherwise post into the outgoing frame.
+      if (this.musicIframe === null || this.musicHandshakeAttempts > MUSIC_HANDSHAKE_MAX_ATTEMPTS) {
+        this.stopMusicHandshakeRetries();
+        return;
+      }
+      this.postMusicHandshake();
+    }, MUSIC_HANDSHAKE_RETRY_MS);
+  }
+
+  private stopMusicHandshakeRetries() {
+    if (this.musicHandshakeInterval === null) return;
+    window.clearInterval(this.musicHandshakeInterval);
+    this.musicHandshakeInterval = null;
   }
 
   private postMusicVolume() {
