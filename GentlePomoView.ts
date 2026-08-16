@@ -674,9 +674,14 @@ export class GentlePomoView extends ItemView {
     const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${this.plugin.settings.musicUrl}`;
     if (musicKey !== this.lastMusicKey) {
       this.lastMusicKey = musicKey;
-      const target = this.plugin.settings.showMusicPlayer
-        ? parseYouTubeUrl(this.plugin.settings.musicUrl)
-        : null;
+      // Parsed once per key change, and kept separate from the visibility
+      // toggle: `parsed` answers "is this a URL yet?", `target` answers "is
+      // there anything to embed right now?". Conflating them made the retire
+      // below follow the toggle — every URL edit made while the player was
+      // hidden kept its old position, so hiding the player quietly changed what
+      // an edit meant.
+      const parsed = parseYouTubeUrl(this.plugin.settings.musicUrl);
+      const target = this.plugin.settings.showMusicPlayer ? parsed : null;
       // An edited URL retires the position recorded under the old one, before
       // the plan is worked out so the edit is honoured on the very rebuild it
       // triggers rather than one change later. Deliberately skipped while the
@@ -686,7 +691,7 @@ export class GentlePomoView extends ItemView {
       // immediate — a half-typed string must not cost the user a position they
       // are about to keep. An emptied field is a real decision, so it counts.
       // Anything skipped here is still refused by planResume's own URL gate.
-      if (target !== null || this.plugin.settings.musicUrl.trim() === "") {
+      if (parsed !== null || this.plugin.settings.musicUrl.trim() === "") {
         this.plugin.retireMusicPositionOnUrlChange();
       }
       // Work out the remembered position here, at build time — deliberately NOT
