@@ -43,11 +43,11 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 ### 🎵 Lofi study music
 
-- Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ♪ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
-- **Fades in and out**: ♪ eases the music up from silence, ⏸ and ⏹ ease it down before stopping — no snapping in mid-bar. Change your mind mid-fade and it simply carries on.
+- Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ▶️ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
+- **Fades in and out**: ▶️ eases the music up from silence, ⏸ and ⏹ ease it down before stopping — no snapping in mid-bar. Change your mind mid-fade and it simply carries on.
 - **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
 - **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
-- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** — or changing the URL — clears the position so the mix starts from the top instead. A link with its own timestamp (`?t=90`, or an older `#t=1m30s`) opens there.
+- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ▶️ to carry on. Nothing auto-plays; ⏹ **Stop** — or changing the URL — clears the position so the mix starts from the top instead. A link with its own timestamp (`?t=90`, or an older `#t=1m30s`) opens there.
 - Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
 - **Desktop only, for now.** On iPhone and iPad, YouTube refuses to load its player inside Obsidian at all (error 153): it requires the embedding page to identify itself with an HTTP `Referer`, and iOS doesn't send one for an app served from a custom scheme. Nothing the plugin can set changes this — it's the same wall other iOS webview apps hit — so the music player is a desktop feature until Obsidian or Apple changes that. Every other feature works on mobile as before.
 

@@ -111,7 +111,7 @@ export class GentlePomoView extends ItemView {
   private pendingResumeSeconds: number | null = null; // one-shot: seek here once playback starts
   private resumeSeekLanding: number | null = null; // seek posted, waiting for the clock to catch up
   // Music volume ramps. One channel serves both the sound-cue duck and the
-  // ♪/⏸/⏹ fades, so they can never post over each other. musicRampLevel is the
+  // ▶️/⏸/⏹ fades, so they can never post over each other. musicRampLevel is the
   // last 0–1 volume actually posted by a ramp — the start point for the next one
   // (so overlapping ramps never jump) and, when non-null, the "the player is not
   // simply sitting at the user's volume" marker.
@@ -119,7 +119,7 @@ export class GentlePomoView extends ItemView {
   private duckRestoreTimeout: number | null = null;
   private musicFadeArmTimeout: number | null = null; // "playback never started" backstop
   private musicRampLevel: number | null = null;
-  // Fade phase. "armed" = ♪ pressed and the volume parked at 0, waiting for
+  // Fade phase. "armed" = ▶️ pressed and the volume parked at 0, waiting for
   // playback to actually start; "in"/"out" = a fade ramp is running. A fade owns
   // the volume for its whole life, so ducking stands down while one is in flight.
   private musicFadePhase: "armed" | "in" | "out" | null = null;
@@ -350,7 +350,7 @@ export class GentlePomoView extends ItemView {
     // never dangles under a hidden selector or above a hidden music row.
     this.musicDivider = controls.createDiv("gp-music-divider");
 
-    // The ♪ row is the only playback UI — the YouTube iframe below is a
+    // The ▶️ row is the only playback UI — the YouTube iframe below is a
     // visually-hidden audio engine (see .gp-music-player in styles.css). The
     // iframe itself is (re)built in applySettings(), which reconciles the
     // showMusicPlayer/musicUrl settings against the DOM.
@@ -402,7 +402,7 @@ export class GentlePomoView extends ItemView {
       // Dropping the pending seek is what makes that true within this session
       // too; the embed URL itself never carried the offset.
       //
-      // All of it lands *with* the stopVideo, not on the click: ♪ pressed
+      // All of it lands *with* the stopVideo, not on the click: ▶️ pressed
       // inside the fade-out cancels the stop, and a half-applied stop would
       // outlive it (a nulled musicCurrentDuration alone kills position
       // recording for the rest of the track — isResumablePosition reads a null
@@ -869,7 +869,7 @@ export class GentlePomoView extends ItemView {
   }
 
   private postMusicVolume() {
-    // A fade owns the volume from the ♪/⏸/⏹ press until it lands — jumping the
+    // A fade owns the volume from the ▶️/⏸/⏹ press until it lands — jumping the
     // player to full volume mid-fade is exactly the jolt the fade exists to
     // remove. The fade-in re-reads the setting when it lands, so a volume
     // change made mid-fade still arrives. Deliberately does NOT stamp
@@ -900,13 +900,13 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * ♪ pressed: park the player at silence and arm the fade-in. The ramp itself
+   * ▶️ pressed: park the player at silence and arm the fade-in. The ramp itself
    * waits for the first PLAYING state (see handleMusicState) — playVideo is
    * followed by a buffering gap with no audio in it, and a fade spent on
    * silence is a fade nobody hears.
    *
    * This also cancels whatever the previous press left running. A fade-out
-   * still on its way down is abandoned here, which is what makes ⏸ → ♪ during
+   * still on its way down is abandoned here, which is what makes ⏸ → ▶️ during
    * a fade simply carry on playing: the pending pauseVideo/stopVideo lives in
    * the ramp's completion callback, so dropping the ramp drops the command too.
    */
@@ -990,16 +990,16 @@ export class GentlePomoView extends ItemView {
    * first would cut the audio dead and leave the fade nothing to fade.
    *
    * Skips straight to the command when there is nothing to fade: the player
-   * isn't ready, isn't running, or is already silent because ♪ was pressed and
+   * isn't ready, isn't running, or is already silent because ▶️ was pressed and
    * playback never started. ⏹ on an idle player therefore still forgets the
    * position instantly. The player is deliberately left at volume 0 afterwards
-   * — it's paused, so that is inaudible, and ♪ re-parks it at 0 regardless.
+   * — it's paused, so that is inaudible, and ▶️ re-parks it at 0 regardless.
    */
   private fadeMusicOut(onLanding: () => void) {
     const from = this.musicRampLevel ?? this.plugin.settings.musicVolume;
     this.clearMusicRampTimers();
     // Swap the buttons now rather than a fade-length later, so the press never
-    // looks ignored. The only thing that un-does the pending command is a ♪
+    // looks ignored. The only thing that un-does the pending command is a ▶️
     // press, and that puts the buttons back itself.
     this.setMusicButtonsPlaying(false);
     if (!this.musicPlayerReady || !this.isAudibleState(this.musicPlayerState) || from <= 0) {
@@ -1028,9 +1028,9 @@ export class GentlePomoView extends ItemView {
    * current level — extend, never double-dip. No-op unless the player is ready
    * and actually playing (pre-handshake commands are dropped by the embed anyway).
    *
-   * A ♪ fade-in does NOT block the duck — that would leave a cue playing over
+   * A ▶️ fade-in does NOT block the duck — that would leave a cue playing over
    * music rising to full volume, which is exactly what ducking exists to
-   * prevent, and "press ♪, then press Start" puts the war drum right in that
+   * prevent, and "press ▶️, then press Start" puts the war drum right in that
    * window. The duck simply takes the volume over: it ramps from wherever the
    * fade had reached and its restore ramp finishes the job of bringing the
    * music up. Clearing the phase is what keeps the abandoned fade from
@@ -1152,7 +1152,7 @@ export class GentlePomoView extends ItemView {
       // exists for — PLAYING clocks arriving after the stop — closes on this
       // transition, and from here the audibility gate blocks recording anyway.
       // Leaving the flag up would keep position recording dead through a later
-      // resume (media keys never pass through ♪, which is the other clearer).
+      // resume (media keys never pass through ▶️, which is the other clearer).
       if (this.musicStopPending && this.musicFadePhase === null && !this.isAudibleState(state)) {
         this.musicStopPending = false;
       }
@@ -1211,12 +1211,12 @@ export class GentlePomoView extends ItemView {
         // The player left a halted state while the volume was parked below the
         // setting with no ramp left to lift it — a landed ⏸/⏹ fade leaves the
         // embed at 0, and hardware media keys can resume it without going
-        // through ♪. In 0.5.3 this was audible (pause kept the user volume);
+        // through ▶️. In 0.5.3 this was audible (pause kept the user volume);
         // silent playback with ⏸ showing would be the regression. Requiring the
         // *previous* state to be halted is what keeps this off the stragglers a
         // landing races (a PLAYING report crossing the just-posted pauseVideo
         // arrives from a still-audible previous state). Unreachable during a
-        // duck (its hold keeps duckRestoreTimeout set) and during our own ♪
+        // duck (its hold keeps duckRestoreTimeout set) and during our own ▶️
         // press (the phase is "armed" there).
         if (state === YT_STATE.PLAYING) {
           this.beginMusicFadeIn();
@@ -1255,7 +1255,7 @@ export class GentlePomoView extends ItemView {
     if (!this.isAudibleState(this.musicPlayerState)) return;
     // ⏹ Stop forgets the position on the click, but audio keeps running through
     // the fade-out — without this, those last reported seconds would bank the
-    // very position that was just cleared. Cleared again on the next ♪ press.
+    // very position that was just cleared. Cleared again on the next ▶️ press.
     if (this.musicStopPending) return;
     // A resume seek is posted while the embed is still reporting the old clock,
     // so ignore readings until it lands — otherwise the first ~second of
@@ -1277,7 +1277,7 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * Swap the ♪ play/pause buttons to match the reported player state (the
+   * Swap the ▶️ play/pause buttons to match the reported player state (the
    * same .gp-hidden swap the main start/pause buttons use). Guarded so the
    * ~4Hz infoDelivery stream doesn't produce redundant DOM writes.
    */
@@ -1291,7 +1291,7 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * Do the ♪/⏸ swap itself. Split out of updateMusicButtons so a fade-out can
+   * Do the ▶️/⏸ swap itself. Split out of updateMusicButtons so a fade-out can
    * flip the buttons the moment it starts: the pause/stop command is already
    * guaranteed to go out, and waiting a fade-length for YouTube to confirm it
    * would leave the button looking dead. Deliberately does NOT touch
@@ -1334,7 +1334,7 @@ export class GentlePomoView extends ItemView {
         return;
       this.musicStallNotifiedAt = now;
       new Notice(
-        "Gentle pomodoro: the music is buffering — slow or lost connection. It resumes by itself once the network is back; if it stays silent, press ⏹ then ♪ to reload."
+        "Gentle pomodoro: the music is buffering — slow or lost connection. It resumes by itself once the network is back; if it stays silent, press ⏹ then ▶️ to reload."
       );
     }, MUSIC_STALL_NOTICE_DELAY_MS);
   }
@@ -1367,7 +1367,7 @@ export class GentlePomoView extends ItemView {
       this.musicEndedTimeout = window.setTimeout(() => {
         this.musicEndedTimeout = null;
         new Notice(
-          "Gentle pomodoro: the music ended — a live stream may have gone offline. Press ♪ to play again or paste a new link."
+          "Gentle pomodoro: the music ended — a live stream may have gone offline. Press ▶️ to play again or paste a new link."
         );
       }, MUSIC_ENDED_NOTICE_DELAY_MS);
     }

@@ -43,7 +43,7 @@ export const MUSIC_DUCK_DOWN_MS = 240;
 export const MUSIC_DUCK_UP_MS = 800;
 export const MUSIC_DUCK_STEP_MS = 60;
 
-// Music fades: ♪ play eases the volume up from silence, ⏸ pause and ⏹ stop ease
+// Music fades: ▶️ play eases the volume up from silence, ⏸ pause and ⏹ stop ease
 // it down to silence *before* the pause/stop command is posted (posting it
 // first would cut the audio dead, which is the jolt the fade exists to remove).
 // The out-fade therefore delays the actual pause, so it is the shorter of the

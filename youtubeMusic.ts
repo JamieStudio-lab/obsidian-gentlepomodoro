@@ -241,7 +241,7 @@ export function buildEmbedUrl(target: MusicTarget, loop = false): string {
   // Deliberately NO `start=`, for any offset from any source. An embed loaded
   // with it — alongside the loop feature's `loop=1&playlist=<self>` — stops
   // responding to `playVideo` after a `pauseVideo`, recovering only on
-  // `stopVideo`: press ♪, ⏸, ♪ and the music is simply gone. 0.5.3 found this
+  // `stopVideo`: press ▶️, ⏸, ▶️ and the music is simply gone. 0.5.3 found this
   // with the resume offset and moved that to a seek; until 0.5.6 a URL the user
   // pasted with its own `t=` still walked straight into it. Both now ride as a
   // one-shot seekTo posted once playback starts (planResume → ResumePlan).

@@ -1361,12 +1361,12 @@
 /* =========================================================================
    Music (audio-only lofi playback)
    -------------------------------------------------------------------------
-   The ♪ controls row is the entire visible UI; the YouTube iframe below it is
+   The ▶️ controls row is the entire visible UI; the YouTube iframe below it is
    a hidden audio engine. Buttons are .gp-icon-btn inside a .gp-controls-row,
    so they inherit the desktop tokens and every Mobile & touch rule (56px bump,
    WebKit svg min-width floor, tap-target sizing) with no extra rules here.
    ========================================================================= */
-/* Hairline between the task selector and the ♪ row. Toggled with .gp-hidden in
+/* Hairline between the task selector and the ▶️ row. Toggled with .gp-hidden in
    applySettings() — shown only when both neighbors are visible. The .gp-controls
    column gap (0.75rem) sits above it; the margin-bottom adds extra breathing room
    before the music row — on the divider itself, so hiding it (display: none)
