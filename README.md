@@ -49,12 +49,14 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
 - **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ♪ to carry on. Nothing auto-plays; ⏹ **Stop** — or changing the URL — clears the position so the mix starts from the top instead. A link with its own timestamp (`?t=90`, or an older `#t=1m30s`) opens there.
 - Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
+- **Desktop only, for now.** On iPhone and iPad, YouTube refuses to load its player inside Obsidian at all (error 153): it requires the embedding page to identify itself with an HTTP `Referer`, and iOS doesn't send one for an app served from a custom scheme. Nothing the plugin can set changes this — it's the same wall other iOS webview apps hit — so the music player is a desktop feature until Obsidian or Apple changes that. Every other feature works on mobile as before.
 
 ### 📱 Mobile (iPad & phone)
 
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
 - **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
 - **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it; music pauses when the app is backgrounded or the screen locks — all platform constraints, not bugs.
+- **Lofi music doesn't play on iPhone or iPad** — YouTube won't load its player inside Obsidian there (error 153). See [Lofi study music](#-lofi-study-music) for why; it isn't the link, and no other link works.
 
 ## Install
 

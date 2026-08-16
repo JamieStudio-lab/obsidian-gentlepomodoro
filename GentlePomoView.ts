@@ -1385,7 +1385,7 @@ export class GentlePomoView extends ItemView {
     // signal that says whether a "it won't play on my iPad" report is a plugin
     // bug or YouTube refusing the video on that platform.
     logger.warn(`Music player error ${String(code)} for ${this.plugin.settings.musicUrl}`);
-    new Notice(`Gentle pomodoro: ${describeMusicError(code)}`);
+    new Notice(`Gentle pomodoro: ${describeMusicError(code, Platform.isIosApp)}`);
   }
 
   /**

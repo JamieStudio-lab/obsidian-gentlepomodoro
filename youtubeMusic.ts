@@ -461,8 +461,20 @@ export function parsePlayerMessage(data: unknown): PlayerMessage | null {
  * device's player refusing the video, 100 is the video being gone, and they
  * lead opposite ways. Codes are quoted so a bug report can name one.
  */
-export function describeMusicError(code: number): string {
+export function describeMusicError(code: number, iosApp = false): string {
   switch (code) {
+    case 153:
+      // Not the link's fault, and no other URL will do better: YouTube requires
+      // the embedding page to identify itself with an HTTP Referer, and iOS
+      // WKWebView sends none for a cross-origin iframe when the app is served
+      // from a custom scheme (which is how Obsidian runs there) — WebKit bug
+      // 169846, the same wall Tauri and Capacitor apps hit. Verified on an iPad
+      // against every embed shape we could build: with and without
+      // enablejsapi, nocookie and youtube.com, with and without referrerpolicy
+      // and origin — all 153, while all of them play on desktop.
+      return iosApp
+        ? "YouTube won't load its player inside Obsidian on iPhone or iPad, so the music player only works on desktop (YouTube error 153). Other links won't help."
+        : "YouTube wouldn't load its player here — it needs the page to identify itself and couldn't (YouTube error 153).";
     case 101:
     case 150:
       return "this video doesn't allow embedding — try another URL.";

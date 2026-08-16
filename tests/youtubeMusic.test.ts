@@ -401,7 +401,20 @@ describe("describeMusicError", () => {
   });
 
   it("still quotes the code for an unknown one", () => {
-    expect(describeMusicError(153)).toContain("error 153");
+    expect(describeMusicError(9999)).toContain("error 9999");
+  });
+
+  it("explains 153 as a platform limit on iOS, not a bad link", () => {
+    // Every embed shape fails this way on iPad — no other URL helps, so the
+    // message must not send the user off trying more of them.
+    const ios = describeMusicError(153, true);
+    expect(ios).toContain("iPhone or iPad");
+    expect(ios).toContain("only works on desktop");
+    expect(ios).toContain("error 153");
+    // Elsewhere it's a real configuration problem worth reporting as one.
+    const other = describeMusicError(153, false);
+    expect(other).toContain("error 153");
+    expect(other).not.toContain("iPhone");
   });
 });
 
