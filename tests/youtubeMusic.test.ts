@@ -11,6 +11,7 @@ import {
   buildListeningMessage,
   parsePlayerMessage,
   musicVolumeTo100,
+  describeMusicError,
   buildVolumeRamp,
   buildFadeRamp,
   isResumablePosition,
@@ -378,6 +379,29 @@ describe("parsePlayerMessage", () => {
     expect(parsePlayerMessage(JSON.stringify("just a string"))).toBeNull();
     expect(parsePlayerMessage(JSON.stringify({ noEvent: true }))).toBeNull();
     expect(parsePlayerMessage(JSON.stringify({ event: "somethingElse" }))).toBeNull();
+  });
+});
+
+describe("describeMusicError", () => {
+  it("names the embedding refusal without a code", () => {
+    for (const code of [101, 150]) {
+      expect(describeMusicError(code)).toContain("doesn't allow embedding");
+      expect(describeMusicError(code)).not.toContain("error");
+    }
+  });
+
+  it("separates the codes the old single message ran together", () => {
+    // 5 is the device's player refusing the video (the same link can play in a
+    // desktop embed); 100 is the video being gone. They lead opposite ways.
+    expect(describeMusicError(5)).toContain("this device's player");
+    expect(describeMusicError(5)).toContain("error 5");
+    expect(describeMusicError(100)).toContain("unavailable");
+    expect(describeMusicError(100)).toContain("error 100");
+    expect(describeMusicError(2)).toContain("error 2");
+  });
+
+  it("still quotes the code for an unknown one", () => {
+    expect(describeMusicError(153)).toContain("error 153");
   });
 });
 

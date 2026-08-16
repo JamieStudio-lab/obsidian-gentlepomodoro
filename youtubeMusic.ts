@@ -450,6 +450,36 @@ export function parsePlayerMessage(data: unknown): PlayerMessage | null {
 }
 
 /**
+ * User-facing explanation for a YouTube onError code, without the plugin's
+ * Notice prefix.
+ *
+ * The numeric code is carried through for everything except the embedding
+ * refusal, which speaks for itself. There is no visible player to show
+ * YouTube's own error screen, so this Notice is the only thing a user ever
+ * sees — and one generic sentence covering codes 2, 5 and 100 made a real
+ * report ("plays on my Mac, not on my iPad") impossible to triage: 5 is the
+ * device's player refusing the video, 100 is the video being gone, and they
+ * lead opposite ways. Codes are quoted so a bug report can name one.
+ */
+export function describeMusicError(code: number): string {
+  switch (code) {
+    case 101:
+    case 150:
+      return "this video doesn't allow embedding — try another URL.";
+    case 100:
+      return "that video is unavailable — it may be private or removed (YouTube error 100).";
+    case 5:
+      // Error 5 is the one that differs by platform: the same link can play in
+      // a desktop embed and be refused inside a mobile webview.
+      return "this device's player can't play this video — it may be restricted on mobile. Try another URL (YouTube error 5).";
+    case 2:
+      return "YouTube rejected this video link — try copying it again (YouTube error 2).";
+    default:
+      return `the music video can't be played (YouTube error ${String(code)}).`;
+  }
+}
+
+/**
  * Map the stored 0–1 music volume onto the embed's 0–100 setVolume scale.
  */
 export function musicVolumeTo100(volume01: number): number {

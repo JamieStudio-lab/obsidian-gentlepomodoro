@@ -27,6 +27,7 @@ import {
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
+import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
 import {
   YT_EMBED_ORIGIN,
@@ -37,6 +38,7 @@ import {
   buildPlayerCommand,
   buildListeningMessage,
   parsePlayerMessage,
+  describeMusicError,
   musicVolumeTo100,
   buildVolumeRamp,
   buildFadeRamp,
@@ -1379,11 +1381,11 @@ export class GentlePomoView extends ItemView {
   private notifyMusicError(code: number) {
     if (this.musicErrorNotified) return;
     this.musicErrorNotified = true;
-    const message =
-      code === 101 || code === 150
-        ? "Gentle pomodoro: this video doesn't allow embedding — try another URL."
-        : "Gentle pomodoro: the music video can't be played (unavailable or restricted).";
-    new Notice(message);
+    // Logged as well as shown: the Notice is transient, and this is the one
+    // signal that says whether a "it won't play on my iPad" report is a plugin
+    // bug or YouTube refusing the video on that platform.
+    logger.warn(`Music player error ${String(code)} for ${this.plugin.settings.musicUrl}`);
+    new Notice(`Gentle pomodoro: ${describeMusicError(code)}`);
   }
 
   /**
