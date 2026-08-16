@@ -60,6 +60,23 @@ describe("parseYouTubeUrl", () => {
     expect(parseYouTubeUrl(`https://youtu.be/${ID}?t=90`)?.startSeconds).toBe(90);
   });
 
+  it("reads an offset from start=, t=, or a legacy #t= fragment", () => {
+    const at = (suffix: string) =>
+      parseYouTubeUrl(`https://www.youtube.com/watch?v=${ID}${suffix}`)?.startSeconds;
+    expect(at("&start=90")).toBe(90);
+    expect(at("&t=90")).toBe(90);
+    expect(at("#t=90")).toBe(90);
+    expect(at("#t=1m30s")).toBe(90);
+    expect(parseYouTubeUrl(`https://youtu.be/${ID}#t=90`)?.startSeconds).toBe(90);
+    // A query param is the modern share format, so it wins over the fragment.
+    expect(at("&t=90#t=300")).toBe(90);
+    expect(at("&start=90&t=300")).toBe(90);
+    // Fragments that carry no t= leave the offset unset rather than erroring.
+    expect(at("#somewhere")).toBeNull();
+    expect(at("#t=abc")).toBeNull();
+    expect(at("")).toBeNull();
+  });
+
   it("parses /live/ URLs (live streams)", () => {
     expect(parseYouTubeUrl(`https://www.youtube.com/live/${ID}`)?.videoId).toBe(ID);
   });

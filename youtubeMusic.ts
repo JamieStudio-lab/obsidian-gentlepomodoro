@@ -131,7 +131,8 @@ export function parseStartTime(raw: string): number | null {
  * Extract an embeddable target from a user-pasted YouTube URL. Handles all the
  * shapes people actually paste — watch?v=, youtu.be/, /live/ (live streams),
  * /shorts/, /embed/, legacy /v/, playlist?list=, music.youtube.com, m., and
- * scheme-less input — and returns null for anything that can't be resolved to
+ * scheme-less input, with a timestamp from `start=`, `t=`, or a legacy `#t=`
+ * fragment — and returns null for anything that can't be resolved to
  * a video or playlist ID client-side (non-YouTube hosts, channel /live pages,
  * malformed IDs).
  */
@@ -152,7 +153,14 @@ export function parseYouTubeUrl(raw: string): MusicTarget | null {
   if (!ALLOWED_HOSTS.has(host)) return null;
 
   const segments = url.pathname.split("/").filter((s) => s !== "");
-  const rawStart = url.searchParams.get("start") ?? url.searchParams.get("t");
+  // Offset, in the three places YouTube has put one. The legacy fragment form
+  // (youtu.be/<id>#t=1m30s) is read last and only for `t`: a query param is the
+  // modern share format, so an explicit one wins. Parsing the hash as a query
+  // string also covers `#t=90&…`; a fragment that isn't key=value yields null.
+  const rawStart =
+    url.searchParams.get("start") ??
+    url.searchParams.get("t") ??
+    new URLSearchParams(url.hash.replace(/^#/, "")).get("t");
   const startSeconds = rawStart !== null ? parseStartTime(rawStart) : null;
   const rawList = url.searchParams.get("list");
   const playlistId = rawList !== null && PLAYLIST_ID_REGEX.test(rawList) ? rawList : null;

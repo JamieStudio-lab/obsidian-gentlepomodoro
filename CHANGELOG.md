@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.5.6] — 2026-08-16
 
+### Added
+
+- **Older `#t=` timestamp links are recognized.** A music URL that carries its start time in the fragment (`https://youtu.be/…#t=1m30s`) now opens at that point, like the modern `?t=90` form. Previously the link worked but the timestamp was silently ignored. An explicit `?t=` still wins if a link somehow has both.
+
 ### Fixed
 
 - **A YouTube link with its own timestamp no longer breaks play-after-pause.** Pasting a music URL copied at a specific time (`…?t=90`, YouTube's "copy link at current time") put a `start=` parameter on the embed, and an embed loaded that way stops responding to play once it has been paused — press ♪, ⏸, then ♪ again and the music was simply gone until you pressed ⏹. The timestamp is now applied the same way the remembered position has been since 0.5.3: as a jump made once playback starts, with nothing added to the embed itself.
