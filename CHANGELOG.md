@@ -4,6 +4,12 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Notes
+
+- **Audited, no change: the hidden music player and YouTube playback quality.** The plugin never asks YouTube for a playback quality, and that is deliberate — the embed API's quality setters have been no-ops for years (YouTube picks automatically from player size and bandwidth, so the invisible 1×1 player gets the lowest video rendition), and it makes no audible difference: YouTube serves the same audio stream whether the video is 144p or 1080p. Forcing the hidden player to 1080p would only spend bandwidth and CPU on pixels nobody sees.
+
 ## [0.5.6] — 2026-08-16
 
 ### Added
