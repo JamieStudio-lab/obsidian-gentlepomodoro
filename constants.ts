@@ -1,4 +1,5 @@
 import type { GentlePomoSettings } from "./types";
+import type { MusicResumeState } from "./youtubeMusic";
 
 // Central home for shared, static values so they aren't duplicated as magic strings/numbers.
 export const VIEW_TYPE_GENTLE_POMO = "gentle-pomo-view";
@@ -123,6 +124,12 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   goalNoticeEnabled: true,
   incrementPomodoroCountOnFinish: false,
   musicUrl: "",
+  musicUrl2: "",
+  musicUrl3: "",
+  musicName1: "",
+  musicName2: "",
+  musicName3: "",
+  musicStationIndex: 0,
   showMusicPlayer: true,
   musicVolume: 0.7,
   musicLoop: true,
@@ -130,6 +137,12 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastGoalHitDate: null,
   sessionsSinceLongBreak: 0,
   sessionCounterDate: null,
+  // Frozen: the shallow Object.assign in loadSettings copies this REFERENCE, so
+  // an in-place push here would corrupt the default for the life of the process
+  // (and leak between vitest cases that spread DEFAULT_SETTINGS). Freezing turns
+  // that silent corruption into an immediate TypeError. loadSettings always
+  // replaces it with a fresh array.
+  musicPositions: Object.freeze([]) as unknown as MusicResumeState[],
   lastMusicVideoId: null,
   lastMusicPlaylistId: null,
   lastMusicSeconds: 0,

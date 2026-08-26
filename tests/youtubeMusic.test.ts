@@ -19,6 +19,13 @@ import {
   musicPositionAppliesToUrl,
   MUSIC_RESUME_MIN_SECONDS,
   MUSIC_RESUME_END_MARGIN_SECONDS,
+  MUSIC_STATION_LIMIT,
+  resolveStationIndex,
+  stationLabel,
+  findPositionForUrl,
+  retainPositionsForUrls,
+  normalizeMusicPositions,
+  stationsAreSettled,
   type MusicTarget,
   type MusicResumeState,
 } from "../youtubeMusic";
@@ -719,5 +726,199 @@ describe("planResume", () => {
       saved({ seconds: -20 }),
     ];
     for (const state of bad) expect(planResume(video, state, URL_A).seekSeconds).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stations (0.5.7): up to three saved links the user picks between.
+// ---------------------------------------------------------------------------
+
+const URL_C = `https://www.youtube.com/watch?v=${OTHER_ID}`;
+
+const positionFor = (url: string | null, seconds = 120): MusicResumeState => ({
+  videoId: ID,
+  playlistId: null,
+  seconds,
+  url,
+});
+
+describe("resolveStationIndex", () => {
+  it("keeps a valid index whose slot holds a link", () => {
+    expect(resolveStationIndex([URL_A, URL_B, URL_C], 1)).toBe(1);
+    expect(resolveStationIndex([URL_A, URL_B, URL_C], 2)).toBe(2);
+  });
+
+  it("falls back to the first filled slot when the selected one is empty", () => {
+    // The user cleared the slot they were listening to.
+    expect(resolveStationIndex(["", URL_B, ""], 0)).toBe(1);
+    expect(resolveStationIndex([URL_A, "", ""], 2)).toBe(0);
+  });
+
+  it("treats a whitespace-only slot as empty", () => {
+    expect(resolveStationIndex(["   ", URL_B, ""], 0)).toBe(1);
+  });
+
+  it("returns 0 when every slot is empty, so nothing is embedded", () => {
+    expect(resolveStationIndex(["", "", ""], 2)).toBe(0);
+  });
+
+  it("survives a hand-edited or corrupt index", () => {
+    // data.json is user-editable; none of these may throw or return junk.
+    for (const bad of [-1, 3, 99, 1.5, NaN, Infinity]) {
+      expect(resolveStationIndex([URL_A, URL_B, ""], bad)).toBe(0);
+    }
+  });
+});
+
+describe("stationLabel", () => {
+  it("uses the name when given", () => {
+    expect(stationLabel("Lofi", 0)).toBe("Lofi");
+  });
+
+  it("falls back to the slot number so a button is never blank", () => {
+    expect(stationLabel("", 0)).toBe("1");
+    expect(stationLabel("   ", 1)).toBe("2");
+    expect(stationLabel("", 2)).toBe("3");
+  });
+});
+
+describe("findPositionForUrl", () => {
+  it("finds the entry stamped with that link", () => {
+    const positions = [positionFor(URL_A, 30), positionFor(URL_B, 90)];
+    expect(findPositionForUrl(positions, URL_B)?.seconds).toBe(90);
+  });
+
+  it("returns null when no entry belongs to the link", () => {
+    expect(findPositionForUrl([positionFor(URL_A)], URL_C)).toBeNull();
+  });
+
+  it("ignores an unstamped (pre-0.5.6) entry", () => {
+    expect(findPositionForUrl([positionFor(null)], URL_A)).toBeNull();
+  });
+
+  it("tolerates surrounding whitespace, since data.json is hand-editable", () => {
+    expect(findPositionForUrl([positionFor(` ${URL_A} `)], URL_A)).not.toBeNull();
+  });
+});
+
+describe("retainPositionsForUrls", () => {
+  it("keeps positions whose link is still in a slot", () => {
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    expect(retainPositionsForUrls(positions, [URL_A, URL_B, ""])).toHaveLength(2);
+  });
+
+  it("drops a position whose link was edited away", () => {
+    const kept = retainPositionsForUrls([positionFor(URL_A), positionFor(URL_B)], [URL_A, "", ""]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.url).toBe(URL_A);
+  });
+
+  it("keeps everything when the user merely SWITCHES station", () => {
+    // The whole point of the picker: switching changes which slot is active,
+    // not which links exist, so no position may be retired.
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    expect(retainPositionsForUrls(positions, [URL_A, URL_B, URL_C])).toEqual(positions);
+  });
+
+  it("follows a link that moved to a different slot", () => {
+    // A position belongs to a URL, not to a slot number.
+    const kept = retainPositionsForUrls([positionFor(URL_B)], ["", "", URL_B]);
+    expect(kept).toHaveLength(1);
+  });
+
+  it("drops everything when all slots are cleared", () => {
+    expect(retainPositionsForUrls([positionFor(URL_A)], ["", "", ""])).toEqual([]);
+  });
+
+  it("retires an unstamped pre-0.5.6 position once", () => {
+    expect(retainPositionsForUrls([positionFor(null)], [URL_A, "", ""])).toEqual([]);
+  });
+
+  it("does not mutate its input", () => {
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    retainPositionsForUrls(positions, ["", "", ""]);
+    expect(positions).toHaveLength(2);
+  });
+
+  it("is idempotent", () => {
+    const once = retainPositionsForUrls([positionFor(URL_A), positionFor(URL_B)], [URL_A, "", ""]);
+    expect(retainPositionsForUrls(once, [URL_A, "", ""])).toEqual(once);
+  });
+});
+
+describe("normalizeMusicPositions", () => {
+  it("returns an empty list for anything that is not an array", () => {
+    for (const bad of [null, undefined, 42, "x", {}]) {
+      expect(normalizeMusicPositions(bad, MUSIC_STATION_LIMIT)).toEqual([]);
+    }
+  });
+
+  it("keeps well-formed entries", () => {
+    const raw = [positionFor(URL_A, 30)];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([
+      { videoId: ID, playlistId: null, seconds: 30, url: URL_A },
+    ]);
+  });
+
+  it("drops entries with no usable URL stamp", () => {
+    const raw = [positionFor(null), positionFor(""), positionFor("   "), { seconds: 5 }];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("drops entries with a non-finite or negative time", () => {
+    const raw = [
+      { videoId: ID, playlistId: null, seconds: NaN, url: URL_A },
+      { videoId: ID, playlistId: null, seconds: -5, url: URL_B },
+      { videoId: ID, playlistId: null, seconds: "90", url: URL_C },
+    ];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("drops non-object junk without throwing", () => {
+    expect(normalizeMusicPositions([null, 7, "x", undefined], MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("keeps only the first entry for a duplicated link", () => {
+    // Two stamps for one URL would make findPositionForUrl order-dependent, and
+    // recordMusicPosition would update one copy while the other shadowed it.
+    const raw = [positionFor(URL_A, 30), positionFor(URL_A, 90)];
+    const out = normalizeMusicPositions(raw, MUSIC_STATION_LIMIT);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.seconds).toBe(30);
+  });
+
+  it("caps the list at the station limit", () => {
+    const raw = [
+      positionFor(URL_A),
+      positionFor(URL_B),
+      positionFor(URL_C),
+      positionFor("https://youtu.be/aaaaaaaaaaa"),
+    ];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toHaveLength(MUSIC_STATION_LIMIT);
+  });
+
+  it("does not require the URL to be parseable or still configured", () => {
+    // Retiring is retainPositionsForUrls' job; doing it here would erase a
+    // position while the user is still typing the link it belongs to.
+    expect(normalizeMusicPositions([positionFor("not a url")], MUSIC_STATION_LIMIT)).toHaveLength(
+      1
+    );
+  });
+});
+
+describe("stationsAreSettled", () => {
+  it("is true when every slot is empty or parseable", () => {
+    expect(stationsAreSettled(["", "", ""])).toBe(true);
+    expect(stationsAreSettled([URL_A, "", URL_C])).toBe(true);
+  });
+
+  it("is false while a slot holds a half-typed link", () => {
+    // The pre-1.13 settings path commits on every keystroke, so this is what
+    // stops an immediate, destructive retire mid-edit.
+    expect(stationsAreSettled([URL_A, "https://www.youtu", ""])).toBe(false);
+  });
+
+  it("treats a whitespace-only slot as an emptied one", () => {
+    expect(stationsAreSettled(["   ", URL_A, ""])).toBe(true);
   });
 });

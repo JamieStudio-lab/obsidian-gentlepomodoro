@@ -1382,6 +1382,31 @@
   width: 100%;
 }
 
+/* Station picker. Reuses the segmented control (Low/Mid/High volume) so the
+   panel keeps one vocabulary for "pick one of these". Centred on its own row
+   above the transport, and hidden entirely when fewer than two links are
+   configured — a single-link setup then looks exactly as it did before. */
+.gp-station-row {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.gp-station-picker {
+  max-width: 100%;
+}
+
+/* Names are user-typed and a narrow sidebar is unforgiving: cap each button and
+   ellipsize rather than letting one long name push the others off the row. The
+   full link is always available as the button's tooltip. */
+.gp-station-btn {
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Decorative row glyph so the row reads as "music", not more timer buttons. */
 .gp-music-row-icon {
   display: flex;

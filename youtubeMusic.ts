@@ -348,6 +348,132 @@ export function planResume(
   return { target: { ...target, videoId }, seekSeconds };
 }
 
+/* =========================================================================
+   Stations — up to three saved links the user picks between.
+
+   A "station" is nothing but a (slot index, url string) pair held in flat
+   settings fields. There is deliberately no station object and no station id:
+   every part of the music feature already keys off the URL *string* (the embed
+   key, the rebuild guards, the position stamp), and adding a second way to say
+   which station is which is how the earlier bugs in this feature happened —
+   two identities that can disagree. A remembered position therefore belongs to
+   a URL, not to a slot, so it follows its link if the user moves it.
+   ========================================================================= */
+
+// Fixed number of station slots. Slots are positional and never spliced.
+export const MUSIC_STATION_LIMIT = 3;
+
+/**
+ * Which slot actually plays. The stored index is a preference, not a promise:
+ * data.json is hand-editable, a slot can be cleared while it is selected, and
+ * an upgrade can leave the index pointing at a slot that never had a URL.
+ * Resolve it rather than trusting it — fall back to the first slot that holds
+ * a link, then to 0 (which yields no player at all when every slot is empty).
+ *
+ * Total, allocation-free and never throws: this runs on the ~20Hz tick path.
+ */
+export function resolveStationIndex(urls: readonly string[], requested: number): number {
+  if (Number.isInteger(requested) && requested >= 0 && requested < urls.length) {
+    if ((urls[requested] ?? "").trim() !== "") return requested;
+  }
+  for (let i = 0; i < urls.length; i++) {
+    if ((urls[i] ?? "").trim() !== "") return i;
+  }
+  return 0;
+}
+
+/**
+ * The label shown on a station button. A name is optional, so a blank one falls
+ * back to the slot number — the buttons must never render empty. Display only:
+ * this string must never reach an embed key or a stored position, or renaming a
+ * station would restart its music.
+ */
+export function stationLabel(name: string, index: number): string {
+  const trimmed = name.trim();
+  return trimmed === "" ? String(index + 1) : trimmed;
+}
+
+/**
+ * The remembered position for a URL, or null. Delegates the comparison to
+ * musicPositionAppliesToUrl so the trim tolerance and the "an unstamped
+ * (pre-0.5.6) entry matches nothing" rule are inherited, not re-implemented.
+ */
+export function findPositionForUrl(
+  positions: readonly MusicResumeState[],
+  url: string
+): MusicResumeState | null {
+  for (const position of positions) {
+    if (musicPositionAppliesToUrl(position.url, url)) return position;
+  }
+  return null;
+}
+
+/**
+ * Drop positions no station holds any more. This is the whole retire rule:
+ * editing a slot's URL and clearing a slot are the same operation to it, so
+ * neither needs a code path of its own, and switching stations is not a change
+ * at all — every slot's URL is still present, so nothing is dropped.
+ *
+ * Returns a fresh array (never mutates), and is idempotent. Entries with no URL
+ * stamp match nothing and are therefore retired, which is the existing
+ * "a pre-0.5.6 position is forgotten once" rule falling out for free.
+ */
+export function retainPositionsForUrls(
+  positions: readonly MusicResumeState[],
+  urls: readonly string[]
+): MusicResumeState[] {
+  return positions.filter((position) =>
+    urls.some((url) => url.trim() !== "" && musicPositionAppliesToUrl(position.url, url))
+  );
+}
+
+/**
+ * Coerce whatever data.json holds into a usable position list: it is
+ * hand-editable, survives across versions, and arrives through a `Partial<>`
+ * cast that the type system cannot actually vouch for.
+ *
+ * Drops entries that are not objects, carry no usable URL stamp, or have a
+ * non-finite `seconds`; caps the list at `limit`. Deliberately does NOT check
+ * whether a URL is still configured or even parseable — that is
+ * retainPositionsForUrls' job, and doing it here would erase a position while
+ * the user is still typing the URL it belongs to.
+ */
+export function normalizeMusicPositions(raw: unknown, limit: number): MusicResumeState[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MusicResumeState[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const fields = entry as Record<string, unknown>;
+    const url = typeof fields.url === "string" ? fields.url : null;
+    if (url === null || url.trim() === "") continue;
+    const seconds = typeof fields.seconds === "number" ? fields.seconds : NaN;
+    if (!Number.isFinite(seconds) || seconds < 0) continue;
+    const videoId = typeof fields.videoId === "string" ? fields.videoId : null;
+    const playlistId = typeof fields.playlistId === "string" ? fields.playlistId : null;
+    // One entry per URL: a duplicated stamp would make findPositionForUrl's
+    // answer depend on array order, and recordMusicPosition would update one
+    // copy while the other kept shadowing it.
+    if (out.some((kept) => musicPositionAppliesToUrl(kept.url, url))) continue;
+    out.push({ videoId, playlistId, seconds, url });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Whether the station URLs are in a state worth acting on destructively. Every
+ * slot must be either empty (a real decision — the user cleared it) or
+ * parseable.
+ *
+ * This exists because the pre-1.13 settings path commits on every keystroke, so
+ * a URL being typed arrives one character at a time. Retiring positions against
+ * a half-typed string would throw away a position the user is about to keep.
+ * Generalized from the single-URL rule that shipped in 0.5.6.
+ */
+export function stationsAreSettled(urls: readonly string[]): boolean {
+  return urls.every((url) => url.trim() === "" || parseYouTubeUrl(url) !== null);
+}
+
 // Commands the plugin sends. Same names as the documented IFrame API funcs.
 // seekTo takes [seconds, allowSeekAhead].
 export type PlayerCommandFunc = "playVideo" | "pauseVideo" | "stopVideo" | "setVolume" | "seekTo";

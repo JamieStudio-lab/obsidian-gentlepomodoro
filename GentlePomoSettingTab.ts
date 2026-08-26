@@ -12,7 +12,13 @@ type SettingsKey = keyof GentlePomoSettings;
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
 const MUSIC_RESUME_DESC =
-  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the URL above — to start from the top next time. Live streams always start live.";
+  "Reopen each link where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the link — to start that one from the top next time. Live streams always start live.";
+const MUSIC_URL_DESC =
+  "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown. A playlist is the easiest way to line up several tracks under one link.";
+const MUSIC_URL_EXTRA_DESC =
+  "Optional. Fill this in to switch between links from the timer panel; leave it empty and the slot is unused.";
+const MUSIC_NAME_DESC =
+  "Optional short name for this link's button in the timer panel, e.g. Lofi or Rain. Leave empty to use the number.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -103,14 +109,49 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         heading: "Music",
         items: [
           {
-            name: "YouTube music URL",
-            desc: "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown.",
+            name: "Music link 1",
+            desc: MUSIC_URL_DESC,
             control: {
               type: "text",
               key: "musicUrl",
               placeholder: "Paste a YouTube link",
               validate: (value) => validateMusicUrl(String(value ?? "")),
             },
+          },
+          {
+            name: "Name for link 1",
+            desc: MUSIC_NAME_DESC,
+            control: { type: "text", key: "musicName1", placeholder: "Lofi" },
+          },
+          {
+            name: "Music link 2",
+            desc: MUSIC_URL_EXTRA_DESC,
+            control: {
+              type: "text",
+              key: "musicUrl2",
+              placeholder: "Paste a YouTube link",
+              validate: (value) => validateMusicUrl(String(value ?? "")),
+            },
+          },
+          {
+            name: "Name for link 2",
+            desc: MUSIC_NAME_DESC,
+            control: { type: "text", key: "musicName2", placeholder: "Rain" },
+          },
+          {
+            name: "Music link 3",
+            desc: MUSIC_URL_EXTRA_DESC,
+            control: {
+              type: "text",
+              key: "musicUrl3",
+              placeholder: "Paste a YouTube link",
+              validate: (value) => validateMusicUrl(String(value ?? "")),
+            },
+          },
+          {
+            name: "Name for link 3",
+            desc: MUSIC_NAME_DESC,
+            control: { type: "text", key: "musicName3", placeholder: "Piano" },
           },
           {
             name: "Show music player",
@@ -281,10 +322,40 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
+      // Station links. Invalid URLs never reach here on 1.13+ — the control's
+      // validate hook rejects them inline. The view rebuilds its iframe via
+      // applySettings, and its station sweep retires any position the edited
+      // link owned. Written out per case rather than as settings[key] because a
+      // switch on a widened key does not narrow the index type.
       case "musicUrl":
-        // Invalid URLs never reach here on 1.13+ — the control's validate hook
-        // rejects them inline. The view rebuilds its iframe via applySettings.
         settings.musicUrl = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicUrl2":
+        settings.musicUrl2 = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicUrl3":
+        settings.musicUrl3 = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      // Station names are display only — never part of the embed key, so
+      // renaming relabels the button without touching playback.
+      case "musicName1":
+        settings.musicName1 = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicName2":
+        settings.musicName2 = String(value).trim();
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicName3":
+        settings.musicName3 = String(value).trim();
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
@@ -304,12 +375,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       case "musicResume":
         settings.musicResume = Boolean(value);
-        // Turning it off drops the remembered position. clearMusicPosition
-        // saves too, but only when there was something to clear — so the save
-        // has to happen here unconditionally, or switching this off with no
-        // position stored (a fresh install, or any time after ⏹) would live in
-        // memory only and come back on at the next restart.
-        if (!settings.musicResume) this.plugin.clearMusicPosition();
+        // Turning it off drops every station's remembered position.
+        // clearAllMusicPositions saves too, but only when there was something to
+        // clear — so the save has to happen here unconditionally, or switching
+        // this off with no position stored (a fresh install, or any time after
+        // ⏹) would live in memory only and come back on at the next restart.
+        if (!settings.musicResume) this.plugin.clearAllMusicPositions();
         await this.plugin.saveSettings();
         return;
       case "theme":
@@ -431,23 +502,75 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Music").setHeading();
 
-    new Setting(containerEl)
-      .setName("YouTube music URL")
-      .setDesc(
-        "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("Paste a YouTube link")
-          .setValue(this.plugin.settings.musicUrl)
-          .onChange(async (value) => {
-            // No validate hook pre-1.13 — an unparsable URL simply hides the
-            // music section view-side (parseYouTubeUrl returns null).
-            this.plugin.settings.musicUrl = value.trim();
-            await this.plugin.saveSettings();
-            applySettingsToOpenViews();
-          })
-      );
+    // Three link slots + their names. Mirrors the declarative path above; keep
+    // the two in sync. No validate hook pre-1.13 — an unparsable URL simply
+    // hides the music section view-side (parseYouTubeUrl returns null), and the
+    // view's station sweep refuses to retire positions while a slot is mid-edit.
+    const musicSlots: {
+      name: string;
+      desc: string;
+      placeholder: string;
+      get: () => string;
+      set: (value: string) => void;
+    }[] = [
+      {
+        name: "Music link 1",
+        desc: MUSIC_URL_DESC,
+        placeholder: "Paste a YouTube link",
+        get: () => this.plugin.settings.musicUrl,
+        set: (value) => (this.plugin.settings.musicUrl = value),
+      },
+      {
+        name: "Name for link 1",
+        desc: MUSIC_NAME_DESC,
+        placeholder: "Lofi",
+        get: () => this.plugin.settings.musicName1,
+        set: (value) => (this.plugin.settings.musicName1 = value),
+      },
+      {
+        name: "Music link 2",
+        desc: MUSIC_URL_EXTRA_DESC,
+        placeholder: "Paste a YouTube link",
+        get: () => this.plugin.settings.musicUrl2,
+        set: (value) => (this.plugin.settings.musicUrl2 = value),
+      },
+      {
+        name: "Name for link 2",
+        desc: MUSIC_NAME_DESC,
+        placeholder: "Rain",
+        get: () => this.plugin.settings.musicName2,
+        set: (value) => (this.plugin.settings.musicName2 = value),
+      },
+      {
+        name: "Music link 3",
+        desc: MUSIC_URL_EXTRA_DESC,
+        placeholder: "Paste a YouTube link",
+        get: () => this.plugin.settings.musicUrl3,
+        set: (value) => (this.plugin.settings.musicUrl3 = value),
+      },
+      {
+        name: "Name for link 3",
+        desc: MUSIC_NAME_DESC,
+        placeholder: "Piano",
+        get: () => this.plugin.settings.musicName3,
+        set: (value) => (this.plugin.settings.musicName3 = value),
+      },
+    ];
+    for (const slot of musicSlots) {
+      new Setting(containerEl)
+        .setName(slot.name)
+        .setDesc(slot.desc)
+        .addText((text) =>
+          text
+            .setPlaceholder(slot.placeholder)
+            .setValue(slot.get())
+            .onChange(async (value) => {
+              slot.set(value.trim());
+              await this.plugin.saveSettings();
+              applySettingsToOpenViews();
+            })
+        );
+    }
 
     new Setting(containerEl)
       .setName("Show music player")
@@ -479,10 +602,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.musicResume).onChange(async (value) => {
           this.plugin.settings.musicResume = value;
-          // Turning it off drops the remembered position. The save is
-          // unconditional because clearMusicPosition only saves when there was
-          // something to clear — see the declarative path for the full note.
-          if (!value) this.plugin.clearMusicPosition();
+          // Turning it off drops every station's remembered position. The save
+          // is unconditional because clearAllMusicPositions only saves when
+          // there was something to clear — see the declarative path's note.
+          if (!value) this.plugin.clearAllMusicPositions();
           await this.plugin.saveSettings();
         })
       );

@@ -4,11 +4,21 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.7] — 2026-08-26
+
+### Added
+
+- **Up to three music links, switchable from the timer panel.** Settings now has three link slots instead of one, each with an optional short name ("Lofi", "Rain"). Fill in a second or third and a small row of name buttons appears above the play controls, so you can change what's playing without opening settings. Leave the extra slots empty and everything looks and behaves exactly as before. Your existing link becomes the first slot automatically — nothing to set up, and nothing is lost.
+  - **Each link remembers its own place.** Play one for a while, switch to another, come back, and the first picks up where you left it. Previously there was a single remembered spot shared by whatever link was configured. (Live streams have no "place" to return to, so those still always start live.)
+  - **Tapping a name only selects it — music never starts by itself.** Because switching reloads the player, the audio stops when you switch; press ▶️ to start the new one. This is deliberate: nothing in the panel should ever produce sound you did not ask for.
+  - **Renaming a link doesn't interrupt anything**, and neither does editing a link you are not currently listening to.
+  - Clearing a slot's text removes that link, and forgets the place it had remembered.
 
 ### Notes
 
 - **Audited, no change: the hidden music player and YouTube playback quality.** The plugin never asks YouTube for a playback quality, and that is deliberate — the embed API's quality setters have been no-ops for years (YouTube picks automatically from player size and bandwidth, so the invisible 1×1 player gets the lowest video rendition), and it makes no audible difference: YouTube serves the same audio stream whether the video is 144p or 1080p. Forcing the hidden player to 1080p would only spend bandwidth and CPU on pixels nobody sees.
+- A place remembered by 0.5.6 or earlier is carried over to whichever slot holds that link. If it had no record of which link it belonged to (from before 0.5.6), it is forgotten once, as it was already.
+- The music player remains unavailable on iPhone and iPad — see 0.5.6. Adding more links does not change that; no link works there.
 
 ## [0.5.6] — 2026-08-16
 
