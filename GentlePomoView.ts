@@ -20,13 +20,20 @@ import {
   MUSIC_FADE_ARM_TIMEOUT_MS,
   MUSIC_FADE_HOLD_MAX_MS,
   MUSIC_ENDED_NOTICE_DELAY_MS,
+  MUSIC_ADVANCE_NOTICE_GRACE_MS,
+  CAPTION_NAME_FADE_MS,
   MUSIC_STALL_NOTICE_DELAY_MS,
   MUSIC_STALL_RENOTIFY_MS,
   RESUME_SEEK_LANDING_TOLERANCE_S,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
-import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
+import {
+  buildDayNightIcon,
+  buildMusicIcon,
+  DAY_NIGHT_ICON_ORDER,
+  type DayNightIcon,
+} from "./icons";
 import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
 import {
@@ -43,7 +50,13 @@ import {
   buildVolumeRamp,
   buildFadeRamp,
   isResumablePosition,
+  visibleNameText,
+  musicPositionAppliesToUrl,
   planResume,
+  MUSIC_STATION_LIMIT,
+  resolveStationIndex,
+  buildStationList,
+  nextStationIndex,
   type ResumePlan,
 } from "./youtubeMusic";
 
@@ -125,6 +138,8 @@ export class GentlePomoView extends ItemView {
   // simply sitting at the user's volume" marker.
   private musicRampInterval: number | null = null;
   private duckRestoreTimeout: number | null = null;
+  /** When an in-flight duck is owed until, so a skip's fade can restore it. */
+  private duckHoldUntilMs: number | null = null;
   private musicFadeArmTimeout: number | null = null; // "playback never started" backstop
   private musicRampLevel: number | null = null;
   // Fade phase. "armed" = ▶️ pressed and the volume parked at 0, waiting for
@@ -152,6 +167,49 @@ export class GentlePomoView extends ItemView {
   private lastMusicEmbedUrl: string | null = null;
   private lastMusicSourceUrl: string | null = null;
   private lastAppliedMusicVolume: number | null = null;
+  // The station picker's own repaint guard, deliberately separate from
+  // lastMusicKey: names and inactive slots change what the buttons say without
+  // changing what plays, and folding them into the embed key would reload the
+  // player on a rename. Newline-delimited because names and URLs are free-form
+  // and a printable separator could be typed into one, making two different
+  // configurations compare equal — and a missed change here is a stale picker.
+  private lastStationUiKey: string | null = null;
+  private stationCaption: HTMLDivElement | null = null;
+  private stationCaptionName: HTMLSpanElement | null = null;
+  private stationCaptionTrack: HTMLSpanElement | null = null;
+  /** Title of the item the embed is actually on; only shown for a playlist. */
+  private musicCurrentVideoTitle: string | null = null;
+  private lastStationCaptionKey: string | null = null;
+  private stationCaptionFullText = "";
+  private nameSwapTimeout: number | null = null;
+  /** What the transport is currently showing; the caption's wording follows it. */
+  private musicShowingAsPlaying = false;
+  private stationName = "";
+  private stationListContainer: HTMLDivElement | null = null;
+  private stationListBtn: HTMLButtonElement | null = null;
+  private nextStationBtn: HTMLButtonElement | null = null;
+  private nextVideoBtn: HTMLButtonElement | null = null;
+  private musicVideoRow: HTMLDivElement | null = null;
+  // When ⏩ last asked the playlist to advance. Only used to hold the
+  // "the music ended" notice, which is wrong in answer to that button.
+  private musicAdvanceRequestedAt: number | null = null;
+  // The station URL a ⏭ press asked to keep playing, or null. Stores the URL
+  // rather than a boolean so a flag that outlives its rebuild can never fire on
+  // an unrelated one — the stranded-auto-play hazard 0.5.7 rejected switching
+  // auto-play over. Lives on the VIEW, never in settings: switching writes a
+  // shared setting and every open panel rebuilds, so a persisted flag would
+  // have every panel start playing at once.
+  private autoPlayOnReady: string | null = null;
+  // Bumped by fadeMusicOut alone. nextMusicStation arms the hand-off only AFTER
+  // awaiting the settings write, so without this a ⏸/⏹ landing inside that await
+  // has nothing to cancel — the rebuild then erases every other trace of the
+  // press and the new station plays anyway. Deliberately NOT bumped in
+  // destroyMusicIframe: teardown runs *inside* that same await, so it would
+  // mismatch on every press and the hand-off would never fire at all.
+  private musicHandOffToken = 0;
+  private stationRows: HTMLDivElement[] = [];
+  private stationRowLabels: HTMLElement[] = [];
+  private stationListVisible = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -181,9 +239,16 @@ export class GentlePomoView extends ItemView {
     // here: Obsidian's mobile webview doesn't expose reliable @media for this leaf.
     // ResizeObserver catches the leaf resize; the window "resize" listener is a
     // belt-and-suspenders catch for rotation. See updateCompactClass + styles.css.
-    this.resizeObserver = new ResizeObserver(() => this.updateCompactClass());
+    this.resizeObserver = new ResizeObserver(() => {
+      this.updateCompactClass();
+      // Whether the caption is cut depends on the panel's width, not its text.
+      this.updateCaptionTooltip();
+    });
     this.resizeObserver.observe(container);
-    this.registerDomEvent(window, "resize", () => this.updateCompactClass());
+    this.registerDomEvent(window, "resize", () => {
+      this.updateCompactClass();
+      this.updateCaptionTooltip();
+    });
 
     // --- Timer Visual Area ---
     const visual = container.createDiv("gp-timer-visual");
@@ -342,6 +407,7 @@ export class GentlePomoView extends ItemView {
     this.registerDomEvent(this.taskBtn, "click", () => {
       this.taskListVisible = !this.taskListVisible;
       if (this.taskListVisible) {
+        this.setStationListVisible(false);
         this.taskListContainer.addClass("gp-visible");
         void this.loadTasks();
       } else {
@@ -363,12 +429,45 @@ export class GentlePomoView extends ItemView {
     // iframe itself is (re)built in applySettings(), which reconciles the
     // showMusicPlayer/musicUrl settings against the DOM.
     this.musicSection = controls.createDiv("gp-music-section");
+
+    // What is playing, as one quiet line above the transport. Deliberately not
+    // a control: the list button below opens the picker, so making this
+    // clickable too would be a second, heavier affordance for the same thing.
+    this.stationCaption = this.musicSection.createDiv("gp-station-current");
+    // Both words exist at once and hand over in sequence (see the CSS): the
+    // arriving one's transition is delayed by the departing one's duration, so
+    // they never overlap, and no timer is involved. Width rides max-width with
+    // both words in flow, so the label is only ever as wide as what it says.
+    const captionLabel = this.stationCaption.createSpan("gp-station-current-label");
+    captionLabel.createSpan({ cls: "gp-station-label-idle", text: "Music" });
+    captionLabel.createSpan({ cls: "gp-station-label-playing", text: "Now playing" });
+    this.stationCaptionName = this.stationCaption.createSpan("gp-station-current-name");
+    this.stationCaptionTrack = this.stationCaption.createSpan("gp-station-current-track gp-hidden");
+    // The label's own width eases over --gp-caption-fade, so the measurement
+    // taken when the text changed read the BEFORE width. Re-measure when the
+    // width has actually settled. The transitions are on the child spans and
+    // bubble; under prefers-reduced-motion no event fires, which is right —
+    // with no transition the synchronous read already saw the final width.
+    this.registerDomEvent(this.stationCaption, "transitionend", (evt: TransitionEvent) => {
+      if (evt.propertyName !== "max-width") return;
+      this.updateCaptionTooltip();
+    });
+
     const musicRow = this.musicSection.createDiv("gp-controls-row");
 
-    // Decorative glyph so the row reads as the music row, not more timer buttons.
-    const musicGlyph = musicRow.createSpan("gp-music-row-icon");
-    setIcon(musicGlyph, "music");
-    musicGlyph.setAttribute("aria-hidden", "true");
+    // The only way to open the picker — the caption above is a label, not a
+    // control. Shown once there is a choice to make; with one link it would be
+    // a control that changes nothing.
+    this.stationListBtn = musicRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn gp-hidden",
+      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" },
+    });
+    this.stationListBtn.appendChild(buildMusicIcon("station-list"));
+    this.stationListBtn.setAttribute("aria-label", "Show music links");
+    this.registerDomEvent(this.stationListBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.toggleStationList();
+    });
 
     this.musicPlayBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn" });
     setIcon(this.musicPlayBtn, "play");
@@ -387,8 +486,7 @@ export class GentlePomoView extends ItemView {
       // playback does, so it isn't spent on the buffering gap before any audio.
       // (Or, if this press landed inside a fade-out, cancel that and ease back
       // up from where it got to — the player never stopped.)
-      this.armMusicFadeIn();
-      this.postToMusicPlayer(buildPlayerCommand("playVideo"));
+      this.startMusicPlayback();
     });
 
     this.musicPauseBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn gp-hidden" });
@@ -418,9 +516,14 @@ export class GentlePomoView extends ItemView {
       // because audio keeps running through the fade and those last reported
       // seconds must not bank a position the stop is about to drop.
       this.musicStopPending = true;
+      // Which station this Stop belongs to, frozen at click time. The clear
+      // below runs on the fade's landing ~450ms later, by which point the user
+      // may have switched stations — reading the active URL there would forget
+      // the incoming station's position instead of this one's.
+      const stopUrl = this.musicSourceUrl;
       this.fadeMusicOut(() => {
         this.postToMusicPlayer(buildPlayerCommand("stopVideo"));
-        this.plugin.clearMusicPosition();
+        this.plugin.clearMusicPosition(stopUrl);
         this.pendingResumeSeconds = null;
         // A seek posted but never landed would otherwise keep blocking
         // trackMusicPosition against an offset the restarted track has to climb
@@ -437,6 +540,124 @@ export class GentlePomoView extends ItemView {
         if (!this.isAudibleState(this.musicPlayerState)) this.musicStopPending = false;
       });
     });
+
+    // ⏭ next link. Hidden below two links, like the list button.
+    this.nextStationBtn = musicRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn gp-hidden",
+      attr: { type: "button" },
+    });
+    // The same glyph the timer's "Skip to next" button uses, deliberately: both
+    // mean "move on to the next one", and two near-identical hand-drawn
+    // variants of that idea in one panel read as a mistake.
+    setIcon(this.nextStationBtn, "skip-forward");
+    this.nextStationBtn.setAttribute("aria-label", "Next music link");
+    this.registerDomEvent(this.nextStationBtn, "click", (evt) => {
+      evt.preventDefault();
+      // Keep playing only if something is audibly playing right now — or if a
+      // previous press is still waiting for its player. Without the second
+      // clause, tapping through 1→2→3 to find a station ends in silence: press
+      // two sees a player that has not finished loading and reads it as stopped.
+      void this.nextMusicStation(this.isMusicPlayingForUser() || this.autoPlayOnReady !== null);
+    });
+
+    // Playlist transport, on its own row so the first one keeps its four
+    // controls at a comfortable size in a 260px column. The whole row animates
+    // in and out, since it only applies to a playlist.
+    this.musicVideoRow = this.musicSection.createDiv(
+      "gp-controls-row gp-music-video-row gp-hidden-animated"
+    );
+
+    const prevVideoBtn = this.musicVideoRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
+      attr: { type: "button" },
+    });
+    // The same artwork as ⏩, mirrored in CSS rather than drawn again: a
+    // reflection preserves stroke length, so the pair cannot drift in weight.
+    const prevIcon = buildMusicIcon("next-video");
+    prevIcon.addClass("gp-icon-flip-x");
+    prevVideoBtn.appendChild(prevIcon);
+    prevVideoBtn.setAttribute("aria-label", "Previous video in playlist");
+    this.registerDomEvent(prevVideoBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.stepPlaylist("previousVideo");
+    });
+
+    this.nextVideoBtn = this.musicVideoRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
+      attr: { type: "button" },
+    });
+    this.nextVideoBtn.appendChild(buildMusicIcon("next-video"));
+    this.nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
+    this.registerDomEvent(this.nextVideoBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.stepPlaylist("nextVideo");
+    });
+
+    // The link list, below the button that opens it. Built once — every slot's
+    // row exists from the start and is only ever re-labelled or hidden, never
+    // re-created, because the pre-1.13 settings path commits on every keystroke
+    // and a rebuild-per-reconcile would leak a detached row (and its listener,
+    // which Component.registerDomEvent releases on unload rather than on
+    // removal) for every character typed into a URL.
+    //
+    // Selecting is all a row does: it never starts playback, so picking a
+    // station cannot surprise the user with sound. ⏭ is the one exception, and
+    // it carries its own explicit opt-in.
+    this.stationListContainer = this.musicSection.createDiv({
+      cls: "gp-task-list gp-station-list",
+      // `inert` is seeded HERE, not left to setStationListVisible. That method
+      // early-returns when the value is unchanged, and stationListVisible starts
+      // false — so a closing call is a no-op, and with two links and the player
+      // on, neither of its conditional call sites is reached at all. The closed
+      // list would keep its rows in the tab order until the user opened it once,
+      // i.e. the attribute armed only after the action it exists to guard.
+      // Seeded false-y the same way aria-expanded already is on the button.
+      attr: { role: "listbox", "aria-label": "Music links", inert: "" },
+    });
+    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
+      // A div, not a <button>, and that is the whole reason the rows look right:
+      // Obsidian's own button styling is more specific than a plain class reset,
+      // so a <button> here kept a filled background in dark mode and swallowed
+      // the hover. The task list is built from divs; matching it exactly is the
+      // only way the two lists cannot diverge. Keyboard operability is put back
+      // by hand below, which the task list itself still lacks.
+      const row = this.stationListContainer.createDiv({
+        cls: "gp-task-item gp-station-item gp-hidden",
+        attr: { role: "option", "aria-selected": "false", tabindex: "0" },
+      });
+      // Label and tick are separate children so relabelling never has to clear
+      // the row (setText on the row itself would drop the icon).
+      // Held rather than re-found: a querySelector result is typed Element, and
+      // `instanceof HTMLElement` is false in an Obsidian pop-out window, whose
+      // document is a different realm — the rows would render blank there, with
+      // nothing logged. (The repo's prefer-instanceof lint rule does not catch
+      // it: a union operand type defeats its check.)
+      this.stationRowLabels.push(row.createSpan("gp-station-item-label"));
+      setIcon(row.createDiv("gp-task-check-icon"), "check");
+      this.stationRows.push(row);
+      const choose = () => {
+        // Close first, synchronously. selectMusicStation awaits saveSettings and
+        // then fans out through applySettingsToOpenViews, which re-enters
+        // applySettings on this very view — closing afterwards would be racing
+        // a reconcile that has already repainted the row under this handler.
+        this.setStationListVisible(false);
+        // The row that was activated is now inside an inert container, so focus
+        // would be dropped to the document. Put it back on the control that
+        // opened the list.
+        this.stationListBtn?.focus();
+        void this.selectMusicStation(slot);
+      };
+      this.registerDomEvent(row, "click", (evt) => {
+        evt.preventDefault();
+        choose();
+      });
+      this.registerDomEvent(row, "keydown", (evt: KeyboardEvent) => {
+        if (evt.key !== "Enter" && evt.key !== " ") return;
+        // Space would scroll the panel out from under the list.
+        evt.preventDefault();
+        choose();
+      });
+    }
 
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
@@ -459,6 +680,15 @@ export class GentlePomoView extends ItemView {
         this.musicPlayerReady = true;
         // Apply the saved volume as soon as the player can take commands.
         this.postMusicVolume();
+        // Hand a ⏭ press over to the station it actually asked for. The stored
+        // URL is compared against the one THIS frame was built for, so a flag
+        // that somehow outlived its rebuild dies here instead of starting music
+        // the user never asked to hear.
+        const handOffTo = this.autoPlayOnReady;
+        this.autoPlayOnReady = null;
+        if (handOffTo !== null && handOffTo === this.musicSourceUrl) {
+          this.startMusicPlayback();
+        }
       } else if (msg.type === "error") {
         this.notifyMusicError(msg.code);
       } else if (msg.type === "state") {
@@ -467,6 +697,15 @@ export class GentlePomoView extends ItemView {
         // infoDelivery: merge whatever this message carried, position before
         // state so a transition into PAUSED flushes the freshest clock value.
         if (msg.videoId !== null) this.musicCurrentVideoId = msg.videoId;
+        if (msg.videoTitle !== null) {
+          // Assigned unconditionally, even when it reduces to nothing: guarding
+          // on "is it visible?" would leave the PREVIOUS item's title standing
+          // as the playlist advances, naming the wrong track — worse than no
+          // name. visibleNameText also collapses whitespace, keeping a
+          // network-sourced value out of the newline-delimited caption key.
+          this.musicCurrentVideoTitle = visibleNameText(msg.videoTitle);
+          this.renderStationCaption();
+        }
         if (msg.duration !== null) this.musicCurrentDuration = msg.duration;
         if (msg.currentTime !== null) this.trackMusicPosition(msg.currentTime);
         if (msg.state !== null) this.handleMusicState(msg.state);
@@ -617,6 +856,15 @@ export class GentlePomoView extends ItemView {
     // The iframe would die with the view DOM anyway, but explicit teardown
     // clears the pending handshake timeout and nulls the refs.
     this.destroyMusicIframe();
+    // After the teardown, not before: destroyMusicIframe drops the track title
+    // and re-renders the caption, which arms a fresh swap timer. Clearing first
+    // made this a no-op in exactly the case it was written for. Not moved into
+    // destroyMusicIframe itself — that also runs on a live station switch, where
+    // the pending swap is the animation we want.
+    if (this.nameSwapTimeout !== null) {
+      window.clearTimeout(this.nameSwapTimeout);
+      this.nameSwapTimeout = null;
+    }
     return Promise.resolve();
   }
 
@@ -665,13 +913,76 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.removeClass("gp-visible");
     }
 
+    // Station picker reconciliation. Separate from the embed reconcile below and
+    // running first, so an edit to ANY slot is retired before the plan for the
+    // active one is worked out. The embed key only moves when the *active* URL
+    // changes, so it would never notice a slot the user is not listening to.
+    const stationUrls = this.plugin.musicStationUrls();
+    const stationNames = [
+      this.plugin.settings.musicName1,
+      this.plugin.settings.musicName2,
+      this.plugin.settings.musicName3,
+    ];
+    const activeSlot = resolveStationIndex(stationUrls, this.plugin.settings.musicStationIndex);
+    const stationUiKey = [
+      this.plugin.settings.showMusicPlayer ? "1" : "0",
+      String(activeSlot),
+      ...stationUrls,
+      ...stationNames,
+    ].join("\n");
+    if (stationUiKey !== this.lastStationUiKey) {
+      this.lastStationUiKey = stationUiKey;
+      // Heals the selected slot and drops positions belonging to links no slot
+      // holds any more. Idempotent and write-free unless something actually
+      // changed, which is what makes it safe to call from every open view.
+      this.plugin.reconcileMusicStations();
+      const rows = buildStationList(stationUrls, stationNames, activeSlot);
+      // Rows are positional — row N is always slot N — so an empty slot keeps
+      // its (hidden) row rather than shifting the ones after it. buildStationList
+      // returns filled slots only, hence the lookup by slot rather than by index.
+      for (let slot = 0; slot < this.stationRows.length; slot++) {
+        const row = this.stationRows[slot];
+        if (!row) continue;
+        const entry = rows.find((candidate) => candidate.slot === slot) ?? null;
+        row.toggleClass("gp-hidden", entry === null);
+        row.toggleClass("gp-task-selected", entry?.active === true);
+        row.setAttribute("aria-selected", entry?.active === true ? "true" : "false");
+        this.stationRowLabels[slot]?.setText(entry?.label ?? "");
+        // The full link lives in the tooltip: a name is optional, and a URL is
+        // far too long to render in a narrow sidebar. Deliberately `title` and
+        // not `aria-label` — the latter REPLACES the accessible name, so a
+        // screen reader would announce a 60-character URL instead of the
+        // station's name.
+        if (entry === null) row.removeAttribute("title");
+        else row.setAttribute("title", entry.url);
+      }
+      const activeEntry = rows.find((candidate) => candidate.active) ?? null;
+      this.stationName = activeEntry?.label ?? "";
+      this.renderStationCaption();
+      // With one link there is nothing to switch between, so the shortcut button
+      // would be a control that changes nothing. The box above still names what
+      // is playing, which is the part that has to survive at any count.
+      const multi = rows.length > 1;
+      this.stationListBtn?.toggleClass("gp-hidden", !multi);
+      this.nextStationBtn?.toggleClass("gp-hidden", !multi);
+      // A list left open under a picker that just lost its choices would spring
+      // back open the next time the section is shown.
+      if (!multi) this.setStationListVisible(false);
+    }
+
     // Music player reconciliation. Runs here so the per-tick call and the settings
     // tab's applySettingsToOpenViews() converge on the same DOM. The lastMusicKey
     // string guard keeps the ~20Hz hot path to one concat + compare — the URL is
     // only parsed when the (toggle, loop, url) triple actually changes. Removing
     // the iframe is what stops playback, which implements "toggle off = hide + stop".
     // Loop is baked into the embed URL, so flipping it rebuilds the iframe too.
-    const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${this.plugin.settings.musicUrl}`;
+    // Only the ACTIVE station's URL is in this key. Names are display-only and
+    // the inactive slots do not affect playback, so neither may appear here —
+    // renaming a station or editing a slot you are not listening to must never
+    // reload the player. The station picker's own repaint is gated separately,
+    // by lastStationUiKey below.
+    const activeMusicUrl = this.plugin.activeMusicUrl();
+    const musicKey = `${this.plugin.settings.showMusicPlayer ? "1" : "0"}|${this.plugin.settings.musicLoop ? "1" : "0"}|${activeMusicUrl}`;
     if (musicKey !== this.lastMusicKey) {
       this.lastMusicKey = musicKey;
       // Parsed once per key change, and kept separate from the visibility
@@ -680,20 +991,14 @@ export class GentlePomoView extends ItemView {
       // below follow the toggle — every URL edit made while the player was
       // hidden kept its old position, so hiding the player quietly changed what
       // an edit meant.
-      const parsed = parseYouTubeUrl(this.plugin.settings.musicUrl);
+      const parsed = parseYouTubeUrl(activeMusicUrl);
       const target = this.plugin.settings.showMusicPlayer ? parsed : null;
-      // An edited URL retires the position recorded under the old one, before
-      // the plan is worked out so the edit is honoured on the very rebuild it
-      // triggers rather than one change later. Deliberately skipped while the
-      // setting holds an unparseable non-empty string: the pre-1.13 settings
-      // path commits on every keystroke, so a URL being typed or corrected
-      // arrives here one character at a time, and erasing is destructive and
-      // immediate — a half-typed string must not cost the user a position they
-      // are about to keep. An emptied field is a real decision, so it counts.
-      // Anything skipped here is still refused by planResume's own URL gate.
-      if (parsed !== null || this.plugin.settings.musicUrl.trim() === "") {
-        this.plugin.retireMusicPositionOnUrlChange();
-      }
+      // Retiring an edited link's position is NOT done here any more — it moved
+      // to the station block above, which sees every slot rather than only the
+      // active one, and which runs first so an edit is still honoured on the
+      // very rebuild it triggers. planResume's own URL check remains the last
+      // line of defence either way.
+      //
       // Work out the remembered position here, at build time — deliberately NOT
       // part of musicKey, since keying on a value that moves every second would
       // rebuild the iframe ~20×/sec. The offset is carried as a pending seek,
@@ -702,11 +1007,24 @@ export class GentlePomoView extends ItemView {
       // clearMusicPosition rides in the fade landing, and a rebuild inside that
       // window (flipping Loop, say) would otherwise snapshot the position the
       // stop is in the middle of forgetting and seed the new iframe with it.
+      //
+      // But the pending stop belongs to the OUTGOING station only — musicStopPending
+      // is set on the ⏹ click and not cleared until destroyMusicIframe (below) or
+      // the embed reports the halt, both of which run *after* this plan is worked
+      // out. A station switch inside that window therefore used to plan the
+      // INCOMING station against an empty store, opening it from the top and then
+      // overwriting the position it should have resumed. Scope the suppression to
+      // the station the stop is actually for; musicSourceUrl is that station,
+      // frozen at build time. (Trim-tolerant via the shared helper: data.json is
+      // hand-editable.) The window is longer than the fade — a stop landing on a
+      // still-running player keeps the flag up until the halt is reported.
+      const stopSuppressesResume =
+        this.musicStopPending && musicPositionAppliesToUrl(this.musicSourceUrl, activeMusicUrl);
       const plan = target
         ? planResume(
             target,
-            this.musicStopPending ? null : this.plugin.musicResumeState(),
-            this.plugin.settings.musicUrl
+            stopSuppressesResume ? null : this.plugin.musicResumeState(activeMusicUrl),
+            activeMusicUrl
           )
         : null;
       const embedUrl = plan ? buildEmbedUrl(plan.target, this.plugin.settings.musicLoop) : null;
@@ -719,16 +1037,50 @@ export class GentlePomoView extends ItemView {
       // same failure one step removed. Null when nothing is embedded, so a view
       // that has never had a player doesn't rebuild on its first tick. Bounded
       // by the musicKey guard, so it can only fire on a real edit.
-      const sourceUrl = embedUrl === null ? null : this.plugin.settings.musicUrl;
-      this.musicSectionVisible = embedUrl !== null;
+      const sourceUrl = embedUrl === null ? null : activeMusicUrl;
+      // Visible whenever a link is configured — deliberately NOT `embedUrl !==
+      // null`, which would hide the whole section, picker included, exactly when
+      // a station whose link does not parse needs switching away from.
+      // resolveStationIndex falls back to the first filled slot, so an empty
+      // active URL means every slot is empty; both inputs are therefore part of
+      // musicKey and this can never be left stale inside the guard.
+      this.musicSectionVisible =
+        this.plugin.settings.showMusicPlayer && activeMusicUrl.trim() !== "";
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
+      // ⏩ belongs to a real playlist only. Read from the PARSED URL's list=,
+      // never from the message stream: with Loop on, buildEmbedUrl gives a plain
+      // single video a `playlist=<its own id>` param (YouTube's quirk — loop
+      // needs one), so the embed then reports a one-item playlist and the button
+      // would appear on every looped video and merely restart the track. Sitting
+      // inside the musicKey guard is what keeps it fresh: both the URL and the
+      // loop flag are already in that key.
+      // gp-hidden-animated, not gp-hidden: display:none cannot animate, and this
+      // row is meant to ease in and out the way the session controls do.
+      this.musicVideoRow?.toggleClass("gp-hidden-animated", parsed?.playlistId == null);
+      // gp-hidden-animated collapses and fades but does NOT remove the row from
+      // the tab order, and pointer-events does not gate Enter on a focused
+      // button. Without this, Tab reaches two invisible controls that skip
+      // tracks or pop a Notice. (The old gp-hidden was display:none, which did.)
+      this.musicVideoRow?.toggleAttribute("inert", parsed?.playlistId == null);
+      // Same reason the task selector clears its own flag when hidden: a list
+      // left open behind a hidden section reappears with it.
+      if (!this.musicSectionVisible) this.setStationListVisible(false);
+      // Now that the section has a layout again, whatever was measured while it
+      // was hidden (and skipped) can finally be resolved.
+      else this.updateCaptionTooltip();
       if (embedUrl !== this.lastMusicEmbedUrl || sourceUrl !== this.lastMusicSourceUrl) {
         this.lastMusicEmbedUrl = embedUrl;
         this.lastMusicSourceUrl = sourceUrl;
         this.destroyMusicIframe();
-        if (embedUrl !== null && plan !== null) this.buildMusicIframe(embedUrl, plan);
+        if (embedUrl !== null && plan !== null) {
+          this.buildMusicIframe(embedUrl, plan, activeMusicUrl);
+        }
       }
     }
+    // Outside the station guard: the caption's wording follows playback, which
+    // changes without any settings key moving. Its own key keeps this to one
+    // concat and one compare on the ~20Hz path.
+    this.renderStationCaption();
     // The task-selector/music divider needs both neighbors visible. Outside the
     // musicKey guard because showTaskSelector can change independently of it.
     this.musicDivider?.toggleClass("gp-hidden", !showSelector || !this.musicSectionVisible);
@@ -769,19 +1121,317 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
+   * Pick a station. Selection only — it never posts a play command, so a tap can
+   * never produce sound the user did not ask for. Switching therefore reloads
+   * the player and lands silent; ▶️ starts it.
+   *
+   * No fade on the way out: a fade would have to carry "now actually switch" in
+   * a ramp completion callback, and cancelMusicRamps drops those — a duck, a ▶️
+   * press or another reconcile inside the fade window would leave the setting
+   * changed and the iframe not. Teardown is instant, so this cannot desync.
+   */
+  /**
+   * ⏩ / ⏪: ask the embed for the next or previous item of the playlist.
+   *
+   * Only while audio is actually running. From a cued or paused player these
+   * would load AND play the item — sound the user did not ask
+   * for, and with no fade behind it — so that case gets the same explanatory
+   * Notice a too-early ▶️ gets rather than a button that does nothing.
+   */
+  private stepPlaylist(direction: "nextVideo" | "previousVideo") {
+    if (this.musicFadePhase === "out" || this.musicStopPending) return;
+    if (!this.musicPlayerReady) {
+      new Notice(
+        "Gentle pomodoro: the music player hasn't loaded yet — wait a moment, or check your connection if you're offline."
+      );
+      return;
+    }
+    if (!this.isAudibleState(this.musicPlayerState)) {
+      new Notice("Gentle pomodoro: press ▶️ first — skipping tracks needs the music playing.");
+      return;
+    }
+    // Ride the same ramp ▶️/⏸/⏹ use: fade the outgoing track down, switch on the
+    // landing, and let the fade-in carry the new one up. Posting nextVideo bare
+    // cut one track dead and dropped the next in at full volume, which is the
+    // one thing this feature family exists to avoid.
+    //
+    // The transport keeps showing "playing" throughout — this is a skip, not a
+    // pause. And because the pending switch lives in the ramp's completion
+    // callback, a ⏸ or ⏹ landing inside the fade cancels the advance and wins,
+    // which is the behaviour that reads correctly.
+    this.fadeMusicOut(() => {
+      // Stamped here rather than at the click: this is the moment ENDED could
+      // fire, and the grace window should start from it.
+      this.musicAdvanceRequestedAt = Date.now();
+      // A seek posted for the OUTGOING item must not outlive it.
+      // trackMusicPosition ignores every clock reading below resumeSeekLanding,
+      // so leaving it armed means the new item records nothing until its clock
+      // climbs past the old item's offset — on a resumed long track, the rest
+      // of the session. Cleared on the landing, so an advance that a ⏸ cancels
+      // leaves the outgoing item's bookkeeping untouched.
+      this.pendingResumeSeconds = null;
+      this.resumeSeekLanding = null;
+      // musicCurrentDuration and musicCurrentVideoId are deliberately NOT
+      // cleared. duration rides only the fuller payloads that accompany a state
+      // change, and an advance that turns out to be a no-op produces no state
+      // change at all — so a nulled duration would never be restored, and
+      // isResumablePosition reads a null duration as "live stream" and stops
+      // recording for the rest of the track. The stream corrects both fields.
+      this.postToMusicPlayer(buildPlayerCommand(direction));
+      // Ease the new item up from the silence the fade-out left. The player was
+      // never halted, so armMusicFadeIn takes its "still running" branch and
+      // ramps straight up from musicRampLevel (0) — and that ramp holds itself
+      // while the new item buffers, so the rise is spent on audio rather than
+      // on the gap before it.
+      this.armMusicFadeIn();
+      // Hand the cue its dip back. fadeMusicOut cleared duckRestoreTimeout, which
+      // was the only thing holding it, so without this the music swells to full
+      // volume under a bell that is still ringing — fade trap 4, via a path that
+      // did not exist before skips started fading. musicFadePhase is "in" here,
+      // which is exactly the branch duckMusic is built to take over.
+      const owed = this.duckHoldUntilMs;
+      if (owed !== null && owed > Date.now()) this.duckMusic((owed - Date.now()) / 1000);
+    }, true);
+  }
+
+  /**
+   * Start playback the way ▶️ does: park the volume at silence and arm the
+   * fade, so it begins when audio does rather than being spent on the buffering
+   * gap. Shared with the ⏭ hand-off so the two can never drift apart.
+   */
+  private startMusicPlayback() {
+    this.armMusicFadeIn();
+    this.postToMusicPlayer(buildPlayerCommand("playVideo"));
+  }
+
+  /**
+   * Whether the user would say music is playing right now. Deliberately not
+   * shared with updateMusicButtons, which reads the incoming state and skips
+   * the readiness check.
+   *
+   * A running fade-out counts as NOT playing even though musicPlayerState is
+   * still PLAYING: setMusicButtonsPlaying deliberately does not advance that
+   * field, so the player is audible but on its way to a pause the user already
+   * asked for. Same for a pending ⏹.
+   */
+  private isMusicPlayingForUser(): boolean {
+    if (!this.musicPlayerReady) return false;
+    if (this.musicStopPending) return false;
+    // Read the transport, do not re-derive it. A fade-out is NOT by itself a
+    // pause any more: since ⏩/⏪ started fading, musicFadePhase === "out" covers
+    // a skip too, and treating that as stopped made ⏭ pressed inside a skip
+    // hand over nothing — the new station loaded silent while the panel still
+    // read "Now playing". The mirror was worse: a ⏸ landing nulls musicFadePhase
+    // while musicPlayerState is still PLAYING until the embed answers, so for
+    // that round trip the old predicate said "playing" with ▶️ already showing,
+    // and ⏭ would answer a pause with sound. musicShowingAsPlaying is set by
+    // setMusicButtonsPlaying, which ⏸/⏹ drive and a skip deliberately does not.
+    return this.musicShowingAsPlaying;
+  }
+
+  /**
+   * ⏭: move to the next slot holding a link, wrapping and stepping over empty
+   * ones. `continuePlayback` carries the music across the switch.
+   *
+   * Switching tears the iframe down, which is what stops the audio, so
+   * continuing means starting the NEW player once it is ready — never a fade
+   * across the gap. A fade would have to carry "now actually switch" in a ramp
+   * completion callback, and cancelMusicRamps drops those, so a duck or a ▶️
+   * inside the window would leave the setting changed and the iframe not.
+   */
+  private async nextMusicStation(continuePlayback: boolean): Promise<void> {
+    const urls = this.plugin.musicStationUrls();
+    // Step from the RESOLVED slot: the stored index is only a preference, and
+    // stepping from a stale one can land on the slot already playing, where
+    // selectMusicStation's "already selected" early return swallows the press.
+    const from = resolveStationIndex(urls, this.plugin.settings.musicStationIndex);
+    const to = nextStationIndex(urls, from);
+    if (to === from) return;
+    // Which frame was playing before the switch. Two slots may hold identical
+    // URLs, in which case the embed key never moves, nothing is torn down and
+    // the music never stopped — handing over there would drop it to silence and
+    // swell it back for no reason.
+    const framePlaying = this.musicIframe;
+    // saveSettings is a real file write; a ⏸ or ⏹ can land while it is out.
+    const handOffToken = this.musicHandOffToken;
+    await this.selectMusicStation(to);
+    if (!continuePlayback) return;
+    if (this.musicIframe === null || this.musicIframe === framePlaying) return;
+    // Pausing or stopping during the write cancels the hand-off, exactly as it
+    // does after one. Without this the press has nothing to cancel: the rebuild
+    // clears musicFadePhase and musicStopPending on its way through.
+    if (handOffToken !== this.musicHandOffToken) return;
+    this.autoPlayOnReady = this.musicSourceUrl;
+  }
+
+  /**
+   * Paint the "Now playing" line: the station's own name, plus the track the
+   * embed is actually on when the station is a playlist (a playlist moves
+   * between items under one unchanged link, so its name alone stops being an
+   * answer to "what is this?"). A plain video is its own track, so naming it
+   * twice would just be noise.
+   *
+   * Guarded by its own key because the title arrives on the ~4Hz info stream:
+   * without it this would rewrite the DOM several times a second.
+   */
+  private renderStationCaption() {
+    const track = this.musicTargetPlaylistId !== null ? (this.musicCurrentVideoTitle ?? "") : "";
+    // "Now playing" only while it is true. Picking a station does not start it,
+    // so the idle line names what ▶️ would play rather than claiming it already
+    // is. Read from the transport's own state rather than recomputed, so the
+    // wording and the ▶️/⏸ button can never disagree — and so it does not
+    // depend on the timer ticking (the engine is silent while no session runs,
+    // which is exactly when someone is most likely to be only playing music).
+    const playing = this.musicShowingAsPlaying;
+    const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
+    if (key === this.lastStationCaptionKey) return;
+    this.lastStationCaptionKey = key;
+    // The wording is two fixed words, so it hands over in pure CSS (see the
+    // label rules). The names are arbitrary strings, which cannot be
+    // pre-rendered that way — they dip out, change while invisible, and come
+    // back, which is the one place a timer earns its keep here.
+    this.stationCaption?.toggleClass("is-playing", playing);
+    this.stationCaptionFullText = [playing ? "Now playing" : "Music", this.stationName, track]
+      .filter((part) => part !== "")
+      .join("  |  ");
+    this.writeStationNames(this.stationName, track);
+    // Nothing to announce at all: no station selected.
+    this.stationCaption?.toggleClass("gp-hidden", this.stationName === "");
+  }
+
+  /**
+   * Put the station and track names on screen, dipping them out and back when
+   * they actually change so a switch or a playlist advance does not snap.
+   *
+   * Skipped — written straight through — on the first paint, when only the
+   * wording changed, and under prefers-reduced-motion, where a fade the user
+   * asked not to see would just make the text arrive late.
+   */
+  private writeStationNames(name: string, track: string) {
+    const nameEl = this.stationCaptionName;
+    const trackEl = this.stationCaptionTrack;
+    if (!nameEl || !trackEl) return;
+
+    const paint = () => {
+      nameEl.setText(name);
+      trackEl.setText(track);
+      trackEl.toggleClass("gp-hidden", track === "");
+      // After the text, never before: the tooltip decides on a measurement.
+      this.updateCaptionTooltip();
+    };
+
+    const changed = nameEl.textContent !== name || trackEl.textContent !== track;
+    const firstPaint = nameEl.textContent === "" && trackEl.textContent === "";
+    if (!changed || firstPaint || this.prefersReducedMotion()) {
+      if (this.nameSwapTimeout !== null) {
+        window.clearTimeout(this.nameSwapTimeout);
+        this.nameSwapTimeout = null;
+      }
+      this.stationCaption?.removeClass("is-swapping");
+      paint();
+      return;
+    }
+
+    // A second change landing mid-dip replaces the first: the names are already
+    // invisible, so it just repaints and rides the same rise back.
+    if (this.nameSwapTimeout !== null) window.clearTimeout(this.nameSwapTimeout);
+    this.stationCaption?.addClass("is-swapping");
+    this.nameSwapTimeout = window.setTimeout(() => {
+      this.nameSwapTimeout = null;
+      paint();
+      this.stationCaption?.removeClass("is-swapping");
+    }, CAPTION_NAME_FADE_MS);
+  }
+
+  /** Honour the OS motion setting for the timer-driven fades CSS cannot gate. */
+  private prefersReducedMotion(): boolean {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
+
+  /**
+   * Offer the whole line as a tooltip, but only while some of it is actually
+   * hidden. Both halves ellipsize independently, so either can be the one that
+   * is cut; a tooltip that merely repeats fully-visible text is noise.
+   *
+   * Measured rather than assumed because it depends on the panel's width, not
+   * on the text: the same name fits a wide sidebar and not a narrow one. Reads
+   * layout, so it is called only when the text changes (renderStationCaption is
+   * behind its own key), when the label's width transition lands, when the
+   * section is unhidden, or when the panel is resized — never per tick. Writing
+   * `title` cannot itself affect layout, so this is safe inside the
+   * ResizeObserver callback.
+   */
+  private updateCaptionTooltip() {
+    const caption = this.stationCaption;
+    if (!caption) return;
+    // Nothing is laid out: the section is hidden, or the panel is closed. A
+    // measurement here reads 0 for both widths and concludes "not cut", which
+    // would strip a tooltip that is needed — and for a plain video the caption
+    // key never moves again, so nothing would re-measure for the rest of the
+    // session. Leave whatever is there; the unhide re-measures.
+    if (caption.clientWidth === 0) return;
+    const cut = [this.stationCaptionName, this.stationCaptionTrack].some(
+      (el) => el !== null && !el.hasClass("gp-hidden") && el.scrollWidth > el.clientWidth + 1
+    );
+    if (cut) caption.setAttribute("title", this.stationCaptionFullText);
+    else caption.removeAttribute("title");
+  }
+
+  /**
+   * Open or close the station list. Mirrors the task selector's expander, and
+   * closes that one on the way — on mobile both lose their height cap and the
+   * task list sits above the music section, so leaving both open would push the
+   * thing just opened below the fold.
+   */
+  private setStationListVisible(visible: boolean) {
+    if (visible === this.stationListVisible) return;
+    this.stationListVisible = visible;
+    this.stationListContainer?.toggleClass("gp-visible", visible);
+    // The closed list is max-height:0, not display:none, so its rows stay
+    // focusable — Tab into one and Enter switches station, silencing whatever is
+    // playing from a control that is not on screen. (Predates the div rewrite:
+    // the buttons it replaced were equally reachable.)
+    this.stationListContainer?.toggleAttribute("inert", !visible);
+    this.stationListBtn?.setAttribute("aria-expanded", visible ? "true" : "false");
+    if (visible && this.taskListVisible) {
+      this.taskListVisible = false;
+      this.taskListContainer.removeClass("gp-visible");
+    }
+  }
+
+  private toggleStationList() {
+    this.setStationListVisible(!this.stationListVisible);
+  }
+
+  private async selectMusicStation(slot: number): Promise<void> {
+    const urls = this.plugin.musicStationUrls();
+    if ((urls[slot] ?? "").trim() === "") return; // empty slot: nothing to select
+    if (resolveStationIndex(urls, this.plugin.settings.musicStationIndex) === slot) return;
+    this.plugin.settings.musicStationIndex = slot;
+    await this.plugin.saveSettings();
+    // Every open panel converges on the new station through the same reconcile
+    // path a settings edit uses, so a second panel can't be left on the old one.
+    this.plugin.applySettingsToOpenViews();
+  }
+
+  /**
    * Create the hidden YouTube iframe and start the postMessage handshake:
    * after the iframe's load event, wait a beat (the embed isn't ready the
    * instant it loads), then announce {"event":"listening"} so it starts
    * streaming onReady/onStateChange/infoDelivery/onError back to us.
    */
-  private buildMusicIframe(embedUrl: string, plan: ResumePlan) {
+  private buildMusicIframe(embedUrl: string, plan: ResumePlan, sourceUrl: string) {
     // Seed the resume bookkeeping from the target. videoId matters for a plain
     // video, where the embed's videoData may never tell us anything we don't
     // already know; inside a playlist the stream corrects it as items advance.
     this.musicCurrentVideoId = plan.target.videoId;
     this.musicTargetPlaylistId = plan.target.playlistId;
-    // Frozen for this iframe's lifetime — see the field's comment.
-    this.musicSourceUrl = this.plugin.settings.musicUrl;
+    // Frozen for this iframe's lifetime — see the field's comment. Passed in
+    // rather than read from settings so it cannot drift from the station this
+    // build is actually for: it is the stamp every recorded position carries,
+    // and reading the live setting here would label this station's position
+    // with whatever slot happens to be active when the sample lands.
+    this.musicSourceUrl = sourceUrl;
     this.musicCurrentDuration = null;
     this.pendingResumeSeconds = plan.seekSeconds;
     this.resumeSeekLanding = null;
@@ -816,13 +1466,25 @@ export class GentlePomoView extends ItemView {
     // unless ⏹ was pressed and its fade never landed, in which case the stop is
     // honoured instead. Banking a position the user just asked to forget would
     // be the wrong answer to the last button they pressed.
-    if (this.musicStopPending) this.plugin.clearMusicPosition();
+    // Reads musicSourceUrl while it is still set — the null below is what makes
+    // this ordering load-bearing. Resolving the station from settings here would
+    // be wrong: teardown is invoked FROM the switch's own rebuild, so by this
+    // point the settings already name the INCOMING station.
+    // A hand-off belongs to the frame it was armed for; this one is going away.
+    // (The ⏭ path arms AFTER its rebuild, so it never clears its own flag.)
+    this.autoPlayOnReady = null;
+    if (this.musicStopPending) this.plugin.clearMusicPosition(this.musicSourceUrl);
     else this.plugin.flushMusicPosition();
     this.pendingResumeSeconds = null;
     this.resumeSeekLanding = null;
     this.musicCurrentVideoId = null;
-    this.musicCurrentDuration = null;
+    this.musicCurrentVideoTitle = null;
+    // The track half of the caption belongs to the frame being torn down.
+    // musicTargetPlaylistId is nulled below, so this drops it rather than
+    // leaving the previous playlist's item named under a new station.
     this.musicTargetPlaylistId = null;
+    this.renderStationCaption();
+    this.musicCurrentDuration = null;
     this.musicSourceUrl = null;
     this.musicStopPending = false;
     // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on
@@ -849,6 +1511,11 @@ export class GentlePomoView extends ItemView {
     this.musicPlayerOrigin = YT_EMBED_ORIGIN;
     this.musicErrorNotified = false;
     this.lastAppliedMusicVolume = null;
+    // This is ALSO what resets musicPlayerState — updateMusicButtons assigns it
+    // before doing the swap. Never reset that field separately above this line:
+    // the swap sits behind the method's `state === musicPlayerState` early
+    // return, so a pre-reset silently kills the ▶️/⏸ restore and leaves ⏸ on
+    // screen with no play button after every teardown-while-playing.
     this.updateMusicButtons(YT_STATE.UNSTARTED);
   }
 
@@ -1024,13 +1691,26 @@ export class GentlePomoView extends ItemView {
    * position instantly. The player is deliberately left at volume 0 afterwards
    * — it's paused, so that is inaudible, and ▶️ re-parks it at 0 regardless.
    */
-  private fadeMusicOut(onLanding: () => void) {
+  private fadeMusicOut(onLanding: () => void, keepShowingPlaying = false) {
+    // A ⏸ or ⏹ press always cancels a pending ⏭ hand-off, and it must be
+    // cleared HERE rather than only in destroyMusicIframe: the early return
+    // below lands immediately and destroys nothing, so during the second or two
+    // a new station takes to load, a press would otherwise leave the flag
+    // standing — the stopVideo is dropped (no handshake yet), the incoming
+    // station's position is wiped, and then the player becomes ready and starts
+    // playing. The plugin would answer Stop with sound.
+    this.autoPlayOnReady = null;
+    this.musicHandOffToken++;
     const from = this.musicRampLevel ?? this.plugin.settings.musicVolume;
     this.clearMusicRampTimers();
     // Swap the buttons now rather than a fade-length later, so the press never
     // looks ignored. The only thing that un-does the pending command is a ▶️
     // press, and that puts the buttons back itself.
-    this.setMusicButtonsPlaying(false);
+    //
+    // ⏩ opts out: skipping to the next track is not a pause, and flashing ▶️
+    // (and "Music") for the length of the fade before flipping straight back
+    // would read as the player stumbling.
+    if (!keepShowingPlaying) this.setMusicButtonsPlaying(false);
     if (!this.musicPlayerReady || !this.isAudibleState(this.musicPlayerState) || from <= 0) {
       this.musicFadePhase = null;
       onLanding();
@@ -1067,6 +1747,9 @@ export class GentlePomoView extends ItemView {
    * still wins: the player is about to pause, so there is nothing to duck.
    */
   duckMusic(cueDurationSec: number) {
+    // Stamped before every guard, so a cue that arrives mid-skip (when the
+    // "out" guard below turns it away) still records how long the dip owes.
+    this.duckHoldUntilMs = Date.now() + Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
     const playing = this.isAudibleState(this.musicPlayerState);
     if (!this.musicPlayerReady || !playing || this.musicFadePhase === "out") return;
 
@@ -1149,6 +1832,10 @@ export class GentlePomoView extends ItemView {
     this.clearMusicRampTimers();
     this.musicRampLevel = null;
     this.musicFadePhase = null;
+    // Deliberately here and not in clearMusicRampTimers: a skip clears the
+    // timers and must still owe the rest of the dip, whereas a teardown or an
+    // explicit volume change ends the duck outright.
+    this.duckHoldUntilMs = null;
   }
 
   private clearMusicRampTimers() {
@@ -1190,9 +1877,10 @@ export class GentlePomoView extends ItemView {
         // boundary that has to reach disk, and it's the main way users leave.
         this.plugin.flushMusicPosition();
       } else if (state === YT_STATE.ENDED) {
-        // Finished: next time this track opens at the top. With loop on, the
-        // restart re-records from ~0 a moment later.
-        this.plugin.clearMusicPosition();
+        // Finished: next time this station opens at the top. With loop on, the
+        // restart re-records from ~0 a moment later. Scoped to the station this
+        // iframe was built for, not the active setting.
+        this.plugin.clearMusicPosition(this.musicSourceUrl);
       } else if (this.pendingResumeSeconds !== null && this.isAudibleState(state)) {
         // Resume, the moment playback actually starts. Seeking is documented as
         // safe only from a running player (from a *cued* one it would start
@@ -1336,6 +2024,19 @@ export class GentlePomoView extends ItemView {
   private setMusicButtonsPlaying(playing: boolean) {
     this.musicPlayBtn?.toggleClass("gp-hidden", playing);
     this.musicPauseBtn?.toggleClass("gp-hidden", !playing);
+    // The caption's wording is the same statement as the button's shape, so it
+    // is driven from the same call rather than recomputed. Two reasons it must
+    // be this and not isMusicPlayingForUser():
+    //
+    //  - Order. fadeMusicOut flips the buttons BEFORE it sets musicFadePhase to
+    //    "out", so a recompute here still sees PLAYING and no fade — the
+    //    caption would keep saying "Now playing" until the embed confirmed the
+    //    pause a fade-length later.
+    //  - Ownership. This is the single funnel for "what the transport now
+    //    says", so routing the caption through it makes the two agree by
+    //    construction instead of by two predicates staying in step.
+    this.musicShowingAsPlaying = playing;
+    this.renderStationCaption();
   }
 
   /**
@@ -1396,6 +2097,15 @@ export class GentlePomoView extends ItemView {
       return;
     }
     if (this.musicFadePhase === "out") return;
+    // A manual ⏩ that ran off the end of a non-looping playlist ends playback.
+    // "A live stream may have gone offline — paste a new link" is nonsense in
+    // answer to a button the user just pressed.
+    if (
+      this.musicAdvanceRequestedAt !== null &&
+      Date.now() - this.musicAdvanceRequestedAt < MUSIC_ADVANCE_NOTICE_GRACE_MS
+    ) {
+      return;
+    }
     const wasAudible =
       this.musicPlayerState === YT_STATE.PLAYING || this.musicPlayerState === YT_STATE.BUFFERING;
     if (state === YT_STATE.ENDED && wasAudible && this.musicEndedTimeout === null) {
@@ -1419,7 +2129,9 @@ export class GentlePomoView extends ItemView {
     // Logged as well as shown: the Notice is transient, and this is the one
     // signal that says whether a "it won't play on my iPad" report is a plugin
     // bug or YouTube refusing the video on that platform.
-    logger.warn(`Music player error ${String(code)} for ${this.plugin.settings.musicUrl}`);
+    // The station this iframe was built for, not the active setting — after a
+    // switch the latter names a different link than the one that failed.
+    logger.warn(`Music player error ${String(code)} for ${this.musicSourceUrl ?? "(none)"}`);
     new Notice(`Gentle pomodoro: ${describeMusicError(code, Platform.isIosApp)}`);
   }
 

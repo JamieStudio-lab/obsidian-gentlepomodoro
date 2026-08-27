@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.5.6 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.7 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -43,13 +43,17 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 ### 🎵 Lofi study music
 
-- Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ▶️ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
-- **Fades in and out**: ▶️ eases the music up from silence, ⏸ and ⏹ ease it down before stopping — no snapping in mid-bar. Change your mind mid-fade and it simply carries on.
-- **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
-- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
-- **Resumes where you left off**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ▶️ to carry on. Nothing auto-plays; ⏹ **Stop** — or changing the URL — clears the position so the mix starts from the top instead. A link with its own timestamp (`?t=90`, or an older `#t=1m30s`) opens there.
-- Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
-- **Desktop only, for now.** On iPhone and iPad, YouTube refuses to load its player inside Obsidian at all (error 153): it requires the embedding page to identify itself with an HTTP `Referer`, and iOS doesn't send one for an app served from a custom scheme. Nothing the plugin can set changes this — it's the same wall other iOS webview apps hit — so the music player is a desktop feature until Obsidian or Apple changes that. Every other feature works on mobile as before.
+- Paste a YouTube link — video, 24/7 live stream (Lofi Girl!), or playlist — and a ▶️ play/pause/stop row appears in the panel. **Audio-only by design**: no video is ever shown.
+- **Up to three links**, each with an optional short name. A line above the controls says what's playing; the list button opens the picker.
+- **⏭ next link** carries the audio across the switch. Picking one from the list doesn't — press ▶️ to start it.
+- **⏪ / ⏩** move through a playlist, on their own row that appears only when the link is genuinely a playlist.
+- **Links check and name themselves**: paste one and a bad link says so, while the name box fills in from the title. Type over it any time.
+- **Fades in and out** on every control — ▶️, ⏸, ⏹ and track skips all ease rather than cut. Change your mind mid-fade and it carries on.
+- **Gentle ducking**: session cues briefly dip the music and ease it back up, so they stay audible without jolting the mix.
+- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume in the in-view settings.
+- **Resumes where you left off, per link.** ⏹ **Stop** — or changing that link — makes it start from the top instead. Live streams always start live.
+- Fully manual — independent of your sessions; stops when you close the panel. A notice tells you if playback stalls.
+- **Desktop only.** YouTube won't load its player inside Obsidian on iOS at all (error 153) — no link works there, and nothing the plugin can set changes it. Every other feature works on mobile.
 
 ### 📱 Mobile (iPad & phone)
 
@@ -80,7 +84,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default or `Frosted glass`), day/night indicator, and **estimated end time** (shown while a session runs).
-- **Music**: **YouTube music URL** (video, live stream, or playlist — audio-only playback in the timer panel), **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen the music at the moment you paused; on by default).
+- **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
 - **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
@@ -122,9 +126,13 @@ Each session appends one line to the day's log file:
 
 ## Network use
 
-The plugin makes **no network requests on its own** — timers, logs, and sounds are all local (audio cues are bundled into `main.js`).
+Timers, logs, and sounds are all local (audio cues are bundled into `main.js`). The optional lofi-music feature is the only part that reaches the network, in two places — both only ever to YouTube, and neither happens until you paste a music link.
 
-The one exception is the optional lofi-music feature: when you paste a YouTube URL into **YouTube music URL** (and **Show music player** is on), the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. Requests happen only while the timer panel is open with that feature configured; clearing the URL or turning the toggle off stops them entirely. YouTube's handling of those requests is covered by [Google's privacy policy](https://policies.google.com/privacy).
+**Playing the audio.** With a music link set and **Show music player** on, the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. This happens only while the timer panel is open; clearing the link or turning the toggle off stops it entirely.
+
+**Checking a link.** When you paste or edit a link in the settings, the plugin makes one small request to `www.youtube-nocookie.com/oembed` about that link, to tell you if YouTube can't find it and to offer a name for it. It is sent shortly after you stop typing, and it carries only the video or playlist ID you pasted. Unlike the player above, this happens even with the timer panel closed and **Show music player** off — those control playback, not the settings page. No request is made for an empty slot, and answers are remembered for the session so editing the same link twice doesn't ask twice.
+
+YouTube's handling of both is covered by [Google's privacy policy](https://policies.google.com/privacy).
 
 ## Issues & feedback
 

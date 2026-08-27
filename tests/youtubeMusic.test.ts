@@ -19,6 +19,24 @@ import {
   musicPositionAppliesToUrl,
   MUSIC_RESUME_MIN_SECONDS,
   MUSIC_RESUME_END_MARGIN_SECONDS,
+  MUSIC_STATION_LIMIT,
+  resolveStationIndex,
+  stationLabel,
+  findPositionForUrl,
+  retainPositionsForUrls,
+  normalizeMusicPositions,
+  stationsAreSettled,
+  visibleNameText,
+  sanitizeStationName,
+  MUSIC_STATION_NAME_MAX,
+  nextStationIndex,
+  buildStationList,
+  buildOEmbedProbeUrl,
+  parseOEmbedResponse,
+  pickStationName,
+  normalizeNameCase,
+  describeLinkCheck,
+  YT_OEMBED_ENDPOINT,
   type MusicTarget,
   type MusicResumeState,
 } from "../youtubeMusic";
@@ -303,6 +321,7 @@ describe("parsePlayerMessage", () => {
       currentTime: null,
       duration: null,
       videoId: null,
+      videoTitle: null,
     });
   });
 
@@ -323,7 +342,34 @@ describe("parsePlayerMessage", () => {
       currentTime: 1234.56,
       duration: 10800,
       videoId: ID,
+      videoTitle: "lofi",
     });
+  });
+
+  it("reads a title-only infoDelivery, which is how a playlist announces a new track", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { videoData: { video_id: OTHER_ID, title: "Track two" } },
+    });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: null,
+      currentTime: null,
+      duration: null,
+      videoId: OTHER_ID,
+      videoTitle: "Track two",
+    });
+  });
+
+  it("ignores a blank or non-string title rather than storing one", () => {
+    for (const title of ["", "   ", 42, null]) {
+      const data = JSON.stringify({
+        event: "infoDelivery",
+        info: { playerState: 1, videoData: { video_id: ID, title } },
+      });
+      const msg = parsePlayerMessage(data);
+      expect(msg && msg.type === "info" ? msg.videoTitle : "unset").toBeNull();
+    }
   });
 
   it("decodes a clock-only infoDelivery (no player state)", () => {
@@ -334,6 +380,7 @@ describe("parsePlayerMessage", () => {
       currentTime: 12.3,
       duration: null,
       videoId: null,
+      videoTitle: null,
     });
   });
 
@@ -719,5 +766,492 @@ describe("planResume", () => {
       saved({ seconds: -20 }),
     ];
     for (const state of bad) expect(planResume(video, state, URL_A).seekSeconds).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stations (0.5.7): up to three saved links the user picks between.
+// ---------------------------------------------------------------------------
+
+const URL_C = `https://www.youtube.com/watch?v=${OTHER_ID}`;
+
+const positionFor = (url: string | null, seconds = 120): MusicResumeState => ({
+  videoId: ID,
+  playlistId: null,
+  seconds,
+  url,
+});
+
+describe("resolveStationIndex", () => {
+  it("keeps a valid index whose slot holds a link", () => {
+    expect(resolveStationIndex([URL_A, URL_B, URL_C], 1)).toBe(1);
+    expect(resolveStationIndex([URL_A, URL_B, URL_C], 2)).toBe(2);
+  });
+
+  it("falls back to the first filled slot when the selected one is empty", () => {
+    // The user cleared the slot they were listening to.
+    expect(resolveStationIndex(["", URL_B, ""], 0)).toBe(1);
+    expect(resolveStationIndex([URL_A, "", ""], 2)).toBe(0);
+  });
+
+  it("treats a whitespace-only slot as empty", () => {
+    expect(resolveStationIndex(["   ", URL_B, ""], 0)).toBe(1);
+  });
+
+  it("returns 0 when every slot is empty, so nothing is embedded", () => {
+    expect(resolveStationIndex(["", "", ""], 2)).toBe(0);
+  });
+
+  it("survives a hand-edited or corrupt index", () => {
+    // data.json is user-editable; none of these may throw or return junk.
+    for (const bad of [-1, 3, 99, 1.5, NaN, Infinity]) {
+      expect(resolveStationIndex([URL_A, URL_B, ""], bad)).toBe(0);
+    }
+  });
+});
+
+describe("stationLabel", () => {
+  it("uses the name when given", () => {
+    expect(stationLabel("Lofi", 0)).toBe("Lofi");
+  });
+
+  it("falls back to the slot number so a button is never blank", () => {
+    expect(stationLabel("", 0)).toBe("1");
+    expect(stationLabel("   ", 1)).toBe("2");
+    expect(stationLabel("", 2)).toBe("3");
+  });
+});
+
+describe("findPositionForUrl", () => {
+  it("finds the entry stamped with that link", () => {
+    const positions = [positionFor(URL_A, 30), positionFor(URL_B, 90)];
+    expect(findPositionForUrl(positions, URL_B)?.seconds).toBe(90);
+  });
+
+  it("returns null when no entry belongs to the link", () => {
+    expect(findPositionForUrl([positionFor(URL_A)], URL_C)).toBeNull();
+  });
+
+  it("ignores an unstamped (pre-0.5.6) entry", () => {
+    expect(findPositionForUrl([positionFor(null)], URL_A)).toBeNull();
+  });
+
+  it("tolerates surrounding whitespace, since data.json is hand-editable", () => {
+    expect(findPositionForUrl([positionFor(` ${URL_A} `)], URL_A)).not.toBeNull();
+  });
+});
+
+describe("retainPositionsForUrls", () => {
+  it("keeps positions whose link is still in a slot", () => {
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    expect(retainPositionsForUrls(positions, [URL_A, URL_B, ""])).toHaveLength(2);
+  });
+
+  it("drops a position whose link was edited away", () => {
+    const kept = retainPositionsForUrls([positionFor(URL_A), positionFor(URL_B)], [URL_A, "", ""]);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]?.url).toBe(URL_A);
+  });
+
+  it("keeps everything when the user merely SWITCHES station", () => {
+    // The whole point of the picker: switching changes which slot is active,
+    // not which links exist, so no position may be retired.
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    expect(retainPositionsForUrls(positions, [URL_A, URL_B, URL_C])).toEqual(positions);
+  });
+
+  it("follows a link that moved to a different slot", () => {
+    // A position belongs to a URL, not to a slot number.
+    const kept = retainPositionsForUrls([positionFor(URL_B)], ["", "", URL_B]);
+    expect(kept).toHaveLength(1);
+  });
+
+  it("drops everything when all slots are cleared", () => {
+    expect(retainPositionsForUrls([positionFor(URL_A)], ["", "", ""])).toEqual([]);
+  });
+
+  it("retires an unstamped pre-0.5.6 position once", () => {
+    expect(retainPositionsForUrls([positionFor(null)], [URL_A, "", ""])).toEqual([]);
+  });
+
+  it("does not mutate its input", () => {
+    const positions = [positionFor(URL_A), positionFor(URL_B)];
+    retainPositionsForUrls(positions, ["", "", ""]);
+    expect(positions).toHaveLength(2);
+  });
+
+  it("is idempotent", () => {
+    const once = retainPositionsForUrls([positionFor(URL_A), positionFor(URL_B)], [URL_A, "", ""]);
+    expect(retainPositionsForUrls(once, [URL_A, "", ""])).toEqual(once);
+  });
+});
+
+describe("normalizeMusicPositions", () => {
+  it("returns an empty list for anything that is not an array", () => {
+    for (const bad of [null, undefined, 42, "x", {}]) {
+      expect(normalizeMusicPositions(bad, MUSIC_STATION_LIMIT)).toEqual([]);
+    }
+  });
+
+  it("keeps well-formed entries", () => {
+    const raw = [positionFor(URL_A, 30)];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([
+      { videoId: ID, playlistId: null, seconds: 30, url: URL_A },
+    ]);
+  });
+
+  it("drops entries with no usable URL stamp", () => {
+    const raw = [positionFor(null), positionFor(""), positionFor("   "), { seconds: 5 }];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("drops entries with a non-finite or negative time", () => {
+    const raw = [
+      { videoId: ID, playlistId: null, seconds: NaN, url: URL_A },
+      { videoId: ID, playlistId: null, seconds: -5, url: URL_B },
+      { videoId: ID, playlistId: null, seconds: "90", url: URL_C },
+    ];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("drops non-object junk without throwing", () => {
+    expect(normalizeMusicPositions([null, 7, "x", undefined], MUSIC_STATION_LIMIT)).toEqual([]);
+  });
+
+  it("keeps only the first entry for a duplicated link", () => {
+    // Two stamps for one URL would make findPositionForUrl order-dependent, and
+    // recordMusicPosition would update one copy while the other shadowed it.
+    const raw = [positionFor(URL_A, 30), positionFor(URL_A, 90)];
+    const out = normalizeMusicPositions(raw, MUSIC_STATION_LIMIT);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.seconds).toBe(30);
+  });
+
+  it("caps the list at the station limit", () => {
+    const raw = [
+      positionFor(URL_A),
+      positionFor(URL_B),
+      positionFor(URL_C),
+      positionFor("https://youtu.be/aaaaaaaaaaa"),
+    ];
+    expect(normalizeMusicPositions(raw, MUSIC_STATION_LIMIT)).toHaveLength(MUSIC_STATION_LIMIT);
+  });
+
+  it("does not require the URL to be parseable or still configured", () => {
+    // Retiring is retainPositionsForUrls' job; doing it here would erase a
+    // position while the user is still typing the link it belongs to.
+    expect(normalizeMusicPositions([positionFor("not a url")], MUSIC_STATION_LIMIT)).toHaveLength(
+      1
+    );
+  });
+});
+
+describe("stationsAreSettled", () => {
+  it("is true when every slot is empty or parseable", () => {
+    expect(stationsAreSettled(["", "", ""])).toBe(true);
+    expect(stationsAreSettled([URL_A, "", URL_C])).toBe(true);
+  });
+
+  it("is false while a slot holds a half-typed link", () => {
+    // The pre-1.13 settings path commits on every keystroke, so this is what
+    // stops an immediate, destructive retire mid-edit.
+    expect(stationsAreSettled([URL_A, "https://www.youtu", ""])).toBe(false);
+  });
+
+  it("treats a whitespace-only slot as an emptied one", () => {
+    expect(stationsAreSettled(["   ", URL_A, ""])).toBe(true);
+  });
+});
+
+/* =========================================================================
+   0.5.7 — station picker, name sanitizing and the oEmbed link check
+   ========================================================================= */
+
+// U+200D ZERO WIDTH JOINER. A real music video in the author's own vault has
+// exactly this as its entire YouTube title, which is what motivated the
+// visible-character gate: String.trim() leaves it untouched.
+const ZWJ = "‍";
+
+describe("visibleNameText", () => {
+  it("keeps an ordinary name unchanged", () => {
+    expect(visibleNameText("Lofi Girl")).toBe("Lofi Girl");
+  });
+
+  it("returns empty for a name that is only a zero-width joiner", () => {
+    expect(visibleNameText(ZWJ)).toBe("");
+  });
+
+  it("returns empty for the blank glyphs that survive trim()", () => {
+    // Hangul fillers, halfwidth filler, Braille blank, Mongolian vowel separator.
+    for (const blank of ["ᅟ", "ᅠ", "ㅤ", "ﾠ", "⠀", "᠎"]) {
+      expect(visibleNameText(blank)).toBe("");
+      expect(blank.trim()).not.toBe(""); // the reason the gate exists
+    }
+  });
+
+  it("strips invisibles but keeps the visible remainder", () => {
+    expect(visibleNameText(`${ZWJ}finㅤ`)).toBe("fin");
+  });
+
+  it("collapses whitespace runs, including newlines", () => {
+    // Load-bearing: names feed lastStationUiKey, which is newline-delimited.
+    expect(visibleNameText("Deep\n\nFocus")).toBe("Deep Focus");
+    expect(visibleNameText("  Rain   Sounds  ")).toBe("Rain Sounds");
+  });
+});
+
+describe("sanitizeStationName", () => {
+  it("passes a short name through", () => {
+    expect(sanitizeStationName("MONOMAN")).toBe("MONOMAN");
+  });
+
+  it("returns empty when nothing visible survives", () => {
+    expect(sanitizeStationName(ZWJ)).toBe("");
+  });
+
+  it("truncates on code points, never mid-emoji", () => {
+    const name = `${"A".repeat(MUSIC_STATION_NAME_MAX - 1)}\u{1F4DA}tail`;
+    const out = sanitizeStationName(name);
+    expect(Array.from(out)).toHaveLength(MUSIC_STATION_NAME_MAX);
+    expect(out.endsWith("\u{1F4DA}")).toBe(true);
+    expect(out).not.toContain("�");
+  });
+
+  it("does not truncate a name that is exactly at the limit", () => {
+    const exact = "A".repeat(MUSIC_STATION_NAME_MAX);
+    expect(sanitizeStationName(exact)).toBe(exact);
+  });
+
+  it("honours an explicit shorter limit", () => {
+    expect(sanitizeStationName("Lofi Girl", 4)).toBe("Lofi");
+  });
+});
+
+describe("stationLabel — invisible names", () => {
+  it("falls back to the slot number when the name is invisible", () => {
+    // Before 0.5.7 this returned the ZWJ itself and rendered a blank button.
+    expect(stationLabel(ZWJ, 2)).toBe("3");
+    expect(stationLabel("ㅤ", 0)).toBe("1");
+  });
+});
+
+describe("nextStationIndex", () => {
+  it("cycles through a full set", () => {
+    const urls = [URL_A, URL_B, URL_C];
+    expect(nextStationIndex(urls, 0)).toBe(1);
+    expect(nextStationIndex(urls, 1)).toBe(2);
+    expect(nextStationIndex(urls, 2)).toBe(0);
+  });
+
+  it("steps over an empty middle slot rather than selecting it", () => {
+    const urls = [URL_A, "", URL_C];
+    expect(nextStationIndex(urls, 0)).toBe(2);
+    expect(nextStationIndex(urls, 2)).toBe(0);
+  });
+
+  it("treats a whitespace-only slot as empty", () => {
+    expect(nextStationIndex([URL_A, "   ", URL_C], 0)).toBe(2);
+  });
+
+  it("returns the same slot when it is the only one filled", () => {
+    expect(nextStationIndex([URL_A, "", ""], 0)).toBe(0);
+  });
+
+  it("returns 0 when every slot is empty", () => {
+    expect(nextStationIndex(["", "", ""], 1)).toBe(0);
+  });
+
+  it("never throws on a corrupt starting index", () => {
+    const urls = [URL_A, URL_B, ""];
+    for (const bad of [-1, 3, 99, 1.5, NaN]) {
+      expect(() => nextStationIndex(urls, bad)).not.toThrow();
+      expect(nextStationIndex(urls, bad)).toBe(1); // treated as starting from 0
+    }
+  });
+});
+
+describe("buildStationList", () => {
+  it("returns filled slots only, carrying their real slot number", () => {
+    const rows = buildStationList([URL_A, "", URL_C], ["Lofi", "", "Rain"], 2);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ slot: 0, label: "Lofi", url: URL_A, active: false });
+    expect(rows[1]).toEqual({ slot: 2, label: "Rain", url: URL_C, active: true });
+  });
+
+  it("labels an unnamed slot by its slot number", () => {
+    const rows = buildStationList(["", URL_B, ""], ["", "", ""], 1);
+    expect(rows[0]?.label).toBe("2");
+  });
+
+  it("is empty when no slot holds a link", () => {
+    expect(buildStationList(["", "", ""], ["a", "b", "c"], 0)).toEqual([]);
+  });
+});
+
+describe("buildOEmbedProbeUrl", () => {
+  const target = (videoId: string | null, playlistId: string | null): MusicTarget => ({
+    videoId,
+    playlistId,
+    startSeconds: null,
+  });
+
+  it("canonicalizes a video to a watch URL", () => {
+    const url = buildOEmbedProbeUrl(target(ID, null));
+    expect(url).toBe(
+      `${YT_OEMBED_ENDPOINT}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${ID}`)}&format=json`
+    );
+  });
+
+  it("asks about the playlist even when a video was also named", () => {
+    // watch?v=X&list=L answers with X's title, but planResume moves the video
+    // within the list, so the list is what the station actually is.
+    const url = buildOEmbedProbeUrl(target(ID, "PL123"));
+    expect(url).toContain(encodeURIComponent("https://www.youtube.com/playlist?list=PL123"));
+    expect(url).not.toContain(ID);
+  });
+
+  it("never probes an /embed/ or nocookie URL, which oEmbed 404s", () => {
+    const inner = decodeURIComponent(
+      (buildOEmbedProbeUrl(target(ID, null)) ?? "").split("url=")[1]?.split("&")[0] ?? ""
+    );
+    expect(inner).toBe(`https://www.youtube.com/watch?v=${ID}`);
+    expect(inner).not.toContain("/embed/");
+    expect(inner).not.toContain("nocookie");
+  });
+
+  it("stays on the nocookie host for the request itself", () => {
+    expect(buildOEmbedProbeUrl(target(ID, null))?.startsWith(YT_EMBED_ORIGIN)).toBe(true);
+  });
+
+  it("returns null when there is nothing to ask about", () => {
+    expect(buildOEmbedProbeUrl(target(null, null))).toBeNull();
+  });
+});
+
+describe("parseOEmbedResponse", () => {
+  it("reads title and author_name", () => {
+    expect(parseOEmbedResponse({ title: "Rain", author_name: "MONOMAN" })).toEqual({
+      title: "Rain",
+      author: "MONOMAN",
+    });
+  });
+
+  it("tolerates a missing field", () => {
+    expect(parseOEmbedResponse({ title: "Rain" })).toEqual({ title: "Rain", author: "" });
+  });
+
+  it("returns null for junk rather than throwing", () => {
+    for (const junk of [null, undefined, 42, "text", {}, { title: 7 }]) {
+      expect(parseOEmbedResponse(junk)).toBeNull();
+    }
+  });
+});
+
+describe("pickStationName", () => {
+  it("names a station after the title, not the channel", () => {
+    expect(pickStationName({ title: "Deep Focus Mix", author: "MikoWorks!" })).toBe(
+      "Deep Focus Mix"
+    );
+  });
+
+  it("falls back to the channel when the title sanitizes away to nothing", () => {
+    // The real case this exists for: a video whose entire title is one ZWJ.
+    // Capitalised on the way out, per the case rule: the channel is "fin".
+    expect(pickStationName({ title: ZWJ, author: "fin" })).toBe("Fin");
+  });
+
+  it("de-shouts an ALL CAPS title", () => {
+    expect(pickStationName({ title: "OUTER WILDS PIANO ALBUM COVER", author: "MikoWorks!" })).toBe(
+      "Outer wilds piano album cover"
+    );
+  });
+
+  it("returns empty when neither field yields anything visible", () => {
+    expect(pickStationName({ title: ZWJ, author: "   " })).toBe("");
+  });
+});
+
+describe("normalizeNameCase", () => {
+  it("sentence-cases a shouting name", () => {
+    expect(normalizeNameCase("MONOMAN")).toBe("Monoman");
+    expect(normalizeNameCase("LOFI HIP HOP RADIO")).toBe("Lofi hip hop radio");
+  });
+
+  it("capitalizes a lowercase opening", () => {
+    expect(normalizeNameCase("lofi hip hop radio")).toBe("Lofi hip hop radio");
+  });
+
+  it("leaves a deliberately mixed-case first word alone", () => {
+    expect(normalizeNameCase("iPhone recordings")).toBe("iPhone recordings");
+    expect(normalizeNameCase("eBay haul")).toBe("eBay haul");
+  });
+
+  it("leaves an ordinary name untouched", () => {
+    expect(normalizeNameCase("Deep Focus Mix")).toBe("Deep Focus Mix");
+  });
+
+  it("does not shout-case a single initial", () => {
+    expect(normalizeNameCase("A")).toBe("A");
+  });
+
+  it("tolerates names with no letters at all", () => {
+    expect(normalizeNameCase("123")).toBe("123");
+    expect(normalizeNameCase("")).toBe("");
+  });
+});
+
+describe("describeLinkCheck", () => {
+  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
+  const playlist: MusicTarget = { videoId: null, playlistId: "PL123", startSeconds: null };
+  const mix: MusicTarget = { videoId: null, playlistId: `RD${ID}`, startSeconds: null };
+
+  it("says nothing on success", () => {
+    expect(describeLinkCheck(200, video)).toBeNull();
+  });
+
+  it("treats 400 as a malformed ID, which is what YouTube uses it for", () => {
+    // 400 fires when the 11th character is outside YouTube's valid final set —
+    // i.e. a mistyped last character, NOT a video that does not exist.
+    expect(describeLinkCheck(400, video)).toContain("valid video ID");
+    expect(describeLinkCheck(400, video)).not.toContain("deleted");
+  });
+
+  it("leads a 404 with checking the link, since that is where a typo lands", () => {
+    // An ordinary typo anywhere but the last character returns 404, so this
+    // wording must not send the user off to ask the uploader.
+    const msg = describeLinkCheck(404, video) ?? "";
+    expect(msg).toContain("check the link");
+    expect(msg).toContain("deleted");
+    expect(msg).not.toContain("valid video ID");
+  });
+
+  it("reports an embedding refusal without promising anything about playback", () => {
+    const msg = describeLinkCheck(401, video) ?? "";
+    expect(msg).toContain("embedded");
+    expect(msg).not.toMatch(/will play|verified|works/i);
+  });
+
+  it("distinguishes a missing playlist from a missing video", () => {
+    expect(describeLinkCheck(404, playlist)).toContain("playlist");
+    expect(describeLinkCheck(404, playlist)).not.toContain("video");
+    expect(describeLinkCheck(404, video)).toContain("video");
+    expect(describeLinkCheck(404, video)).not.toContain("playlist");
+  });
+
+  it("stays silent for an RD mix, which 404s from oEmbed yet plays fine", () => {
+    expect(describeLinkCheck(404, mix)).toBeNull();
+  });
+
+  it("stays silent for anything ambiguous rather than guessing", () => {
+    for (const status of [0, 403, 429, 500, 503]) {
+      expect(describeLinkCheck(status, video)).toBeNull();
+    }
+  });
+
+  it("never claims a link will play", () => {
+    for (const status of [200, 400, 401, 404, 403, 500]) {
+      const msg = describeLinkCheck(status, video) ?? "";
+      expect(msg).not.toMatch(/will play|playable|verified|confirmed/i);
+    }
   });
 });

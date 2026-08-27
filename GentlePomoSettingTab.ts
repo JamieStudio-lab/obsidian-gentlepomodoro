@@ -1,9 +1,27 @@
-import { App, PluginSettingTab, Setting, type SettingDefinitionItem } from "obsidian";
+import {
+  App,
+  PluginSettingTab,
+  Setting,
+  debounce,
+  requestUrl,
+  type SettingDefinitionItem,
+  type SettingGroupItem,
+  type TextComponent,
+} from "obsidian";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
-import { validateMusicUrl } from "./youtubeMusic";
+import {
+  validateMusicUrl,
+  parseYouTubeUrl,
+  buildOEmbedProbeUrl,
+  parseOEmbedResponse,
+  pickStationName,
+  describeLinkCheck,
+  MUSIC_STATION_LIMIT,
+  type MusicTarget,
+} from "./youtubeMusic";
 
 type SettingsKey = keyof GentlePomoSettings;
 
@@ -12,7 +30,13 @@ type SettingsKey = keyof GentlePomoSettings;
 const POMO_COUNT_TOGGLE_DESC =
   "Beta — edits your task files. Adds a lifetime '🍅 N' marker to the task line each time a linked focus session ends.";
 const MUSIC_RESUME_DESC =
-  "Reopen the music where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the URL above — to start from the top next time. Live streams always start live.";
+  "Reopen each link where you paused or left it, including after quitting Obsidian. Press ⏹ — or change the link — to start that one from the top next time. Live streams always start live.";
+const MUSIC_URL_DESC =
+  "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown. A playlist is the easiest way to line up several tracks under one link.";
+const MUSIC_URL_EXTRA_DESC =
+  "Optional. Fill this in to switch between links from the timer panel; leave it empty and the slot is unused.";
+const MUSIC_NAME_DESC =
+  "Optional short name for this link's button in the timer panel, e.g. Lofi or Rain. Leave empty to use the number.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -26,12 +50,269 @@ const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
 const REMOVE_ALL_MARKERS_DESC =
   "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
 
+// How long to wait after the last keystroke before asking YouTube about a link.
+// Both settings paths commit on every keystroke, so an un-debounced check would
+// be one request per character.
+const MUSIC_LINK_CHECK_DEBOUNCE_MS = 800;
+// A "YouTube has it" answer is stable; a negative one may be a link that was
+// only just published, or a blip, so it is re-asked after a while.
+const MUSIC_LINK_CACHE_TTL_MS = 60_000;
+
+const MUSIC_URL_KEYS = ["musicUrl", "musicUrl2", "musicUrl3"] as const;
+const MUSIC_NAME_KEYS = ["musicName1", "musicName2", "musicName3"] as const;
+const MUSIC_NAME_PLACEHOLDERS = ["Lofi", "Rain", "Piano"] as const;
+
+/** What one oEmbed probe learned. `name` is "" when nothing usable came back. */
+interface LinkProbeResult {
+  status: number;
+  name: string;
+}
+
+/**
+ * Ask YouTube whether it has this link, and what it is called. Returns null
+ * when the question could not be put at all (offline, blocked, a body that is
+ * not JSON) — callers must then say nothing rather than accuse the link.
+ */
+async function probeMusicLink(target: MusicTarget): Promise<LinkProbeResult | null> {
+  const url = buildOEmbedProbeUrl(target);
+  if (url === null) return null;
+  try {
+    // throw:false — a 400/401/404 IS the answer here, not an error.
+    const response = await requestUrl({ url, method: "GET", throw: false });
+    let name = "";
+    if (response.status === 200) {
+      // .json is a getter that parses on access, and the non-200 bodies are
+      // plain text under a JSON content type — so it is only ever touched here,
+      // and even then defensively.
+      try {
+        const fields = parseOEmbedResponse(response.json);
+        if (fields !== null) name = pickStationName(fields);
+      } catch {
+        name = "";
+      }
+    }
+    return { status: response.status, name };
+  } catch {
+    return null;
+  }
+}
+
+/** Per-slot view state for the link rows. Rebuilt whenever the tab renders. */
+interface MusicSlotUi {
+  urlInput: TextComponent | null;
+  nameInput: TextComponent | null;
+  errorEl: HTMLElement | null;
+  /** Bumped on every keystroke and on hide(); a probe whose token moved is stale. */
+  token: number;
+  probe: ((url: string, target: MusicTarget, token: number) => void) | null;
+}
+
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
 
   constructor(app: App, plugin: GentlePomoPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  /**
+   * The six link/name rows, shared shape for the 1.13 path. Kept beside the
+   * imperative loop in display() — changing one means changing both.
+   */
+  private musicLinkDefinitions(): SettingGroupItem<SettingsKey>[] {
+    const rows: SettingGroupItem<SettingsKey>[] = [];
+    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
+      rows.push({
+        name: `Music link ${String(slot + 1)}`,
+        desc: slot === 0 ? MUSIC_URL_DESC : MUSIC_URL_EXTRA_DESC,
+        render: (setting) => this.buildMusicUrlRow(setting, slot),
+      });
+      rows.push({
+        name: `Name for link ${String(slot + 1)}`,
+        desc: MUSIC_NAME_DESC,
+        render: (setting) => this.buildMusicNameRow(setting, slot),
+      });
+    }
+    return rows;
+  }
+
+  private musicSlotUi: MusicSlotUi[] = [];
+  private linkProbeCache = new Map<string, { result: LinkProbeResult; at: number }>();
+
+  private musicSlot(slot: number): MusicSlotUi {
+    let ui = this.musicSlotUi[slot];
+    if (!ui) {
+      ui = { urlInput: null, nameInput: null, errorEl: null, token: 0, probe: null };
+      this.musicSlotUi[slot] = ui;
+    }
+    return ui;
+  }
+
+  /**
+   * Closing the tab must drop every request still in the air, or a landing
+   * would paint an error into a torn-down row, or write a name for a link the
+   * user has since changed.
+   */
+  override hide(): void {
+    for (const ui of this.musicSlotUi) {
+      if (ui) ui.token++;
+    }
+    super.hide();
+  }
+
+  /**
+   * One music-link row, shared by both settings paths so they cannot drift.
+   * Returns the teardown the 1.13 render hook wants; harmless to ignore.
+   *
+   * Deliberately NOT the declarative `validate` hook, even though it accepts a
+   * promise: that hook is awaited inside the control's own per-keystroke
+   * handler, with no debouncing and no sequencing of its own, so a slow answer
+   * to an old keystroke can land after a newer one. The debounce and the token
+   * below are the whole point, and they have to live outside it.
+   */
+  private buildMusicUrlRow(setting: Setting, slot: number): () => void {
+    const ui = this.musicSlot(slot);
+    const urlKey = MUSIC_URL_KEYS[slot];
+    setting.addText((text) => {
+      ui.urlInput = text;
+      text
+        .setPlaceholder("Paste a YouTube link")
+        .setValue(this.plugin.settings[urlKey])
+        .onChange((value) => {
+          void this.handleMusicUrlInput(slot, value);
+        });
+    });
+    setting.settingEl.addClass("gp-setting-with-error");
+    ui.errorEl = setting.controlEl.createDiv("gp-setting-error");
+    // Paint what the STORED value already says. The sync validate hook used to
+    // do this for free on mount, and a link that is broken in data.json must not
+    // become invisible here just because nobody has typed in the box yet.
+    this.paintMusicLinkError(slot, validateMusicUrl(this.plugin.settings[urlKey]) ?? null);
+    return () => {
+      ui.token++;
+      ui.urlInput = null;
+      ui.errorEl = null;
+    };
+  }
+
+  /** The name row beside a link. Held onto so a probe can offer a name into it. */
+  private buildMusicNameRow(setting: Setting, slot: number): () => void {
+    const ui = this.musicSlot(slot);
+    const nameKey = MUSIC_NAME_KEYS[slot];
+    setting.addText((text) => {
+      ui.nameInput = text;
+      text
+        .setPlaceholder(MUSIC_NAME_PLACEHOLDERS[slot] ?? "")
+        .setValue(this.plugin.settings[nameKey])
+        .onChange((value) => {
+          void this.commitMusicName(slot, value);
+        });
+    });
+    return () => {
+      ui.nameInput = null;
+    };
+  }
+
+  private async commitMusicName(slot: number, value: string): Promise<void> {
+    const nameKey = MUSIC_NAME_KEYS[slot];
+    this.plugin.settings[nameKey] = value.trim();
+    await this.plugin.saveSettings();
+    this.applySettingsToOpenViews();
+  }
+
+  private paintMusicLinkError(slot: number, message: string | null): void {
+    const el = this.musicSlot(slot).errorEl;
+    if (!el) return;
+    el.setText(message ?? "");
+  }
+
+  private async handleMusicUrlInput(slot: number, raw: string): Promise<void> {
+    const ui = this.musicSlot(slot);
+    // Every keystroke invalidates whatever is in flight for this slot.
+    const token = ++ui.token;
+    const value = raw.trim();
+    const urlKey = MUSIC_URL_KEYS[slot];
+    this.plugin.settings[urlKey] = value;
+    await this.plugin.saveSettings();
+    this.applySettingsToOpenViews();
+
+    // Tier 1: is this a YouTube link at all. Local, instant, and the only check
+    // that can be certain.
+    const syntax = validateMusicUrl(value);
+    if (syntax !== undefined) {
+      this.paintMusicLinkError(slot, syntax);
+      return;
+    }
+    this.paintMusicLinkError(slot, null);
+    if (value === "") return;
+    const target = parseYouTubeUrl(value);
+    if (target === null) return;
+    // Tier 2: does YouTube have it, and what is it called. One request answers
+    // both. (There is no tier 3 — whether it will actually PLAY depends on the
+    // Referer the iframe sends, which this request cannot reproduce.)
+    ui.probe ??= debounce(
+      (url: string, probeTarget: MusicTarget, issuedToken: number) => {
+        void this.runMusicLinkProbe(slot, url, probeTarget, issuedToken);
+      },
+      MUSIC_LINK_CHECK_DEBOUNCE_MS,
+      true
+    );
+    ui.probe(value, target, token);
+  }
+
+  private async runMusicLinkProbe(
+    slot: number,
+    frozenUrl: string,
+    target: MusicTarget,
+    token: number
+  ): Promise<void> {
+    const ui = this.musicSlot(slot);
+    if (token !== ui.token) return;
+
+    const cached = this.linkProbeCache.get(frozenUrl);
+    const fresh =
+      cached !== undefined &&
+      (cached.result.status === 200 || Date.now() - cached.at < MUSIC_LINK_CACHE_TTL_MS);
+    const result = fresh && cached !== undefined ? cached.result : await probeMusicLink(target);
+    // A keystroke landed while the request was out: this answer describes a URL
+    // the user has already moved on from.
+    if (token !== ui.token) return;
+    // Could not ask. Saying nothing beats accusing a link that may be fine.
+    if (result === null) return;
+    if (!fresh) this.linkProbeCache.set(frozenUrl, { result, at: Date.now() });
+    // Belt to the token's braces: the slot must still hold the link we asked
+    // about. Compared against the string frozen when the request was issued,
+    // never against the live setting — that is 0.5.6's provenance rule, and the
+    // reason a position could once be stamped with the wrong URL.
+    if (this.plugin.settings[MUSIC_URL_KEYS[slot]].trim() !== frozenUrl) return;
+
+    this.paintMusicLinkError(slot, describeLinkCheck(result.status, target));
+    this.maybePrefillMusicName(slot, result.name);
+  }
+
+  /**
+   * Offer the name YouTube reports, and only ever as an offer: a name the user
+   * has typed is never overwritten, and neither is one they are in the middle
+   * of typing.
+   *
+   * The stored setting is trimmed, so "the setting is empty" is not enough on
+   * its own — someone who typed a letter and deleted it, or only whitespace,
+   * has an empty setting with their cursor still in the box, and writing there
+   * would rewrite the field under the caret. That window grows with latency,
+   * and it is the one moment "still allow edits" is most visibly broken.
+   */
+  private maybePrefillMusicName(slot: number, name: string): void {
+    if (name === "") return;
+    const nameKey = MUSIC_NAME_KEYS[slot];
+    if (this.plugin.settings[nameKey].trim() !== "") return;
+    const input = this.musicSlot(slot).nameInput;
+    if (input) {
+      if (!input.inputEl.isConnected) return;
+      if (input.getValue().trim() !== "") return;
+      if (activeDocument.activeElement === input.inputEl) return;
+      input.setValue(name);
+    }
+    void this.commitMusicName(slot, name);
   }
 
   private applySettingsToOpenViews(): void {
@@ -102,16 +383,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         type: "group",
         heading: "Music",
         items: [
-          {
-            name: "YouTube music URL",
-            desc: "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown.",
-            control: {
-              type: "text",
-              key: "musicUrl",
-              placeholder: "Paste a YouTube link",
-              validate: (value) => validateMusicUrl(String(value ?? "")),
-            },
-          },
+          // Rendered rather than declared, because the link check owns its own
+          // debounce, its own staleness token and an error line of its own —
+          // none of which the `validate` hook can carry (see buildMusicUrlRow).
+          // setName/setDesc still come from here, so settings search keeps
+          // finding these rows.
+          ...this.musicLinkDefinitions(),
           {
             name: "Show music player",
             desc: "Show the music controls in the timer panel. Turning this off also stops playback.",
@@ -281,13 +558,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
-      case "musicUrl":
-        // Invalid URLs never reach here on 1.13+ — the control's validate hook
-        // rejects them inline. The view rebuilds its iframe via applySettings.
-        settings.musicUrl = String(value).trim();
-        await this.plugin.saveSettings();
-        this.applySettingsToOpenViews();
-        return;
+      // The six station link/name rows are render rows on both paths now
+      // (see musicLinkDefinitions / buildMusicUrlRow), so they own their reads
+      // and writes and never come through here. Adding a case back would be
+      // dead code that silently disagrees with the builder.
       case "showMusicPlayer":
         // The view-side reconciliation removes the iframe when this goes off —
         // that removal is what stops playback (no timer/engine side effect).
@@ -304,12 +578,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       case "musicResume":
         settings.musicResume = Boolean(value);
-        // Turning it off drops the remembered position. clearMusicPosition
-        // saves too, but only when there was something to clear — so the save
-        // has to happen here unconditionally, or switching this off with no
-        // position stored (a fresh install, or any time after ⏹) would live in
-        // memory only and come back on at the next restart.
-        if (!settings.musicResume) this.plugin.clearMusicPosition();
+        // Turning it off drops every station's remembered position.
+        // clearAllMusicPositions saves too, but only when there was something to
+        // clear — so the save has to happen here unconditionally, or switching
+        // this off with no position stored (a fresh install, or any time after
+        // ⏹) would live in memory only and come back on at the next restart.
+        if (!settings.musicResume) this.plugin.clearAllMusicPositions();
         await this.plugin.saveSettings();
         return;
       case "theme":
@@ -431,23 +705,23 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName("Music").setHeading();
 
-    new Setting(containerEl)
-      .setName("YouTube music URL")
-      .setDesc(
-        "Paste a YouTube video, live stream, or playlist link. Audio plays in the timer panel — the video is never shown."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("Paste a YouTube link")
-          .setValue(this.plugin.settings.musicUrl)
-          .onChange(async (value) => {
-            // No validate hook pre-1.13 — an unparsable URL simply hides the
-            // music section view-side (parseYouTubeUrl returns null).
-            this.plugin.settings.musicUrl = value.trim();
-            await this.plugin.saveSettings();
-            applySettingsToOpenViews();
-          })
+    // Three link slots + their names, through the same builder the 1.13 path
+    // uses — so the link check, the error line and the name prefill are
+    // identical on both, and there is only one place to change them.
+    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
+      this.buildMusicUrlRow(
+        new Setting(containerEl)
+          .setName(`Music link ${String(slot + 1)}`)
+          .setDesc(slot === 0 ? MUSIC_URL_DESC : MUSIC_URL_EXTRA_DESC),
+        slot
       );
+      this.buildMusicNameRow(
+        new Setting(containerEl)
+          .setName(`Name for link ${String(slot + 1)}`)
+          .setDesc(MUSIC_NAME_DESC),
+        slot
+      );
+    }
 
     new Setting(containerEl)
       .setName("Show music player")
@@ -479,10 +753,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.musicResume).onChange(async (value) => {
           this.plugin.settings.musicResume = value;
-          // Turning it off drops the remembered position. The save is
-          // unconditional because clearMusicPosition only saves when there was
-          // something to clear — see the declarative path for the full note.
-          if (!value) this.plugin.clearMusicPosition();
+          // Turning it off drops every station's remembered position. The save
+          // is unconditional because clearAllMusicPositions only saves when
+          // there was something to clear — see the declarative path's note.
+          if (!value) this.plugin.clearAllMusicPositions();
           await this.plugin.saveSettings();
         })
       );

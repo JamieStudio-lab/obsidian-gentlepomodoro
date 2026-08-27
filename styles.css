@@ -1382,11 +1382,244 @@
   width: 100%;
 }
 
-/* Decorative row glyph so the row reads as "music", not more timer buttons. */
-.gp-music-row-icon {
+/* Station picker. One quiet line naming what is playing, and a list opened by
+   the list button in the transport row below it.
+
+   The list is a .gp-task-list of .gp-task-items and deliberately adds almost
+   nothing: same border, same panel, same open animation, same hover and
+   selected treatment as the task selector. Two pickers in one narrow column
+   that looked merely similar would read as a bug. Only the differences that
+   matter to a station live here. */
+.gp-station-current {
+  width: 100%;
+  /* Its own breathing room on both sides: clear of the hairline above, and well
+     clear of the transport below — .gp-controls' 0.75rem row gap alone read as
+     the caption being glued to the buttons. */
+  margin-top: 0.5rem;
+  margin-bottom: 1.1rem;
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+/* "Music" and "Now playing" both exist, and hand over one after the other
+   rather than at the same time: the outgoing word fades and closes, and only
+   once it has gone does the incoming one open and fade in. The whole handover
+   is one delay apart, so the two never overlap and no timer is involved.
+
+   Width is carried by max-width rather than by taking the hidden word out of
+   flow. Both stay in flow, so the label is always exactly as wide as what it
+   currently says and the separator sits against it — and the change is eased
+   instead of snapping, which an absolutely-positioned word cannot do
+   (`position` is not an animatable property). */
+.gp-station-current-label {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.75;
+  /* One knob for the whole handover. The visible length is TWICE this, since
+     the two halves run in sequence rather than together. */
+  --gp-caption-fade: 0.5s;
+}
+
+/* EXACTLY ONE `transition` shorthand, and it lives here at (0,1,0). Which half
+   is delayed is cascaded as a custom property instead, for two reasons:
+
+   - Correctness. Declaring the shorthand again on the Leaving rule made its
+     first selector, `.gp-station-label-playing` (0,1,0, later in source), win
+     for that span in BOTH states — so "Now playing" arrived with no delay and
+     the two words ran together on every ▶️ press.
+   - Reduced motion. The guard below is `transition: none` at (0,1,0). Any
+     descendant rule redeclaring the shorthand (e.g. `.is-playing .…-idle`, at
+     (0,3,0)) silently beats it and re-enables motion for users who asked for
+     none — the hazard this file already records from 0.3.2. */
+.gp-station-label-idle,
+.gp-station-label-playing {
+  display: inline-block;
+  overflow: hidden;
+  white-space: nowrap;
+  /* Comfortably past "Now playing" at this size; it only ever caps the ease. */
+  max-width: 7em;
+  opacity: 1;
+  /* Arriving is the default: wait out the departing word, then open. */
+  --gp-caption-delay: var(--gp-caption-fade, 0.5s);
+  transition:
+    opacity var(--gp-caption-fade, 0.5s) ease var(--gp-caption-delay),
+    max-width var(--gp-caption-fade, 0.5s) ease var(--gp-caption-delay);
+}
+
+/* Leaving: no delay — this half runs first. */
+.gp-station-label-playing,
+.gp-station-current.is-playing .gp-station-label-idle {
+  --gp-caption-delay: 0s;
+  max-width: 0;
+  opacity: 0;
+}
+
+/* Arriving, and more specific than the Leaving rule above, so the delay returns. */
+.gp-station-current.is-playing .gp-station-label-playing {
+  --gp-caption-delay: var(--gp-caption-fade, 0.5s);
+  max-width: 7em;
+  opacity: 1;
+}
+
+/* Both names truncate rather than wrap, and each may shrink: min-width:0 is
+   what actually permits that inside a flex row, without which neither ellipsis
+   ever appears. The track gets the larger share, being the longer of the two. */
+.gp-station-current-name,
+.gp-station-current-track {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.gp-station-current-name {
+  flex: 0 1 auto;
+  color: var(--text-normal);
+}
+
+/* The names dip out and back when they change — a station switch, or a playlist
+   moving to the next track. Unlike the two fixed words beside them, these are
+   arbitrary strings, so they cannot be pre-rendered and cross-faded in CSS
+   alone; the view holds them invisible for CAPTION_NAME_FADE_MS and repaints in
+   the gap. Keep that constant and this duration in step.
+
+   Each name dips together with its own separator — the `|` is generated content
+   on the same span, and opacity groups an element with its descendants. That is
+   deliberate: floating the separators outside the fade would expose the track
+   pipe jumping sideways when the new station name has a different width, and
+   leave an orphaned pipe behind when the same repaint hides the track span
+   entirely (playlist station -> plain video). Opacity does not reflow, so the
+   segment fades without moving. */
+.gp-station-current-name,
+.gp-station-current-track {
+  --gp-name-fade: 0.28s;
+  transition: opacity var(--gp-name-fade) ease;
+}
+
+.gp-station-current.is-swapping .gp-station-current-name,
+.gp-station-current.is-swapping .gp-station-current-track {
+  opacity: 0;
+}
+
+/* Separator drawn rather than typed, so it never lands in a name or survives
+   into the DOM text of a station. */
+.gp-station-current-name::before,
+.gp-station-current-track::before {
+  content: "|";
+  margin-right: 6px;
+  opacity: 0.45;
+}
+
+.gp-station-current-track {
+  flex: 1 1 auto;
+}
+
+/* Names are user-typed and a narrow sidebar is unforgiving: one line, cut with
+   an ellipsis. .gp-task-item deliberately lets task text wrap — a task needs
+   reading, a station needs recognising. min-width:0 is load-bearing here too. */
+.gp-station-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Every row carries a tick from the start (rows are built once and only
+   re-labelled), so it needs hiding until its row is the active one. The task
+   list's own .gp-task-selected rule is one class more specific and turns it
+   back on. */
+.gp-station-item .gp-task-check-icon {
+  display: none;
+}
+
+/* The one place the station list departs from the task list: no filled panel
+   behind it. Border, radius, padding, scroll cap and open animation all still
+   come from .gp-task-list — only the fill is dropped, so the sole background
+   colours in the list are the hover and the active row. */
+.gp-station-list {
+  background-color: transparent;
+  /* Slower than the task list's 0.3s. That one is a working list you open to
+     get something done; this is a mood control, and it should feel unhurried.
+     The mobile override that kills the transition outright still wins — it is
+     `body.is-mobile .gp-task-list`, which out-specifies this. */
+  transition:
+    max-height 0.55s ease-in-out,
+    padding 0.55s ease;
+  /* Flex rather than margins so the spacing sits only BETWEEN rendered rows: an
+     unused middle slot is display:none, so it contributes no gap, and the last
+     visible row gains no trailing space even when a hidden slot follows it. */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Rows are divs, exactly like .gp-task-item, so they need no reset at all —
+   every background, hover and selected colour comes from the shared task-list
+   rules. (They were <button>s briefly: Obsidian's own button styling out-
+   specifies a plain class reset, so they kept a filled background in dark mode
+   and the hover never showed.) The tabindex added in the view is what keeps
+   them keyboard-operable without reintroducing that. */
+/* Playlist transport. Only meaningful for a playlist, so the whole row eases in
+   and out rather than blinking — same curve and durations as the session
+   controls' .gp-animated-wrapper, but collapsing vertically since it is a row.
+   It must never be .gp-hidden: display:none cannot animate. */
+.gp-music-video-row {
+  overflow: hidden;
+  max-height: calc(var(--gp-icon-btn-size, 42px) + 4px);
+  margin-top: 0.75rem;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    max-height 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    opacity 0.3s ease,
+    margin-top 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+
+.gp-music-video-row.gp-hidden-animated {
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.94);
+  pointer-events: none;
+}
+
+/* ⏪ is ⏩'s artwork reflected. A reflection is an isometry, so the mirrored
+   glyph keeps exactly the same stroke weight — redrawing it would not. */
+.gp-icon-flip-x {
+  transform: scaleX(-1);
+}
+
+/* The row still appears and disappears, it just stops sliding and fading to do
+   it. The mirrored glyph's transform is layout, not motion, so it stays. */
+@media (prefers-reduced-motion: reduce) {
+  .gp-music-video-row {
+    transition: none;
+    transform: none;
+  }
+
+  .gp-music-video-row.gp-hidden-animated {
+    transform: none;
+  }
+
+  .gp-station-label-idle,
+  .gp-station-label-playing,
+  .gp-station-current-name,
+  .gp-station-current-track {
+    transition: none;
+  }
+}
+
+.gp-station-item:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
@@ -1700,5 +1933,40 @@ body.is-tablet .gp-timer-time {
   body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape,
   body.is-tablet .gp-theme-frosted-glass .gp-state-running .gp-timer-shape {
     animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
+  }
+}
+
+/* ===== Settings-tab inline errors ===== */
+
+/* The link check writes here, under the box it belongs to. Obsidian's control
+   column is a flex row aligned to the right, so the message needs its own line:
+   let the column wrap and give the message the full width of it.
+
+   Plugin-owned rather than Setting.setErrorMessage/errorEl, which are 1.13-only
+   and would fail this repo's own no-unsupported-api lint at minAppVersion 1.7.2. */
+.gp-setting-with-error .setting-item-control {
+  flex-wrap: wrap;
+}
+
+.gp-setting-error {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* No message, no gap. */
+.gp-setting-error:empty {
+  display: none;
+}
+
+/* On a narrow settings pane Obsidian stacks name and control; keep the message
+   with its box and reading left-to-right like the description above it. */
+@media (max-width: 640px) {
+  .gp-setting-error {
+    text-align: left;
   }
 }

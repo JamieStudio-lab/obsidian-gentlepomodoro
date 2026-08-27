@@ -4,6 +4,29 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] — 2026-08-27
+
+### Added
+
+- **Up to three music links, switchable from the timer panel.** Settings now has three link slots instead of one, each with an optional short name ("Lofi", "Rain"). The music controls now name the chosen link on one quiet line — reading "Music" until you press ▶️, then "Now playing", and adding the track name when the link is a playlist. Names fade rather than snap when they change, whether you switch links or a playlist moves on — with a list button beside the transport to pick a different link. Leave the extra slots empty and there is simply nothing to pick from. Your existing link becomes the first slot automatically — nothing to set up, and nothing is lost.
+  - **Each link remembers its own place.** Play one for a while, switch to another, come back, and the first picks up where you left it. Previously there was a single remembered spot shared by whatever link was configured. (Live streams have no "place" to return to, so those still always start live.)
+  - **Renaming a link doesn't interrupt anything**, and neither does editing a link you are not currently listening to.
+  - Clearing a slot's text removes that link, and forgets the place it had remembered.
+- **A next-link button, which keeps the music going.** Press ⏭ while something is playing and the next link starts on its own once it has loaded. Press it while paused or stopped and nothing makes a sound. Picking a link from the list still never starts playback by itself — ⏭ is the one control that says "and keep playing", because a next button that answers with silence isn't much of a next button. It appears only when you have more than one link.
+- **Previous and next video buttons for playlists.** Press ⏪ or ⏩ to move through the playlist you're listening to — they fade out and back in like the other controls rather than cutting, and pressing ⏸ or ⏹ while one fades cancels the skip. They sit on their own row, which eases in and out the way the session controls do, and appears only when the link you're on is actually a playlist. They stay out of the way for ordinary videos — including looped ones, which YouTube internally treats as a one-item playlist.
+- **Bad links now say so, in the settings, under the box.** Paste something that isn't a YouTube link, or one YouTube has no record of, and a short message appears under that box. It is honest about its limits: it can tell you a link is malformed, deleted, private, or blocked from embedding, but it cannot promise a link will play — that depends on things it has no way to test from here. Anything it isn't sure about, it stays quiet about.
+- **Links name themselves.** Paste a link and the name box beside it fills in on its own, from the video or playlist title, tidied up: a SHOUTING title is brought back to sentence case, a lowercase one gets its first letter capitalised, and an over-long one is cut at a word. You can still type over it, and it never touches a name you have already written, or one you are in the middle of writing. If a title turns out to be unusable — one link tested here has a title that is a single invisible character — the channel name is used instead.
+
+### Notes
+
+- **Audited, no change: the hidden music player and YouTube playback quality.** The plugin never asks YouTube for a playback quality, and that is deliberate — the embed API's quality setters have been no-ops for years (YouTube picks automatically from player size and bandwidth, so the invisible 1×1 player gets the lowest video rendition), and it makes no audible difference: YouTube serves the same audio stream whether the video is 144p or 1080p. Forcing the hidden player to 1080p would only spend bandwidth and CPU on pixels nobody sees.
+- **Checking a link is one small request to YouTube**, sent shortly after you stop typing in a link box, carrying only the video or playlist ID you pasted. Unlike the music player itself, it happens even with the timer panel closed and "Show music player" off — those settings control playback, and this is the settings page. The README's "Network use" section has been rewritten to describe both. Nothing is sent for an empty slot.
+- On Obsidian 1.13 and later, a link that isn't recognised is now saved as you typed it rather than being refused — so nothing you type is lost, and the message under the box explains what is wrong. Earlier Obsidian versions already behaved this way.
+- An older bug surfaced while building this and is fixed here: pressing ⏹ and then switching links straight away made the new link start from the top and forget where it had been.
+- The "Music" / "Now playing" wording follows the ▶️/⏸ button exactly, including when no Pomodoro session is running. It briefly did not: it was recomputed on the timer's tick, and the timer does not tick while idle, so it changed late and then stuck.
+- A place remembered by 0.5.6 or earlier is carried over to whichever slot holds that link. If it had no record of which link it belonged to (from before 0.5.6), it is forgotten once, as it was already.
+- The music player remains unavailable on iPhone and iPad — see 0.5.6. Adding more links does not change that; no link works there.
+
 ## [0.5.6] — 2026-08-16
 
 ### Added

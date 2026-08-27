@@ -1,4 +1,5 @@
 import type { GentlePomoSettings } from "./types";
+import type { MusicResumeState } from "./youtubeMusic";
 
 // Central home for shared, static values so they aren't duplicated as magic strings/numbers.
 export const VIEW_TYPE_GENTLE_POMO = "gentle-pomo-view";
@@ -78,6 +79,21 @@ export const MUSIC_FADE_HOLD_MAX_MS = 3000;
 // or a live stream going offline) should surface to the user.
 export const MUSIC_ENDED_NOTICE_DELAY_MS = 3000;
 
+// After a manual ⏩ advance, hold the "the music ended" notice for a moment. At
+// the last item of a non-looping playlist the advance simply ends playback, and
+// that notice blames a live stream going offline and asks for a new link —
+// nonsense in answer to a button the user just pressed. Mid-playlist advances
+// are already covered by the notice's own disarm on the next PLAYING/BUFFERING.
+export const MUSIC_ADVANCE_NOTICE_GRACE_MS = 4000;
+
+// How long the caption's station/track names dip out for before the new ones
+// come back. Half the visible handover, since the rise mirrors the dip. Kept
+// well under the "Music"/"Now playing" fade beside it: those two words are a
+// mode you glance at, while a name is something you are reading, and holding it
+// blank for a full second to be gentle just reads as a stall. The matching CSS
+// duration is --gp-name-fade in styles.css; keep the two in step.
+export const CAPTION_NAME_FADE_MS = 280;
+
 // How long a BUFFERING player state must persist before the "music is
 // buffering" Notice fires (normal track starts and brief rebuffers stay well
 // under this), and the minimum gap between such notices — a flapping
@@ -123,6 +139,12 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   goalNoticeEnabled: true,
   incrementPomodoroCountOnFinish: false,
   musicUrl: "",
+  musicUrl2: "",
+  musicUrl3: "",
+  musicName1: "",
+  musicName2: "",
+  musicName3: "",
+  musicStationIndex: 0,
   showMusicPlayer: true,
   musicVolume: 0.7,
   musicLoop: true,
@@ -130,6 +152,12 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastGoalHitDate: null,
   sessionsSinceLongBreak: 0,
   sessionCounterDate: null,
+  // Frozen: the shallow Object.assign in loadSettings copies this REFERENCE, so
+  // an in-place push here would corrupt the default for the life of the process
+  // (and leak between vitest cases that spread DEFAULT_SETTINGS). Freezing turns
+  // that silent corruption into an immediate TypeError. loadSettings always
+  // replaces it with a fresh array.
+  musicPositions: Object.freeze([]) as unknown as MusicResumeState[],
   lastMusicVideoId: null,
   lastMusicPlaylistId: null,
   lastMusicSeconds: 0,
