@@ -5,6 +5,7 @@ import {
   debounce,
   requestUrl,
   type SettingDefinitionItem,
+  type SettingControl,
   type SettingGroupItem,
   type TextComponent,
 } from "obsidian";
@@ -61,6 +62,45 @@ const MUSIC_LINK_CACHE_TTL_MS = 60_000;
 const MUSIC_URL_KEYS = ["musicUrl", "musicUrl2", "musicUrl3"] as const;
 const MUSIC_NAME_KEYS = ["musicName1", "musicName2", "musicName3"] as const;
 const MUSIC_NAME_PLACEHOLDERS = ["Lofi", "Rain", "Piano"] as const;
+
+/**
+ * Render one stored value into a text/dropdown box. getControlValue is typed
+ * `unknown` (that is the 1.13 contract), and every control this tab renders
+ * holds a string, a number or a boolean — anything else is a bug, and an empty
+ * box says so more usefully than "[object Object]".
+ */
+function controlText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+/**
+ * One settings row, in the plugin's own vocabulary — the single list both
+ * settings paths render from.
+ *
+ * Deliberately not Obsidian's own SettingDefinition: an action row needs a
+ * button label (and, for the two destructive ones, red styling) that the 1.13
+ * shape has no room for, because there the whole row is the control. Keeping
+ * our own type means the imperative path is a projection rather than a
+ * re-statement.
+ */
+type SettingRowSpec =
+  | { name: string; desc: string; control: SettingControl<SettingsKey> }
+  | { name: string; desc: string; render: (setting: Setting) => void | (() => void) }
+  | {
+      name: string;
+      desc: string;
+      action: (el: HTMLElement, index: number) => void;
+      buttonText: string;
+      destructive?: boolean;
+    };
+
+/** A `.setHeading()` row and the settings under it. */
+interface SettingGroupSpec {
+  heading: string;
+  rows: SettingRowSpec[];
+}
 
 /** What one oEmbed probe learned. `name` is "" when nothing usable came back. */
 interface LinkProbeResult {
@@ -119,8 +159,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * The six link/name rows, shared shape for the 1.13 path. Kept beside the
    * imperative loop in display() — changing one means changing both.
    */
-  private musicLinkDefinitions(): SettingGroupItem<SettingsKey>[] {
-    const rows: SettingGroupItem<SettingsKey>[] = [];
+  private musicLinkDefinitions(): SettingRowSpec[] {
+    const rows: SettingRowSpec[] = [];
     for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
       rows.push({
         name: `Music link ${String(slot + 1)}`,
@@ -331,12 +371,18 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     }
   }
 
-  override getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
+  /**
+   * Every settings row, once. Both paths render from this and nothing else,
+   * which is what makes them incapable of drifting: on 1.13+
+   * getSettingDefinitions maps it to Obsidian's declarative shape, and below
+   * that display() walks it with renderSettingRow. Adding a setting means
+   * adding one entry here — there is no second list to remember.
+   */
+  private settingGroups(): SettingGroupSpec[] {
     return [
       {
-        type: "group",
         heading: "Display & behavior",
-        items: [
+        rows: [
           {
             name: "Pomodoro logs folder",
             desc: "Folder to store daily log files (e.g., 'pomodoro_logs').",
@@ -355,9 +401,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Timer appearance",
-        items: [
+        rows: [
           {
             name: "Theme",
             desc: "Visual style for the timer.",
@@ -380,9 +425,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Music",
-        items: [
+        rows: [
           // Rendered rather than declared, because the link check owns its own
           // debounce, its own staleness token and an error line of its own —
           // none of which the `validate` hook can carry (see buildMusicUrlRow).
@@ -407,9 +451,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Long break",
-        items: [
+        rows: [
           {
             name: "Long break duration (minutes)",
             desc: "Length of the long break that replaces a regular break.",
@@ -423,9 +466,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Daily focus goal",
-        items: [
+        rows: [
           {
             name: "Daily focus goal (minutes)",
             desc: "Set to 0 to disable. The status bar shows today's progress against this goal.",
@@ -439,9 +481,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Task selector",
-        items: [
+        rows: [
           {
             name: "Tasks folder path",
             desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
@@ -470,9 +511,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        type: "group",
         heading: "Task integration",
-        items: [
+        rows: [
           {
             name: "Increment task pomodoro count on finish",
             desc: POMO_COUNT_TOGGLE_DESC,
@@ -484,6 +524,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             action: () => {
               void this.plugin.checkPomodoroMarkers();
             },
+            buttonText: "Check",
           },
           {
             name: REPAIR_MARKERS_NAME,
@@ -491,6 +532,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             action: () => {
               void this.plugin.repairPomodoroMarkers();
             },
+            buttonText: "Repair",
           },
           {
             name: REMOVE_MARKERS_NAME,
@@ -498,6 +540,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             action: () => {
               void this.plugin.removeMisplacedPomodoroMarkers();
             },
+            buttonText: "Remove",
+            destructive: true,
           },
           {
             name: REMOVE_ALL_MARKERS_NAME,
@@ -505,10 +549,30 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             action: () => {
               void this.plugin.removeAllPomodoroMarkers();
             },
+            buttonText: "Remove all",
+            destructive: true,
           },
         ],
       },
     ];
+  }
+
+  /**
+   * Obsidian 1.13+ renders settings itself from these, which is also what puts
+   * them in the settings search index. A pure projection of settingGroups() —
+   * the only thing dropped is the button text, which the 1.13 action shape has
+   * no room for (there the whole row is the control).
+   */
+  override getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
+    return this.settingGroups().map((group) => ({
+      type: "group" as const,
+      heading: group.heading,
+      items: group.rows.map((row): SettingGroupItem<SettingsKey> => {
+        if ("control" in row) return { name: row.name, desc: row.desc, control: row.control };
+        if ("render" in row) return { name: row.name, desc: row.desc, render: row.render };
+        return { name: row.name, desc: row.desc, action: row.action };
+      }),
+    }));
   }
 
   override getControlValue(key: string): unknown {
@@ -621,306 +685,85 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     await this.plugin.saveSettings();
   }
 
-  // Fallback for Obsidian < 1.13.0 (minAppVersion is below that). Never called
-  // on 1.13+, where the tab renders declaratively from getSettingDefinitions()
-  // — keep both paths in sync when adding or changing a setting.
+  /**
+   * Fallback for Obsidian < 1.13.0 (minAppVersion is 1.7.2). Never called on
+   * 1.13+, where the tab renders itself from getSettingDefinitions().
+   *
+   * Generic on purpose. This used to be ~300 lines that re-stated every
+   * setting's name, description, control and side effects a second time, with
+   * five separate warnings in the docs to keep the two in step. Both now render
+   * from settingGroups(), and every write goes through setControlValue — the
+   * one place the side effects live — so there is nothing left to keep in sync.
+   */
   override display(): void {
     const { containerEl } = this;
     containerEl.empty();
-
-    const applySettingsToOpenViews = () => this.applySettingsToOpenViews();
-
-    new Setting(containerEl).setName("Display & behavior").setHeading();
-
-    new Setting(containerEl)
-      .setName("Pomodoro logs folder")
-      .setDesc("Folder to store daily log files (e.g., 'pomodoro_logs').")
-      .addText((text) =>
-        text
-          .setPlaceholder("Example: pomodoro_logs")
-          .setValue(this.plugin.settings.logFolderPath)
-          .onChange(async (value) => {
-            this.plugin.settings.logFolderPath = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Auto-open on startup")
-      .setDesc("Open the view in the right panel when Obsidian starts.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.autoOpenOnStartup).onChange(async (value) => {
-          this.plugin.settings.autoOpenOnStartup = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Show status bar")
-      .setDesc("Show the status bar indicator.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showInStatusBar).onChange(async (value) => {
-          await this.plugin.setStatusBarVisibility(value);
-        })
-      );
-
-    new Setting(containerEl).setName("Timer appearance").setHeading();
-
-    new Setting(containerEl)
-      .setName("Theme")
-      .setDesc("Visual style for the timer.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("classic", "Classic")
-          .addOption("frosted-glass", "Frosted glass")
-          .setValue(this.plugin.settings.theme)
-          .onChange(async (value) => {
-            this.plugin.settings.theme = value as "classic" | "frosted-glass";
-            await this.plugin.saveSettings();
-            applySettingsToOpenViews();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Day/night indicator")
-      .setDesc("Show a subtle sun/moon indicator above the timer.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showDayNightIndicator).onChange(async (value) => {
-          this.plugin.settings.showDayNightIndicator = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Show estimated end time")
-      .setDesc("Show the projected finish time on the timer while a session is running.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showEndTime).onChange(async (value) => {
-          this.plugin.settings.showEndTime = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl).setName("Music").setHeading();
-
-    // Three link slots + their names, through the same builder the 1.13 path
-    // uses — so the link check, the error line and the name prefill are
-    // identical on both, and there is only one place to change them.
-    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
-      this.buildMusicUrlRow(
-        new Setting(containerEl)
-          .setName(`Music link ${String(slot + 1)}`)
-          .setDesc(slot === 0 ? MUSIC_URL_DESC : MUSIC_URL_EXTRA_DESC),
-        slot
-      );
-      this.buildMusicNameRow(
-        new Setting(containerEl)
-          .setName(`Name for link ${String(slot + 1)}`)
-          .setDesc(MUSIC_NAME_DESC),
-        slot
-      );
+    for (const group of this.settingGroups()) {
+      new Setting(containerEl).setName(group.heading).setHeading();
+      for (const row of group.rows) this.renderSettingRow(containerEl, row);
     }
+  }
 
-    new Setting(containerEl)
-      .setName("Show music player")
-      .setDesc("Show the music controls in the timer panel. Turning this off also stops playback.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showMusicPlayer).onChange(async (value) => {
-          this.plugin.settings.showMusicPlayer = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Loop music")
-      .setDesc(
-        "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.musicLoop).onChange(async (value) => {
-          this.plugin.settings.musicLoop = value;
-          await this.plugin.saveSettings();
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Resume where you left off")
-      .setDesc(MUSIC_RESUME_DESC)
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.musicResume).onChange(async (value) => {
-          this.plugin.settings.musicResume = value;
-          // Turning it off drops every station's remembered position. The save
-          // is unconditional because clearAllMusicPositions only saves when
-          // there was something to clear — see the declarative path's note.
-          if (!value) this.plugin.clearAllMusicPositions();
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl).setName("Long break").setHeading();
-
-    new Setting(containerEl)
-      .setName("Long break duration (minutes)")
-      .setDesc("Length of the long break that replaces a regular break.")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.longBreakMinutes.toString()).onChange(async (value) => {
-          const n = parseInt(value, 10);
-          if (Number.isFinite(n) && n > 0) {
-            this.plugin.settings.longBreakMinutes = n;
-            await this.plugin.saveSettings();
-          }
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Long break frequency")
-      .setDesc("Number of focus sessions before each long break (classic technique uses 4).")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.longBreakEvery.toString()).onChange(async (value) => {
-          const n = parseInt(value, 10);
-          if (Number.isFinite(n) && n >= 1) {
-            this.plugin.settings.longBreakEvery = n;
-            await this.plugin.saveSettings();
-          }
-        })
-      );
-
-    new Setting(containerEl).setName("Daily focus goal").setHeading();
-
-    new Setting(containerEl)
-      .setName("Daily focus goal (minutes)")
-      .setDesc("Set to 0 to disable. The status bar shows today's progress against this goal.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.dailyFocusGoalMinutes.toString())
-          .onChange(async (value) => {
-            const n = parseInt(value, 10);
-            if (Number.isFinite(n) && n >= 0) {
-              this.plugin.settings.dailyFocusGoalMinutes = n;
-              await this.plugin.saveSettings();
-            }
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Goal-hit notice")
-      .setDesc("Show a one-time notice when today's focus first crosses the daily goal.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.goalNoticeEnabled).onChange(async (value) => {
-          this.plugin.settings.goalNoticeEnabled = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl).setName("Task selector").setHeading();
-
-    new Setting(containerEl)
-      .setName("Tasks folder path")
-      .setDesc(
-        "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault."
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("Example: projects/active")
-          .setValue(this.plugin.settings.tasksPath)
-          .onChange(async (value) => {
-            this.plugin.settings.tasksPath = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Show task selector")
-      .setDesc(
-        "Show the task picker in the timer panel. Turning this off unlinks the current task."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showTaskSelector).onChange(async (value) => {
-          this.plugin.settings.showTaskSelector = value;
-          await this.plugin.saveSettings();
-          if (!value && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
-            this.plugin.timer.setTask(NO_TASK_LABEL);
-          }
-          applySettingsToOpenViews();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Task lookahead window")
-      .setDesc(
-        "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear."
-      )
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("3", "3 Days")
-          .addOption("5", "5 Days")
-          .addOption("7", "7 Days")
-          .addOption("14", "14 Days")
-          .addOption("30", "30 Days")
-          .setValue(this.plugin.settings.taskSelectorDays.toString())
-          .onChange(async (value) => {
-            const n = parseInt(value, 10);
-            if (Number.isFinite(n) && n > 0) {
-              this.plugin.settings.taskSelectorDays = n;
-              await this.plugin.saveSettings();
-            }
-          })
-      );
-
-    new Setting(containerEl).setName("Task integration").setHeading();
-
-    new Setting(containerEl)
-      .setName("Increment task pomodoro count on finish")
-      .setDesc(POMO_COUNT_TOGGLE_DESC)
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.incrementPomodoroCountOnFinish)
-          .onChange(async (value) => {
-            this.plugin.settings.incrementPomodoroCountOnFinish = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName(CHECK_MARKERS_NAME)
-      .setDesc(CHECK_MARKERS_DESC)
-      .addButton((btn) =>
-        btn.setButtonText("Check").onClick(() => {
-          void this.plugin.checkPomodoroMarkers();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName(REPAIR_MARKERS_NAME)
-      .setDesc(REPAIR_MARKERS_DESC)
-      .addButton((btn) =>
-        btn.setButtonText("Repair").onClick(() => {
-          void this.plugin.repairPomodoroMarkers();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName(REMOVE_MARKERS_NAME)
-      .setDesc(REMOVE_MARKERS_DESC)
-      .addButton((btn) => {
-        btn.setButtonText("Remove").onClick(() => {
-          void this.plugin.removeMisplacedPomodoroMarkers();
+  /** Render one row the pre-1.13 way. Values are read and written through
+   *  getControlValue/setControlValue, exactly as 1.13 does it. */
+  private renderSettingRow(containerEl: HTMLElement, row: SettingRowSpec): void {
+    const setting = new Setting(containerEl).setName(row.name).setDesc(row.desc);
+    if ("render" in row) {
+      // The music link rows own their own DOM on both paths — same builder,
+      // so the link check, the error line and the name prefill are identical.
+      row.render(setting);
+      return;
+    }
+    if ("action" in row) {
+      setting.addButton((btn) => {
+        btn.setButtonText(row.buttonText).onClick(() => {
+          row.action(btn.buttonEl, 0);
         });
-        markDestructive(btn);
+        // The two that delete counts get the red treatment; 1.13 has no
+        // equivalent, which is the one thing this path does that the other
+        // cannot.
+        if (row.destructive === true) markDestructive(btn);
       });
-
-    new Setting(containerEl)
-      .setName(REMOVE_ALL_MARKERS_NAME)
-      .setDesc(REMOVE_ALL_MARKERS_DESC)
-      .addButton((btn) => {
-        btn.setButtonText("Remove all").onClick(() => {
-          void this.plugin.removeAllPomodoroMarkers();
+      return;
+    }
+    const control = row.control;
+    const commit = (value: unknown) => {
+      // setControlValue owns the validation and every side effect (the status
+      // bar, the unlink-on-hide, the open-view reconcile), so an invalid entry
+      // is simply not written — the same as on 1.13.
+      void this.setControlValue(control.key, value);
+    };
+    const current = this.getControlValue(control.key);
+    switch (control.type) {
+      case "toggle":
+        setting.addToggle((toggle) => toggle.setValue(Boolean(current)).onChange(commit));
+        return;
+      case "dropdown":
+        setting.addDropdown((dropdown) => {
+          for (const [value, label] of Object.entries(control.options)) {
+            dropdown.addOption(value, String(label));
+          }
+          dropdown.setValue(controlText(current)).onChange(commit);
         });
-        markDestructive(btn);
-      });
+        return;
+      case "text":
+        setting.addText((text) =>
+          text
+            .setPlaceholder(control.placeholder ?? "")
+            .setValue(controlText(current))
+            .onChange(commit)
+        );
+        return;
+      case "number":
+        // A plain text box, as this path always used: Setting has no number
+        // component, and setControlValue rejects anything that isn't a usable
+        // number rather than writing a NaN.
+        setting.addText((text) => text.setValue(controlText(current)).onChange(commit));
+        return;
+      default:
+        // A control type nobody has added a case for renders as a bare row
+        // rather than silently losing the setting.
+        return;
+    }
   }
 }
