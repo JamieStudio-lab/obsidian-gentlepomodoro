@@ -1483,6 +1483,25 @@
   color: var(--text-normal);
 }
 
+/* The names dip out and back when they change — a station switch, or a playlist
+   moving to the next track. Unlike the two fixed words beside them, these are
+   arbitrary strings, so they cannot be pre-rendered and cross-faded in CSS
+   alone; the view holds them invisible for CAPTION_NAME_FADE_MS and repaints in
+   the gap. Keep that constant and this duration in step.
+
+   Only the text fades. The separators stay put, so the line does not appear to
+   come apart while a name changes. */
+.gp-station-current-name,
+.gp-station-current-track {
+  --gp-name-fade: 0.28s;
+  transition: opacity var(--gp-name-fade) ease;
+}
+
+.gp-station-current.is-swapping .gp-station-current-name,
+.gp-station-current.is-swapping .gp-station-current-track {
+  opacity: 0;
+}
+
 /* Separator drawn rather than typed, so it never lands in a name or survives
    into the DOM text of a station. */
 .gp-station-current-name::before,
@@ -1586,7 +1605,9 @@
   }
 
   .gp-station-label-idle,
-  .gp-station-label-playing {
+  .gp-station-label-playing,
+  .gp-station-current-name,
+  .gp-station-current-track {
     transition: none;
   }
 }

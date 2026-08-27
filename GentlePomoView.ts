@@ -21,6 +21,7 @@ import {
   MUSIC_FADE_HOLD_MAX_MS,
   MUSIC_ENDED_NOTICE_DELAY_MS,
   MUSIC_ADVANCE_NOTICE_GRACE_MS,
+  CAPTION_NAME_FADE_MS,
   MUSIC_STALL_NOTICE_DELAY_MS,
   MUSIC_STALL_RENOTIFY_MS,
   RESUME_SEEK_LANDING_TOLERANCE_S,
@@ -180,6 +181,7 @@ export class GentlePomoView extends ItemView {
   private musicCurrentVideoTitle: string | null = null;
   private lastStationCaptionKey: string | null = null;
   private stationCaptionFullText = "";
+  private nameSwapTimeout: number | null = null;
   /** What the transport is currently showing; the caption's wording follows it. */
   private musicShowingAsPlaying = false;
   private stationName = "";
@@ -844,6 +846,10 @@ export class GentlePomoView extends ItemView {
       window.clearTimeout(this.peekTimeout);
       this.peekTimeout = null;
     }
+    if (this.nameSwapTimeout !== null) {
+      window.clearTimeout(this.nameSwapTimeout);
+      this.nameSwapTimeout = null;
+    }
     // The iframe would die with the view DOM anyway, but explicit teardown
     // clears the pending handshake timeout and nulls the refs.
     this.destroyMusicIframe();
@@ -1268,16 +1274,66 @@ export class GentlePomoView extends ItemView {
     const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
     if (key === this.lastStationCaptionKey) return;
     this.lastStationCaptionKey = key;
+    // The wording is two fixed words, so it hands over in pure CSS (see the
+    // label rules). The names are arbitrary strings, which cannot be
+    // pre-rendered that way — they dip out, change while invisible, and come
+    // back, which is the one place a timer earns its keep here.
     this.stationCaption?.toggleClass("is-playing", playing);
-    this.stationCaptionName?.setText(this.stationName);
-    this.stationCaptionTrack?.setText(track);
-    this.stationCaptionTrack?.toggleClass("gp-hidden", track === "");
-    // Nothing to announce at all: no station selected.
-    this.stationCaption?.toggleClass("gp-hidden", this.stationName === "");
     this.stationCaptionFullText = [playing ? "Now playing" : "Music", this.stationName, track]
       .filter((part) => part !== "")
       .join("  |  ");
-    this.updateCaptionTooltip();
+    this.writeStationNames(this.stationName, track);
+    // Nothing to announce at all: no station selected.
+    this.stationCaption?.toggleClass("gp-hidden", this.stationName === "");
+  }
+
+  /**
+   * Put the station and track names on screen, dipping them out and back when
+   * they actually change so a switch or a playlist advance does not snap.
+   *
+   * Skipped — written straight through — on the first paint, when only the
+   * wording changed, and under prefers-reduced-motion, where a fade the user
+   * asked not to see would just make the text arrive late.
+   */
+  private writeStationNames(name: string, track: string) {
+    const nameEl = this.stationCaptionName;
+    const trackEl = this.stationCaptionTrack;
+    if (!nameEl || !trackEl) return;
+
+    const paint = () => {
+      nameEl.setText(name);
+      trackEl.setText(track);
+      trackEl.toggleClass("gp-hidden", track === "");
+      // After the text, never before: the tooltip decides on a measurement.
+      this.updateCaptionTooltip();
+    };
+
+    const changed = nameEl.textContent !== name || trackEl.textContent !== track;
+    const firstPaint = nameEl.textContent === "" && trackEl.textContent === "";
+    if (!changed || firstPaint || this.prefersReducedMotion()) {
+      if (this.nameSwapTimeout !== null) {
+        window.clearTimeout(this.nameSwapTimeout);
+        this.nameSwapTimeout = null;
+      }
+      this.stationCaption?.removeClass("is-swapping");
+      paint();
+      return;
+    }
+
+    // A second change landing mid-dip replaces the first: the names are already
+    // invisible, so it just repaints and rides the same rise back.
+    if (this.nameSwapTimeout !== null) window.clearTimeout(this.nameSwapTimeout);
+    this.stationCaption?.addClass("is-swapping");
+    this.nameSwapTimeout = window.setTimeout(() => {
+      this.nameSwapTimeout = null;
+      paint();
+      this.stationCaption?.removeClass("is-swapping");
+    }, CAPTION_NAME_FADE_MS);
+  }
+
+  /** Honour the OS motion setting for the timer-driven fades CSS cannot gate. */
+  private prefersReducedMotion(): boolean {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
   /**

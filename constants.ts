@@ -86,6 +86,14 @@ export const MUSIC_ENDED_NOTICE_DELAY_MS = 3000;
 // are already covered by the notice's own disarm on the next PLAYING/BUFFERING.
 export const MUSIC_ADVANCE_NOTICE_GRACE_MS = 4000;
 
+// How long the caption's station/track names dip out for before the new ones
+// come back. Half the visible handover, since the rise mirrors the dip. Kept
+// well under the "Music"/"Now playing" fade beside it: those two words are a
+// mode you glance at, while a name is something you are reading, and holding it
+// blank for a full second to be gentle just reads as a stall. The matching CSS
+// duration is --gp-name-fade in styles.css; keep the two in step.
+export const CAPTION_NAME_FADE_MS = 280;
+
 // How long a BUFFERING player state must persist before the "music is
 // buffering" Notice fires (normal track starts and brief rebuffers stay well
 // under this), and the minimum gap between such notices — a flapping
