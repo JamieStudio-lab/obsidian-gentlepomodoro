@@ -605,7 +605,14 @@ export class GentlePomoView extends ItemView {
     // it carries its own explicit opt-in.
     this.stationListContainer = this.musicSection.createDiv({
       cls: "gp-task-list gp-station-list",
-      attr: { role: "listbox", "aria-label": "Music links" },
+      // `inert` is seeded HERE, not left to setStationListVisible. That method
+      // early-returns when the value is unchanged, and stationListVisible starts
+      // false — so a closing call is a no-op, and with two links and the player
+      // on, neither of its conditional call sites is reached at all. The closed
+      // list would keep its rows in the tab order until the user opened it once,
+      // i.e. the attribute armed only after the action it exists to guard.
+      // Seeded false-y the same way aria-expanded already is on the button.
+      attr: { role: "listbox", "aria-label": "Music links", inert: "" },
     });
     for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
       // A div, not a <button>, and that is the whole reason the rows look right:
@@ -846,13 +853,18 @@ export class GentlePomoView extends ItemView {
       window.clearTimeout(this.peekTimeout);
       this.peekTimeout = null;
     }
+    // The iframe would die with the view DOM anyway, but explicit teardown
+    // clears the pending handshake timeout and nulls the refs.
+    this.destroyMusicIframe();
+    // After the teardown, not before: destroyMusicIframe drops the track title
+    // and re-renders the caption, which arms a fresh swap timer. Clearing first
+    // made this a no-op in exactly the case it was written for. Not moved into
+    // destroyMusicIframe itself — that also runs on a live station switch, where
+    // the pending swap is the animation we want.
     if (this.nameSwapTimeout !== null) {
       window.clearTimeout(this.nameSwapTimeout);
       this.nameSwapTimeout = null;
     }
-    // The iframe would die with the view DOM anyway, but explicit teardown
-    // clears the pending handshake timeout and nulls the refs.
-    this.destroyMusicIframe();
     return Promise.resolve();
   }
 

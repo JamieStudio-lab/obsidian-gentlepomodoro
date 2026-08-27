@@ -1489,8 +1489,13 @@
    alone; the view holds them invisible for CAPTION_NAME_FADE_MS and repaints in
    the gap. Keep that constant and this duration in step.
 
-   Only the text fades. The separators stay put, so the line does not appear to
-   come apart while a name changes. */
+   Each name dips together with its own separator — the `|` is generated content
+   on the same span, and opacity groups an element with its descendants. That is
+   deliberate: floating the separators outside the fade would expose the track
+   pipe jumping sideways when the new station name has a different width, and
+   leave an orphaned pipe behind when the same repaint hides the track span
+   entirely (playlist station -> plain video). Opacity does not reflow, so the
+   segment fades without moving. */
 .gp-station-current-name,
 .gp-station-current-track {
   --gp-name-fade: 0.28s;
