@@ -7,24 +7,7 @@ import {
   NO_TASK_LABEL,
   ONE_MINUTE_MS,
   PEEK_REVEAL_MS,
-  MUSIC_LISTENING_DELAY_MS,
-  MUSIC_HANDSHAKE_RETRY_MS,
-  MUSIC_HANDSHAKE_MAX_ATTEMPTS,
-  MUSIC_DUCK_FACTOR,
-  MUSIC_DUCK_DOWN_MS,
-  MUSIC_DUCK_UP_MS,
-  MUSIC_DUCK_STEP_MS,
-  MUSIC_FADE_IN_MS,
-  MUSIC_FADE_OUT_MS,
-  MUSIC_FADE_STEP_MS,
-  MUSIC_FADE_ARM_TIMEOUT_MS,
-  MUSIC_FADE_HOLD_MAX_MS,
-  MUSIC_ENDED_NOTICE_DELAY_MS,
-  MUSIC_ADVANCE_NOTICE_GRACE_MS,
   CAPTION_NAME_FADE_MS,
-  MUSIC_STALL_NOTICE_DELAY_MS,
-  MUSIC_STALL_RENOTIFY_MS,
-  RESUME_SEEK_LANDING_TOLERANCE_S,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
@@ -34,38 +17,19 @@ import {
   DAY_NIGHT_ICON_ORDER,
   type DayNightIcon,
 } from "./icons";
-import { logger } from "./logger";
+import { MusicController, type MusicHost } from "./MusicController";
 import type { MomentFactory } from "./momentTypes";
 import {
-  YT_EMBED_ORIGIN,
-  YT_ALLOWED_MESSAGE_ORIGINS,
-  YT_STATE,
   parseYouTubeUrl,
   buildEmbedUrl,
-  buildPlayerCommand,
-  buildListeningMessage,
-  parsePlayerMessage,
-  describeMusicError,
-  musicVolumeTo100,
-  buildVolumeRamp,
-  buildFadeRamp,
-  isResumablePosition,
-  visibleNameText,
-  musicPositionAppliesToUrl,
   planResume,
   MUSIC_STATION_LIMIT,
   resolveStationIndex,
   buildStationList,
   nextStationIndex,
-  type ResumePlan,
 } from "./youtubeMusic";
 
 declare const moment: MomentFactory;
-
-/** How many volume posts fit into `durationMs` at `stepMs` apart — at least one. */
-function rampSteps(durationMs: number, stepMs: number): number {
-  return Math.max(1, Math.round(durationMs / stepMs));
-}
 
 export class GentlePomoView extends ItemView {
   plugin: GentlePomoPlugin;
@@ -99,56 +63,11 @@ export class GentlePomoView extends ItemView {
   private musicPlayBtn!: HTMLButtonElement;
   private musicPauseBtn!: HTMLButtonElement;
   private musicPlayerContainer!: HTMLDivElement; // visually-hidden iframe host
+  // The frame itself stays here: the view is what owns DOM. Everything that
+  // decides *what to do with it* lives in MusicController, reached through the
+  // host object below.
   private musicIframe: HTMLIFrameElement | null = null;
-  private musicListenTimeout: number | null = null;
-  private musicHandshakeInterval: number | null = null; // re-sends until the embed answers
-  private musicHandshakeAttempts = 0;
-  private musicPlayerReady = false;
-  // Where to address commands. Depending on the video the embed bounces from
-  // the nocookie origin we loaded to www.youtube.com, and postMessage delivers
-  // nothing when targetOrigin doesn't match the frame's *current* origin — so
-  // this tracks the origin the player last spoke from (always one of
-  // YT_ALLOWED_MESSAGE_ORIGINS, checked on the way in) rather than assuming.
-  private musicPlayerOrigin: string = YT_EMBED_ORIGIN;
-  private musicPlayerState: number = YT_STATE.UNSTARTED;
-  private musicErrorNotified = false; // one Notice per iframe build
-  private musicEndedTimeout: number | null = null; // pending "music ended" Notice
-  private musicStallTimeout: number | null = null; // pending "music is buffering" Notice
-  private musicStallNotifiedAt = 0; // rate-limits stall notices (0 = never fired)
-  // Resume bookkeeping. The embed reports its clock/metadata piecemeal over
-  // infoDelivery, so the view keeps the running picture and hands whole
-  // positions to the plugin (which owns persistence).
-  // The musicUrl *setting* this iframe was built from — the provenance stamped
-  // on any position it reports. Read at build time and frozen here on purpose:
-  // both settings paths assign settings.musicUrl and only then `await
-  // saveSettings()`, and the outgoing iframe keeps streaming its ~4Hz clock
-  // across that await. Reading the live setting when a sample lands would stamp
-  // the OLD track's position with the NEW URL, at which point both of 0.5.6's
-  // guards see a match and the offset is applied to a URL it never came from.
-  private musicSourceUrl: string | null = null;
-  private musicCurrentVideoId: string | null = null; // seeded from the URL, corrected by videoData
-  private musicCurrentDuration: number | null = null; // null/0 ⇒ live stream: nothing to resume
-  private musicTargetPlaylistId: string | null = null; // list context of the loaded embed
-  private pendingResumeSeconds: number | null = null; // one-shot: seek here once playback starts
-  private resumeSeekLanding: number | null = null; // seek posted, waiting for the clock to catch up
-  // Music volume ramps. One channel serves both the sound-cue duck and the
-  // ▶️/⏸/⏹ fades, so they can never post over each other. musicRampLevel is the
-  // last 0–1 volume actually posted by a ramp — the start point for the next one
-  // (so overlapping ramps never jump) and, when non-null, the "the player is not
-  // simply sitting at the user's volume" marker.
-  private musicRampInterval: number | null = null;
-  private duckRestoreTimeout: number | null = null;
-  /** When an in-flight duck is owed until, so a skip's fade can restore it. */
-  private duckHoldUntilMs: number | null = null;
-  private musicFadeArmTimeout: number | null = null; // "playback never started" backstop
-  private musicRampLevel: number | null = null;
-  // Fade phase. "armed" = ▶️ pressed and the volume parked at 0, waiting for
-  // playback to actually start; "in"/"out" = a fade ramp is running. A fade owns
-  // the volume for its whole life, so ducking stands down while one is in flight.
-  private musicFadePhase: "armed" | "in" | "out" | null = null;
-  // ⏹ pressed: the fade-out is still playing audio, but the position has already
-  // been forgotten and must not be recorded again on the way down.
-  private musicStopPending = false;
+  private readonly music: MusicController;
 
   private timerListener: TimerListener | null = null;
   private lastState: TimerState | null = null;
@@ -162,11 +81,10 @@ export class GentlePomoView extends ItemView {
   // Music reconciliation guards (same write-guard family). lastMusicKey gates the
   // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl and
   // lastMusicSourceUrl together gate iframe rebuilds (an offset no longer shows
-  // up in the URL); lastAppliedMusicVolume gates setVolume posts.
+  // up in the URL). Volume convergence is the controller's own bookkeeping.
   private lastMusicKey: string | null = null;
   private lastMusicEmbedUrl: string | null = null;
   private lastMusicSourceUrl: string | null = null;
-  private lastAppliedMusicVolume: number | null = null;
   // The station picker's own repaint guard, deliberately separate from
   // lastMusicKey: names and inactive slots change what the buttons say without
   // changing what plays, and folding them into the embed key would reload the
@@ -177,36 +95,15 @@ export class GentlePomoView extends ItemView {
   private stationCaption: HTMLDivElement | null = null;
   private stationCaptionName: HTMLSpanElement | null = null;
   private stationCaptionTrack: HTMLSpanElement | null = null;
-  /** Title of the item the embed is actually on; only shown for a playlist. */
-  private musicCurrentVideoTitle: string | null = null;
   private lastStationCaptionKey: string | null = null;
   private stationCaptionFullText = "";
   private nameSwapTimeout: number | null = null;
-  /** What the transport is currently showing; the caption's wording follows it. */
-  private musicShowingAsPlaying = false;
   private stationName = "";
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
   private nextVideoBtn: HTMLButtonElement | null = null;
   private musicVideoRow: HTMLDivElement | null = null;
-  // When ⏩ last asked the playlist to advance. Only used to hold the
-  // "the music ended" notice, which is wrong in answer to that button.
-  private musicAdvanceRequestedAt: number | null = null;
-  // The station URL a ⏭ press asked to keep playing, or null. Stores the URL
-  // rather than a boolean so a flag that outlives its rebuild can never fire on
-  // an unrelated one — the stranded-auto-play hazard 0.5.7 rejected switching
-  // auto-play over. Lives on the VIEW, never in settings: switching writes a
-  // shared setting and every open panel rebuilds, so a persisted flag would
-  // have every panel start playing at once.
-  private autoPlayOnReady: string | null = null;
-  // Bumped by fadeMusicOut alone. nextMusicStation arms the hand-off only AFTER
-  // awaiting the settings write, so without this a ⏸/⏹ landing inside that await
-  // has nothing to cancel — the rebuild then erases every other trace of the
-  // press and the new station plays anyway. Deliberately NOT bumped in
-  // destroyMusicIframe: teardown runs *inside* that same await, so it would
-  // mismatch on every press and the hand-off would never fire at all.
-  private musicHandOffToken = 0;
   private stationRows: HTMLDivElement[] = [];
   private stationRowLabels: HTMLElement[] = [];
   private stationListVisible = false;
@@ -215,6 +112,7 @@ export class GentlePomoView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.timer = plugin.timer;
+    this.music = new MusicController(this.createMusicHost());
   }
 
   getViewType(): string {
@@ -474,19 +372,7 @@ export class GentlePomoView extends ItemView {
     this.musicPlayBtn.setAttribute("aria-label", "Play music");
     this.registerDomEvent(this.musicPlayBtn, "click", (evt) => {
       evt.preventDefault();
-      // Pre-handshake commands are silently dropped by the embed — without
-      // this, playing while offline (or mid-boot) is just a dead button.
-      if (!this.musicPlayerReady) {
-        new Notice(
-          "Gentle pomodoro: the music player hasn't loaded yet — wait a moment, or check your connection if you're offline."
-        );
-        return;
-      }
-      // Park the volume at silence and arm the fade — it starts for real when
-      // playback does, so it isn't spent on the buffering gap before any audio.
-      // (Or, if this press landed inside a fade-out, cancel that and ease back
-      // up from where it got to — the player never stopped.)
-      this.startMusicPlayback();
+      this.music.pressPlay();
     });
 
     this.musicPauseBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn gp-hidden" });
@@ -494,9 +380,7 @@ export class GentlePomoView extends ItemView {
     this.musicPauseBtn.setAttribute("aria-label", "Pause music");
     this.registerDomEvent(this.musicPauseBtn, "click", (evt) => {
       evt.preventDefault();
-      // Fade first, pause on landing: pausing up front would cut the audio dead
-      // and leave the fade nothing to fade.
-      this.fadeMusicOut(() => this.postToMusicPlayer(buildPlayerCommand("pauseVideo")));
+      this.music.pressPause();
     });
 
     const musicStopBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn" });
@@ -504,41 +388,7 @@ export class GentlePomoView extends ItemView {
     musicStopBtn.setAttribute("aria-label", "Stop music");
     this.registerDomEvent(musicStopBtn, "click", (evt) => {
       evt.preventDefault();
-      // Stop means "start from the top next time" — pause is what remembers.
-      // Dropping the pending seek is what makes that true within this session
-      // too; the embed URL itself never carried the offset.
-      //
-      // All of it lands *with* the stopVideo, not on the click: ▶️ pressed
-      // inside the fade-out cancels the stop, and a half-applied stop would
-      // outlive it (a nulled musicCurrentDuration alone kills position
-      // recording for the rest of the track — isResumablePosition reads a null
-      // duration as "live stream"). musicStopPending is the one thing set now,
-      // because audio keeps running through the fade and those last reported
-      // seconds must not bank a position the stop is about to drop.
-      this.musicStopPending = true;
-      // Which station this Stop belongs to, frozen at click time. The clear
-      // below runs on the fade's landing ~450ms later, by which point the user
-      // may have switched stations — reading the active URL there would forget
-      // the incoming station's position instead of this one's.
-      const stopUrl = this.musicSourceUrl;
-      this.fadeMusicOut(() => {
-        this.postToMusicPlayer(buildPlayerCommand("stopVideo"));
-        this.plugin.clearMusicPosition(stopUrl);
-        this.pendingResumeSeconds = null;
-        // A seek posted but never landed would otherwise keep blocking
-        // trackMusicPosition against an offset the restarted track has to climb
-        // all the way back to before recording anything.
-        this.resumeSeekLanding = null;
-        this.musicCurrentDuration = null;
-        // A stop that landed on an already-halted player is settled right here:
-        // no straggler clock can pass trackMusicPosition's audibility gate, and
-        // there may be no further state transition to settle it later. When the
-        // player was still running, the flag must survive until the embed
-        // reports the halt (handleMusicState clears it) — the embed keeps
-        // reporting PLAYING clocks for a beat after stopVideo, and those must
-        // not re-bank the position just cleared.
-        if (!this.isAudibleState(this.musicPlayerState)) this.musicStopPending = false;
-      });
+      this.music.pressStop();
     });
 
     // ⏭ next link. Hidden below two links, like the list button.
@@ -557,7 +407,7 @@ export class GentlePomoView extends ItemView {
       // previous press is still waiting for its player. Without the second
       // clause, tapping through 1→2→3 to find a station ends in silence: press
       // two sees a player that has not finished loading and reads it as stopped.
-      void this.nextMusicStation(this.isMusicPlayingForUser() || this.autoPlayOnReady !== null);
+      void this.nextMusicStation(this.music.isPlayingForUser() || this.music.handOffPending);
     });
 
     // Playlist transport, on its own row so the first one keeps its four
@@ -579,7 +429,7 @@ export class GentlePomoView extends ItemView {
     prevVideoBtn.setAttribute("aria-label", "Previous video in playlist");
     this.registerDomEvent(prevVideoBtn, "click", (evt) => {
       evt.preventDefault();
-      this.stepPlaylist("previousVideo");
+      this.music.stepPlaylist("previousVideo");
     });
 
     this.nextVideoBtn = this.musicVideoRow.createEl("button", {
@@ -590,7 +440,7 @@ export class GentlePomoView extends ItemView {
     this.nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
     this.registerDomEvent(this.nextVideoBtn, "click", (evt) => {
       evt.preventDefault();
-      this.stepPlaylist("nextVideo");
+      this.music.stepPlaylist("nextVideo");
     });
 
     // The link list, below the button that opens it. Built once — every slot's
@@ -661,55 +511,12 @@ export class GentlePomoView extends ItemView {
 
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
-    // The embed talks back over the shared window message bus. Source and
-    // origin are checked before parsing — everything else on the bus is noise.
+    // The embed talks back over the shared window message bus. Only messages
+    // from *our* frame get through; the controller checks the origin against
+    // its allowlist and learns the origin to address commands to from it.
     this.registerDomEvent(window, "message", (evt: MessageEvent) => {
       if (!this.musicIframe || evt.source !== this.musicIframe.contentWindow) return;
-      if (!YT_ALLOWED_MESSAGE_ORIGINS.includes(evt.origin)) return;
-      // Address every later command to wherever the player actually is. Pinning
-      // to the origin we loaded meant that once a video bounced the frame to
-      // www.youtube.com, playVideo/setVolume/seekTo were all dropped by the
-      // browser — no error, no state change, and the player still looking ready.
-      this.musicPlayerOrigin = evt.origin;
-      // Any message at all means the embed heard the handshake — even one this
-      // parser goes on to discard. Stop re-sending it.
-      this.stopMusicHandshakeRetries();
-      const msg = parsePlayerMessage(evt.data);
-      if (!msg) return;
-      if (msg.type === "ready") {
-        this.musicPlayerReady = true;
-        // Apply the saved volume as soon as the player can take commands.
-        this.postMusicVolume();
-        // Hand a ⏭ press over to the station it actually asked for. The stored
-        // URL is compared against the one THIS frame was built for, so a flag
-        // that somehow outlived its rebuild dies here instead of starting music
-        // the user never asked to hear.
-        const handOffTo = this.autoPlayOnReady;
-        this.autoPlayOnReady = null;
-        if (handOffTo !== null && handOffTo === this.musicSourceUrl) {
-          this.startMusicPlayback();
-        }
-      } else if (msg.type === "error") {
-        this.notifyMusicError(msg.code);
-      } else if (msg.type === "state") {
-        this.handleMusicState(msg.state);
-      } else {
-        // infoDelivery: merge whatever this message carried, position before
-        // state so a transition into PAUSED flushes the freshest clock value.
-        if (msg.videoId !== null) this.musicCurrentVideoId = msg.videoId;
-        if (msg.videoTitle !== null) {
-          // Assigned unconditionally, even when it reduces to nothing: guarding
-          // on "is it visible?" would leave the PREVIOUS item's title standing
-          // as the playlist advances, naming the wrong track — worse than no
-          // name. visibleNameText also collapses whitespace, keeping a
-          // network-sourced value out of the newline-delimited caption key.
-          this.musicCurrentVideoTitle = visibleNameText(msg.videoTitle);
-          this.renderStationCaption();
-        }
-        if (msg.duration !== null) this.musicCurrentDuration = msg.duration;
-        if (msg.currentTime !== null) this.trackMusicPosition(msg.currentTime);
-        if (msg.state !== null) this.handleMusicState(msg.state);
-      }
+      this.music.handleFrameMessage(evt.origin, evt.data);
     });
 
     // Daily-goal progress. Hidden on desktop via CSS (the status bar carries it
@@ -855,12 +662,12 @@ export class GentlePomoView extends ItemView {
     }
     // The iframe would die with the view DOM anyway, but explicit teardown
     // clears the pending handshake timeout and nulls the refs.
-    this.destroyMusicIframe();
-    // After the teardown, not before: destroyMusicIframe drops the track title
+    this.music.destroy();
+    // After the teardown, not before: the teardown drops the track title
     // and re-renders the caption, which arms a fresh swap timer. Clearing first
     // made this a no-op in exactly the case it was written for. Not moved into
-    // destroyMusicIframe itself — that also runs on a live station switch, where
-    // the pending swap is the animation we want.
+    // the controller's destroy() itself — that also runs on a live station
+    // switch, where the pending swap is the animation we want.
     if (this.nameSwapTimeout !== null) {
       window.clearTimeout(this.nameSwapTimeout);
       this.nameSwapTimeout = null;
@@ -1018,8 +825,7 @@ export class GentlePomoView extends ItemView {
       // frozen at build time. (Trim-tolerant via the shared helper: data.json is
       // hand-editable.) The window is longer than the fade — a stop landing on a
       // still-running player keeps the flag up until the halt is reported.
-      const stopSuppressesResume =
-        this.musicStopPending && musicPositionAppliesToUrl(this.musicSourceUrl, activeMusicUrl);
+      const stopSuppressesResume = this.music.stopSuppressesResumeFor(activeMusicUrl);
       const plan = target
         ? planResume(
             target,
@@ -1071,9 +877,9 @@ export class GentlePomoView extends ItemView {
       if (embedUrl !== this.lastMusicEmbedUrl || sourceUrl !== this.lastMusicSourceUrl) {
         this.lastMusicEmbedUrl = embedUrl;
         this.lastMusicSourceUrl = sourceUrl;
-        this.destroyMusicIframe();
+        this.music.destroy();
         if (embedUrl !== null && plan !== null) {
-          this.buildMusicIframe(embedUrl, plan, activeMusicUrl);
+          this.music.build(embedUrl, plan, activeMusicUrl);
         }
       }
     }
@@ -1086,9 +892,7 @@ export class GentlePomoView extends ItemView {
     this.musicDivider?.toggleClass("gp-hidden", !showSelector || !this.musicSectionVisible);
     // Volume convergence (settings changed from another view or a reload while
     // the player was still booting). No-op per tick once applied.
-    if (this.musicPlayerReady && this.plugin.settings.musicVolume !== this.lastAppliedMusicVolume) {
-      this.postMusicVolume();
-    }
+    this.music.syncVolume();
 
     // Estimated end time. Shown only while running and before overtime — a static
     // "you'll finish at 15:30", the calm counterpart to the hidden countdown.
@@ -1121,123 +925,10 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * Pick a station. Selection only — it never posts a play command, so a tap can
-   * never produce sound the user did not ask for. Switching therefore reloads
-   * the player and lands silent; ▶️ starts it.
-   *
-   * No fade on the way out: a fade would have to carry "now actually switch" in
-   * a ramp completion callback, and cancelMusicRamps drops those — a duck, a ▶️
-   * press or another reconcile inside the fade window would leave the setting
-   * changed and the iframe not. Teardown is instant, so this cannot desync.
-   */
-  /**
-   * ⏩ / ⏪: ask the embed for the next or previous item of the playlist.
-   *
-   * Only while audio is actually running. From a cued or paused player these
-   * would load AND play the item — sound the user did not ask
-   * for, and with no fade behind it — so that case gets the same explanatory
-   * Notice a too-early ▶️ gets rather than a button that does nothing.
-   */
-  private stepPlaylist(direction: "nextVideo" | "previousVideo") {
-    if (this.musicFadePhase === "out" || this.musicStopPending) return;
-    if (!this.musicPlayerReady) {
-      new Notice(
-        "Gentle pomodoro: the music player hasn't loaded yet — wait a moment, or check your connection if you're offline."
-      );
-      return;
-    }
-    if (!this.isAudibleState(this.musicPlayerState)) {
-      new Notice("Gentle pomodoro: press ▶️ first — skipping tracks needs the music playing.");
-      return;
-    }
-    // Ride the same ramp ▶️/⏸/⏹ use: fade the outgoing track down, switch on the
-    // landing, and let the fade-in carry the new one up. Posting nextVideo bare
-    // cut one track dead and dropped the next in at full volume, which is the
-    // one thing this feature family exists to avoid.
-    //
-    // The transport keeps showing "playing" throughout — this is a skip, not a
-    // pause. And because the pending switch lives in the ramp's completion
-    // callback, a ⏸ or ⏹ landing inside the fade cancels the advance and wins,
-    // which is the behaviour that reads correctly.
-    this.fadeMusicOut(() => {
-      // Stamped here rather than at the click: this is the moment ENDED could
-      // fire, and the grace window should start from it.
-      this.musicAdvanceRequestedAt = Date.now();
-      // A seek posted for the OUTGOING item must not outlive it.
-      // trackMusicPosition ignores every clock reading below resumeSeekLanding,
-      // so leaving it armed means the new item records nothing until its clock
-      // climbs past the old item's offset — on a resumed long track, the rest
-      // of the session. Cleared on the landing, so an advance that a ⏸ cancels
-      // leaves the outgoing item's bookkeeping untouched.
-      this.pendingResumeSeconds = null;
-      this.resumeSeekLanding = null;
-      // musicCurrentDuration and musicCurrentVideoId are deliberately NOT
-      // cleared. duration rides only the fuller payloads that accompany a state
-      // change, and an advance that turns out to be a no-op produces no state
-      // change at all — so a nulled duration would never be restored, and
-      // isResumablePosition reads a null duration as "live stream" and stops
-      // recording for the rest of the track. The stream corrects both fields.
-      this.postToMusicPlayer(buildPlayerCommand(direction));
-      // Ease the new item up from the silence the fade-out left. The player was
-      // never halted, so armMusicFadeIn takes its "still running" branch and
-      // ramps straight up from musicRampLevel (0) — and that ramp holds itself
-      // while the new item buffers, so the rise is spent on audio rather than
-      // on the gap before it.
-      this.armMusicFadeIn();
-      // Hand the cue its dip back. fadeMusicOut cleared duckRestoreTimeout, which
-      // was the only thing holding it, so without this the music swells to full
-      // volume under a bell that is still ringing — fade trap 4, via a path that
-      // did not exist before skips started fading. musicFadePhase is "in" here,
-      // which is exactly the branch duckMusic is built to take over.
-      const owed = this.duckHoldUntilMs;
-      if (owed !== null && owed > Date.now()) this.duckMusic((owed - Date.now()) / 1000);
-    }, true);
-  }
-
-  /**
-   * Start playback the way ▶️ does: park the volume at silence and arm the
-   * fade, so it begins when audio does rather than being spent on the buffering
-   * gap. Shared with the ⏭ hand-off so the two can never drift apart.
-   */
-  private startMusicPlayback() {
-    this.armMusicFadeIn();
-    this.postToMusicPlayer(buildPlayerCommand("playVideo"));
-  }
-
-  /**
-   * Whether the user would say music is playing right now. Deliberately not
-   * shared with updateMusicButtons, which reads the incoming state and skips
-   * the readiness check.
-   *
-   * A running fade-out counts as NOT playing even though musicPlayerState is
-   * still PLAYING: setMusicButtonsPlaying deliberately does not advance that
-   * field, so the player is audible but on its way to a pause the user already
-   * asked for. Same for a pending ⏹.
-   */
-  private isMusicPlayingForUser(): boolean {
-    if (!this.musicPlayerReady) return false;
-    if (this.musicStopPending) return false;
-    // Read the transport, do not re-derive it. A fade-out is NOT by itself a
-    // pause any more: since ⏩/⏪ started fading, musicFadePhase === "out" covers
-    // a skip too, and treating that as stopped made ⏭ pressed inside a skip
-    // hand over nothing — the new station loaded silent while the panel still
-    // read "Now playing". The mirror was worse: a ⏸ landing nulls musicFadePhase
-    // while musicPlayerState is still PLAYING until the embed answers, so for
-    // that round trip the old predicate said "playing" with ▶️ already showing,
-    // and ⏭ would answer a pause with sound. musicShowingAsPlaying is set by
-    // setMusicButtonsPlaying, which ⏸/⏹ drive and a skip deliberately does not.
-    return this.musicShowingAsPlaying;
-  }
-
-  /**
    * ⏭: move to the next slot holding a link, wrapping and stepping over empty
-   * ones. `continuePlayback` carries the music across the switch.
-   *
-   * Switching tears the iframe down, which is what stops the audio, so
-   * continuing means starting the NEW player once it is ready — never a fade
-   * across the gap. A fade would have to carry "now actually switch" in a ramp
-   * completion callback, and cancelMusicRamps drops those, so a duck or a ▶️
-   * inside the window would leave the setting changed and the iframe not.
+   * ones. `continuePlayback` carries the music across the switch — see
+   * MusicController.armHandOff for why that is a hand-off to the newly built
+   * player rather than a fade across the gap.
    */
   private async nextMusicStation(continuePlayback: boolean): Promise<void> {
     const urls = this.plugin.musicStationUrls();
@@ -1247,21 +938,13 @@ export class GentlePomoView extends ItemView {
     const from = resolveStationIndex(urls, this.plugin.settings.musicStationIndex);
     const to = nextStationIndex(urls, from);
     if (to === from) return;
-    // Which frame was playing before the switch. Two slots may hold identical
-    // URLs, in which case the embed key never moves, nothing is torn down and
-    // the music never stopped — handing over there would drop it to silence and
-    // swell it back for no reason.
-    const framePlaying = this.musicIframe;
-    // saveSettings is a real file write; a ⏸ or ⏹ can land while it is out.
-    const handOffToken = this.musicHandOffToken;
+    // Captured before the settings write, which is a real file write a ⏸ or ⏹
+    // can land inside — the controller decides on the way out whether the press
+    // still means anything.
+    const handOff = this.music.snapshotHandOff();
     await this.selectMusicStation(to);
     if (!continuePlayback) return;
-    if (this.musicIframe === null || this.musicIframe === framePlaying) return;
-    // Pausing or stopping during the write cancels the hand-off, exactly as it
-    // does after one. Without this the press has nothing to cancel: the rebuild
-    // clears musicFadePhase and musicStopPending on its way through.
-    if (handOffToken !== this.musicHandOffToken) return;
-    this.autoPlayOnReady = this.musicSourceUrl;
+    this.music.armHandOff(handOff);
   }
 
   /**
@@ -1275,14 +958,14 @@ export class GentlePomoView extends ItemView {
    * without it this would rewrite the DOM several times a second.
    */
   private renderStationCaption() {
-    const track = this.musicTargetPlaylistId !== null ? (this.musicCurrentVideoTitle ?? "") : "";
+    const track = this.music.playlistId !== null ? (this.music.videoTitle ?? "") : "";
     // "Now playing" only while it is true. Picking a station does not start it,
     // so the idle line names what ▶️ would play rather than claiming it already
     // is. Read from the transport's own state rather than recomputed, so the
     // wording and the ▶️/⏸ button can never disagree — and so it does not
     // depend on the timer ticking (the engine is silent while no session runs,
     // which is exactly when someone is most likely to be only playing music).
-    const playing = this.musicShowingAsPlaying;
+    const playing = this.music.showingAsPlaying;
     const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
     if (key === this.lastStationCaptionKey) return;
     this.lastStationCaptionKey = key;
@@ -1403,6 +1086,16 @@ export class GentlePomoView extends ItemView {
     this.setStationListVisible(!this.stationListVisible);
   }
 
+  /**
+   * Pick a station. Selection only — it never posts a play command, so a tap can
+   * never produce sound the user did not ask for. Switching therefore reloads
+   * the player and lands silent; ▶️ starts it.
+   *
+   * No fade on the way out: a fade would have to carry "now actually switch" in
+   * a ramp completion callback, and cancelMusicRamps drops those — a duck, a ▶️
+   * press or another reconcile inside the fade window would leave the setting
+   * changed and the iframe not. Teardown is instant, so this cannot desync.
+   */
   private async selectMusicStation(slot: number): Promise<void> {
     const urls = this.plugin.musicStationUrls();
     if ((urls[slot] ?? "").trim() === "") return; // empty slot: nothing to select
@@ -1415,724 +1108,83 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * Create the hidden YouTube iframe and start the postMessage handshake:
-   * after the iframe's load event, wait a beat (the embed isn't ready the
-   * instant it loads), then announce {"event":"listening"} so it starts
-   * streaming onReady/onStateChange/infoDelivery/onError back to us.
-   */
-  private buildMusicIframe(embedUrl: string, plan: ResumePlan, sourceUrl: string) {
-    // Seed the resume bookkeeping from the target. videoId matters for a plain
-    // video, where the embed's videoData may never tell us anything we don't
-    // already know; inside a playlist the stream corrects it as items advance.
-    this.musicCurrentVideoId = plan.target.videoId;
-    this.musicTargetPlaylistId = plan.target.playlistId;
-    // Frozen for this iframe's lifetime — see the field's comment. Passed in
-    // rather than read from settings so it cannot drift from the station this
-    // build is actually for: it is the stamp every recorded position carries,
-    // and reading the live setting here would label this station's position
-    // with whatever slot happens to be active when the sample lands.
-    this.musicSourceUrl = sourceUrl;
-    this.musicCurrentDuration = null;
-    this.pendingResumeSeconds = plan.seekSeconds;
-    this.resumeSeekLanding = null;
-
-    const iframe = this.musicPlayerContainer.createEl("iframe", {
-      attr: {
-        src: embedUrl,
-        allow: "autoplay; encrypted-media; picture-in-picture; fullscreen",
-        referrerpolicy: "strict-origin-when-cross-origin", // YouTube needs a Referer or it throws error 153
-        allowfullscreen: "",
-        title: "Lofi music player",
-      },
-    });
-    this.musicIframe = iframe;
-    this.registerDomEvent(iframe, "load", () => {
-      if (this.musicListenTimeout !== null) window.clearTimeout(this.musicListenTimeout);
-      this.musicListenTimeout = window.setTimeout(() => {
-        this.musicListenTimeout = null;
-        this.beginMusicHandshake();
-      }, MUSIC_LISTENING_DELAY_MS);
-    });
-  }
-
-  /**
-   * Tear the iframe down — removal from the DOM is what stops playback.
-   * Also resets the handshake/volume state so a rebuilt iframe starts fresh.
-   */
-  private destroyMusicIframe() {
-    // Teardown is a boundary: closing the panel, moving the leaf, or changing
-    // the URL all end playback. The pending position is keyed by the video it
-    // came from, so saving the *outgoing* one here is correct even mid-swap —
-    // unless ⏹ was pressed and its fade never landed, in which case the stop is
-    // honoured instead. Banking a position the user just asked to forget would
-    // be the wrong answer to the last button they pressed.
-    // Reads musicSourceUrl while it is still set — the null below is what makes
-    // this ordering load-bearing. Resolving the station from settings here would
-    // be wrong: teardown is invoked FROM the switch's own rebuild, so by this
-    // point the settings already name the INCOMING station.
-    // A hand-off belongs to the frame it was armed for; this one is going away.
-    // (The ⏭ path arms AFTER its rebuild, so it never clears its own flag.)
-    this.autoPlayOnReady = null;
-    if (this.musicStopPending) this.plugin.clearMusicPosition(this.musicSourceUrl);
-    else this.plugin.flushMusicPosition();
-    this.pendingResumeSeconds = null;
-    this.resumeSeekLanding = null;
-    this.musicCurrentVideoId = null;
-    this.musicCurrentVideoTitle = null;
-    // The track half of the caption belongs to the frame being torn down.
-    // musicTargetPlaylistId is nulled below, so this drops it rather than
-    // leaving the previous playlist's item named under a new station.
-    this.musicTargetPlaylistId = null;
-    this.renderStationCaption();
-    this.musicCurrentDuration = null;
-    this.musicSourceUrl = null;
-    this.musicStopPending = false;
-    // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on
-    // one — the iframe is going away, and removing it is what stops playback.
-    this.cancelMusicRamps();
-    if (this.musicListenTimeout !== null) {
-      window.clearTimeout(this.musicListenTimeout);
-      this.musicListenTimeout = null;
-    }
-    this.stopMusicHandshakeRetries();
-    if (this.musicEndedTimeout !== null) {
-      window.clearTimeout(this.musicEndedTimeout);
-      this.musicEndedTimeout = null;
-    }
-    if (this.musicStallTimeout !== null) {
-      window.clearTimeout(this.musicStallTimeout);
-      this.musicStallTimeout = null;
-    }
-    this.musicIframe?.remove();
-    this.musicIframe = null;
-    this.musicPlayerReady = false;
-    // Back to the origin the next iframe is loaded from — a learned one belongs
-    // to the frame that taught it, and the next video may not bounce at all.
-    this.musicPlayerOrigin = YT_EMBED_ORIGIN;
-    this.musicErrorNotified = false;
-    this.lastAppliedMusicVolume = null;
-    // This is ALSO what resets musicPlayerState — updateMusicButtons assigns it
-    // before doing the swap. Never reset that field separately above this line:
-    // the swap sits behind the method's `state === musicPlayerState` early
-    // return, so a pre-reset silently kills the ▶️/⏸ restore and leaves ⏸ on
-    // screen with no play button after every teardown-while-playing.
-    this.updateMusicButtons(YT_STATE.UNSTARTED);
-  }
-
-  private postToMusicPlayer(payload: string) {
-    this.musicIframe?.contentWindow?.postMessage(payload, this.musicPlayerOrigin);
-  }
-
-  /**
-   * The handshake is the one message that goes out before the embed has told us
-   * anything, so there is no learned origin yet — and if the player has already
-   * bounced to www.youtube.com, a nocookie-addressed handshake is dropped and
-   * the embed never streams a single event (the panel then reports "the music
-   * player hasn't loaded" forever). Sent to every origin the embed may
-   * legitimately be on instead: only the frame's actual origin receives it, the
-   * browser drops the rest, so the player is never handed a duplicate.
-   */
-  private postMusicHandshake() {
-    const payload = buildListeningMessage();
-    for (const origin of YT_ALLOWED_MESSAGE_ORIGINS) {
-      this.musicIframe?.contentWindow?.postMessage(payload, origin);
-    }
-  }
-
-  /** Send the handshake and keep sending until the embed answers (or the
-   *  attempts run out). See MUSIC_HANDSHAKE_RETRY_MS for why one shot isn't
-   *  enough off the desktop. */
-  private beginMusicHandshake() {
-    this.stopMusicHandshakeRetries();
-    this.musicHandshakeAttempts = 0;
-    this.postMusicHandshake();
-    this.musicHandshakeInterval = window.setInterval(() => {
-      this.musicHandshakeAttempts++;
-      // The iframe check matters: teardown clears this interval, but a rebuild
-      // racing the tick would otherwise post into the outgoing frame.
-      if (this.musicIframe === null || this.musicHandshakeAttempts > MUSIC_HANDSHAKE_MAX_ATTEMPTS) {
-        this.stopMusicHandshakeRetries();
-        return;
-      }
-      this.postMusicHandshake();
-    }, MUSIC_HANDSHAKE_RETRY_MS);
-  }
-
-  private stopMusicHandshakeRetries() {
-    if (this.musicHandshakeInterval === null) return;
-    window.clearInterval(this.musicHandshakeInterval);
-    this.musicHandshakeInterval = null;
-  }
-
-  private postMusicVolume() {
-    // A fade owns the volume from the ▶️/⏸/⏹ press until it lands — jumping the
-    // player to full volume mid-fade is exactly the jolt the fade exists to
-    // remove. The fade-in re-reads the setting when it lands, so a volume
-    // change made mid-fade still arrives. Deliberately does NOT stamp
-    // lastAppliedMusicVolume: leaving it stale keeps applySettings' convergence
-    // check firing, so if a fade ever ends without applying the volume itself,
-    // the next tick heals it rather than the control going quietly dead.
-    //
-    // A running fade-in is re-aimed rather than dropped: its ramp was built to
-    // a target snapshotted at the start, so leaving it alone would climb to the
-    // old volume and only then jump to the new one. 0.5.0's promise is that
-    // changing the music volume always wins immediately.
-    if (this.musicFadePhase === "in") {
-      // Stamped here precisely because the ramp is what applies it now: leaving
-      // it stale would have the ~20Hz convergence check rebuild the ramp on
-      // every tick, restarting it faster than a single step could ever fire.
-      this.lastAppliedMusicVolume = this.plugin.settings.musicVolume;
-      this.beginMusicFadeIn();
-      return;
-    }
-    if (this.musicFadePhase !== null) return;
-    // An explicit volume set (segmented control, reset, cross-view reconcile)
-    // always wins over an in-flight duck.
-    this.cancelMusicRamps();
-    this.postToMusicPlayer(
-      buildPlayerCommand("setVolume", [musicVolumeTo100(this.plugin.settings.musicVolume)])
-    );
-    this.lastAppliedMusicVolume = this.plugin.settings.musicVolume;
-  }
-
-  /**
-   * ▶️ pressed: park the player at silence and arm the fade-in. The ramp itself
-   * waits for the first PLAYING state (see handleMusicState) — playVideo is
-   * followed by a buffering gap with no audio in it, and a fade spent on
-   * silence is a fade nobody hears.
-   *
-   * This also cancels whatever the previous press left running. A fade-out
-   * still on its way down is abandoned here, which is what makes ⏸ → ▶️ during
-   * a fade simply carry on playing: the pending pauseVideo/stopVideo lives in
-   * the ramp's completion callback, so dropping the ramp drops the command too.
-   */
-  private armMusicFadeIn() {
-    // Read before the clear: a player still running here means the press landed
-    // inside a fade-out that had not yet paused or stopped it.
-    const stillRunning = this.isAudibleState(this.musicPlayerState);
-    this.clearMusicRampTimers();
-    this.musicStopPending = false;
-    if (stillRunning) {
-      // The player never actually stopped, so playVideo changes nothing and no
-      // state transition need ever arrive — an armed fade could wait forever
-      // with the volume parked at 0. Ease straight back up from wherever the
-      // abandoned fade-out got to instead; that is also the smoother sound. If
-      // it happens to be mid-rebuffer, the ramp's own hold covers the silence.
-      this.setMusicButtonsPlaying(true);
-      this.beginMusicFadeIn();
-      return;
-    }
-    this.musicFadePhase = "armed";
-    this.musicRampLevel = 0;
-    this.postToMusicPlayer(buildPlayerCommand("setVolume", [0]));
-    this.scheduleMusicFadeArmBackstop();
-    // A cancelled fade-out already flipped the buttons to "paused" — put back
-    // whatever the player is really doing.
-    this.setMusicButtonsPlaying(this.isAudibleState(this.musicPlayerState));
-  }
-
-  /**
-   * Backstop for the "armed" phase: if playback never starts, stand the fade
-   * down rather than leave the player silent with postMusicVolume locked out.
-   * A player that is merely buffering slowly hands over to the ramp instead,
-   * which holds itself until audio starts — cancelling there would make a slow
-   * connection snap in at full volume once it finally plays.
-   */
-  private scheduleMusicFadeArmBackstop() {
-    if (this.musicFadeArmTimeout !== null) window.clearTimeout(this.musicFadeArmTimeout);
-    this.musicFadeArmTimeout = window.setTimeout(() => {
-      this.musicFadeArmTimeout = null;
-      if (this.musicFadePhase !== "armed") return;
-      if (this.isAudibleState(this.musicPlayerState)) {
-        this.beginMusicFadeIn();
-        return;
-      }
-      this.musicFadePhase = null;
-      this.postMusicVolume();
-    }, MUSIC_FADE_ARM_TIMEOUT_MS);
-  }
-
-  /** Run the armed fade-in, now that audio is actually flowing. */
-  private beginMusicFadeIn() {
-    const from = this.musicRampLevel ?? 0;
-    this.clearMusicRampTimers(); // drops the arm backstop; the fade is under way
-    this.musicFadePhase = "in";
-    this.runMusicRamp(
-      buildFadeRamp(
-        from,
-        this.plugin.settings.musicVolume,
-        rampSteps(MUSIC_FADE_IN_MS, MUSIC_FADE_STEP_MS)
-      ),
-      MUSIC_FADE_STEP_MS,
-      () => {
-        this.musicFadePhase = null;
-        // Exact landing on the volume as it stands *now* (the setting may have
-        // changed mid-fade) plus the lastAppliedMusicVolume bookkeeping.
-        this.postMusicVolume();
-      },
-      // Only spend the fade on audible time. A resumed track rebuffers right
-      // here — the seekTo goes out on the first audible state, usually the
-      // BUFFERING just before this one — and without the hold the whole ramp
-      // would run through that silence and the music would arrive at full
-      // volume, no fade heard. Bounded, so a player that never comes back
-      // can't strand the ramp half-way up.
-      () => this.musicPlayerState !== YT_STATE.PLAYING
-    );
-  }
-
-  /**
-   * ⏸/⏹ pressed: ease the volume down to silence, then run `onLanding` — the
-   * pauseVideo or stopVideo that actually halts playback. Posting that command
-   * first would cut the audio dead and leave the fade nothing to fade.
-   *
-   * Skips straight to the command when there is nothing to fade: the player
-   * isn't ready, isn't running, or is already silent because ▶️ was pressed and
-   * playback never started. ⏹ on an idle player therefore still forgets the
-   * position instantly. The player is deliberately left at volume 0 afterwards
-   * — it's paused, so that is inaudible, and ▶️ re-parks it at 0 regardless.
-   */
-  private fadeMusicOut(onLanding: () => void, keepShowingPlaying = false) {
-    // A ⏸ or ⏹ press always cancels a pending ⏭ hand-off, and it must be
-    // cleared HERE rather than only in destroyMusicIframe: the early return
-    // below lands immediately and destroys nothing, so during the second or two
-    // a new station takes to load, a press would otherwise leave the flag
-    // standing — the stopVideo is dropped (no handshake yet), the incoming
-    // station's position is wiped, and then the player becomes ready and starts
-    // playing. The plugin would answer Stop with sound.
-    this.autoPlayOnReady = null;
-    this.musicHandOffToken++;
-    const from = this.musicRampLevel ?? this.plugin.settings.musicVolume;
-    this.clearMusicRampTimers();
-    // Swap the buttons now rather than a fade-length later, so the press never
-    // looks ignored. The only thing that un-does the pending command is a ▶️
-    // press, and that puts the buttons back itself.
-    //
-    // ⏩ opts out: skipping to the next track is not a pause, and flashing ▶️
-    // (and "Music") for the length of the fade before flipping straight back
-    // would read as the player stumbling.
-    if (!keepShowingPlaying) this.setMusicButtonsPlaying(false);
-    if (!this.musicPlayerReady || !this.isAudibleState(this.musicPlayerState) || from <= 0) {
-      this.musicFadePhase = null;
-      onLanding();
-      return;
-    }
-    this.musicFadePhase = "out";
-    this.runMusicRamp(
-      buildFadeRamp(from, 0, rampSteps(MUSIC_FADE_OUT_MS, MUSIC_FADE_STEP_MS)),
-      MUSIC_FADE_STEP_MS,
-      () => {
-        this.musicFadePhase = null;
-        onLanding();
-      }
-    );
-  }
-
-  /**
-   * Dip the music under a sound cue: a quick stepped ramp to MUSIC_DUCK_FACTOR
-   * × the user's volume, hold for the cue's duration, then a slower ease back
-   * up. (A ramp *down* in the ordinary case — but see below: catching a fade-in
-   * part-way means moving up to the ducked level rather than down to it.)
-   * Called (via the plugin) from TimerEngine.playSound with
-   * the decoded clip's length. A cue landing mid-duck restarts the hold from the
-   * current level — extend, never double-dip. No-op unless the player is ready
-   * and actually playing (pre-handshake commands are dropped by the embed anyway).
-   *
-   * A ▶️ fade-in does NOT block the duck — that would leave a cue playing over
-   * music rising to full volume, which is exactly what ducking exists to
-   * prevent, and "press ▶️, then press Start" puts the war drum right in that
-   * window. The duck simply takes the volume over: it ramps from wherever the
-   * fade had reached and its restore ramp finishes the job of bringing the
-   * music up. Clearing the phase is what keeps the abandoned fade from
-   * stranding it (its landing callback dies with the replaced ramp). A fade-OUT
-   * still wins: the player is about to pause, so there is nothing to duck.
+   * Dip the music under a sound cue. Called (via the plugin) from
+   * TimerEngine.playSound, which must not touch the DOM itself; the controller
+   * no-ops unless a player is ready and actually playing.
    */
   duckMusic(cueDurationSec: number) {
-    // Stamped before every guard, so a cue that arrives mid-skip (when the
-    // "out" guard below turns it away) still records how long the dip owes.
-    this.duckHoldUntilMs = Date.now() + Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
-    const playing = this.isAudibleState(this.musicPlayerState);
-    if (!this.musicPlayerReady || !playing || this.musicFadePhase === "out") return;
-
-    const base = this.plugin.settings.musicVolume;
-    const target = base * MUSIC_DUCK_FACTOR;
-    const from = this.musicRampLevel ?? base;
-    this.clearMusicRampTimers();
-    this.musicFadePhase = null;
-    // The duck is aimed at the setting as it stands, so record that. A fade the
-    // duck just took over may have left the stamp stale (its skip path in
-    // postMusicVolume deliberately doesn't stamp), and a stale stamp here would
-    // have the ~20Hz convergence check cancel this duck on the very next tick —
-    // full volume under the cue, the exact thing ducking exists to prevent.
-    this.lastAppliedMusicVolume = base;
-    this.runMusicRamp(
-      buildVolumeRamp(from, target, rampSteps(MUSIC_DUCK_DOWN_MS, MUSIC_DUCK_STEP_MS)),
-      MUSIC_DUCK_STEP_MS
-    );
-    // The down-ramp runs under the cue's attack; restore starts when the clip ends.
-    const holdMs = Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
-    this.duckRestoreTimeout = window.setTimeout(() => {
-      this.duckRestoreTimeout = null;
-      this.restoreDuckedMusic();
-    }, holdMs);
-  }
-
-  /** Ease the music back to the user's volume (re-read at restore time) and end the duck. */
-  private restoreDuckedMusic() {
-    const userVolume = this.plugin.settings.musicVolume;
-    const from = this.musicRampLevel ?? userVolume * MUSIC_DUCK_FACTOR;
-    this.runMusicRamp(
-      buildVolumeRamp(from, userVolume, rampSteps(MUSIC_DUCK_UP_MS, MUSIC_DUCK_STEP_MS)),
-      MUSIC_DUCK_STEP_MS,
-      () => {
-        // Exact landing + lastAppliedMusicVolume bookkeeping (the cancel inside
-        // clears musicRampLevel, ending the duck).
-        this.postMusicVolume();
-      }
-    );
+    this.music.duck(cueDurationSec);
   }
 
   /**
-   * Post a stepped volume ramp — one setVolume per `stepMs`, or none at all on
-   * a tick `holdWhile` holds — and run `onDone` on the last step. Replaces any
-   * running ramp, which is also how a pending pauseVideo/stopVideo gets
-   * cancelled: it lives in that callback and a replaced ramp never reaches it.
+   * The view's half of the music contract: real timers, the hidden iframe, the
+   * plugin's position store, and the two statements the controller makes to the
+   * panel. Everything the state machine touches outside itself goes through
+   * here — which is what lets tests drive it with a fake clock and a recording
+   * message sink instead of a browser. See [MusicController.ts](MusicController.ts).
    */
-  private runMusicRamp(
-    levels: number[],
-    stepMs: number,
-    onDone?: () => void,
-    holdWhile?: () => boolean
-  ) {
-    if (this.musicRampInterval !== null) window.clearInterval(this.musicRampInterval);
-    let i = 0;
-    let held = 0;
-    const maxHeld = Math.floor(MUSIC_FADE_HOLD_MAX_MS / stepMs);
-    this.musicRampInterval = window.setInterval(() => {
-      // A held tick posts nothing and advances nothing — the ramp simply waits
-      // for audio to come back, up to the bound.
-      if (holdWhile?.() === true && held < maxHeld) {
-        held++;
-        return;
-      }
-      const level = levels[i++];
-      this.musicRampLevel = level;
-      this.postToMusicPlayer(buildPlayerCommand("setVolume", [musicVolumeTo100(level)]));
-      if (i >= levels.length && this.musicRampInterval !== null) {
-        window.clearInterval(this.musicRampInterval);
-        this.musicRampInterval = null;
-        onDone?.();
-      }
-    }, stepMs);
-  }
-
-  /** Drop any in-flight ramp — duck or fade — and all of its state. Restores
-   *  nothing: callers either post the user volume next (postMusicVolume) or are
-   *  tearing the iframe down. Any pending pauseVideo/stopVideo goes with it. */
-  private cancelMusicRamps() {
-    this.clearMusicRampTimers();
-    this.musicRampLevel = null;
-    this.musicFadePhase = null;
-    // Deliberately here and not in clearMusicRampTimers: a skip clears the
-    // timers and must still owe the rest of the dip, whereas a teardown or an
-    // explicit volume change ends the duck outright.
-    this.duckHoldUntilMs = null;
-  }
-
-  private clearMusicRampTimers() {
-    if (this.musicRampInterval !== null) {
-      window.clearInterval(this.musicRampInterval);
-      this.musicRampInterval = null;
-    }
-    if (this.duckRestoreTimeout !== null) {
-      window.clearTimeout(this.duckRestoreTimeout);
-      this.duckRestoreTimeout = null;
-    }
-    if (this.musicFadeArmTimeout !== null) {
-      window.clearTimeout(this.musicFadeArmTimeout);
-      this.musicFadeArmTimeout = null;
-    }
-  }
-
-  /**
-   * React to a reported player state, from either onStateChange or an
-   * infoDelivery that carried one.
-   *
-   * Ordering is load-bearing: updateMusicButtons is what advances
-   * musicPlayerState, and both the stall notice and the transition checks here
-   * read it as the *previous* state, so it must stay last.
-   */
-  private handleMusicState(state: number) {
-    if (state !== this.musicPlayerState) {
-      // A ⏹ whose stopVideo has gone out (no fade still running) is settled the
-      // moment the embed reports a halt: the straggler window musicStopPending
-      // exists for — PLAYING clocks arriving after the stop — closes on this
-      // transition, and from here the audibility gate blocks recording anyway.
-      // Leaving the flag up would keep position recording dead through a later
-      // resume (media keys never pass through ▶️, which is the other clearer).
-      if (this.musicStopPending && this.musicFadePhase === null && !this.isAudibleState(state)) {
-        this.musicStopPending = false;
-      }
-      if (state === YT_STATE.PAUSED) {
-        // The position only lives in memory while playing — pausing is the
-        // boundary that has to reach disk, and it's the main way users leave.
+  private createMusicHost(): MusicHost {
+    return {
+      now: () => Date.now(),
+      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimeout: (id) => {
+        window.clearTimeout(id);
+      },
+      setInterval: (fn, ms) => window.setInterval(fn, ms),
+      clearInterval: (id) => {
+        window.clearInterval(id);
+      },
+      mountPlayer: (src, onLoad) => {
+        const iframe = this.musicPlayerContainer.createEl("iframe", {
+          attr: {
+            src,
+            allow: "autoplay; encrypted-media; picture-in-picture; fullscreen",
+            referrerpolicy: "strict-origin-when-cross-origin", // YouTube needs a Referer or it throws error 153
+            allowfullscreen: "",
+            title: "Lofi music player",
+          },
+        });
+        this.musicIframe = iframe;
+        this.registerDomEvent(iframe, "load", onLoad);
+      },
+      unmountPlayer: () => {
+        this.musicIframe?.remove();
+        this.musicIframe = null;
+      },
+      postToPlayer: (payload, origin) => {
+        this.musicIframe?.contentWindow?.postMessage(payload, origin);
+      },
+      broadcastToPlayer: (payload, origins) => {
+        for (const origin of origins) {
+          this.musicIframe?.contentWindow?.postMessage(payload, origin);
+        }
+      },
+      musicVolume: () => this.plugin.settings.musicVolume,
+      recordPosition: (position) => {
+        this.plugin.recordMusicPosition(position);
+      },
+      clearPosition: (url) => {
+        this.plugin.clearMusicPosition(url);
+      },
+      flushPosition: () => {
         this.plugin.flushMusicPosition();
-      } else if (state === YT_STATE.ENDED) {
-        // Finished: next time this station opens at the top. With loop on, the
-        // restart re-records from ~0 a moment later. Scoped to the station this
-        // iframe was built for, not the active setting.
-        this.plugin.clearMusicPosition(this.musicSourceUrl);
-      } else if (this.pendingResumeSeconds !== null && this.isAudibleState(state)) {
-        // Resume, the moment playback actually starts. Seeking is documented as
-        // safe only from a running player (from a *cued* one it would start
-        // playback, which is exactly the auto-play this feature must not do), so
-        // the offset waits here rather than riding along in the embed URL.
-        // BUFFERING usually arrives first, so the jump lands before any audio.
-        const seconds = this.pendingResumeSeconds;
-        this.pendingResumeSeconds = null;
-        // Consumed either way — a seek that isn't posted now must not fire on
-        // some later transition. A non-positive duration is how the embed
-        // reports a live stream: an offset means nothing on one (YouTube
-        // ignored `start=` there outright), and seeking would land far outside
-        // the DVR window. Only skipped when we positively know it's live —
-        // duration stays null until the info stream carries one, and for an
-        // ordinary video the seek is the entire point. Stored positions are
-        // never live (isResumablePosition refuses them); a pasted t= can be.
-        if (this.musicCurrentDuration === null || this.musicCurrentDuration > 0) {
-          this.resumeSeekLanding = seconds;
-          this.postToMusicPlayer(buildPlayerCommand("seekTo", [seconds, true]));
-        }
-      }
-      // The armed fade-in starts the moment audio does — PLAYING, not
-      // BUFFERING, which is still silence. It stands down only on a genuine
-      // halt (PAUSED/ENDED — iOS pausing on background, an external pause):
-      // the embed can report transient UNSTARTED/CUED on its way to playing,
-      // and treating those as dead ends would cancel the fade and let the
-      // music snap in at full volume. A player that truly never starts is the
-      // arm timeout's job, and ⏸/⏹ pressed during the gap resolve the phase in
-      // their own handlers.
-      if (this.musicFadePhase === "armed") {
-        if (state === YT_STATE.PLAYING) {
-          this.beginMusicFadeIn();
-        } else if (state === YT_STATE.PAUSED || state === YT_STATE.ENDED) {
-          this.musicFadePhase = null;
-          this.postMusicVolume();
-        }
-      } else if (
-        this.musicFadePhase === null &&
-        this.isAudibleState(state) &&
-        !this.isAudibleState(this.musicPlayerState) &&
-        this.musicRampInterval === null &&
-        this.duckRestoreTimeout === null &&
-        this.musicRampLevel !== null
-      ) {
-        // The player left a halted state while the volume was parked below the
-        // setting with no ramp left to lift it — a landed ⏸/⏹ fade leaves the
-        // embed at 0, and hardware media keys can resume it without going
-        // through ▶️. In 0.5.3 this was audible (pause kept the user volume);
-        // silent playback with ⏸ showing would be the regression. Requiring the
-        // *previous* state to be halted is what keeps this off the stragglers a
-        // landing races (a PLAYING report crossing the just-posted pauseVideo
-        // arrives from a still-audible previous state). Unreachable during a
-        // duck (its hold keeps duckRestoreTimeout set) and during our own ▶️
-        // press (the phase is "armed" there).
-        if (state === YT_STATE.PLAYING) {
-          this.beginMusicFadeIn();
-        } else {
-          // BUFFERING: audio hasn't started — re-arm instead of fading through
-          // the silence, and the existing armed machinery finishes the job.
-          this.musicFadePhase = "armed";
-          this.scheduleMusicFadeArmBackstop();
-        }
-      }
-    }
-    this.maybeNotifyMusicStalled(state);
-    this.maybeNotifyMusicEnded(state);
-    this.updateMusicButtons(state);
-  }
-
-  /** Playing or buffering — i.e. the player is running, not cued or paused. */
-  private isAudibleState(state: number): boolean {
-    return state === YT_STATE.PLAYING || state === YT_STATE.BUFFERING;
-  }
-
-  /**
-   * Hand a reported playback position to the plugin's store. Live streams and
-   * the final seconds of a track are filtered out by isResumablePosition; the
-   * "too early to bother resuming" floor lives on the *apply* side instead, so
-   * that a restarted track immediately overwrites a stale offset here.
-   *
-   * Only an audibly-running player is recorded. A cued one also reports a clock
-   * (at 0), which would otherwise let a second, idle panel — or the moment just
-   * after ⏹ Stop — reset a position the playing panel had banked. Note the
-   * state read here is the *previous* one (updateMusicButtons advances it after
-   * this runs), which is also what keeps the first 0 of a resumed track from
-   * overwriting the very offset it was built with.
-   */
-  private trackMusicPosition(seconds: number) {
-    if (!this.isAudibleState(this.musicPlayerState)) return;
-    // ⏹ Stop forgets the position on the click, but audio keeps running through
-    // the fade-out — without this, those last reported seconds would bank the
-    // very position that was just cleared. Cleared again on the next ▶️ press.
-    if (this.musicStopPending) return;
-    // A resume seek is posted while the embed is still reporting the old clock,
-    // so ignore readings until it lands — otherwise the first ~second of
-    // playback overwrites the very position we just asked it to jump to. If the
-    // seek is never honoured nothing is recorded, which leaves the stored
-    // position intact and the next open resumes from it again.
-    if (this.resumeSeekLanding !== null) {
-      if (seconds < this.resumeSeekLanding - RESUME_SEEK_LANDING_TOLERANCE_S) return;
-      this.resumeSeekLanding = null;
-    }
-    const videoId = this.musicCurrentVideoId;
-    if (videoId === null) return;
-    // Provenance comes from the iframe, never from the live setting — see
-    // musicSourceUrl. Null means no iframe is playing, so there is nothing to
-    // attribute the position to.
-    const sourceUrl = this.musicSourceUrl;
-    if (sourceUrl === null) return;
-    if (!isResumablePosition(seconds, this.musicCurrentDuration)) return;
-    this.plugin.recordMusicPosition({
-      videoId,
-      playlistId: this.musicTargetPlaylistId,
-      seconds,
-      url: sourceUrl,
-    });
-  }
-
-  /**
-   * Swap the ▶️ play/pause buttons to match the reported player state (the
-   * same .gp-hidden swap the main start/pause buttons use). Guarded so the
-   * ~4Hz infoDelivery stream doesn't produce redundant DOM writes.
-   */
-  private updateMusicButtons(state: number) {
-    if (state === this.musicPlayerState) return;
-    this.musicPlayerState = state;
-    // A fade-out wins: the player genuinely keeps running through it, so a
-    // rebuffer or a playlist advance landing mid-fade would otherwise put the
-    // ⏸ button back moments after the user pressed it.
-    this.setMusicButtonsPlaying(this.musicFadePhase === "out" ? false : this.isAudibleState(state));
-  }
-
-  /**
-   * Do the ▶️/⏸ swap itself. Split out of updateMusicButtons so a fade-out can
-   * flip the buttons the moment it starts: the pause/stop command is already
-   * guaranteed to go out, and waiting a fade-length for YouTube to confirm it
-   * would leave the button looking dead. Deliberately does NOT touch
-   * musicPlayerState — the real transition still has to arrive for the
-   * position flush, the resume seek and the notices to run off it.
-   */
-  private setMusicButtonsPlaying(playing: boolean) {
-    this.musicPlayBtn?.toggleClass("gp-hidden", playing);
-    this.musicPauseBtn?.toggleClass("gp-hidden", !playing);
-    // The caption's wording is the same statement as the button's shape, so it
-    // is driven from the same call rather than recomputed. Two reasons it must
-    // be this and not isMusicPlayingForUser():
-    //
-    //  - Order. fadeMusicOut flips the buttons BEFORE it sets musicFadePhase to
-    //    "out", so a recompute here still sees PLAYING and no fade — the
-    //    caption would keep saying "Now playing" until the embed confirmed the
-    //    pause a fade-length later.
-    //  - Ownership. This is the single funnel for "what the transport now
-    //    says", so routing the caption through it makes the two agree by
-    //    construction instead of by two predicates staying in step.
-    this.musicShowingAsPlaying = playing;
-    this.renderStationCaption();
-  }
-
-  /**
-   * Surface a *lasting* BUFFERING state as a Notice — a network stall is just
-   * silence with the player hidden. Armed once per stall episode (on the
-   * transition into BUFFERING), disarmed the moment any other state arrives;
-   * normal track starts and brief rebuffers stay under the delay. The player
-   * self-recovers when the connection returns, so this only informs — it never
-   * pauses or reloads anything. Rate-limited so a flapping connection doesn't
-   * nag: at most one notice per MUSIC_STALL_RENOTIFY_MS.
-   */
-  private maybeNotifyMusicStalled(state: number) {
-    if (state !== YT_STATE.BUFFERING) {
-      if (this.musicStallTimeout !== null) {
-        window.clearTimeout(this.musicStallTimeout);
-        this.musicStallTimeout = null;
-      }
-      return;
-    }
-    // Arm only on the transition into BUFFERING — the ~4Hz infoDelivery stream
-    // repeats the state, and after the timeout fires (timeout null, state still
-    // BUFFERING) those repeats must not re-arm it within the same episode.
-    if (this.musicStallTimeout !== null || this.musicPlayerState === YT_STATE.BUFFERING) return;
-    this.musicStallTimeout = window.setTimeout(() => {
-      this.musicStallTimeout = null;
-      const now = Date.now();
-      if (
-        now - this.musicStallNotifiedAt < MUSIC_STALL_RENOTIFY_MS &&
-        this.musicStallNotifiedAt !== 0
-      )
-        return;
-      this.musicStallNotifiedAt = now;
-      new Notice(
-        "Gentle pomodoro: the music is buffering — slow or lost connection. It resumes by itself once the network is back; if it stays silent, press ⏹ then ▶️ to reload."
-      );
-    }, MUSIC_STALL_NOTICE_DELAY_MS);
-  }
-
-  /**
-   * Surface a *lasting* ENDED state as a Notice — with the player hidden there
-   * is nothing to show that playback truly stopped (a finished video with loop
-   * off, or a live stream going offline). Playlist auto-advance and loop
-   * restarts pass through ENDED and resume within ~a second, so the Notice is
-   * armed on a playing→ENDED transition and disarmed if playback resumes
-   * before MUSIC_ENDED_NOTICE_DELAY_MS.
-   *
-   * Never armed during a ⏸/⏹ fade-out. The user has just asked for silence and
-   * the audio runs on for the length of the fade, so a track that happens to
-   * end inside that window would answer the button press with "the music ended
-   * — paste a new link". Stopping on purpose is not news.
-   */
-  private maybeNotifyMusicEnded(state: number) {
-    if (state === YT_STATE.PLAYING || state === YT_STATE.BUFFERING) {
-      if (this.musicEndedTimeout !== null) {
-        window.clearTimeout(this.musicEndedTimeout);
-        this.musicEndedTimeout = null;
-      }
-      return;
-    }
-    if (this.musicFadePhase === "out") return;
-    // A manual ⏩ that ran off the end of a non-looping playlist ends playback.
-    // "A live stream may have gone offline — paste a new link" is nonsense in
-    // answer to a button the user just pressed.
-    if (
-      this.musicAdvanceRequestedAt !== null &&
-      Date.now() - this.musicAdvanceRequestedAt < MUSIC_ADVANCE_NOTICE_GRACE_MS
-    ) {
-      return;
-    }
-    const wasAudible =
-      this.musicPlayerState === YT_STATE.PLAYING || this.musicPlayerState === YT_STATE.BUFFERING;
-    if (state === YT_STATE.ENDED && wasAudible && this.musicEndedTimeout === null) {
-      this.musicEndedTimeout = window.setTimeout(() => {
-        this.musicEndedTimeout = null;
-        new Notice(
-          "Gentle pomodoro: the music ended — a live stream may have gone offline. Press ▶️ to play again or paste a new link."
-        );
-      }, MUSIC_ENDED_NOTICE_DELAY_MS);
-    }
-  }
-
-  /**
-   * Surface an embed error as a Notice — with the player hidden there is no
-   * visible error screen, so without this a broken URL is just a dead Play
-   * button. Once per iframe build (the embed can re-emit onError).
-   */
-  private notifyMusicError(code: number) {
-    if (this.musicErrorNotified) return;
-    this.musicErrorNotified = true;
-    // Logged as well as shown: the Notice is transient, and this is the one
-    // signal that says whether a "it won't play on my iPad" report is a plugin
-    // bug or YouTube refusing the video on that platform.
-    // The station this iframe was built for, not the active setting — after a
-    // switch the latter names a different link than the one that failed.
-    logger.warn(`Music player error ${String(code)} for ${this.musicSourceUrl ?? "(none)"}`);
-    new Notice(`Gentle pomodoro: ${describeMusicError(code, Platform.isIosApp)}`);
+      },
+      setTransportPlaying: (playing) => {
+        this.musicPlayBtn?.toggleClass("gp-hidden", playing);
+        this.musicPauseBtn?.toggleClass("gp-hidden", !playing);
+        // The caption's wording is the same statement as the button's shape, so
+        // it repaints from this one call rather than being recomputed — see
+        // MusicController.setButtonsPlaying for the two reasons that matters.
+        this.renderStationCaption();
+      },
+      onTrackChanged: () => {
+        this.renderStationCaption();
+      },
+      notice: (message) => {
+        new Notice(message);
+      },
+      isIosApp: () => Platform.isIosApp,
+    };
   }
 
   /**
@@ -2357,8 +1409,8 @@ export class GentlePomoView extends ItemView {
         settings.musicVolume = v;
         await this.plugin.saveSettings();
         // Live-apply to this view's playing iframe; other open views converge
-        // via the lastAppliedMusicVolume guard in their applySettings.
-        this.postMusicVolume();
+        // through their own syncVolume() on the next reconcile.
+        this.music.applyVolume();
       }
     );
 
@@ -2389,7 +1441,7 @@ export class GentlePomoView extends ItemView {
       await this.plugin.saveSettings();
       this.timer.updateDuration("focus", settings.focusMinutes);
       this.timer.updateDuration("break", settings.breakMinutes);
-      this.postMusicVolume();
+      this.music.applyVolume();
       this.renderSettingsPanel();
     });
   }
