@@ -26,6 +26,17 @@ import {
   retainPositionsForUrls,
   normalizeMusicPositions,
   stationsAreSettled,
+  visibleNameText,
+  sanitizeStationName,
+  MUSIC_STATION_NAME_MAX,
+  filledStationCount,
+  nextStationIndex,
+  buildStationList,
+  buildOEmbedProbeUrl,
+  parseOEmbedResponse,
+  pickStationName,
+  describeLinkCheck,
+  YT_OEMBED_ENDPOINT,
   type MusicTarget,
   type MusicResumeState,
 } from "../youtubeMusic";
@@ -920,5 +931,265 @@ describe("stationsAreSettled", () => {
 
   it("treats a whitespace-only slot as an emptied one", () => {
     expect(stationsAreSettled(["   ", URL_A, ""])).toBe(true);
+  });
+});
+
+/* =========================================================================
+   0.5.7 — station picker, name sanitizing and the oEmbed link check
+   ========================================================================= */
+
+// U+200D ZERO WIDTH JOINER. A real music video in the author's own vault has
+// exactly this as its entire YouTube title, which is what motivated the
+// visible-character gate: String.trim() leaves it untouched.
+const ZWJ = "‍";
+
+describe("visibleNameText", () => {
+  it("keeps an ordinary name unchanged", () => {
+    expect(visibleNameText("Lofi Girl")).toBe("Lofi Girl");
+  });
+
+  it("returns empty for a name that is only a zero-width joiner", () => {
+    expect(visibleNameText(ZWJ)).toBe("");
+  });
+
+  it("returns empty for the blank glyphs that survive trim()", () => {
+    // Hangul fillers, halfwidth filler, Braille blank, Mongolian vowel separator.
+    for (const blank of ["ᅟ", "ᅠ", "ㅤ", "ﾠ", "⠀", "᠎"]) {
+      expect(visibleNameText(blank)).toBe("");
+      expect(blank.trim()).not.toBe(""); // the reason the gate exists
+    }
+  });
+
+  it("strips invisibles but keeps the visible remainder", () => {
+    expect(visibleNameText(`${ZWJ}finㅤ`)).toBe("fin");
+  });
+
+  it("collapses whitespace runs, including newlines", () => {
+    // Load-bearing: names feed lastStationUiKey, which is newline-delimited.
+    expect(visibleNameText("Deep\n\nFocus")).toBe("Deep Focus");
+    expect(visibleNameText("  Rain   Sounds  ")).toBe("Rain Sounds");
+  });
+});
+
+describe("sanitizeStationName", () => {
+  it("passes a short name through", () => {
+    expect(sanitizeStationName("MONOMAN")).toBe("MONOMAN");
+  });
+
+  it("returns empty when nothing visible survives", () => {
+    expect(sanitizeStationName(ZWJ)).toBe("");
+  });
+
+  it("truncates on code points, never mid-emoji", () => {
+    const name = `${"A".repeat(MUSIC_STATION_NAME_MAX - 1)}\u{1F4DA}tail`;
+    const out = sanitizeStationName(name);
+    expect(Array.from(out)).toHaveLength(MUSIC_STATION_NAME_MAX);
+    expect(out.endsWith("\u{1F4DA}")).toBe(true);
+    expect(out).not.toContain("�");
+  });
+
+  it("does not truncate a name that is exactly at the limit", () => {
+    const exact = "A".repeat(MUSIC_STATION_NAME_MAX);
+    expect(sanitizeStationName(exact)).toBe(exact);
+  });
+
+  it("honours an explicit shorter limit", () => {
+    expect(sanitizeStationName("Lofi Girl", 4)).toBe("Lofi");
+  });
+});
+
+describe("stationLabel — invisible names", () => {
+  it("falls back to the slot number when the name is invisible", () => {
+    // Before 0.5.7 this returned the ZWJ itself and rendered a blank button.
+    expect(stationLabel(ZWJ, 2)).toBe("3");
+    expect(stationLabel("ㅤ", 0)).toBe("1");
+  });
+});
+
+describe("filledStationCount", () => {
+  it("counts only slots holding a link", () => {
+    expect(filledStationCount([URL_A, "", URL_B])).toBe(2);
+    expect(filledStationCount(["", "   ", ""])).toBe(0);
+    expect(filledStationCount([URL_A, URL_B, URL_C])).toBe(3);
+  });
+});
+
+describe("nextStationIndex", () => {
+  it("cycles through a full set", () => {
+    const urls = [URL_A, URL_B, URL_C];
+    expect(nextStationIndex(urls, 0)).toBe(1);
+    expect(nextStationIndex(urls, 1)).toBe(2);
+    expect(nextStationIndex(urls, 2)).toBe(0);
+  });
+
+  it("steps over an empty middle slot rather than selecting it", () => {
+    const urls = [URL_A, "", URL_C];
+    expect(nextStationIndex(urls, 0)).toBe(2);
+    expect(nextStationIndex(urls, 2)).toBe(0);
+  });
+
+  it("treats a whitespace-only slot as empty", () => {
+    expect(nextStationIndex([URL_A, "   ", URL_C], 0)).toBe(2);
+  });
+
+  it("returns the same slot when it is the only one filled", () => {
+    expect(nextStationIndex([URL_A, "", ""], 0)).toBe(0);
+  });
+
+  it("returns 0 when every slot is empty", () => {
+    expect(nextStationIndex(["", "", ""], 1)).toBe(0);
+  });
+
+  it("never throws on a corrupt starting index", () => {
+    const urls = [URL_A, URL_B, ""];
+    for (const bad of [-1, 3, 99, 1.5, NaN]) {
+      expect(() => nextStationIndex(urls, bad)).not.toThrow();
+      expect(nextStationIndex(urls, bad)).toBe(1); // treated as starting from 0
+    }
+  });
+});
+
+describe("buildStationList", () => {
+  it("returns filled slots only, carrying their real slot number", () => {
+    const rows = buildStationList([URL_A, "", URL_C], ["Lofi", "", "Rain"], 2);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ slot: 0, label: "Lofi", url: URL_A, active: false });
+    expect(rows[1]).toEqual({ slot: 2, label: "Rain", url: URL_C, active: true });
+  });
+
+  it("labels an unnamed slot by its slot number", () => {
+    const rows = buildStationList(["", URL_B, ""], ["", "", ""], 1);
+    expect(rows[0]?.label).toBe("2");
+  });
+
+  it("is empty when no slot holds a link", () => {
+    expect(buildStationList(["", "", ""], ["a", "b", "c"], 0)).toEqual([]);
+  });
+});
+
+describe("buildOEmbedProbeUrl", () => {
+  const target = (videoId: string | null, playlistId: string | null): MusicTarget => ({
+    videoId,
+    playlistId,
+    startSeconds: null,
+  });
+
+  it("canonicalizes a video to a watch URL", () => {
+    const url = buildOEmbedProbeUrl(target(ID, null));
+    expect(url).toBe(
+      `${YT_OEMBED_ENDPOINT}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${ID}`)}&format=json`
+    );
+  });
+
+  it("asks about the playlist even when a video was also named", () => {
+    // watch?v=X&list=L answers with X's title, but planResume moves the video
+    // within the list, so the list is what the station actually is.
+    const url = buildOEmbedProbeUrl(target(ID, "PL123"));
+    expect(url).toContain(encodeURIComponent("https://www.youtube.com/playlist?list=PL123"));
+    expect(url).not.toContain(ID);
+  });
+
+  it("never probes an /embed/ or nocookie URL, which oEmbed 404s", () => {
+    const inner = decodeURIComponent(
+      (buildOEmbedProbeUrl(target(ID, null)) ?? "").split("url=")[1]?.split("&")[0] ?? ""
+    );
+    expect(inner).toBe(`https://www.youtube.com/watch?v=${ID}`);
+    expect(inner).not.toContain("/embed/");
+    expect(inner).not.toContain("nocookie");
+  });
+
+  it("stays on the nocookie host for the request itself", () => {
+    expect(buildOEmbedProbeUrl(target(ID, null))?.startsWith(YT_EMBED_ORIGIN)).toBe(true);
+  });
+
+  it("returns null when there is nothing to ask about", () => {
+    expect(buildOEmbedProbeUrl(target(null, null))).toBeNull();
+  });
+});
+
+describe("parseOEmbedResponse", () => {
+  it("reads title and author_name", () => {
+    expect(parseOEmbedResponse({ title: "Rain", author_name: "MONOMAN" })).toEqual({
+      title: "Rain",
+      author: "MONOMAN",
+    });
+  });
+
+  it("tolerates a missing field", () => {
+    expect(parseOEmbedResponse({ title: "Rain" })).toEqual({ title: "Rain", author: "" });
+  });
+
+  it("returns null for junk rather than throwing", () => {
+    for (const junk of [null, undefined, 42, "text", {}, { title: 7 }]) {
+      expect(parseOEmbedResponse(junk)).toBeNull();
+    }
+  });
+});
+
+describe("pickStationName", () => {
+  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
+  const playlist: MusicTarget = { videoId: null, playlistId: "PL123", startSeconds: null };
+
+  it("names a video after its channel, not its title", () => {
+    expect(
+      pickStationName({ title: "OUTER WILDS PIANO ALBUM COVER", author: "MikoWorks!" }, video)
+    ).toBe("MikoWorks!");
+  });
+
+  it("names a playlist after its title", () => {
+    expect(
+      pickStationName({ title: "Most Viewed Songs", author: "BelgiumDimi008" }, playlist)
+    ).toBe("Most Viewed Songs");
+  });
+
+  it("falls back to the other field when the preferred one is invisible", () => {
+    expect(pickStationName({ title: "Rain Sounds", author: ZWJ }, video)).toBe("Rain Sounds");
+  });
+
+  it("returns empty when neither field yields anything visible", () => {
+    expect(pickStationName({ title: ZWJ, author: "   " }, video)).toBe("");
+  });
+});
+
+describe("describeLinkCheck", () => {
+  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
+  const playlist: MusicTarget = { videoId: null, playlistId: "PL123", startSeconds: null };
+  const mix: MusicTarget = { videoId: null, playlistId: `RD${ID}`, startSeconds: null };
+
+  it("says nothing on success", () => {
+    expect(describeLinkCheck(200, video)).toBeNull();
+  });
+
+  it("reports a video YouTube does not have (400 covers typos and dead IDs)", () => {
+    expect(describeLinkCheck(400, video)).toContain("no video with that ID");
+  });
+
+  it("reports an embedding refusal without promising anything about playback", () => {
+    const msg = describeLinkCheck(401, video) ?? "";
+    expect(msg).toContain("embedded");
+    expect(msg).not.toMatch(/will play|verified|works/i);
+  });
+
+  it("reports a deleted video and a deleted playlist differently", () => {
+    expect(describeLinkCheck(404, video)).toContain("video");
+    expect(describeLinkCheck(404, playlist)).toContain("playlist");
+  });
+
+  it("stays silent for an RD mix, which 404s from oEmbed yet plays fine", () => {
+    expect(describeLinkCheck(404, mix)).toBeNull();
+  });
+
+  it("stays silent for anything ambiguous rather than guessing", () => {
+    // 403 shows up on region blocks; 5xx and 0 (offline) must never accuse the link.
+    for (const status of [0, 403, 429, 500, 503]) {
+      expect(describeLinkCheck(status, video)).toBeNull();
+    }
+  });
+
+  it("never claims a link will play", () => {
+    for (const status of [200, 400, 401, 404, 403, 500]) {
+      const msg = describeLinkCheck(status, video) ?? "";
+      expect(msg).not.toMatch(/will play|playable|verified|confirmed/i);
+    }
   });
 });

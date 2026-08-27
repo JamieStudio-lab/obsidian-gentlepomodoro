@@ -389,8 +389,8 @@ export function resolveStationIndex(urls: readonly string[], requested: number):
  * station would restart its music.
  */
 export function stationLabel(name: string, index: number): string {
-  const trimmed = name.trim();
-  return trimmed === "" ? String(index + 1) : trimmed;
+  const visible = visibleNameText(name);
+  return visible === "" ? String(index + 1) : visible;
 }
 
 /**
@@ -474,9 +474,249 @@ export function stationsAreSettled(urls: readonly string[]): boolean {
   return urls.every((url) => url.trim() === "" || parseYouTubeUrl(url) !== null);
 }
 
+/**
+ * Characters that occupy a name but render as nothing, and are neither
+ * whitespace nor \p{Cf}. This is the canonical "invisible name" set — Hangul
+ * fillers, the halfwidth filler, the Braille blank and the Mongolian vowel
+ * separator all survive String.trim() and every whitespace class.
+ */
+const BLANK_GLYPH_REGEX = /[\u115F\u1160\u3164\uFFA0\u2800\u180E]/gu;
+
+/**
+ * Reduce a free-text name to what a reader would actually see, or "" when that
+ * is nothing. Strips format characters (\p{Cf} — ZWJ, ZWSP, BOM, the bidi
+ * marks) and the blank glyphs above, collapses every run of whitespace to a
+ * single space, and trims.
+ *
+ * The emptiness test has to be "did anything visible survive", not "is it in a
+ * strip list": the two sets above do not cover each other, and neither is
+ * closed. A name that reduces to nothing must fall back to the slot number, or
+ * the picker renders a row the user cannot see or aim at.
+ *
+ * Collapsing whitespace is load-bearing rather than cosmetic. Names feed
+ * lastStationUiKey, whose newline delimiter was chosen because no human can
+ * type one into a single-line input — a network-sourced name (0.5.7's oEmbed
+ * prefill) is the first value that never passes through that input, and the
+ * destructive orphan sweep sits inside that guard.
+ */
+export function visibleNameText(raw: string): string {
+  return raw
+    .replace(/\p{Cf}/gu, "")
+    .replace(BLANK_GLYPH_REGEX, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+// Longest station name kept. Names ride in a narrow sidebar button and in
+// lastStationUiKey; a 96-character video title helps nobody at either end.
+export const MUSIC_STATION_NAME_MAX = 40;
+
+/**
+ * Clean a name that came from somewhere other than the user's keyboard (a
+ * YouTube title or channel) into something safe to store and render.
+ *
+ * Truncation walks code points, never UTF-16 units: a title ending in an emoji
+ * cut with String.slice leaves a lone surrogate that renders as U+FFFD.
+ * Returns "" when nothing visible survives, which callers treat as "no name
+ * offered" rather than as a name.
+ */
+export function sanitizeStationName(raw: string, max: number = MUSIC_STATION_NAME_MAX): string {
+  const visible = visibleNameText(raw);
+  if (visible === "") return "";
+  const limit = Math.max(1, Math.floor(max));
+  const points = Array.from(visible);
+  if (points.length <= limit) return visible;
+  return points.slice(0, limit).join("").trimEnd();
+}
+
+/** How many slots hold a link. Empty and whitespace-only slots do not count. */
+export function filledStationCount(urls: readonly string[]): number {
+  let count = 0;
+  for (const url of urls) {
+    if ((url ?? "").trim() !== "") count++;
+  }
+  return count;
+}
+
+/**
+ * The slot the ⏭ next-link button moves to: the next slot holding a link,
+ * wrapping past the end and stepping over empty slots (slots are positional and
+ * never spliced, so slot 2 empty between two filled ones is normal).
+ *
+ * `from` must be the RESOLVED index, never settings.musicStationIndex — the
+ * stored value is only a preference. With slots {0,1} filled and a stored index
+ * of 2, stepping from the raw 2 wraps to 0, which is already the playing slot,
+ * and selectMusicStation's "already selected" early return swallows the press.
+ *
+ * Returns `from` unchanged when no other slot holds a link, so a single-station
+ * setup is a no-op rather than a wrap onto itself. Total and never throws: a
+ * corrupt `from` is treated as 0.
+ */
+export function nextStationIndex(urls: readonly string[], from: number): number {
+  const total = urls.length;
+  if (total === 0) return 0;
+  const start = Number.isInteger(from) && from >= 0 && from < total ? from : 0;
+  for (let step = 1; step <= total; step++) {
+    const candidate = (start + step) % total;
+    if ((urls[candidate] ?? "").trim() !== "") return candidate;
+  }
+  // Nothing else holds a link. Return `start` when it is itself a real station
+  // (the single-station no-op), otherwise fall back to 0 exactly as
+  // resolveStationIndex does, so the two helpers never disagree about which
+  // slot is meaningful.
+  return (urls[start] ?? "").trim() !== "" ? start : 0;
+}
+
+/** One row of the station picker. `slot` is the settings slot, not a list position. */
+export interface StationListEntry {
+  slot: number;
+  label: string;
+  url: string;
+  active: boolean;
+}
+
+/**
+ * The rows the station picker should show: filled slots only, in slot order,
+ * each carrying the slot it came from so a click maps back to settings without
+ * the caller counting past the empty ones.
+ */
+export function buildStationList(
+  urls: readonly string[],
+  names: readonly string[],
+  activeIndex: number
+): StationListEntry[] {
+  const rows: StationListEntry[] = [];
+  for (let slot = 0; slot < urls.length; slot++) {
+    const url = (urls[slot] ?? "").trim();
+    if (url === "") continue;
+    rows.push({
+      slot,
+      label: stationLabel(names[slot] ?? "", slot),
+      url,
+      active: slot === activeIndex,
+    });
+  }
+  return rows;
+}
+
+/* =========================================================================
+   Link check (oEmbed)
+   -------------------------------------------------------------------------
+   One lookup per pasted link answers two questions: does YouTube have this,
+   and what is it called. It CANNOT answer "will it play" — the embed's own
+   playability varies with the Referer the iframe sends, which this request
+   cannot reproduce. Every message below states an observable, never a promise.
+   ========================================================================= */
+
+// Served by the nocookie host as well as youtube.com, byte-equivalent and
+// cookie-free — so the plugin's whole network surface stays on the single
+// domain the README already discloses.
+export const YT_OEMBED_ENDPOINT = `${YT_EMBED_ORIGIN}/oembed`;
+
+/**
+ * The oEmbed probe URL for a parsed target, or null when there is nothing to
+ * ask about.
+ *
+ * Built from the CANONICAL target, never from the user's raw string: oEmbed
+ * 404s on /embed/<id>, /v/<id> and every youtube-nocookie.com watch URL, all of
+ * which parseYouTubeUrl accepts and the embed plays happily. Probing the raw
+ * string would tell someone who pasted an embed URL that their working link is
+ * dead.
+ *
+ * A playlist is asked about as a playlist even when the URL also named a video:
+ * watch?v=X&list=L answers with X's title, and planResume swaps the video
+ * inside an unchanged list, so naming the station after the pasted item names
+ * something it leaves within minutes.
+ */
+export function buildOEmbedProbeUrl(target: MusicTarget): string | null {
+  let inner: string | null = null;
+  if (target.playlistId !== null) {
+    inner = `https://www.youtube.com/playlist?list=${encodeURIComponent(target.playlistId)}`;
+  } else if (target.videoId !== null) {
+    inner = `https://www.youtube.com/watch?v=${encodeURIComponent(target.videoId)}`;
+  }
+  if (inner === null) return null;
+  return `${YT_OEMBED_ENDPOINT}?url=${encodeURIComponent(inner)}&format=json`;
+}
+
+/** The two fields worth reading off a 200 oEmbed body. Throw-proof. */
+export function parseOEmbedResponse(payload: unknown): { title: string; author: string } | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const fields = payload as Record<string, unknown>;
+  const title = typeof fields.title === "string" ? fields.title : "";
+  const author = typeof fields.author_name === "string" ? fields.author_name : "";
+  if (title === "" && author === "") return null;
+  return { title, author };
+}
+
+/**
+ * The name to offer for a station, or "" when nothing usable came back.
+ *
+ * A video is named after its CHANNEL and a playlist after its TITLE, because a
+ * station is a vibe rather than one track: video titles run to advertising
+ * copy (a real one in this author's own vault is 96 characters and ends in an
+ * emoji; another is a single zero-width joiner, i.e. invisible), while the
+ * channel is the thing a listener would actually call it. Falls back to the
+ * other field when the preferred one sanitizes away to nothing.
+ */
+export function pickStationName(
+  fields: { title: string; author: string },
+  target: MusicTarget
+): string {
+  const preferred = target.playlistId !== null ? fields.title : fields.author;
+  const fallback = target.playlistId !== null ? fields.author : fields.title;
+  return sanitizeStationName(preferred) || sanitizeStationName(fallback);
+}
+
+/**
+ * What to show under a link box for an oEmbed status, or null to say nothing.
+ *
+ * Silence is the default for anything ambiguous: a wrong "this link is broken"
+ * under a link that plays is worse than no check at all. Verified against the
+ * live endpoint:
+ *   200  YouTube has it and offers it for embedding.
+ *   400  no such video — returned for typos AND for well-formed IDs that do not
+ *        exist, which is the same fact to a user.
+ *   401  present but not offered for embedding (also age-restricted / unlisted).
+ *   404  video: gone. Playlist: gone, EXCEPT RD* mixes, which have no oEmbed
+ *        record at all yet play perfectly in the embed this plugin builds — so
+ *        those stay silent.
+ *   else (403 region blocks, 5xx, offline) say nothing.
+ */
+export function describeLinkCheck(status: number, target: MusicTarget): string | null {
+  const isPlaylist = target.playlistId !== null;
+  switch (status) {
+    case 200:
+      return null;
+    case 400:
+      return isPlaylist
+        ? "YouTube doesn't recognise that playlist ID."
+        : "YouTube has no video with that ID — check the link.";
+    case 401:
+      return "YouTube won't allow this link to be embedded — it may have embedding turned off, or be age-restricted or private.";
+    case 404:
+      // Mixes and radio playlists are generated per viewer, so oEmbed has
+      // nothing to return for them even though the embed plays them.
+      if (isPlaylist) {
+        return target.playlistId !== null && target.playlistId.startsWith("RD")
+          ? null
+          : "YouTube couldn't find that playlist — it may be private or deleted.";
+      }
+      return "YouTube couldn't find that video — it may have been deleted or made private.";
+    default:
+      return null;
+  }
+}
+
 // Commands the plugin sends. Same names as the documented IFrame API funcs.
 // seekTo takes [seconds, allowSeekAhead].
-export type PlayerCommandFunc = "playVideo" | "pauseVideo" | "stopVideo" | "setVolume" | "seekTo";
+export type PlayerCommandFunc =
+  | "playVideo"
+  | "pauseVideo"
+  | "stopVideo"
+  | "setVolume"
+  | "seekTo"
+  | "nextVideo";
 
 /**
  * Serialize a player command. The embed expects a JSON *string*, not an
