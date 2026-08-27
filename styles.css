@@ -1407,29 +1407,38 @@
   line-height: 1.3;
 }
 
-/* "Music" and "Now playing" both exist, stacked in one grid cell, and cross-fade
-   into each other. Grid rather than absolute positioning so the cell sizes
-   itself to the longer word: the wording can change without the line reflowing,
-   and there are no timers involved. */
+/* "Music" and "Now playing" both exist and cross-fade into each other, with no
+   timer involved. Only the word currently showing is in flow; the other is
+   taken out of it, so the label is exactly as wide as what it says and the rest
+   of the line sits right against it. (Stacking both in a grid cell also
+   cross-fades, but then the label is permanently as wide as the LONGER word and
+   "Music" leaves a gap before the separator.) */
 .gp-station-current-label {
-  display: grid;
+  position: relative;
   flex-shrink: 0;
   opacity: 0.75;
 }
 
 .gp-station-label-idle,
 .gp-station-label-playing {
-  grid-area: 1 / 1;
   white-space: nowrap;
-  transition: opacity 0.45s ease;
+  transition: opacity 0.35s ease;
 }
 
+/* The word on its way out keeps its place at the label's origin while it fades,
+   contributing no width. Going playing -> idle it is the wider of the two, so
+   it briefly overhangs the separator — which reads as the word dissolving,
+   and is over in a third of a second. */
 .gp-station-label-playing,
 .gp-station-current.is-playing .gp-station-label-idle {
+  position: absolute;
+  top: 0;
+  left: 0;
   opacity: 0;
 }
 
 .gp-station-current.is-playing .gp-station-label-playing {
+  position: static;
   opacity: 1;
 }
 
