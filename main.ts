@@ -3,7 +3,14 @@ import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
-import { LogManager, effectiveFocusBaseSeconds, shouldFireGoalNotice } from "./logManager";
+import {
+  FocusTotalTracker,
+  focusGoalText,
+  formatHoursMinutes,
+  liveFocusSeconds,
+  type FocusTotalHost,
+} from "./focusTotals";
+import { LogManager, shouldFireGoalNotice } from "./logManager";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -16,7 +23,6 @@ import { MusicStationStore, type MusicStationStoreHost } from "./musicStationSto
 import { TimerEngine } from "./TimerEngine";
 import {
   DEFAULT_SETTINGS,
-  FOCUS_TOTAL_CACHE_TTL_MS,
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
@@ -43,13 +49,10 @@ export default class GentlePomoPlugin extends Plugin {
   private statusTimeEl: HTMLElement | null = null;
   private statusFocusTotal: HTMLElement | null = null;
   private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
-  private statusFocusBaseSeconds = 0;
-  /** Local date (YYYY-MM-DD) the cached base was fetched for; other days count as 0. */
-  private statusFocusBaseDate: string | null = null;
+  /** Today's logged focus total, TTL- and date-stamped. */
+  private readonly focusTotals = new FocusTotalTracker(this.createFocusTotalHost());
   /** When the last settings write failed, so a broken vault can't nag per keystroke. */
   private settingsSaveFailedAt: number | null = null;
-  private statusFocusLastFetchMs = 0;
-  private statusFocusFetchInFlight = false;
   private statusTimerListener: TimerListener | null = null;
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
@@ -668,26 +671,13 @@ export default class GentlePomoPlugin extends Plugin {
    *  (a base fetched on an earlier day counts as 0 until the refetch lands)
    *  plus the live in-progress focus session. */
   private currentFocusSeconds(state: TimerState): number {
-    const base = effectiveFocusBaseSeconds(
-      this.statusFocusBaseSeconds,
-      this.statusFocusBaseDate,
-      todayLocalStr()
-    );
-    return base + this.getLiveFocusSeconds(state);
+    return this.focusTotals.loggedSeconds() + liveFocusSeconds(state);
   }
 
   /** "Today Xh / Yh" focus-time + goal text and whether the goal is met, from the
    *  current focus total. Shared by the status bar and the in-view mobile meter. */
   private focusGoalText(state: TimerState): { text: string; met: boolean } {
-    const focusTotalSeconds = this.currentFocusSeconds(state);
-    const goalMinutes = this.settings.dailyFocusGoalMinutes;
-    let text = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
-    let met = false;
-    if (goalMinutes > 0) {
-      text += ` / ${this.formatHoursMinutes(goalMinutes * 60)}`;
-      met = focusTotalSeconds >= goalMinutes * 60;
-    }
-    return { text, met };
+    return focusGoalText(this.currentFocusSeconds(state), this.settings.dailyFocusGoalMinutes);
   }
 
   /** Push the current focus-goal text into a view's in-view meter. Independent of the
@@ -805,66 +795,48 @@ export default class GentlePomoPlugin extends Plugin {
     ) {
       return;
     }
-    const goalHm = this.formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
+    const goalHm = formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
     new Notice(`[GentlePomo] Daily focus goal hit: ${goalHm}`);
     this.settings.lastGoalHitDate = today;
     void this.saveSettings();
   }
 
-  private getLiveFocusSeconds(state: TimerState): number {
-    if (state.mode !== "focus") return 0;
-    if (!state.isRunning && state.remainingMs === state.totalMs) return 0;
-    const elapsedMs = state.totalMs - state.remainingMs;
-    const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
-    return elapsedSeconds;
-  }
-
-  /** Drop the focus-total TTL so the next check refetches immediately. Called
-   *  by LogManager.writeLog the moment a focus line lands, so the refetch —
-   *  and the goal notice riding on its landing — arrives with the
-   *  end-of-session bell rather than up to a TTL later. (If a fetch is
-   *  already in flight at that instant, its landing re-stamps the TTL and the
-   *  fresh line waits for the next beat — worst case ~90s, self-healing.) */
+  /** A log line was just written; the next refresh must actually read the file. */
   invalidateFocusTotalCache(): void {
-    this.statusFocusLastFetchMs = 0;
+    this.focusTotals.invalidate();
   }
 
-  private async maybeRefreshFocusTotal() {
-    if (this.statusFocusFetchInFlight) return;
-    const now = Date.now();
-    const today = todayLocalStr();
-    // Midnight rollover invalidates the base immediately; the TTL alone would
-    // let yesterday's total linger into the new day.
-    const baseStale = this.statusFocusBaseDate !== today;
-    if (!baseStale && now - this.statusFocusLastFetchMs < FOCUS_TOTAL_CACHE_TTL_MS) return;
-
-    this.statusFocusFetchInFlight = true;
-    try {
-      // `today` is resolved before the read so the stamp matches the day the
-      // log file was picked, even if midnight passes during the await.
-      const totalSeconds = await this.logManager.getTodayFocusSeconds();
-      this.statusFocusBaseSeconds = totalSeconds;
-      this.statusFocusBaseDate = today;
-      this.statusFocusLastFetchMs = Date.now();
-      // Goal-notice check rides on the landing. Guard: if midnight passed
-      // during the await, `totalSeconds` describes yesterday's file — don't
-      // feed it to today's check (the now-stale stamp forces a refetch on the
-      // next beat, which re-lands with the new day's total).
-      if (today === todayLocalStr()) {
-        this.maybeFireGoalNotice(totalSeconds);
-      }
-      const state = this.timer.getState();
-      this.updateStatusBar(state, true);
-      // The status-bar path mirrors into open views only while the bar exists;
-      // push directly so the in-view meter corrects with the bar hidden too.
-      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
-        if (leaf.view instanceof GentlePomoView) {
-          this.refreshViewGoalProgress(leaf.view, state);
+  /**
+   * The tracker's view of the plugin. The two landing hooks are deliberately
+   * separate: repainting a stale number for a moment is harmless and
+   * self-correcting, while firing the once-per-day notice off one is not.
+   */
+  private createFocusTotalHost(): FocusTotalHost {
+    return {
+      now: () => Date.now(),
+      today: () => todayLocalStr(),
+      fetchLoggedSeconds: () => this.logManager.getTodayFocusSeconds(),
+      checkGoalNotice: (loggedSeconds) => {
+        this.maybeFireGoalNotice(loggedSeconds);
+      },
+      onLanded: () => {
+        const state = this.timer.getState();
+        this.updateStatusBar(state, true);
+        // The status-bar path mirrors into open views only while the bar
+        // exists; push directly so the in-view meter corrects with the bar
+        // hidden too.
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+          if (leaf.view instanceof GentlePomoView) {
+            this.refreshViewGoalProgress(leaf.view, state);
+          }
         }
-      }
-    } finally {
-      this.statusFocusFetchInFlight = false;
-    }
+      },
+    };
+  }
+
+  /** Read the logged total if the cache is due, then repaint and check the goal. */
+  private maybeRefreshFocusTotal(): Promise<void> {
+    return this.focusTotals.refresh();
   }
 
   private formatSeconds(totalSeconds: number, overtime = false): string {
@@ -872,12 +844,5 @@ export default class GentlePomoPlugin extends Plugin {
     const s = totalSeconds % 60;
     const timeText = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     return overtime ? `+${timeText}` : timeText;
-  }
-
-  private formatHoursMinutes(totalSeconds: number): string {
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return `${hours}h ${minutes}m`;
   }
 }
