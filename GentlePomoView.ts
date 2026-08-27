@@ -171,6 +171,7 @@ export class GentlePomoView extends ItemView {
   // configurations compare equal — and a missed change here is a stale picker.
   private lastStationUiKey: string | null = null;
   private stationCaption: HTMLDivElement | null = null;
+  private stationCaptionLabel: HTMLSpanElement | null = null;
   private stationCaptionName: HTMLSpanElement | null = null;
   private stationCaptionTrack: HTMLSpanElement | null = null;
   /** Title of the item the embed is actually on; only shown for a playlist. */
@@ -418,7 +419,10 @@ export class GentlePomoView extends ItemView {
     // a control: the list button below opens the picker, so making this
     // clickable too would be a second, heavier affordance for the same thing.
     this.stationCaption = this.musicSection.createDiv("gp-station-current");
-    this.stationCaption.createSpan({ cls: "gp-station-current-label", text: "Now playing" });
+    this.stationCaptionLabel = this.stationCaption.createSpan({
+      cls: "gp-station-current-label",
+      text: "Music",
+    });
     this.stationCaptionName = this.stationCaption.createSpan("gp-station-current-name");
     this.stationCaptionTrack = this.stationCaption.createSpan("gp-station-current-track gp-hidden");
 
@@ -975,6 +979,10 @@ export class GentlePomoView extends ItemView {
         }
       }
     }
+    // Outside the station guard: the caption's wording follows playback, which
+    // changes without any settings key moving. Its own key keeps this to one
+    // concat and one compare on the ~20Hz path.
+    this.renderStationCaption();
     // The task-selector/music divider needs both neighbors visible. Outside the
     // musicKey guard because showTaskSelector can change independently of it.
     this.musicDivider?.toggleClass("gp-hidden", !showSelector || !this.musicSectionVisible);
@@ -1134,9 +1142,16 @@ export class GentlePomoView extends ItemView {
    */
   private renderStationCaption() {
     const track = this.musicTargetPlaylistId !== null ? (this.musicCurrentVideoTitle ?? "") : "";
-    const key = `${this.stationName}\n${track}`;
+    // "Now playing" only while it is true. Picking a station does not start it,
+    // so the idle line names what ▶️ would play rather than claiming it already
+    // is. isMusicPlayingForUser is the right predicate: it already counts a
+    // running fade-out as stopped, so ⏸ changes the wording at the press rather
+    // than a fade-length later.
+    const playing = this.isMusicPlayingForUser();
+    const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
     if (key === this.lastStationCaptionKey) return;
     this.lastStationCaptionKey = key;
+    this.stationCaptionLabel?.setText(playing ? "Now playing" : "Music");
     this.stationCaptionName?.setText(this.stationName);
     this.stationCaptionTrack?.setText(track);
     this.stationCaptionTrack?.toggleClass("gp-hidden", track === "");
