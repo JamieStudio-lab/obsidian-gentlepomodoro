@@ -177,6 +177,7 @@ export class GentlePomoView extends ItemView {
   /** Title of the item the embed is actually on; only shown for a playlist. */
   private musicCurrentVideoTitle: string | null = null;
   private lastStationCaptionKey: string | null = null;
+  private stationCaptionFullText = "";
   private stationName = "";
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
@@ -231,9 +232,16 @@ export class GentlePomoView extends ItemView {
     // here: Obsidian's mobile webview doesn't expose reliable @media for this leaf.
     // ResizeObserver catches the leaf resize; the window "resize" listener is a
     // belt-and-suspenders catch for rotation. See updateCompactClass + styles.css.
-    this.resizeObserver = new ResizeObserver(() => this.updateCompactClass());
+    this.resizeObserver = new ResizeObserver(() => {
+      this.updateCompactClass();
+      // Whether the caption is cut depends on the panel's width, not its text.
+      this.updateCaptionTooltip();
+    });
     this.resizeObserver.observe(container);
-    this.registerDomEvent(window, "resize", () => this.updateCompactClass());
+    this.registerDomEvent(window, "resize", () => {
+      this.updateCompactClass();
+      this.updateCaptionTooltip();
+    });
 
     // --- Timer Visual Area ---
     const visual = container.createDiv("gp-timer-visual");
@@ -1172,6 +1180,32 @@ export class GentlePomoView extends ItemView {
     this.stationCaptionTrack?.toggleClass("gp-hidden", track === "");
     // Nothing to announce at all: no station selected.
     this.stationCaption?.toggleClass("gp-hidden", this.stationName === "");
+    this.stationCaptionFullText = [playing ? "Now playing" : "Music", this.stationName, track]
+      .filter((part) => part !== "")
+      .join("  |  ");
+    this.updateCaptionTooltip();
+  }
+
+  /**
+   * Offer the whole line as a tooltip, but only while some of it is actually
+   * hidden. Both halves ellipsize independently, so either can be the one that
+   * is cut; a tooltip that merely repeats fully-visible text is noise.
+   *
+   * Measured rather than assumed because it depends on the panel's width, not
+   * on the text: the same name fits a wide sidebar and not a narrow one. Reads
+   * layout, so it is called only when the text changes (renderStationCaption is
+   * behind its own key) or when the panel is resized — never per tick. Writing
+   * `title` cannot itself affect layout, so this is safe inside the
+   * ResizeObserver callback.
+   */
+  private updateCaptionTooltip() {
+    const caption = this.stationCaption;
+    if (!caption) return;
+    const cut = [this.stationCaptionName, this.stationCaptionTrack].some(
+      (el) => el !== null && !el.hasClass("gp-hidden") && el.scrollWidth > el.clientWidth + 1
+    );
+    if (cut) caption.setAttribute("title", this.stationCaptionFullText);
+    else caption.removeAttribute("title");
   }
 
   /**
