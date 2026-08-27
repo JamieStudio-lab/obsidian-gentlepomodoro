@@ -170,8 +170,7 @@ export class GentlePomoView extends ItemView {
   // and a printable separator could be typed into one, making two different
   // configurations compare equal — and a missed change here is a stale picker.
   private lastStationUiKey: string | null = null;
-  private stationSelectorRow: HTMLDivElement | null = null;
-  private stationBtnText: HTMLDivElement | null = null;
+  private stationCaption: HTMLDivElement | null = null;
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
@@ -186,7 +185,15 @@ export class GentlePomoView extends ItemView {
   // shared setting and every open panel rebuilds, so a persisted flag would
   // have every panel start playing at once.
   private autoPlayOnReady: string | null = null;
+  // Bumped by fadeMusicOut alone. nextMusicStation arms the hand-off only AFTER
+  // awaiting the settings write, so without this a ⏸/⏹ landing inside that await
+  // has nothing to cancel — the rebuild then erases every other trace of the
+  // press and the new station plays anyway. Deliberately NOT bumped in
+  // destroyMusicIframe: teardown runs *inside* that same await, so it would
+  // mismatch on every press and the hand-off would never fire at all.
+  private musicHandOffToken = 0;
   private stationRows: HTMLButtonElement[] = [];
+  private stationRowLabels: HTMLElement[] = [];
   private stationListVisible = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
@@ -401,56 +408,10 @@ export class GentlePomoView extends ItemView {
     // showMusicPlayer/musicUrl settings against the DOM.
     this.musicSection = controls.createDiv("gp-music-section");
 
-    // Station picker, shaped like the task selector above it: a full-width box
-    // naming what is playing, which opens a list of the configured links. Built
-    // once — every slot's row exists from the start and is only ever re-labelled
-    // or hidden, never re-created, because the pre-1.13 settings path commits on
-    // every keystroke and a rebuild-per-reconcile would leak a detached row (and
-    // its listener, which Component.registerDomEvent releases on unload rather
-    // than on removal) for every character typed into a URL.
-    //
-    // Selecting is all a row does: it never starts playback, so tapping a
-    // station cannot surprise the user with sound. The ⏭ button in the controls
-    // row is the one exception, and it carries its own explicit opt-in.
-    this.stationSelectorRow = this.musicSection.createDiv(
-      "gp-controls-row gp-station-selector-row"
-    );
-    const stationBtn = this.stationSelectorRow.createEl("button", {
-      cls: "gp-btn gp-btn-full",
-      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" },
-    });
-    stationBtn.createDiv("gp-task-btn-label").setText("Music");
-    this.stationBtnText = stationBtn.createDiv("gp-task-btn-text");
-    this.stationBtnText.setText("No music link");
-    this.registerDomEvent(stationBtn, "click", (evt) => {
-      evt.preventDefault();
-      this.toggleStationList();
-    });
-
-    this.stationListContainer = this.musicSection.createDiv({
-      cls: "gp-task-list gp-station-list",
-      attr: { role: "listbox", "aria-label": "Music links" },
-    });
-    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
-      const row = this.stationListContainer.createEl("button", {
-        cls: "gp-task-item gp-station-item gp-hidden",
-        attr: { type: "button", role: "option", "aria-selected": "false" },
-      });
-      // Label and tick are separate children so relabelling never has to clear
-      // the row (setText on the button itself would drop the icon).
-      row.createSpan("gp-station-item-label");
-      setIcon(row.createDiv("gp-task-check-icon"), "check");
-      this.stationRows.push(row);
-      this.registerDomEvent(row, "click", (evt) => {
-        evt.preventDefault();
-        // Close first, synchronously. selectMusicStation awaits saveSettings and
-        // then fans out through applySettingsToOpenViews, which re-enters
-        // applySettings on this very view — closing afterwards would be racing
-        // a reconcile that has already repainted the row under this handler.
-        this.setStationListVisible(false);
-        void this.selectMusicStation(slot);
-      });
-    }
+    // What is playing, as one quiet line above the transport. Deliberately not
+    // a control: the list button below opens the picker, so making this
+    // clickable too would be a second, heavier affordance for the same thing.
+    this.stationCaption = this.musicSection.createDiv("gp-station-current");
 
     const musicRow = this.musicSection.createDiv("gp-controls-row");
 
@@ -458,7 +419,7 @@ export class GentlePomoView extends ItemView {
     // — with one link it would be a control that changes nothing.
     this.stationListBtn = musicRow.createEl("button", {
       cls: "gp-btn gp-icon-btn gp-hidden",
-      attr: { type: "button" },
+      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" },
     });
     this.stationListBtn.appendChild(buildMusicIcon("station-list"));
     this.stationListBtn.setAttribute("aria-label", "Show music links");
@@ -567,6 +528,46 @@ export class GentlePomoView extends ItemView {
       evt.preventDefault();
       this.advancePlaylist();
     });
+
+    // The link list, below the button that opens it. Built once — every slot's
+    // row exists from the start and is only ever re-labelled or hidden, never
+    // re-created, because the pre-1.13 settings path commits on every keystroke
+    // and a rebuild-per-reconcile would leak a detached row (and its listener,
+    // which Component.registerDomEvent releases on unload rather than on
+    // removal) for every character typed into a URL.
+    //
+    // Selecting is all a row does: it never starts playback, so picking a
+    // station cannot surprise the user with sound. ⏭ is the one exception, and
+    // it carries its own explicit opt-in.
+    this.stationListContainer = this.musicSection.createDiv({
+      cls: "gp-station-list",
+      attr: { role: "listbox", "aria-label": "Music links" },
+    });
+    for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
+      const row = this.stationListContainer.createEl("button", {
+        cls: "gp-station-item gp-hidden",
+        attr: { type: "button", role: "option", "aria-selected": "false" },
+      });
+      // Label and tick are separate children so relabelling never has to clear
+      // the row (setText on the button itself would drop the icon).
+      // Held rather than re-found: a querySelector result is typed Element, and
+      // `instanceof HTMLElement` is false in an Obsidian pop-out window, whose
+      // document is a different realm — the rows would render blank there, with
+      // nothing logged. (The repo's prefer-instanceof lint rule does not catch
+      // it: a union operand type defeats its check.)
+      this.stationRowLabels.push(row.createSpan("gp-station-item-label"));
+      setIcon(row.createDiv("gp-station-item-check"), "check");
+      this.stationRows.push(row);
+      this.registerDomEvent(row, "click", (evt) => {
+        evt.preventDefault();
+        // Close first, synchronously. selectMusicStation awaits saveSettings and
+        // then fans out through applySettingsToOpenViews, which re-enters
+        // applySettings on this very view — closing afterwards would be racing
+        // a reconcile that has already repainted the row under this handler.
+        this.setStationListVisible(false);
+        void this.selectMusicStation(slot);
+      });
+    }
 
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
@@ -836,10 +837,9 @@ export class GentlePomoView extends ItemView {
         if (!row) continue;
         const entry = rows.find((candidate) => candidate.slot === slot) ?? null;
         row.toggleClass("gp-hidden", entry === null);
-        row.toggleClass("gp-task-selected", entry?.active === true);
+        row.toggleClass("is-active", entry?.active === true);
         row.setAttribute("aria-selected", entry?.active === true ? "true" : "false");
-        const label = row.querySelector(".gp-station-item-label");
-        if (label instanceof HTMLElement) label.setText(entry?.label ?? "");
+        this.stationRowLabels[slot]?.setText(entry?.label ?? "");
         // The full link lives in the tooltip: a name is optional, and a URL is
         // far too long to render in a narrow sidebar. Deliberately `title` and
         // not `aria-label` — the latter REPLACES the accessible name, so a
@@ -849,7 +849,7 @@ export class GentlePomoView extends ItemView {
         else row.setAttribute("title", entry.url);
       }
       const activeEntry = rows.find((candidate) => candidate.active) ?? null;
-      this.stationBtnText?.setText(activeEntry?.label ?? "No music link");
+      this.stationCaption?.setText(activeEntry?.label ?? "");
       // With one link there is nothing to switch between, so the shortcut button
       // would be a control that changes nothing. The box above still names what
       // is playing, which is the part that has to survive at any count.
@@ -1093,9 +1093,15 @@ export class GentlePomoView extends ItemView {
     // the music never stopped — handing over there would drop it to silence and
     // swell it back for no reason.
     const framePlaying = this.musicIframe;
+    // saveSettings is a real file write; a ⏸ or ⏹ can land while it is out.
+    const handOffToken = this.musicHandOffToken;
     await this.selectMusicStation(to);
     if (!continuePlayback) return;
     if (this.musicIframe === null || this.musicIframe === framePlaying) return;
+    // Pausing or stopping during the write cancels the hand-off, exactly as it
+    // does after one. Without this the press has nothing to cancel: the rebuild
+    // clears musicFadePhase and musicStopPending on its way through.
+    if (handOffToken !== this.musicHandOffToken) return;
     this.autoPlayOnReady = this.musicSourceUrl;
   }
 
@@ -1109,9 +1115,7 @@ export class GentlePomoView extends ItemView {
     if (visible === this.stationListVisible) return;
     this.stationListVisible = visible;
     this.stationListContainer?.toggleClass("gp-visible", visible);
-    this.stationSelectorRow
-      ?.querySelector(".gp-btn-full")
-      ?.setAttribute("aria-expanded", visible ? "true" : "false");
+    this.stationListBtn?.setAttribute("aria-expanded", visible ? "true" : "false");
     if (visible && this.taskListVisible) {
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
@@ -1201,14 +1205,6 @@ export class GentlePomoView extends ItemView {
     this.musicTargetPlaylistId = null;
     this.musicSourceUrl = null;
     this.musicStopPending = false;
-    // A player state belongs to the frame that reported it, exactly as a
-    // learned origin does. Left standing, a torn-down PLAYING frame makes
-    // armMusicFadeIn read the NEXT frame as "still running": it skips the
-    // setVolume(0) park and eases up instead, and its ramp's hold predicate
-    // (musicPlayerState !== PLAYING) then never holds, so the fade finishes
-    // long before the new player has any audio and the music arrives at full
-    // volume. UNSTARTED is not audible, so the arm-and-park branch is taken.
-    this.musicPlayerState = YT_STATE.UNSTARTED;
     // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on
     // one — the iframe is going away, and removing it is what stops playback.
     this.cancelMusicRamps();
@@ -1233,6 +1229,11 @@ export class GentlePomoView extends ItemView {
     this.musicPlayerOrigin = YT_EMBED_ORIGIN;
     this.musicErrorNotified = false;
     this.lastAppliedMusicVolume = null;
+    // This is ALSO what resets musicPlayerState — updateMusicButtons assigns it
+    // before doing the swap. Never reset that field separately above this line:
+    // the swap sits behind the method's `state === musicPlayerState` early
+    // return, so a pre-reset silently kills the ▶️/⏸ restore and leaves ⏸ on
+    // screen with no play button after every teardown-while-playing.
     this.updateMusicButtons(YT_STATE.UNSTARTED);
   }
 
@@ -1417,6 +1418,7 @@ export class GentlePomoView extends ItemView {
     // station's position is wiped, and then the player becomes ready and starts
     // playing. The plugin would answer Stop with sound.
     this.autoPlayOnReady = null;
+    this.musicHandOffToken++;
     const from = this.musicRampLevel ?? this.plugin.settings.musicVolume;
     this.clearMusicRampTimers();
     // Swap the buttons now rather than a fade-length later, so the press never

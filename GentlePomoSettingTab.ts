@@ -86,7 +86,7 @@ async function probeMusicLink(target: MusicTarget): Promise<LinkProbeResult | nu
       // and even then defensively.
       try {
         const fields = parseOEmbedResponse(response.json);
-        if (fields !== null) name = pickStationName(fields, target);
+        if (fields !== null) name = pickStationName(fields);
       } catch {
         name = "";
       }

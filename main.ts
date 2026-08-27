@@ -788,11 +788,23 @@ export default class GentlePomoPlugin extends Plugin {
       entry.url = position.url;
     } else {
       if (this.settings.musicPositions.length >= MUSIC_STATION_LIMIT) {
-        // Unreachable while the retire sweep runs: at most three slots means at
-        // most three stamps. A tripwire, so an invariant break is visible in the
-        // console instead of silently evicting somebody's position.
-        logger.warn("music positions exceeded the station limit; dropping the oldest");
-        this.settings.musicPositions.shift();
+        // Reachable whenever the retire sweep is frozen — one unparseable slot
+        // holds stationsAreSettled false indefinitely, and orphans then pile up.
+        // Evict an entry NO slot still holds, never index 0: the array is in
+        // insertion order, so the oldest entry is typically the user's main
+        // station, and dropping it silently loses a position that is still in
+        // use. Only fall back to the oldest if every entry is still live, which
+        // really is the tripwire case.
+        const live = this.musicStationUrls();
+        const orphan = this.settings.musicPositions.findIndex(
+          (candidate) => !live.some((url) => musicPositionAppliesToUrl(candidate.url, url))
+        );
+        if (orphan >= 0) {
+          this.settings.musicPositions.splice(orphan, 1);
+        } else {
+          logger.warn("music positions exceeded the station limit; dropping the oldest");
+          this.settings.musicPositions.shift();
+        }
       }
       this.settings.musicPositions.push({
         videoId: position.videoId,

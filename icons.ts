@@ -69,38 +69,46 @@ export function buildDayNightIcon(icon: DayNightIcon): SVGSVGElement {
    -------------------------------------------------------------------------
    Hand-built for the same reason as the day/night set above, plus one of its
    own: Obsidian's addIcon() wraps whatever it is given in a 0 0 100 100
-   viewBox, so registering this 24- and 16-unit artwork through it would mean
-   rescaling every path by hand. Building the <svg> here keeps the supplied
-   coordinates exactly as drawn.
+   viewBox, so registering this artwork through it would mean rescaling every
+   path by hand.
 
-   The `svg-icon` class is deliberate — the mobile CSS floor that works around
-   WebKit's flex-SVG sliver bug is written against `.gp-icon-btn svg.svg-icon`,
-   so a custom icon without it would collapse to a sliver on iPad.
+   ALL THREE SHARE ONE 24-UNIT viewBox AND ONE STROKE WIDTH, and that is
+   load-bearing rather than tidiness. Obsidian's app CSS sets stroke-width on
+   .svg-icon, and a CSS rule beats a presentation attribute — so a per-icon
+   stroke-width set here is simply discarded, and the SAME css width resolves
+   against each icon's own user-space. In a 16-unit box it therefore renders
+   1.5x thicker than in a 24-unit one. The next-station artwork is drawn 16-unit
+   and is moved into the shared space by TRANSLATION ONLY: its shape is already
+   14x14, exactly the list icon's height, so it needs no scaling — and a scale
+   would have re-introduced the same stroke problem from the other direction.
+
+   The `svg-icon` class is deliberate: the mobile CSS floor that works around
+   WebKit's flex-SVG sliver bug is written against `.gp-icon-btn svg.svg-icon`.
    ========================================================================= */
 
 export type MusicIcon = "station-list" | "next-station" | "next-video";
 
 interface MusicIconShape {
-  /** The artwork's own coordinate space, kept as drawn. */
-  size: number;
   paths: string[];
+  /** Shift applied to artwork not drawn centred in the shared 24-unit box. */
+  offset?: number;
 }
 
 const MUSIC_ICON_SHAPES: Record<MusicIcon, MusicIconShape> = {
   "station-list": {
-    size: 24,
     paths: [
       "M21 12L9 12M21 6L9 6M21 18L9 18M5 12C5 12.5523 4.55228 13 4 13C3.44772 13 3 12.5523 3 12C3 11.4477 3.44772 11 4 11C4.55228 11 5 11.4477 5 12ZM5 6C5 6.55228 4.55228 7 4 7C3.44772 7 3 6.55228 3 6C3 5.44772 3.44772 5 4 5C4.55228 5 5 5.44772 5 6ZM5 18C5 18.5523 4.55228 19 4 19C3.44772 19 3 18.5523 3 18C3 17.4477 3.44772 17 4 17C4.55228 17 5 17.4477 5 18Z",
     ],
   },
   "next-station": {
-    size: 16,
+    // Drawn 1..15 in a 16-unit box: 14x14, centred on (8,8). +4 puts it on
+    // (12,12) in the shared box at its original size.
+    offset: 4,
     paths: [
       "M15 1V15M3.59951 13.9204L9.43826 9.24939C9.97211 8.82231 10.239 8.60878 10.3357 8.3508C10.4204 8.12461 10.4204 7.87539 10.3357 7.6492C10.239 7.39122 9.97211 7.17769 9.43826 6.75061L3.59951 2.07961C2.76734 1.41387 2.35125 1.081 2.00108 1.08063C1.69654 1.0803 1.40845 1.21876 1.21846 1.45677C1 1.73045 1 2.2633 1 3.329V12.671C1 13.7367 1 14.2695 1.21846 14.5432C1.40845 14.7812 1.69654 14.9197 2.00108 14.9194C2.35125 14.919 2.76734 14.5861 3.59951 13.9204Z",
     ],
   },
   "next-video": {
-    size: 24,
     paths: [
       "M13 16.437C13 17.567 13 18.1321 13.2283 18.4091C13.4266 18.6497 13.7258 18.7841 14.0374 18.7724C14.3961 18.759 14.8184 18.3836 15.663 17.6329L20.6547 13.1958C21.12 12.7822 21.3526 12.5754 21.4383 12.3312C21.5136 12.1168 21.5136 11.8831 21.4383 11.6687C21.3526 11.4245 21.12 11.2177 20.6547 10.8041L15.663 6.36706C14.8184 5.61631 14.3961 5.24093 14.0374 5.22751C13.7258 5.21584 13.4266 5.35021 13.2283 5.59086C13 5.86787 13 6.43288 13 7.56291V16.437Z",
       "M2 16.437C2 17.567 2 18.1321 2.22827 18.4091C2.42657 18.6497 2.72579 18.7841 3.0374 18.7724C3.39609 18.759 3.81839 18.3836 4.66298 17.6329L9.65466 13.1958C10.12 12.7822 10.3526 12.5754 10.4383 12.3312C10.5136 12.1168 10.5136 11.8831 10.4383 11.6687C10.3526 11.4245 10.12 11.2177 9.65466 10.8041L4.66298 6.36706C3.81839 5.61631 3.39609 5.24093 3.0374 5.22751C2.72579 5.21584 2.42657 5.35021 2.22827 5.59086C2 5.86787 2 6.43288 2 7.56291V16.437Z",
@@ -108,35 +116,39 @@ const MUSIC_ICON_SHAPES: Record<MusicIcon, MusicIconShape> = {
   },
 };
 
-// The weight every music icon renders at, expressed in the 24-unit space the
-// two larger ones are drawn in. The 16-unit artwork is drawn at stroke-width 2
-// as well, but a 16-unit box scaled to the same pixel size magnifies its
-// strokes by 1.5x — side by side in one row that reads as a bolder icon rather
-// than as the same set. Scaling the width by the artwork's own size keeps the
-// rendered weight identical without touching a single coordinate.
-const MUSIC_ICON_STROKE_AT_24 = 2;
-
 /**
- * Build one of the music-row icons as a themed, screen-reader-invisible SVG.
- * Stroke is `currentColor`, so it follows the button's text color in both
- * themes and in light/dark — the supplied artwork hard-coded black, which
- * would have been invisible against a dark control.
+ * Build one of the music-row icons: themed, screen-reader-invisible, and the
+ * same visual weight and size as Obsidian's own 24-unit Lucide glyphs beside
+ * it. Stroke is `currentColor`, so it follows the button's text colour in both
+ * themes — the supplied artwork hard-coded black, invisible on a dark control.
  */
 export function buildMusicIcon(icon: MusicIcon): SVGSVGElement {
   const shape = MUSIC_ICON_SHAPES[icon];
   const svg = createSvgEl("svg");
   svg.addClass("svg-icon");
-  svg.setAttribute("viewBox", `0 0 ${String(shape.size)} ${String(shape.size)}`);
+  svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", String((MUSIC_ICON_STROKE_AT_24 * shape.size) / 24));
+  // Same value for every icon, and only a fallback: Obsidian's .svg-icon CSS
+  // overrides it. Consistency comes from the shared viewBox, not from here.
+  svg.setAttribute("stroke-width", "2");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
+  // A translate leaves stroke width untouched; a scale would not.
+  const host =
+    shape.offset === undefined
+      ? svg
+      : (() => {
+          const g = createSvgEl("g");
+          g.setAttribute("transform", `translate(${String(shape.offset)} ${String(shape.offset)})`);
+          svg.appendChild(g);
+          return g;
+        })();
   for (const d of shape.paths) {
     const path = createSvgEl("path");
     path.setAttribute("d", d);
-    svg.appendChild(path);
+    host.appendChild(path);
   }
   return svg;
 }

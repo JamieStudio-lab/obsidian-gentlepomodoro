@@ -476,35 +476,102 @@ export function stationsAreSettled(urls: readonly string[]): boolean {
 
 /**
  * Characters that occupy a name but render as nothing, and are neither
- * whitespace nor \p{Cf}. This is the canonical "invisible name" set — Hangul
- * fillers, the halfwidth filler, the Braille blank and the Mongolian vowel
- * separator all survive String.trim() and every whitespace class.
+ * whitespace nor a joiner. Hangul fillers, the halfwidth filler, the Braille
+ * blank and the Mongolian vowel separator all survive String.trim().
  */
 const BLANK_GLYPH_REGEX = /[\u115F\u1160\u3164\uFFA0\u2800\u180E]/gu;
 
 /**
+ * Invisible formatting that carries no meaning of its own: zero-width space,
+ * BOM, soft hyphen and the bidi controls. Deliberately NOT the two joiners —
+ * see visibleNameText.
+ */
+const INVISIBLE_FORMAT_REGEX = /[\u200B\uFEFF\u00AD\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+
+const ZWJ = "\u200D";
+const ZWNJ = "\u200C";
+
+const isJoiner = (ch: string | undefined): boolean => ch === ZWJ || ch === ZWNJ;
+
+/**
  * Reduce a free-text name to what a reader would actually see, or "" when that
- * is nothing. Strips format characters (\p{Cf} — ZWJ, ZWSP, BOM, the bidi
- * marks) and the blank glyphs above, collapses every run of whitespace to a
- * single space, and trims.
+ * is nothing.
  *
- * The emptiness test has to be "did anything visible survive", not "is it in a
- * strip list": the two sets above do not cover each other, and neither is
- * closed. A name that reduces to nothing must fall back to the slot number, or
- * the picker renders a row the user cannot see or aim at.
+ * The two joiners U+200C/U+200D are kept when they sit BETWEEN two non-space
+ * characters and dropped everywhere else, because they are the one class of
+ * invisible character that changes what its neighbours render as: stripping
+ * them turns one emoji into several (👩‍🌾 becomes two unrelated glyphs, 👨‍👩‍👧
+ * becomes three people) and misspells Persian and Indic words that require a
+ * ZWNJ. A joiner with nothing to join — a leading one, or a name that is
+ * nothing but joiners — is decoration and goes.
  *
- * Collapsing whitespace is load-bearing rather than cosmetic. Names feed
- * lastStationUiKey, whose newline delimiter was chosen because no human can
- * type one into a single-line input — a network-sourced name (0.5.7's oEmbed
- * prefill) is the first value that never passes through that input, and the
- * destructive orphan sweep sits inside that guard.
+ * The emptiness test is separate and stricter: it asks whether anything visible
+ * survives once EVERY invisible is removed, so a name made only of joiners and
+ * blank glyphs still falls back to the slot number rather than rendering a row
+ * the user cannot see or aim at. That test cannot be a strip list — the sets
+ * above do not cover each other, and neither is closed.
+ *
+ * Whitespace is collapsed in the returned value, not merely in the test: names
+ * feed lastStationUiKey, which is newline-delimited on the grounds that no
+ * human can type a newline into a single-line input. A network-sourced name is
+ * the first value that never passes through that input.
  */
 export function visibleNameText(raw: string): string {
-  return raw
-    .replace(/\p{Cf}/gu, "")
-    .replace(BLANK_GLYPH_REGEX, "")
-    .replace(/\s+/gu, " ")
-    .trim();
+  const points = Array.from(raw.replace(INVISIBLE_FORMAT_REGEX, "").replace(BLANK_GLYPH_REGEX, ""));
+  const kept: string[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const ch = points[i] ?? "";
+    if (!isJoiner(ch)) {
+      kept.push(ch);
+      continue;
+    }
+    const prev = points[i - 1];
+    const next = points[i + 1];
+    const joins =
+      prev !== undefined &&
+      next !== undefined &&
+      !isJoiner(prev) &&
+      !isJoiner(next) &&
+      !/\s/u.test(prev) &&
+      !/\s/u.test(next);
+    if (joins) kept.push(ch);
+  }
+  const text = kept.join("").replace(/\s+/gu, " ").trim();
+  // Nothing visible left once the joiners are discounted too.
+  if (text.replace(new RegExp(`[${ZWJ}${ZWNJ}]`, "gu"), "").trim() === "") return "";
+  return text;
+}
+
+/**
+ * Present a name the way a person would write it. Only two transformations,
+ * both conservative:
+ *   - A name with no lowercase at all is shouting (YouTube titles often are),
+ *     so it becomes sentence case: "MONOMAN" -> "Monoman".
+ *   - A name opening on a lowercase letter gets that letter capitalised, unless
+ *     its first word is deliberately mixed-case ("iPhone tips" is left alone).
+ * Anything else is returned untouched.
+ */
+export function normalizeNameCase(text: string): string {
+  if (text === "") return text;
+  const letters = text.match(/\p{L}/gu)?.length ?? 0;
+  if (letters === 0) return text;
+  if (!/\p{Ll}/u.test(text) && letters >= 2) {
+    let seenFirstLetter = false;
+    return Array.from(text)
+      .map((ch) => {
+        if (!/\p{L}/u.test(ch)) return ch;
+        if (seenFirstLetter) return ch.toLocaleLowerCase();
+        seenFirstLetter = true;
+        return ch.toLocaleUpperCase();
+      })
+      .join("");
+  }
+  const first = Array.from(text)[0] ?? "";
+  if (!/\p{Ll}/u.test(first)) return text;
+  const firstWord = text.split(/\s/u)[0] ?? "";
+  // "iPhone", "eBay": the lowercase opening is the name, not a typo.
+  if (/\p{Lu}/u.test(firstWord)) return text;
+  return first.toLocaleUpperCase() + text.slice(first.length);
 }
 
 // Longest station name kept. Names ride in a narrow sidebar button and in
@@ -526,7 +593,13 @@ export function sanitizeStationName(raw: string, max: number = MUSIC_STATION_NAM
   const limit = Math.max(1, Math.floor(max));
   const points = Array.from(visible);
   if (points.length <= limit) return visible;
-  return points.slice(0, limit).join("").trimEnd();
+  let cut = points.slice(0, limit).join("");
+  // Prefer a word boundary, but only when one falls late enough that the cut is
+  // still recognisably the same name.
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace >= Math.floor(limit * 0.6)) cut = cut.slice(0, lastSpace);
+  // A cut can land inside an emoji sequence; trimEnd does not remove a joiner.
+  return cut.replace(new RegExp(`[${ZWJ}${ZWNJ}\\s]+$`, "u"), "");
 }
 
 /** How many slots hold a link. Empty and whitespace-only slots do not count. */
@@ -652,20 +725,17 @@ export function parseOEmbedResponse(payload: unknown): { title: string; author: 
 /**
  * The name to offer for a station, or "" when nothing usable came back.
  *
- * A video is named after its CHANNEL and a playlist after its TITLE, because a
- * station is a vibe rather than one track: video titles run to advertising
- * copy (a real one in this author's own vault is 96 characters and ends in an
- * emoji; another is a single zero-width joiner, i.e. invisible), while the
- * channel is the thing a listener would actually call it. Falls back to the
- * other field when the preferred one sanitizes away to nothing.
+ * The TITLE is what a person would call the thing they are listening to, so it
+ * leads for videos and playlists alike. The channel is the fallback, and it is
+ * not a theoretical one: a real video in this author's vault has a title that
+ * is a single zero-width joiner, which sanitizes away to nothing and would
+ * otherwise leave the slot unnamed.
+ *
+ * Titles are also where shouting lives ("OUTER WILDS PIANO ALBUM COVER"), hence
+ * the case pass.
  */
-export function pickStationName(
-  fields: { title: string; author: string },
-  target: MusicTarget
-): string {
-  const preferred = target.playlistId !== null ? fields.title : fields.author;
-  const fallback = target.playlistId !== null ? fields.author : fields.title;
-  return sanitizeStationName(preferred) || sanitizeStationName(fallback);
+export function pickStationName(fields: { title: string; author: string }): string {
+  return normalizeNameCase(sanitizeStationName(fields.title) || sanitizeStationName(fields.author));
 }
 
 /**
@@ -673,14 +743,17 @@ export function pickStationName(
  *
  * Silence is the default for anything ambiguous: a wrong "this link is broken"
  * under a link that plays is worse than no check at all. Verified against the
- * live endpoint:
+ * live endpoint, and note the 400/404 split is NOT the intuitive one —
  *   200  YouTube has it and offers it for embedding.
- *   400  no such video — returned for typos AND for well-formed IDs that do not
- *        exist, which is the same fact to a user.
- *   401  present but not offered for embedding (also age-restricted / unlisted).
- *   404  video: gone. Playlist: gone, EXCEPT RD* mixes, which have no oEmbed
- *        record at all yet play perfectly in the embed this plugin builds — so
- *        those stay silent.
+ *   400  the ID is structurally invalid. YouTube's 11th character encodes only
+ *        16 possible values, so this fires for a mistyped LAST character and
+ *        little else.
+ *   404  no such video. This is where an ordinary typo lands, and also a
+ *        genuinely deleted one — so the wording has to serve both and lead with
+ *        checking the link, which is the recoverable case.
+ *   401  present but not offered for embedding (also age-restricted / private).
+ *   404 on a playlist: gone, EXCEPT RD* mixes, which have no oEmbed record at
+ *        all yet play perfectly in the embed this plugin builds.
  *   else (403 region blocks, 5xx, offline) say nothing.
  */
 export function describeLinkCheck(status: number, target: MusicTarget): string | null {
@@ -690,19 +763,19 @@ export function describeLinkCheck(status: number, target: MusicTarget): string |
       return null;
     case 400:
       return isPlaylist
-        ? "YouTube doesn't recognise that playlist ID."
-        : "YouTube has no video with that ID — check the link.";
+        ? "That doesn't look like a valid playlist ID."
+        : "That doesn't look like a valid video ID — check the last few characters.";
     case 401:
       return "YouTube won't allow this link to be embedded — it may have embedding turned off, or be age-restricted or private.";
     case 404:
-      // Mixes and radio playlists are generated per viewer, so oEmbed has
-      // nothing to return for them even though the embed plays them.
       if (isPlaylist) {
+        // Mixes and radio playlists are generated per viewer, so oEmbed has
+        // nothing to return for them even though the embed plays them.
         return target.playlistId !== null && target.playlistId.startsWith("RD")
           ? null
-          : "YouTube couldn't find that playlist — it may be private or deleted.";
+          : "YouTube couldn't find that playlist — check the link, or it may have been deleted.";
       }
-      return "YouTube couldn't find that video — it may have been deleted or made private.";
+      return "YouTube couldn't find that video — check the link, or it may have been deleted.";
     default:
       return null;
   }

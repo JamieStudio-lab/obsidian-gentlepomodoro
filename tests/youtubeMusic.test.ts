@@ -35,6 +35,7 @@ import {
   buildOEmbedProbeUrl,
   parseOEmbedResponse,
   pickStationName,
+  normalizeNameCase,
   describeLinkCheck,
   YT_OEMBED_ENDPOINT,
   type MusicTarget,
@@ -1127,27 +1128,55 @@ describe("parseOEmbedResponse", () => {
 });
 
 describe("pickStationName", () => {
-  const video: MusicTarget = { videoId: ID, playlistId: null, startSeconds: null };
-  const playlist: MusicTarget = { videoId: null, playlistId: "PL123", startSeconds: null };
-
-  it("names a video after its channel, not its title", () => {
-    expect(
-      pickStationName({ title: "OUTER WILDS PIANO ALBUM COVER", author: "MikoWorks!" }, video)
-    ).toBe("MikoWorks!");
+  it("names a station after the title, not the channel", () => {
+    expect(pickStationName({ title: "Deep Focus Mix", author: "MikoWorks!" })).toBe(
+      "Deep Focus Mix"
+    );
   });
 
-  it("names a playlist after its title", () => {
-    expect(
-      pickStationName({ title: "Most Viewed Songs", author: "BelgiumDimi008" }, playlist)
-    ).toBe("Most Viewed Songs");
+  it("falls back to the channel when the title sanitizes away to nothing", () => {
+    // The real case this exists for: a video whose entire title is one ZWJ.
+    // Capitalised on the way out, per the case rule: the channel is "fin".
+    expect(pickStationName({ title: ZWJ, author: "fin" })).toBe("Fin");
   });
 
-  it("falls back to the other field when the preferred one is invisible", () => {
-    expect(pickStationName({ title: "Rain Sounds", author: ZWJ }, video)).toBe("Rain Sounds");
+  it("de-shouts an ALL CAPS title", () => {
+    expect(pickStationName({ title: "OUTER WILDS PIANO ALBUM COVER", author: "MikoWorks!" })).toBe(
+      "Outer wilds piano album cover"
+    );
   });
 
   it("returns empty when neither field yields anything visible", () => {
-    expect(pickStationName({ title: ZWJ, author: "   " }, video)).toBe("");
+    expect(pickStationName({ title: ZWJ, author: "   " })).toBe("");
+  });
+});
+
+describe("normalizeNameCase", () => {
+  it("sentence-cases a shouting name", () => {
+    expect(normalizeNameCase("MONOMAN")).toBe("Monoman");
+    expect(normalizeNameCase("LOFI HIP HOP RADIO")).toBe("Lofi hip hop radio");
+  });
+
+  it("capitalizes a lowercase opening", () => {
+    expect(normalizeNameCase("lofi hip hop radio")).toBe("Lofi hip hop radio");
+  });
+
+  it("leaves a deliberately mixed-case first word alone", () => {
+    expect(normalizeNameCase("iPhone recordings")).toBe("iPhone recordings");
+    expect(normalizeNameCase("eBay haul")).toBe("eBay haul");
+  });
+
+  it("leaves an ordinary name untouched", () => {
+    expect(normalizeNameCase("Deep Focus Mix")).toBe("Deep Focus Mix");
+  });
+
+  it("does not shout-case a single initial", () => {
+    expect(normalizeNameCase("A")).toBe("A");
+  });
+
+  it("tolerates names with no letters at all", () => {
+    expect(normalizeNameCase("123")).toBe("123");
+    expect(normalizeNameCase("")).toBe("");
   });
 });
 
@@ -1160,8 +1189,20 @@ describe("describeLinkCheck", () => {
     expect(describeLinkCheck(200, video)).toBeNull();
   });
 
-  it("reports a video YouTube does not have (400 covers typos and dead IDs)", () => {
-    expect(describeLinkCheck(400, video)).toContain("no video with that ID");
+  it("treats 400 as a malformed ID, which is what YouTube uses it for", () => {
+    // 400 fires when the 11th character is outside YouTube's valid final set —
+    // i.e. a mistyped last character, NOT a video that does not exist.
+    expect(describeLinkCheck(400, video)).toContain("valid video ID");
+    expect(describeLinkCheck(400, video)).not.toContain("deleted");
+  });
+
+  it("leads a 404 with checking the link, since that is where a typo lands", () => {
+    // An ordinary typo anywhere but the last character returns 404, so this
+    // wording must not send the user off to ask the uploader.
+    const msg = describeLinkCheck(404, video) ?? "";
+    expect(msg).toContain("check the link");
+    expect(msg).toContain("deleted");
+    expect(msg).not.toContain("valid video ID");
   });
 
   it("reports an embedding refusal without promising anything about playback", () => {
@@ -1170,9 +1211,11 @@ describe("describeLinkCheck", () => {
     expect(msg).not.toMatch(/will play|verified|works/i);
   });
 
-  it("reports a deleted video and a deleted playlist differently", () => {
-    expect(describeLinkCheck(404, video)).toContain("video");
+  it("distinguishes a missing playlist from a missing video", () => {
     expect(describeLinkCheck(404, playlist)).toContain("playlist");
+    expect(describeLinkCheck(404, playlist)).not.toContain("video");
+    expect(describeLinkCheck(404, video)).toContain("video");
+    expect(describeLinkCheck(404, video)).not.toContain("playlist");
   });
 
   it("stays silent for an RD mix, which 404s from oEmbed yet plays fine", () => {
@@ -1180,7 +1223,6 @@ describe("describeLinkCheck", () => {
   });
 
   it("stays silent for anything ambiguous rather than guessing", () => {
-    // 403 shows up on region blocks; 5xx and 0 (offline) must never accuse the link.
     for (const status of [0, 403, 429, 500, 503]) {
       expect(describeLinkCheck(status, video)).toBeNull();
     }
