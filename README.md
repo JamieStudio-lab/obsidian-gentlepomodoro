@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Two ambient themes — Classic (day→night gradient) or Frosted Glass (drifting color orbs behind a frosted pane) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.5.6 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.5.7 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -43,17 +43,17 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 ### 🎵 Lofi study music
 
-- Paste a YouTube link — a video, a 24/7 live stream (Lofi Girl!), or a playlist — in the plugin settings and a ▶️ play/pause/stop row appears in the timer panel. **Audio-only by design**: no video is ever shown.
-- **Up to three links, switchable from the panel**: fill in a second or third link (each with an optional short name like _Lofi_ or _Rain_) and you can change the mood without opening settings. The controls open with a line naming what's playing — _Music | Lofi_ before you start, _Now playing | Lofi_ once it's going (plus the track name, on a playlist). That line is just a label; the list button at the left of the transport is what opens the picker, and it appears once you have two or more links. Picking one only selects it: the player reloads and lands silent, so press ▶️ to start. Renaming a link, or editing one you aren't listening to, never interrupts what's playing.
-- **⏭ next link, and it keeps playing**: press it while music is going and the next link starts by itself once it has loaded; press it while paused or stopped and nothing makes a sound. It's the one control that carries the audio across a switch. Shown only when you have more than one link.
-- **⏮ / ⏩ previous and next video** move through a playlist. They sit on their own row, which eases in and out and appears only when the link you're on is genuinely a playlist — a single video on loop doesn't count, even though YouTube treats it as a one-item playlist internally.
-- **Links check themselves and name themselves**: paste a link and, if YouTube has no record of it — a typo, a deleted or private video, one that blocks embedding — a short message appears under the box in settings. The name box fills in on its own too, from the video or playlist title, tidied up: a SHOUTING title comes back to sentence case, a lowercase one gets its first letter capitalised, and an over-long one is cut at a word. (If a title turns out to be unusable — some are a single invisible character — the channel name is used instead.) Type over it any time; it never touches a name you've already written, or one you're in the middle of writing. The check is honest about its limits: it can't promise a link will play, only that YouTube can find it.
-- **Fades in and out**: ▶️ eases the music up from silence, ⏸ and ⏹ ease it down before stopping, and ⏮/⏩ fade across a track change rather than cutting — no snapping in mid-bar. Change your mind mid-fade and it simply carries on; pressing ⏸ or ⏹ during a track skip cancels the skip.
-- **Gentle ducking**: session cues (drum, bell, ding) briefly dip the music and ease it back up, so they stay audible without jolting the mix.
-- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume next to the sound volume in the in-view settings.
-- **Resumes where you left off, per link**: pause (or close the panel, or quit Obsidian) and the track is queued at that moment next time — press ▶️ to carry on. Each link keeps its own place, so switching away and back picks up where you were. Nothing auto-plays; ⏹ **Stop** — or changing that link — clears its position so it starts from the top instead. A link with its own timestamp (`?t=90`, or an older `#t=1m30s`) opens there. Live streams always start live.
-- Fully manual — independent of your sessions; stops when you close the timer panel. If playback truly stops or stalls (stream offline, lost connection), a notice tells you.
-- **Desktop only, for now.** On iPhone and iPad, YouTube refuses to load its player inside Obsidian at all (error 153): it requires the embedding page to identify itself with an HTTP `Referer`, and iOS doesn't send one for an app served from a custom scheme. Nothing the plugin can set changes this — it's the same wall other iOS webview apps hit — so the music player is a desktop feature until Obsidian or Apple changes that. Every other feature works on mobile as before.
+- Paste a YouTube link — video, 24/7 live stream (Lofi Girl!), or playlist — and a ▶️ play/pause/stop row appears in the panel. **Audio-only by design**: no video is ever shown.
+- **Up to three links**, each with an optional short name. A line above the controls says what's playing; the list button opens the picker.
+- **⏭ next link** carries the audio across the switch. Picking one from the list doesn't — press ▶️ to start it.
+- **⏮ / ⏩** move through a playlist, on their own row that appears only when the link is genuinely a playlist.
+- **Links check and name themselves**: paste one and a bad link says so, while the name box fills in from the title. Type over it any time.
+- **Fades in and out** on every control — ▶️, ⏸, ⏹ and track skips all ease rather than cut. Change your mind mid-fade and it carries on.
+- **Gentle ducking**: session cues briefly dip the music and ease it back up, so they stay audible without jolting the mix.
+- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume in the in-view settings.
+- **Resumes where you left off, per link.** ⏹ **Stop** — or changing that link — makes it start from the top instead. Live streams always start live.
+- Fully manual — independent of your sessions; stops when you close the panel. A notice tells you if playback stalls.
+- **Desktop only.** YouTube won't load its player inside Obsidian on iOS at all (error 153) — no link works there, and nothing the plugin can set changes it. Every other feature works on mobile.
 
 ### 📱 Mobile (iPad & phone)
 
