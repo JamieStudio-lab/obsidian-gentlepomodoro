@@ -1383,78 +1383,65 @@
 }
 
 /* Station picker. One quiet line naming what is playing, and a list opened by
-   the list button in the transport row below it. Deliberately lighter than the
-   task list: no panel behind it, no filled selection — a station is a label you
-   glance at, not a record you act on. */
+   the list button in the transport row below it.
+
+   The list is a .gp-task-list of .gp-task-items and deliberately adds almost
+   nothing: same border, same panel, same open animation, same hover and
+   selected treatment as the task selector. Two pickers in one narrow column
+   that looked merely similar would read as a bug. Only the differences that
+   matter to a station live here. */
 .gp-station-current {
   width: 100%;
-  margin-bottom: 6px;
+  /* Matches .gp-controls' own 0.75rem row gap — the caption is a row in that
+     rhythm, not a label glued to the buttons. */
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--text-muted);
   font-size: 0.78rem;
   line-height: 1.3;
-  text-align: center;
+}
+
+.gp-station-current-label {
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+
+/* Both names truncate rather than wrap, and each may shrink: min-width:0 is
+   what actually permits that inside a flex row, without which neither ellipsis
+   ever appears. The track gets the larger share, being the longer of the two. */
+.gp-station-current-name,
+.gp-station-current-track {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.gp-station-current:empty {
-  display: none;
-}
-
-/* Same expander mechanic as .gp-task-list (max-height, so it can animate) but
-   none of its chrome. */
-.gp-station-list {
-  width: 100%;
-  max-height: 0;
-  overflow: hidden auto;
-  margin-top: 6px;
-  transition:
-    max-height 0.3s ease-in-out,
-    padding 0.3s ease;
-}
-
-.gp-station-list.gp-visible {
-  max-height: 220px;
-  padding: 2px 0;
-}
-
-/* Real buttons, so the list is keyboard-operable — hence the UA reset. */
-.gp-station-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 9px 10px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-}
-
-/* Colour arrives on hover and on the active row, and nowhere else. */
-.gp-station-item:hover {
-  background-color: var(--background-modifier-hover);
+.gp-station-current-name {
+  flex: 0 1 auto;
   color: var(--text-normal);
 }
 
-.gp-station-item.is-active {
-  color: var(--text-accent);
-  font-weight: 600;
+/* Separator drawn rather than typed, so it never lands in a name or survives
+   into the DOM text of a station. */
+.gp-station-current-name::before,
+.gp-station-current-track::before {
+  content: "|";
+  margin-right: 6px;
+  opacity: 0.45;
+}
+
+.gp-station-current-track {
+  flex: 1 1 auto;
 }
 
 /* Names are user-typed and a narrow sidebar is unforgiving: one line, cut with
-   an ellipsis rather than wrapped. min-width:0 is what actually lets a flex
-   child shrink below its content width — without it the ellipsis never appears. */
+   an ellipsis. .gp-task-item deliberately lets task text wrap — a task needs
+   reading, a station needs recognising. min-width:0 is load-bearing here too. */
 .gp-station-item-label {
   flex: 1 1 auto;
   min-width: 0;
@@ -1463,20 +1450,23 @@
   white-space: nowrap;
 }
 
-.gp-station-item-check {
+/* Every row carries a tick from the start (rows are built once and only
+   re-labelled), so it needs hiding until its row is the active one. The task
+   list's own .gp-task-selected rule is one class more specific and turns it
+   back on. */
+.gp-station-item .gp-task-check-icon {
   display: none;
-  flex-shrink: 0;
-  align-items: center;
-  color: var(--text-accent);
 }
 
-.gp-station-item.is-active .gp-station-item-check {
-  display: flex;
-}
-
-.gp-station-item-check svg {
-  width: 14px;
-  height: 14px;
+/* .gp-task-item is written for a div; these rows are real buttons so the list
+   is keyboard-operable. Undo the UA chrome and let the shared rule do the rest. */
+.gp-station-item {
+  width: 100%;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-family: inherit;
+  text-align: left;
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
@@ -1663,9 +1653,7 @@ body.is-tablet .gp-btn-full {
 }
 
 body.is-mobile .gp-task-item,
-body.is-tablet .gp-task-item,
-body.is-mobile .gp-station-item,
-body.is-tablet .gp-station-item {
+body.is-tablet .gp-task-item {
   padding: 14px;
   min-height: var(--gp-tap-min);
 }
@@ -1730,18 +1718,14 @@ body.is-tablet .gp-root::after {
 body.is-mobile .gp-settings-panel,
 body.is-tablet .gp-settings-panel,
 body.is-mobile .gp-task-list,
-body.is-tablet .gp-task-list,
-body.is-mobile .gp-station-list,
-body.is-tablet .gp-station-list {
+body.is-tablet .gp-task-list {
   transition: none;
 }
 
 body.is-mobile .gp-settings-panel.gp-visible,
 body.is-tablet .gp-settings-panel.gp-visible,
 body.is-mobile .gp-task-list.gp-visible,
-body.is-tablet .gp-task-list.gp-visible,
-body.is-mobile .gp-station-list.gp-visible,
-body.is-tablet .gp-station-list.gp-visible {
+body.is-tablet .gp-task-list.gp-visible {
   max-height: none;
   overflow: visible;
 }

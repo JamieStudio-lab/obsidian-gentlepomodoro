@@ -825,6 +825,7 @@ export type PlayerMessage =
       currentTime: number | null; // seconds into the current video
       duration: number | null; // total seconds; 0 or absent for a live stream
       videoId: string | null; // the video actually loaded (playlists advance)
+      videoTitle: string | null; // its title, when the payload carried one
     }
   | { type: "error"; code: number }; // 2 invalid, 5 html5, 100 unavailable, 101/150 embed-disabled, 153 config
 
@@ -871,17 +872,30 @@ export function parsePlayerMessage(data: unknown): PlayerMessage | null {
       const duration = numberField(fields, "duration");
 
       let videoId: string | null = null;
+      let videoTitle: string | null = null;
       const videoData = fields.videoData;
       if (typeof videoData === "object" && videoData !== null) {
-        const id = (videoData as Record<string, unknown>).video_id;
+        const data = videoData as Record<string, unknown>;
+        const id = data.video_id;
         if (typeof id === "string" && VIDEO_ID_REGEX.test(id)) videoId = id;
+        // The embed streams the loaded item's title alongside its id. Reading it
+        // here is what lets a playlist station name the track it is on without
+        // any extra network call.
+        const title = data.title;
+        if (typeof title === "string" && title.trim() !== "") videoTitle = title;
       }
 
       // Nothing we track — a volume/quality/loadedFraction-only delivery.
-      if (state === null && currentTime === null && duration === null && videoId === null) {
+      if (
+        state === null &&
+        currentTime === null &&
+        duration === null &&
+        videoId === null &&
+        videoTitle === null
+      ) {
         return null;
       }
-      return { type: "info", state, currentTime, duration, videoId };
+      return { type: "info", state, currentTime, duration, videoId, videoTitle };
     }
     default:
       return null;

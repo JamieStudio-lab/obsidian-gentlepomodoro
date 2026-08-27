@@ -171,6 +171,12 @@ export class GentlePomoView extends ItemView {
   // configurations compare equal — and a missed change here is a stale picker.
   private lastStationUiKey: string | null = null;
   private stationCaption: HTMLDivElement | null = null;
+  private stationCaptionName: HTMLSpanElement | null = null;
+  private stationCaptionTrack: HTMLSpanElement | null = null;
+  /** Title of the item the embed is actually on; only shown for a playlist. */
+  private musicCurrentVideoTitle: string | null = null;
+  private lastStationCaptionKey: string | null = null;
+  private stationName = "";
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
@@ -412,6 +418,9 @@ export class GentlePomoView extends ItemView {
     // a control: the list button below opens the picker, so making this
     // clickable too would be a second, heavier affordance for the same thing.
     this.stationCaption = this.musicSection.createDiv("gp-station-current");
+    this.stationCaption.createSpan({ cls: "gp-station-current-label", text: "Now playing" });
+    this.stationCaptionName = this.stationCaption.createSpan("gp-station-current-name");
+    this.stationCaptionTrack = this.stationCaption.createSpan("gp-station-current-track gp-hidden");
 
     const musicRow = this.musicSection.createDiv("gp-controls-row");
 
@@ -505,7 +514,10 @@ export class GentlePomoView extends ItemView {
       cls: "gp-btn gp-icon-btn gp-hidden",
       attr: { type: "button" },
     });
-    this.nextStationBtn.appendChild(buildMusicIcon("next-station"));
+    // The same glyph the timer's "Skip to next" button uses, deliberately: both
+    // mean "move on to the next one", and two near-identical hand-drawn
+    // variants of that idea in one panel read as a mistake.
+    setIcon(this.nextStationBtn, "skip-forward");
     this.nextStationBtn.setAttribute("aria-label", "Next music link");
     this.registerDomEvent(this.nextStationBtn, "click", (evt) => {
       evt.preventDefault();
@@ -540,12 +552,12 @@ export class GentlePomoView extends ItemView {
     // station cannot surprise the user with sound. ⏭ is the one exception, and
     // it carries its own explicit opt-in.
     this.stationListContainer = this.musicSection.createDiv({
-      cls: "gp-station-list",
+      cls: "gp-task-list gp-station-list",
       attr: { role: "listbox", "aria-label": "Music links" },
     });
     for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
       const row = this.stationListContainer.createEl("button", {
-        cls: "gp-station-item gp-hidden",
+        cls: "gp-task-item gp-station-item gp-hidden",
         attr: { type: "button", role: "option", "aria-selected": "false" },
       });
       // Label and tick are separate children so relabelling never has to clear
@@ -556,7 +568,7 @@ export class GentlePomoView extends ItemView {
       // nothing logged. (The repo's prefer-instanceof lint rule does not catch
       // it: a union operand type defeats its check.)
       this.stationRowLabels.push(row.createSpan("gp-station-item-label"));
-      setIcon(row.createDiv("gp-station-item-check"), "check");
+      setIcon(row.createDiv("gp-task-check-icon"), "check");
       this.stationRows.push(row);
       this.registerDomEvent(row, "click", (evt) => {
         evt.preventDefault();
@@ -607,6 +619,10 @@ export class GentlePomoView extends ItemView {
         // infoDelivery: merge whatever this message carried, position before
         // state so a transition into PAUSED flushes the freshest clock value.
         if (msg.videoId !== null) this.musicCurrentVideoId = msg.videoId;
+        if (msg.videoTitle !== null) {
+          this.musicCurrentVideoTitle = msg.videoTitle;
+          this.renderStationCaption();
+        }
         if (msg.duration !== null) this.musicCurrentDuration = msg.duration;
         if (msg.currentTime !== null) this.trackMusicPosition(msg.currentTime);
         if (msg.state !== null) this.handleMusicState(msg.state);
@@ -837,7 +853,7 @@ export class GentlePomoView extends ItemView {
         if (!row) continue;
         const entry = rows.find((candidate) => candidate.slot === slot) ?? null;
         row.toggleClass("gp-hidden", entry === null);
-        row.toggleClass("is-active", entry?.active === true);
+        row.toggleClass("gp-task-selected", entry?.active === true);
         row.setAttribute("aria-selected", entry?.active === true ? "true" : "false");
         this.stationRowLabels[slot]?.setText(entry?.label ?? "");
         // The full link lives in the tooltip: a name is optional, and a URL is
@@ -849,7 +865,8 @@ export class GentlePomoView extends ItemView {
         else row.setAttribute("title", entry.url);
       }
       const activeEntry = rows.find((candidate) => candidate.active) ?? null;
-      this.stationCaption?.setText(activeEntry?.label ?? "");
+      this.stationName = activeEntry?.label ?? "";
+      this.renderStationCaption();
       // With one link there is nothing to switch between, so the shortcut button
       // would be a control that changes nothing. The box above still names what
       // is playing, which is the part that has to survive at any count.
@@ -1106,6 +1123,28 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
+   * Paint the "Now playing" line: the station's own name, plus the track the
+   * embed is actually on when the station is a playlist (a playlist moves
+   * between items under one unchanged link, so its name alone stops being an
+   * answer to "what is this?"). A plain video is its own track, so naming it
+   * twice would just be noise.
+   *
+   * Guarded by its own key because the title arrives on the ~4Hz info stream:
+   * without it this would rewrite the DOM several times a second.
+   */
+  private renderStationCaption() {
+    const track = this.musicTargetPlaylistId !== null ? (this.musicCurrentVideoTitle ?? "") : "";
+    const key = `${this.stationName}\n${track}`;
+    if (key === this.lastStationCaptionKey) return;
+    this.lastStationCaptionKey = key;
+    this.stationCaptionName?.setText(this.stationName);
+    this.stationCaptionTrack?.setText(track);
+    this.stationCaptionTrack?.toggleClass("gp-hidden", track === "");
+    // Nothing to announce at all: no station selected.
+    this.stationCaption?.toggleClass("gp-hidden", this.stationName === "");
+  }
+
+  /**
    * Open or close the station list. Mirrors the task selector's expander, and
    * closes that one on the way — on mobile both lose their height cap and the
    * task list sits above the music section, so leaving both open would push the
@@ -1201,8 +1240,13 @@ export class GentlePomoView extends ItemView {
     this.pendingResumeSeconds = null;
     this.resumeSeekLanding = null;
     this.musicCurrentVideoId = null;
-    this.musicCurrentDuration = null;
+    this.musicCurrentVideoTitle = null;
+    // The track half of the caption belongs to the frame being torn down.
+    // musicTargetPlaylistId is nulled below, so this drops it rather than
+    // leaving the previous playlist's item named under a new station.
     this.musicTargetPlaylistId = null;
+    this.renderStationCaption();
+    this.musicCurrentDuration = null;
     this.musicSourceUrl = null;
     this.musicStopPending = false;
     // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on

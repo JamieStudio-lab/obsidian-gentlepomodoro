@@ -322,6 +322,7 @@ describe("parsePlayerMessage", () => {
       currentTime: null,
       duration: null,
       videoId: null,
+      videoTitle: null,
     });
   });
 
@@ -342,7 +343,34 @@ describe("parsePlayerMessage", () => {
       currentTime: 1234.56,
       duration: 10800,
       videoId: ID,
+      videoTitle: "lofi",
     });
+  });
+
+  it("reads a title-only infoDelivery, which is how a playlist announces a new track", () => {
+    const data = JSON.stringify({
+      event: "infoDelivery",
+      info: { videoData: { video_id: OTHER_ID, title: "Track two" } },
+    });
+    expect(parsePlayerMessage(data)).toEqual({
+      type: "info",
+      state: null,
+      currentTime: null,
+      duration: null,
+      videoId: OTHER_ID,
+      videoTitle: "Track two",
+    });
+  });
+
+  it("ignores a blank or non-string title rather than storing one", () => {
+    for (const title of ["", "   ", 42, null]) {
+      const data = JSON.stringify({
+        event: "infoDelivery",
+        info: { playerState: 1, videoData: { video_id: ID, title } },
+      });
+      const msg = parsePlayerMessage(data);
+      expect(msg && msg.type === "info" ? msg.videoTitle : "unset").toBeNull();
+    }
   });
 
   it("decodes a clock-only infoDelivery (no player state)", () => {
@@ -353,6 +381,7 @@ describe("parsePlayerMessage", () => {
       currentTime: 12.3,
       duration: null,
       videoId: null,
+      videoTitle: null,
     });
   });
 
