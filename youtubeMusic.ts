@@ -602,15 +602,6 @@ export function sanitizeStationName(raw: string, max: number = MUSIC_STATION_NAM
   return cut.replace(new RegExp(`[${ZWJ}${ZWNJ}\\s]+$`, "u"), "");
 }
 
-/** How many slots hold a link. Empty and whitespace-only slots do not count. */
-export function filledStationCount(urls: readonly string[]): number {
-  let count = 0;
-  for (const url of urls) {
-    if ((url ?? "").trim() !== "") count++;
-  }
-  return count;
-}
-
 /**
  * The slot the ⏭ next-link button moves to: the next slot holding a link,
  * wrapping past the end and stepping over empty slots (slots are positional and

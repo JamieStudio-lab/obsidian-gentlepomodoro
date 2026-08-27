@@ -29,7 +29,6 @@ import {
   visibleNameText,
   sanitizeStationName,
   MUSIC_STATION_NAME_MAX,
-  filledStationCount,
   nextStationIndex,
   buildStationList,
   buildOEmbedProbeUrl,
@@ -1033,14 +1032,6 @@ describe("stationLabel — invisible names", () => {
     // Before 0.5.7 this returned the ZWJ itself and rendered a blank button.
     expect(stationLabel(ZWJ, 2)).toBe("3");
     expect(stationLabel("ㅤ", 0)).toBe("1");
-  });
-});
-
-describe("filledStationCount", () => {
-  it("counts only slots holding a link", () => {
-    expect(filledStationCount([URL_A, "", URL_B])).toBe(2);
-    expect(filledStationCount(["", "   ", ""])).toBe(0);
-    expect(filledStationCount([URL_A, URL_B, URL_C])).toBe(3);
   });
 });
 
