@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Up to three music links, switchable from the timer panel.** Settings now has three link slots instead of one, each with an optional short name ("Lofi", "Rain"). The music controls now name what is playing on one quiet line, with a list button beside the transport to pick a different link. Leave the extra slots empty and there is simply nothing to pick from. Your existing link becomes the first slot automatically — nothing to set up, and nothing is lost.
+- **Up to three music links, switchable from the timer panel.** Settings now has three link slots instead of one, each with an optional short name ("Lofi", "Rain"). The music controls now name what is playing on one quiet line — and, for a playlist, the track it is on — with a list button beside the transport to pick a different link. Leave the extra slots empty and there is simply nothing to pick from. Your existing link becomes the first slot automatically — nothing to set up, and nothing is lost.
   - **Each link remembers its own place.** Play one for a while, switch to another, come back, and the first picks up where you left it. Previously there was a single remembered spot shared by whatever link was configured. (Live streams have no "place" to return to, so those still always start live.)
   - **Renaming a link doesn't interrupt anything**, and neither does editing a link you are not currently listening to.
   - Clearing a slot's text removes that link, and forgets the place it had remembered.
