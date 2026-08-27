@@ -1046,6 +1046,14 @@ export class GentlePomoView extends ItemView {
     this.musicTargetPlaylistId = null;
     this.musicSourceUrl = null;
     this.musicStopPending = false;
+    // A player state belongs to the frame that reported it, exactly as a
+    // learned origin does. Left standing, a torn-down PLAYING frame makes
+    // armMusicFadeIn read the NEXT frame as "still running": it skips the
+    // setVolume(0) park and eases up instead, and its ramp's hold predicate
+    // (musicPlayerState !== PLAYING) then never holds, so the fade finishes
+    // long before the new player has any audio and the music arrives at full
+    // volume. UNSTARTED is not audible, so the arm-and-park branch is taken.
+    this.musicPlayerState = YT_STATE.UNSTARTED;
     // Drops the ramp timers along with any pauseVideo/stopVideo still waiting on
     // one — the iframe is going away, and removing it is what stops playback.
     this.cancelMusicRamps();
