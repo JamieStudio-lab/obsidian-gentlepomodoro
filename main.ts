@@ -12,6 +12,7 @@ import {
   scanAllPomodoroMarkersInVault,
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
+import { MusicStationStore, type MusicStationStoreHost } from "./musicStationStore";
 import { TimerEngine } from "./TimerEngine";
 import {
   DEFAULT_SETTINGS,
@@ -22,15 +23,7 @@ import {
   SETTINGS_SAVE_RENOTIFY_MS,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
-import {
-  MUSIC_STATION_LIMIT,
-  findPositionForUrl,
-  musicPositionAppliesToUrl,
-  normalizeMusicPositions,
-  resolveStationIndex,
-  retainPositionsForUrls,
-  stationsAreSettled,
-} from "./youtubeMusic";
+import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
 
@@ -61,8 +54,10 @@ export default class GentlePomoPlugin extends Plugin {
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
   private repairInFlight = false;
-  /** Set when the remembered music position has moved since the last save. */
-  private musicPositionDirty = false;
+  /** Station slots and their remembered positions. Constructed here rather
+   *  than in onload because loadSettings() reconciles through it. */
+  /** Station slots and their remembered positions. */
+  private readonly musicStations = new MusicStationStore(this.createMusicStationHost());
 
   override async onload() {
     await this.loadSettings();
@@ -725,179 +720,67 @@ export default class GentlePomoPlugin extends Plugin {
       if (leaf.view instanceof GentlePomoView) leaf.view.applySettings();
     }
   }
+  /**
+   * The store's view of the plugin. `settings` is a call rather than a
+   * captured reference because loadSettings() replaces the object wholesale —
+   * a snapshot taken here would leave the store reading and writing the
+   * pre-load settings for the rest of the session.
+   */
+  private createMusicStationHost(): MusicStationStoreHost {
+    return {
+      settings: () => this.settings,
+      save: () => {
+        void this.saveSettings();
+      },
+    };
+  }
 
-  /** The three station URLs, slot order. The single place that spelling lives. */
+  /* ===== Music stations =====
+   *
+   * The rules themselves live in MusicStationStore, which takes the settings
+   * and a save hook and nothing else — so the provenance and retire rules that
+   * 0.5.6 and 0.5.7 were spent on are reachable from a test. These stay as the
+   * plugin's public surface because the view and the settings tab call them.
+   */
+
+  /** The three station URLs, slot order. */
   musicStationUrls(): string[] {
-    return [this.settings.musicUrl, this.settings.musicUrl2, this.settings.musicUrl3];
+    return this.musicStations.stationUrls();
   }
 
   /** The station URL that should actually play, after resolving a stale index. */
   activeMusicUrl(): string {
-    const urls = this.musicStationUrls();
-    return urls[resolveStationIndex(urls, this.settings.musicStationIndex)] ?? "";
+    return this.musicStations.activeUrl();
   }
 
-  /**
-   * The remembered position for one station URL, or null when the feature is
-   * off or nothing is stored for it. Read once per iframe build — never on the
-   * render hot path.
-   *
-   * Takes the URL rather than reading the active one, because the caller knows
-   * which station it is building for and this must not depend on the index
-   * having already been updated.
-   */
+  /** The remembered position for one station URL, or null. */
   musicResumeState(url: string): MusicResumeState | null {
-    if (!this.settings.musicResume) return null;
-    return findPositionForUrl(this.settings.musicPositions, url);
+    return this.musicStations.resumeState(url);
   }
 
-  /**
-   * Drop positions that belong to links no station holds any more.
-   *
-   * This is the whole retire rule, and it is driven by the SLOT LIST rather
-   * than by what is playing — which is what lets it correctly forget an
-   * inactive slot's position, something a "did the playing URL change?" hook
-   * never could. Editing a slot and clearing a slot are the same event to it,
-   * so neither needs its own path; switching stations is not an event at all,
-   * because every slot's URL is still there.
-   *
-   * Skipped entirely while any slot holds a half-typed URL: the pre-1.13
-   * settings path commits on every keystroke, and this erase is immediate and
-   * destructive. Anything skipped here is still refused by planResume's own URL
-   * check, so a stale position can never be *applied* — only left in place.
-   */
+  /** Heal the selected slot and drop positions no slot holds any more. */
   reconcileMusicStations(): void {
-    const urls = this.musicStationUrls();
-    let changed = false;
-
-    // Heal the selected slot so what is stored matches what actually plays.
-    // Without this the stored index can point at an EMPTY slot while playback
-    // runs on the fallback — and then filling that empty slot would silently
-    // move playback onto it, because the fallback stops applying. Writing the
-    // resolution back means editing a slot you are not listening to can never
-    // change what plays.
-    const resolved = resolveStationIndex(urls, this.settings.musicStationIndex);
-    if (resolved !== this.settings.musicStationIndex) {
-      this.settings.musicStationIndex = resolved;
-      changed = true;
-    }
-
-    // Drop positions belonging to links no slot holds any more. Skipped while
-    // any slot holds a half-typed URL: the pre-1.13 settings path commits on
-    // every keystroke, and this erase is immediate and destructive. Anything
-    // skipped here is still refused by planResume's own URL check, so a stale
-    // position can never be applied — only left in place.
-    if (stationsAreSettled(urls)) {
-      const next = retainPositionsForUrls(this.settings.musicPositions, urls);
-      if (next.length !== this.settings.musicPositions.length) {
-        this.settings.musicPositions = next;
-        this.musicPositionDirty = false;
-        changed = true;
-      }
-    }
-
-    // One save for both, and none at all in the common case — which matters
-    // because every open view runs this from the same change-gated block.
-    if (changed) void this.saveSettings();
+    this.musicStations.reconcile();
   }
 
-  /**
-   * Track where the music has reached. Called from the embed's ~4Hz message
-   * stream, so it stays a short scan and a dirty flag — the disk write is
-   * deferred to flushMusicPosition (boundaries + the slow interval), because
-   * data.json lives in the vault and every save is sync traffic.
-   */
+  /** Track where the music has reached (in memory; flushed on boundaries). */
   recordMusicPosition(position: MusicResumeState): void {
-    if (!this.settings.musicResume) return;
-    // Provenance travels WITH the position, from the iframe that produced it —
-    // never read off this.settings here. Both settings paths assign the URL and
-    // only then `await saveSettings()`, and the outgoing iframe keeps streaming
-    // across that await: stamping the live setting would relabel the old
-    // track's position with the new URL, and the URL checks would then wave it
-    // through onto a station it never came from.
-    if (position.url === null || position.url.trim() === "") return;
-    const seconds = Math.floor(position.seconds);
-    const entry = findPositionForUrl(this.settings.musicPositions, position.url);
-    if (
-      entry !== null &&
-      entry.videoId === position.videoId &&
-      entry.playlistId === position.playlistId &&
-      entry.seconds === seconds &&
-      entry.url === position.url
-    ) {
-      return; // same whole second — the 4Hz stream collapses to ~1 update/sec
-    }
-    if (entry !== null) {
-      // Safe to mutate: loadSettings always installs a fresh array of fresh
-      // objects, so this can never reach the frozen DEFAULT_SETTINGS one.
-      entry.videoId = position.videoId;
-      entry.playlistId = position.playlistId;
-      entry.seconds = seconds;
-      entry.url = position.url;
-    } else {
-      if (this.settings.musicPositions.length >= MUSIC_STATION_LIMIT) {
-        // Reachable whenever the retire sweep is frozen — one unparseable slot
-        // holds stationsAreSettled false indefinitely, and orphans then pile up.
-        // Evict an entry NO slot still holds, never index 0: the array is in
-        // insertion order, so the oldest entry is typically the user's main
-        // station, and dropping it silently loses a position that is still in
-        // use. Only fall back to the oldest if every entry is still live, which
-        // really is the tripwire case.
-        const live = this.musicStationUrls();
-        const orphan = this.settings.musicPositions.findIndex(
-          (candidate) => !live.some((url) => musicPositionAppliesToUrl(candidate.url, url))
-        );
-        if (orphan >= 0) {
-          this.settings.musicPositions.splice(orphan, 1);
-        } else {
-          logger.warn("music positions exceeded the station limit; dropping the oldest");
-          this.settings.musicPositions.shift();
-        }
-      }
-      this.settings.musicPositions.push({
-        videoId: position.videoId,
-        playlistId: position.playlistId,
-        seconds,
-        url: position.url,
-      });
-    }
-    this.musicPositionDirty = true;
+    this.musicStations.record(position);
   }
 
-  /**
-   * Forget one station's position — ⏹ Stop and a finished track both mean "open
-   * this from the top next time". Saved at once rather than on the next
-   * boundary: it answers a deliberate action, not a background sample.
-   *
-   * Takes the URL the caller was actually playing. The view passes its frozen
-   * copy rather than the active setting, because a Stop can land after the user
-   * has already switched stations — resolving it here would clear the incoming
-   * station's position instead.
-   */
+  /** Forget one station's position — ⏹ Stop, and a finished track. */
   clearMusicPosition(url: string | null): void {
-    this.musicPositionDirty = false;
-    if (url === null) return;
-    const next = this.settings.musicPositions.filter(
-      (position) => !musicPositionAppliesToUrl(position.url, url)
-    );
-    if (next.length === this.settings.musicPositions.length) return;
-    this.settings.musicPositions = next;
-    void this.saveSettings();
+    this.musicStations.clear(url);
   }
 
-  /** Forget every station's position — used when the resume feature is switched off. */
+  /** Forget every station's position — used when resume is switched off. */
   clearAllMusicPositions(): void {
-    this.musicPositionDirty = false;
-    if (this.settings.musicPositions.length === 0) return;
-    this.settings.musicPositions = [];
-    void this.saveSettings();
+    this.musicStations.clearAll();
   }
 
   /** Persist a moved position. No-op when it hasn't changed since the last save. */
   flushMusicPosition(): void {
-    if (!this.musicPositionDirty) return;
-    this.musicPositionDirty = false;
-    void this.saveSettings();
+    this.musicStations.flush();
   }
 
   /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —
