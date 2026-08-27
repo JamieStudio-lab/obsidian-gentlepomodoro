@@ -199,7 +199,7 @@ export class GentlePomoView extends ItemView {
   // destroyMusicIframe: teardown runs *inside* that same await, so it would
   // mismatch on every press and the hand-off would never fire at all.
   private musicHandOffToken = 0;
-  private stationRows: HTMLButtonElement[] = [];
+  private stationRows: HTMLDivElement[] = [];
   private stationRowLabels: HTMLElement[] = [];
   private stationListVisible = false;
 
@@ -560,12 +560,18 @@ export class GentlePomoView extends ItemView {
       attr: { role: "listbox", "aria-label": "Music links" },
     });
     for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
-      const row = this.stationListContainer.createEl("button", {
+      // A div, not a <button>, and that is the whole reason the rows look right:
+      // Obsidian's own button styling is more specific than a plain class reset,
+      // so a <button> here kept a filled background in dark mode and swallowed
+      // the hover. The task list is built from divs; matching it exactly is the
+      // only way the two lists cannot diverge. Keyboard operability is put back
+      // by hand below, which the task list itself still lacks.
+      const row = this.stationListContainer.createDiv({
         cls: "gp-task-item gp-station-item gp-hidden",
-        attr: { type: "button", role: "option", "aria-selected": "false" },
+        attr: { role: "option", "aria-selected": "false", tabindex: "0" },
       });
       // Label and tick are separate children so relabelling never has to clear
-      // the row (setText on the button itself would drop the icon).
+      // the row (setText on the row itself would drop the icon).
       // Held rather than re-found: a querySelector result is typed Element, and
       // `instanceof HTMLElement` is false in an Obsidian pop-out window, whose
       // document is a different realm — the rows would render blank there, with
@@ -574,14 +580,23 @@ export class GentlePomoView extends ItemView {
       this.stationRowLabels.push(row.createSpan("gp-station-item-label"));
       setIcon(row.createDiv("gp-task-check-icon"), "check");
       this.stationRows.push(row);
-      this.registerDomEvent(row, "click", (evt) => {
-        evt.preventDefault();
+      const choose = () => {
         // Close first, synchronously. selectMusicStation awaits saveSettings and
         // then fans out through applySettingsToOpenViews, which re-enters
         // applySettings on this very view — closing afterwards would be racing
         // a reconcile that has already repainted the row under this handler.
         this.setStationListVisible(false);
         void this.selectMusicStation(slot);
+      };
+      this.registerDomEvent(row, "click", (evt) => {
+        evt.preventDefault();
+        choose();
+      });
+      this.registerDomEvent(row, "keydown", (evt: KeyboardEvent) => {
+        if (evt.key !== "Enter" && evt.key !== " ") return;
+        // Space would scroll the panel out from under the list.
+        evt.preventDefault();
+        choose();
       });
     }
 

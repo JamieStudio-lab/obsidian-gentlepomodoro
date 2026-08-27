@@ -1466,17 +1466,15 @@
   background-color: transparent;
 }
 
-/* .gp-task-item is written for a div; these rows are real buttons so the list
-   is keyboard-operable. Undo the UA chrome and let the shared rule do the rest.
-   Backgrounds are left to .gp-task-item's own :hover and .gp-task-selected
-   rules, both of which out-specify this one. */
-.gp-station-item {
-  width: 100%;
-  border: none;
-  background: none;
-  box-shadow: none;
-  font-family: inherit;
-  text-align: left;
+/* Rows are divs, exactly like .gp-task-item, so they need no reset at all —
+   every background, hover and selected colour comes from the shared task-list
+   rules. (They were <button>s briefly: Obsidian's own button styling out-
+   specifies a plain class reset, so they kept a filled background in dark mode
+   and the hover never showed.) The tabindex added in the view is what keeps
+   them keyboard-operable without reintroducing that. */
+.gp-station-item:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
