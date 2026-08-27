@@ -102,7 +102,6 @@ export class GentlePomoView extends ItemView {
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
-  private nextVideoBtn: HTMLButtonElement | null = null;
   private musicVideoRow: HTMLDivElement | null = null;
   private stationRows: HTMLDivElement[] = [];
   private stationRowLabels: HTMLElement[] = [];
@@ -432,13 +431,13 @@ export class GentlePomoView extends ItemView {
       this.music.stepPlaylist("previousVideo");
     });
 
-    this.nextVideoBtn = this.musicVideoRow.createEl("button", {
+    const nextVideoBtn = this.musicVideoRow.createEl("button", {
       cls: "gp-btn gp-icon-btn",
       attr: { type: "button" },
     });
-    this.nextVideoBtn.appendChild(buildMusicIcon("next-video"));
-    this.nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
-    this.registerDomEvent(this.nextVideoBtn, "click", (evt) => {
+    nextVideoBtn.appendChild(buildMusicIcon("next-video"));
+    nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
+    this.registerDomEvent(nextVideoBtn, "click", (evt) => {
       evt.preventDefault();
       this.music.stepPlaylist("nextVideo");
     });

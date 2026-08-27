@@ -19,6 +19,7 @@ import {
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
+  SETTINGS_SAVE_RENOTIFY_MS,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 import {
@@ -52,6 +53,8 @@ export default class GentlePomoPlugin extends Plugin {
   private statusFocusBaseSeconds = 0;
   /** Local date (YYYY-MM-DD) the cached base was fetched for; other days count as 0. */
   private statusFocusBaseDate: string | null = null;
+  /** When the last settings write failed, so a broken vault can't nag per keystroke. */
+  private settingsSaveFailedAt: number | null = null;
   private statusFocusLastFetchMs = 0;
   private statusFocusFetchInFlight = false;
   private statusTimerListener: TimerListener | null = null;
@@ -401,7 +404,21 @@ export default class GentlePomoPlugin extends Plugin {
   }
 
   async loadSettings() {
-    const loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
+    // data.json is hand-editable and sync-merged, so it can arrive malformed
+    // through no fault of ours — and loadData() parses it, so letting that
+    // throw takes onload down and the whole plugin with it. Starting on the
+    // defaults is recoverable; not loading at all is not.
+    let loaded: Partial<GentlePomoSettings> | null = null;
+    let loadFailed = false;
+    try {
+      loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
+    } catch (e) {
+      loadFailed = true;
+      logger.error("Could not read data.json; starting from the defaults", e);
+      new Notice(
+        "Gentle pomodoro: couldn't read its settings file, so it started with the defaults. The file itself is untouched — fix or delete data.json and reload the plugin."
+      );
+    }
     // Migrate legacy "sunset" → "classic" (renamed in 2026-05-26). Saved
     // once so future loads don't repeat the rewrite.
     let migrated = false;
@@ -461,13 +478,44 @@ export default class GentlePomoPlugin extends Plugin {
     // running reconcile, so there is one source of truth for both; its own save
     // is harmless here but the migrated flag below already covers this load.
     this.reconcileMusicStations();
-    if (migrated) {
+    // Never write back over a file we could not read. `migrated` is true on
+    // that path anyway (a null `loaded` derives the task-selector default), so
+    // without this guard the very first thing a failed load does is overwrite
+    // the settings the user still has, and can still fix by hand.
+    if (migrated && !loadFailed) {
       await this.saveSettings();
     }
   }
 
+  /**
+   * Persist settings.
+   *
+   * Wrapped because no caller is in a position to handle a rejection: five fire
+   * and forget (`void this.saveSettings()`), and the rest are awaited inside
+   * handlers that Obsidian itself does not await. An unhandled rejection here
+   * is therefore invisible — the user changes a setting, watches the UI agree,
+   * and finds it reverted after a restart with nothing to explain it. A vault
+   * write can fail for reasons that have nothing to do with this plugin: a
+   * read-only vault, a sync client holding the file, storage pressure on
+   * mobile. writeLog has carried the same guard since 0.3.0.
+   */
   async saveSettings() {
-    await this.saveData(this.settings);
+    try {
+      await this.saveData(this.settings);
+      this.settingsSaveFailedAt = null;
+    } catch (e) {
+      logger.error("Could not save settings", e);
+      const now = Date.now();
+      if (
+        this.settingsSaveFailedAt === null ||
+        now - this.settingsSaveFailedAt > SETTINGS_SAVE_RENOTIFY_MS
+      ) {
+        this.settingsSaveFailedAt = now;
+        new Notice(
+          "Gentle pomodoro: couldn't save its settings — check that the vault is writable. Changes made now will be lost when Obsidian restarts."
+        );
+      }
+    }
   }
 
   private maybeAutoOpenView() {

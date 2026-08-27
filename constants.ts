@@ -101,6 +101,11 @@ export const CAPTION_NAME_FADE_MS = 280;
 export const MUSIC_STALL_NOTICE_DELAY_MS = 10_000;
 export const MUSIC_STALL_RENOTIFY_MS = 300_000;
 
+// A failed settings write is reported at most this often. The pre-1.13 settings
+// path commits on every keystroke, so a vault that cannot be written would
+// otherwise queue one Notice per character typed into a text field.
+export const SETTINGS_SAVE_RENOTIFY_MS = 60_000;
+
 // How often a changed music position is written to data.json while playback
 // runs. The embed reports its clock ~4Hz, so the position is tracked in memory
 // and only *persisted* on boundaries (pause, stop, track end, panel close,
