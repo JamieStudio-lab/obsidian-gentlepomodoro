@@ -1464,6 +1464,12 @@
    colours in the list are the hover and the active row. */
 .gp-station-list {
   background-color: transparent;
+  /* Flex rather than margins so the spacing sits only BETWEEN rendered rows: an
+     unused middle slot is display:none, so it contributes no gap, and the last
+     visible row gains no trailing space even when a hidden slot follows it. */
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* Rows are divs, exactly like .gp-task-item, so they need no reset at all —
