@@ -23,6 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Checking a link is one small request to YouTube**, sent shortly after you stop typing in a link box, carrying only the video or playlist ID you pasted. Unlike the music player itself, it happens even with the timer panel closed and "Show music player" off — those settings control playback, and this is the settings page. The README's "Network use" section has been rewritten to describe both. Nothing is sent for an empty slot.
 - On Obsidian 1.13 and later, a link that isn't recognised is now saved as you typed it rather than being refused — so nothing you type is lost, and the message under the box explains what is wrong. Earlier Obsidian versions already behaved this way.
 - An older bug surfaced while building this and is fixed here: pressing ⏹ and then switching links straight away made the new link start from the top and forget where it had been.
+- The "Music" / "Now playing" wording follows the ▶️/⏸ button exactly, including when no Pomodoro session is running. It briefly did not: it was recomputed on the timer's tick, and the timer does not tick while idle, so it changed late and then stuck.
 - A place remembered by 0.5.6 or earlier is carried over to whichever slot holds that link. If it had no record of which link it belonged to (from before 0.5.6), it is forgotten once, as it was already.
 - The music player remains unavailable on iPhone and iPad — see 0.5.6. Adding more links does not change that; no link works there.
 

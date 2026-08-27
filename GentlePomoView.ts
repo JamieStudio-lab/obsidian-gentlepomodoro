@@ -178,6 +178,8 @@ export class GentlePomoView extends ItemView {
   private musicCurrentVideoTitle: string | null = null;
   private lastStationCaptionKey: string | null = null;
   private stationCaptionFullText = "";
+  /** What the transport is currently showing; the caption's wording follows it. */
+  private musicShowingAsPlaying = false;
   private stationName = "";
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
@@ -1167,10 +1169,11 @@ export class GentlePomoView extends ItemView {
     const track = this.musicTargetPlaylistId !== null ? (this.musicCurrentVideoTitle ?? "") : "";
     // "Now playing" only while it is true. Picking a station does not start it,
     // so the idle line names what ▶️ would play rather than claiming it already
-    // is. isMusicPlayingForUser is the right predicate: it already counts a
-    // running fade-out as stopped, so ⏸ changes the wording at the press rather
-    // than a fade-length later.
-    const playing = this.isMusicPlayingForUser();
+    // is. Read from the transport's own state rather than recomputed, so the
+    // wording and the ▶️/⏸ button can never disagree — and so it does not
+    // depend on the timer ticking (the engine is silent while no session runs,
+    // which is exactly when someone is most likely to be only playing music).
+    const playing = this.musicShowingAsPlaying;
     const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
     if (key === this.lastStationCaptionKey) return;
     this.lastStationCaptionKey = key;
@@ -1839,6 +1842,19 @@ export class GentlePomoView extends ItemView {
   private setMusicButtonsPlaying(playing: boolean) {
     this.musicPlayBtn?.toggleClass("gp-hidden", playing);
     this.musicPauseBtn?.toggleClass("gp-hidden", !playing);
+    // The caption's wording is the same statement as the button's shape, so it
+    // is driven from the same call rather than recomputed. Two reasons it must
+    // be this and not isMusicPlayingForUser():
+    //
+    //  - Order. fadeMusicOut flips the buttons BEFORE it sets musicFadePhase to
+    //    "out", so a recompute here still sees PLAYING and no fade — the
+    //    caption would keep saying "Now playing" until the embed confirmed the
+    //    pause a fade-length later.
+    //  - Ownership. This is the single funnel for "what the transport now
+    //    says", so routing the caption through it makes the two agree by
+    //    construction instead of by two predicates staying in step.
+    this.musicShowingAsPlaying = playing;
+    this.renderStationCaption();
   }
 
   /**
