@@ -123,9 +123,13 @@ Each session appends one line to the day's log file:
 
 ## Network use
 
-The plugin makes **no network requests on its own** — timers, logs, and sounds are all local (audio cues are bundled into `main.js`).
+Timers, logs, and sounds are all local (audio cues are bundled into `main.js`). The optional lofi-music feature is the only part that reaches the network, in two places — both only ever to YouTube, and neither happens until you paste a music link.
 
-The one exception is the optional lofi-music feature: when you paste a YouTube URL into any of the **music link** slots (and **Show music player** is on), the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. Requests happen only while the timer panel is open with that feature configured; clearing the URL or turning the toggle off stops them entirely. YouTube's handling of those requests is covered by [Google's privacy policy](https://policies.google.com/privacy).
+**Playing the audio.** With a music link set and **Show music player** on, the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. This happens only while the timer panel is open; clearing the link or turning the toggle off stops it entirely.
+
+**Checking a link.** When you paste or edit a link in the settings, the plugin makes one small request to `www.youtube-nocookie.com/oembed` about that link, to tell you if YouTube can't find it and to offer a name for it. It is sent shortly after you stop typing, and it carries only the video or playlist ID you pasted. Unlike the player above, this happens even with the timer panel closed and **Show music player** off — those control playback, not the settings page. No request is made for an empty slot, and answers are remembered for the session so editing the same link twice doesn't ask twice.
+
+YouTube's handling of both is covered by [Google's privacy policy](https://policies.google.com/privacy).
 
 ## Issues & feedback
 

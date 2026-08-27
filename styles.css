@@ -1739,3 +1739,38 @@ body.is-tablet .gp-timer-time {
     animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
   }
 }
+
+/* ===== Settings-tab inline errors ===== */
+
+/* The link check writes here, under the box it belongs to. Obsidian's control
+   column is a flex row aligned to the right, so the message needs its own line:
+   let the column wrap and give the message the full width of it.
+
+   Plugin-owned rather than Setting.setErrorMessage/errorEl, which are 1.13-only
+   and would fail this repo's own no-unsupported-api lint at minAppVersion 1.7.2. */
+.gp-setting-with-error .setting-item-control {
+  flex-wrap: wrap;
+}
+
+.gp-setting-error {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  text-align: right;
+  line-height: 1.35;
+}
+
+/* No message, no gap. */
+.gp-setting-error:empty {
+  display: none;
+}
+
+/* On a narrow settings pane Obsidian stacks name and control; keep the message
+   with its box and reading left-to-right like the description above it. */
+@media (max-width: 640px) {
+  .gp-setting-error {
+    text-align: left;
+  }
+}
