@@ -20,6 +20,7 @@ import {
   MUSIC_FADE_ARM_TIMEOUT_MS,
   MUSIC_FADE_HOLD_MAX_MS,
   MUSIC_ENDED_NOTICE_DELAY_MS,
+  MUSIC_ADVANCE_NOTICE_GRACE_MS,
   MUSIC_STALL_NOTICE_DELAY_MS,
   MUSIC_STALL_RENOTIFY_MS,
   RESUME_SEEK_LANDING_TOLERANCE_S,
@@ -174,6 +175,10 @@ export class GentlePomoView extends ItemView {
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
+  private nextVideoBtn: HTMLButtonElement | null = null;
+  // When ⏩ last asked the playlist to advance. Only used to hold the
+  // "the music ended" notice, which is wrong in answer to that button.
+  private musicAdvanceRequestedAt: number | null = null;
   // The station URL a ⏭ press asked to keep playing, or null. Stores the URL
   // rather than a boolean so a flag that outlives its rebuild can never fire on
   // an unrelated one — the stranded-auto-play hazard 0.5.7 rejected switching
@@ -550,6 +555,19 @@ export class GentlePomoView extends ItemView {
       void this.nextMusicStation(this.isMusicPlayingForUser() || this.autoPlayOnReady !== null);
     });
 
+    // ⏩ next video in the playlist. Shown only when the active link names a
+    // real playlist — see the visibility rule in applySettings.
+    this.nextVideoBtn = musicRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn gp-hidden",
+      attr: { type: "button" },
+    });
+    this.nextVideoBtn.appendChild(buildMusicIcon("next-video"));
+    this.nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
+    this.registerDomEvent(this.nextVideoBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.advancePlaylist();
+    });
+
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
     // The embed talks back over the shared window message bus. Source and
@@ -920,6 +938,14 @@ export class GentlePomoView extends ItemView {
       this.musicSectionVisible =
         this.plugin.settings.showMusicPlayer && activeMusicUrl.trim() !== "";
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
+      // ⏩ belongs to a real playlist only. Read from the PARSED URL's list=,
+      // never from the message stream: with Loop on, buildEmbedUrl gives a plain
+      // single video a `playlist=<its own id>` param (YouTube's quirk — loop
+      // needs one), so the embed then reports a one-item playlist and the button
+      // would appear on every looped video and merely restart the track. Sitting
+      // inside the musicKey guard is what keeps it fresh: both the URL and the
+      // loop flag are already in that key.
+      this.nextVideoBtn?.toggleClass("gp-hidden", parsed?.playlistId == null);
       // Same reason the task selector clears its own flag when hidden: a list
       // left open behind a hidden section reappears with it.
       if (!this.musicSectionVisible) this.setStationListVisible(false);
@@ -981,6 +1007,43 @@ export class GentlePomoView extends ItemView {
    * press or another reconcile inside the fade window would leave the setting
    * changed and the iframe not. Teardown is instant, so this cannot desync.
    */
+  /**
+   * ⏩: ask the embed for the next item of the playlist.
+   *
+   * Only while audio is actually running. From a cued or paused player
+   * nextVideo would load AND play the next item — sound the user did not ask
+   * for, and with no fade behind it — so that case gets the same explanatory
+   * Notice a too-early ▶️ gets rather than a button that does nothing.
+   */
+  private advancePlaylist() {
+    if (this.musicFadePhase === "out" || this.musicStopPending) return;
+    if (!this.musicPlayerReady) {
+      new Notice(
+        "Gentle pomodoro: the music player hasn't loaded yet — wait a moment, or check your connection if you're offline."
+      );
+      return;
+    }
+    if (!this.isAudibleState(this.musicPlayerState)) {
+      new Notice("Gentle pomodoro: press ▶️ first — skipping ahead needs the music playing.");
+      return;
+    }
+    this.musicAdvanceRequestedAt = Date.now();
+    // A seek that was posted for the OUTGOING item must not outlive it.
+    // trackMusicPosition ignores every clock reading below resumeSeekLanding,
+    // so leaving it armed means the new item records nothing until its clock
+    // climbs past the old item's offset — on a resumed long track, the rest of
+    // the session.
+    this.pendingResumeSeconds = null;
+    this.resumeSeekLanding = null;
+    // musicCurrentDuration and musicCurrentVideoId are deliberately NOT
+    // cleared. duration rides only the fuller payloads that accompany a state
+    // change, and an advance that turns out to be a no-op produces no state
+    // change at all — so a nulled duration would never be restored, and
+    // isResumablePosition reads a null duration as "live stream" and stops
+    // recording for the rest of the track. The stream corrects both fields.
+    this.postToMusicPlayer(buildPlayerCommand("nextVideo"));
+  }
+
   /**
    * Start playback the way ▶️ does: park the volume at silence and arm the
    * fade, so it begins when audio does rather than being spent on the buffering
@@ -1726,6 +1789,15 @@ export class GentlePomoView extends ItemView {
       return;
     }
     if (this.musicFadePhase === "out") return;
+    // A manual ⏩ that ran off the end of a non-looping playlist ends playback.
+    // "A live stream may have gone offline — paste a new link" is nonsense in
+    // answer to a button the user just pressed.
+    if (
+      this.musicAdvanceRequestedAt !== null &&
+      Date.now() - this.musicAdvanceRequestedAt < MUSIC_ADVANCE_NOTICE_GRACE_MS
+    ) {
+      return;
+    }
     const wasAudible =
       this.musicPlayerState === YT_STATE.PLAYING || this.musicPlayerState === YT_STATE.BUFFERING;
     if (state === YT_STATE.ENDED && wasAudible && this.musicEndedTimeout === null) {

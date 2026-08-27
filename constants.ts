@@ -79,6 +79,13 @@ export const MUSIC_FADE_HOLD_MAX_MS = 3000;
 // or a live stream going offline) should surface to the user.
 export const MUSIC_ENDED_NOTICE_DELAY_MS = 3000;
 
+// After a manual ⏩ advance, hold the "the music ended" notice for a moment. At
+// the last item of a non-looping playlist the advance simply ends playback, and
+// that notice blames a live stream going offline and asks for a new link —
+// nonsense in answer to a button the user just pressed. Mid-playlist advances
+// are already covered by the notice's own disarm on the next PLAYING/BUFFERING.
+export const MUSIC_ADVANCE_NOTICE_GRACE_MS = 4000;
+
 // How long a BUFFERING player state must persist before the "music is
 // buffering" Notice fires (normal track starts and brief rebuffers stay well
 // under this), and the minimum gap between such notices — a flapping
