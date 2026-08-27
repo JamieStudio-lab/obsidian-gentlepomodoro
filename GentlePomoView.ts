@@ -43,6 +43,7 @@ import {
   buildVolumeRamp,
   buildFadeRamp,
   isResumablePosition,
+  musicPositionAppliesToUrl,
   planResume,
   MUSIC_STATION_LIMIT,
   resolveStationIndex,
@@ -785,10 +786,23 @@ export class GentlePomoView extends ItemView {
       // clearMusicPosition rides in the fade landing, and a rebuild inside that
       // window (flipping Loop, say) would otherwise snapshot the position the
       // stop is in the middle of forgetting and seed the new iframe with it.
+      //
+      // But the pending stop belongs to the OUTGOING station only — musicStopPending
+      // is set on the ⏹ click and not cleared until destroyMusicIframe (below) or
+      // the embed reports the halt, both of which run *after* this plan is worked
+      // out. A station switch inside that window therefore used to plan the
+      // INCOMING station against an empty store, opening it from the top and then
+      // overwriting the position it should have resumed. Scope the suppression to
+      // the station the stop is actually for; musicSourceUrl is that station,
+      // frozen at build time. (Trim-tolerant via the shared helper: data.json is
+      // hand-editable.) The window is longer than the fade — a stop landing on a
+      // still-running player keeps the flag up until the halt is reported.
+      const stopSuppressesResume =
+        this.musicStopPending && musicPositionAppliesToUrl(this.musicSourceUrl, activeMusicUrl);
       const plan = target
         ? planResume(
             target,
-            this.musicStopPending ? null : this.plugin.musicResumeState(activeMusicUrl),
+            stopSuppressesResume ? null : this.plugin.musicResumeState(activeMusicUrl),
             activeMusicUrl
           )
         : null;
