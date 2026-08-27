@@ -49,6 +49,7 @@ import {
   buildVolumeRamp,
   buildFadeRamp,
   isResumablePosition,
+  visibleNameText,
   musicPositionAppliesToUrl,
   planResume,
   MUSIC_STATION_LIMIT,
@@ -136,6 +137,8 @@ export class GentlePomoView extends ItemView {
   // simply sitting at the user's volume" marker.
   private musicRampInterval: number | null = null;
   private duckRestoreTimeout: number | null = null;
+  /** When an in-flight duck is owed until, so a skip's fade can restore it. */
+  private duckHoldUntilMs: number | null = null;
   private musicFadeArmTimeout: number | null = null; // "playback never started" backstop
   private musicRampLevel: number | null = null;
   // Fade phase. "armed" = ▶️ pressed and the volume parked at 0, waiting for
@@ -429,19 +432,30 @@ export class GentlePomoView extends ItemView {
     // a control: the list button below opens the picker, so making this
     // clickable too would be a second, heavier affordance for the same thing.
     this.stationCaption = this.musicSection.createDiv("gp-station-current");
-    // Both words exist at once, stacked in one grid cell and cross-faded by a
-    // class. No timers, and no width jump when the wording changes — the cell
-    // is always as wide as the longer of the two.
+    // Both words exist at once and hand over in sequence (see the CSS): the
+    // arriving one's transition is delayed by the departing one's duration, so
+    // they never overlap, and no timer is involved. Width rides max-width with
+    // both words in flow, so the label is only ever as wide as what it says.
     const captionLabel = this.stationCaption.createSpan("gp-station-current-label");
     captionLabel.createSpan({ cls: "gp-station-label-idle", text: "Music" });
     captionLabel.createSpan({ cls: "gp-station-label-playing", text: "Now playing" });
     this.stationCaptionName = this.stationCaption.createSpan("gp-station-current-name");
     this.stationCaptionTrack = this.stationCaption.createSpan("gp-station-current-track gp-hidden");
+    // The label's own width eases over --gp-caption-fade, so the measurement
+    // taken when the text changed read the BEFORE width. Re-measure when the
+    // width has actually settled. The transitions are on the child spans and
+    // bubble; under prefers-reduced-motion no event fires, which is right —
+    // with no transition the synchronous read already saw the final width.
+    this.registerDomEvent(this.stationCaption, "transitionend", (evt: TransitionEvent) => {
+      if (evt.propertyName !== "max-width") return;
+      this.updateCaptionTooltip();
+    });
 
     const musicRow = this.musicSection.createDiv("gp-controls-row");
 
-    // Opens the same list as the box. Only shown once there is a choice to make
-    // — with one link it would be a control that changes nothing.
+    // The only way to open the picker — the caption above is a label, not a
+    // control. Shown once there is a choice to make; with one link it would be
+    // a control that changes nothing.
     this.stationListBtn = musicRow.createEl("button", {
       cls: "gp-btn gp-icon-btn gp-hidden",
       attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" },
@@ -618,6 +632,10 @@ export class GentlePomoView extends ItemView {
         // applySettings on this very view — closing afterwards would be racing
         // a reconcile that has already repainted the row under this handler.
         this.setStationListVisible(false);
+        // The row that was activated is now inside an inert container, so focus
+        // would be dropped to the document. Put it back on the control that
+        // opened the list.
+        this.stationListBtn?.focus();
         void this.selectMusicStation(slot);
       };
       this.registerDomEvent(row, "click", (evt) => {
@@ -671,7 +689,12 @@ export class GentlePomoView extends ItemView {
         // state so a transition into PAUSED flushes the freshest clock value.
         if (msg.videoId !== null) this.musicCurrentVideoId = msg.videoId;
         if (msg.videoTitle !== null) {
-          this.musicCurrentVideoTitle = msg.videoTitle;
+          // Assigned unconditionally, even when it reduces to nothing: guarding
+          // on "is it visible?" would leave the PREVIOUS item's title standing
+          // as the playlist advances, naming the wrong track — worse than no
+          // name. visibleNameText also collapses whitespace, keeping a
+          // network-sourced value out of the newline-delimited caption key.
+          this.musicCurrentVideoTitle = visibleNameText(msg.videoTitle);
           this.renderStationCaption();
         }
         if (msg.duration !== null) this.musicCurrentDuration = msg.duration;
@@ -1016,9 +1039,17 @@ export class GentlePomoView extends ItemView {
       // gp-hidden-animated, not gp-hidden: display:none cannot animate, and this
       // row is meant to ease in and out the way the session controls do.
       this.musicVideoRow?.toggleClass("gp-hidden-animated", parsed?.playlistId == null);
+      // gp-hidden-animated collapses and fades but does NOT remove the row from
+      // the tab order, and pointer-events does not gate Enter on a focused
+      // button. Without this, Tab reaches two invisible controls that skip
+      // tracks or pop a Notice. (The old gp-hidden was display:none, which did.)
+      this.musicVideoRow?.toggleAttribute("inert", parsed?.playlistId == null);
       // Same reason the task selector clears its own flag when hidden: a list
       // left open behind a hidden section reappears with it.
       if (!this.musicSectionVisible) this.setStationListVisible(false);
+      // Now that the section has a layout again, whatever was measured while it
+      // was hidden (and skipped) can finally be resolved.
+      else this.updateCaptionTooltip();
       if (embedUrl !== this.lastMusicEmbedUrl || sourceUrl !== this.lastMusicSourceUrl) {
         this.lastMusicEmbedUrl = embedUrl;
         this.lastMusicSourceUrl = sourceUrl;
@@ -1135,6 +1166,13 @@ export class GentlePomoView extends ItemView {
       // while the new item buffers, so the rise is spent on audio rather than
       // on the gap before it.
       this.armMusicFadeIn();
+      // Hand the cue its dip back. fadeMusicOut cleared duckRestoreTimeout, which
+      // was the only thing holding it, so without this the music swells to full
+      // volume under a bell that is still ringing — fade trap 4, via a path that
+      // did not exist before skips started fading. musicFadePhase is "in" here,
+      // which is exactly the branch duckMusic is built to take over.
+      const owed = this.duckHoldUntilMs;
+      if (owed !== null && owed > Date.now()) this.duckMusic((owed - Date.now()) / 1000);
     }, true);
   }
 
@@ -1160,8 +1198,17 @@ export class GentlePomoView extends ItemView {
    */
   private isMusicPlayingForUser(): boolean {
     if (!this.musicPlayerReady) return false;
-    if (this.musicFadePhase === "out" || this.musicStopPending) return false;
-    return this.isAudibleState(this.musicPlayerState);
+    if (this.musicStopPending) return false;
+    // Read the transport, do not re-derive it. A fade-out is NOT by itself a
+    // pause any more: since ⏩/⏮ started fading, musicFadePhase === "out" covers
+    // a skip too, and treating that as stopped made ⏭ pressed inside a skip
+    // hand over nothing — the new station loaded silent while the panel still
+    // read "Now playing". The mirror was worse: a ⏸ landing nulls musicFadePhase
+    // while musicPlayerState is still PLAYING until the embed answers, so for
+    // that round trip the old predicate said "playing" with ▶️ already showing,
+    // and ⏭ would answer a pause with sound. musicShowingAsPlaying is set by
+    // setMusicButtonsPlaying, which ⏸/⏹ drive and a skip deliberately does not.
+    return this.musicShowingAsPlaying;
   }
 
   /**
@@ -1241,13 +1288,20 @@ export class GentlePomoView extends ItemView {
    * Measured rather than assumed because it depends on the panel's width, not
    * on the text: the same name fits a wide sidebar and not a narrow one. Reads
    * layout, so it is called only when the text changes (renderStationCaption is
-   * behind its own key) or when the panel is resized — never per tick. Writing
+   * behind its own key), when the label's width transition lands, when the
+   * section is unhidden, or when the panel is resized — never per tick. Writing
    * `title` cannot itself affect layout, so this is safe inside the
    * ResizeObserver callback.
    */
   private updateCaptionTooltip() {
     const caption = this.stationCaption;
     if (!caption) return;
+    // Nothing is laid out: the section is hidden, or the panel is closed. A
+    // measurement here reads 0 for both widths and concludes "not cut", which
+    // would strip a tooltip that is needed — and for a plain video the caption
+    // key never moves again, so nothing would re-measure for the rest of the
+    // session. Leave whatever is there; the unhide re-measures.
+    if (caption.clientWidth === 0) return;
     const cut = [this.stationCaptionName, this.stationCaptionTrack].some(
       (el) => el !== null && !el.hasClass("gp-hidden") && el.scrollWidth > el.clientWidth + 1
     );
@@ -1265,6 +1319,11 @@ export class GentlePomoView extends ItemView {
     if (visible === this.stationListVisible) return;
     this.stationListVisible = visible;
     this.stationListContainer?.toggleClass("gp-visible", visible);
+    // The closed list is max-height:0, not display:none, so its rows stay
+    // focusable — Tab into one and Enter switches station, silencing whatever is
+    // playing from a control that is not on screen. (Predates the div rewrite:
+    // the buttons it replaced were equally reachable.)
+    this.stationListContainer?.toggleAttribute("inert", !visible);
     this.stationListBtn?.setAttribute("aria-expanded", visible ? "true" : "false");
     if (visible && this.taskListVisible) {
       this.taskListVisible = false;
@@ -1620,6 +1679,9 @@ export class GentlePomoView extends ItemView {
    * still wins: the player is about to pause, so there is nothing to duck.
    */
   duckMusic(cueDurationSec: number) {
+    // Stamped before every guard, so a cue that arrives mid-skip (when the
+    // "out" guard below turns it away) still records how long the dip owes.
+    this.duckHoldUntilMs = Date.now() + Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
     const playing = this.isAudibleState(this.musicPlayerState);
     if (!this.musicPlayerReady || !playing || this.musicFadePhase === "out") return;
 
@@ -1702,6 +1764,10 @@ export class GentlePomoView extends ItemView {
     this.clearMusicRampTimers();
     this.musicRampLevel = null;
     this.musicFadePhase = null;
+    // Deliberately here and not in clearMusicRampTimers: a skip clears the
+    // timers and must still owe the rest of the dip, whereas a teardown or an
+    // explicit volume change ends the duck outright.
+    this.duckHoldUntilMs = null;
   }
 
   private clearMusicRampTimers() {

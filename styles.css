@@ -1426,6 +1426,17 @@
   --gp-caption-fade: 0.5s;
 }
 
+/* EXACTLY ONE `transition` shorthand, and it lives here at (0,1,0). Which half
+   is delayed is cascaded as a custom property instead, for two reasons:
+
+   - Correctness. Declaring the shorthand again on the Leaving rule made its
+     first selector, `.gp-station-label-playing` (0,1,0, later in source), win
+     for that span in BOTH states — so "Now playing" arrived with no delay and
+     the two words ran together on every ▶️ press.
+   - Reduced motion. The guard below is `transition: none` at (0,1,0). Any
+     descendant rule redeclaring the shorthand (e.g. `.is-playing .…-idle`, at
+     (0,3,0)) silently beats it and re-enables motion for users who asked for
+     none — the hazard this file already records from 0.3.2. */
 .gp-station-label-idle,
 .gp-station-label-playing {
   display: inline-block;
@@ -1434,23 +1445,24 @@
   /* Comfortably past "Now playing" at this size; it only ever caps the ease. */
   max-width: 7em;
   opacity: 1;
-  /* Arriving: wait out the departing word, then open. */
+  /* Arriving is the default: wait out the departing word, then open. */
+  --gp-caption-delay: var(--gp-caption-fade, 0.5s);
   transition:
-    opacity var(--gp-caption-fade, 0.5s) ease var(--gp-caption-fade, 0.5s),
-    max-width var(--gp-caption-fade, 0.5s) ease var(--gp-caption-fade, 0.5s);
+    opacity var(--gp-caption-fade, 0.5s) ease var(--gp-caption-delay),
+    max-width var(--gp-caption-fade, 0.5s) ease var(--gp-caption-delay);
 }
 
 /* Leaving: no delay — this half runs first. */
 .gp-station-label-playing,
 .gp-station-current.is-playing .gp-station-label-idle {
+  --gp-caption-delay: 0s;
   max-width: 0;
   opacity: 0;
-  transition:
-    opacity var(--gp-caption-fade, 0.5s) ease,
-    max-width var(--gp-caption-fade, 0.5s) ease;
 }
 
+/* Arriving, and more specific than the Leaving rule above, so the delay returns. */
 .gp-station-current.is-playing .gp-station-label-playing {
+  --gp-caption-delay: var(--gp-caption-fade, 0.5s);
   max-width: 7em;
   opacity: 1;
 }
