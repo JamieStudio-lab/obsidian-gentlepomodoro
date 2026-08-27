@@ -53,6 +53,7 @@ import {
   MUSIC_STATION_LIMIT,
   resolveStationIndex,
   buildStationList,
+  nextStationIndex,
   type ResumePlan,
 } from "./youtubeMusic";
 
@@ -172,6 +173,14 @@ export class GentlePomoView extends ItemView {
   private stationBtnText: HTMLDivElement | null = null;
   private stationListContainer: HTMLDivElement | null = null;
   private stationListBtn: HTMLButtonElement | null = null;
+  private nextStationBtn: HTMLButtonElement | null = null;
+  // The station URL a ⏭ press asked to keep playing, or null. Stores the URL
+  // rather than a boolean so a flag that outlives its rebuild can never fire on
+  // an unrelated one — the stranded-auto-play hazard 0.5.7 rejected switching
+  // auto-play over. Lives on the VIEW, never in settings: switching writes a
+  // shared setting and every open panel rebuilds, so a persisted flag would
+  // have every panel start playing at once.
+  private autoPlayOnReady: string | null = null;
   private stationRows: HTMLButtonElement[] = [];
   private stationListVisible = false;
 
@@ -470,8 +479,7 @@ export class GentlePomoView extends ItemView {
       // playback does, so it isn't spent on the buffering gap before any audio.
       // (Or, if this press landed inside a fade-out, cancel that and ease back
       // up from where it got to — the player never stopped.)
-      this.armMusicFadeIn();
-      this.postToMusicPlayer(buildPlayerCommand("playVideo"));
+      this.startMusicPlayback();
     });
 
     this.musicPauseBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn gp-hidden" });
@@ -526,6 +534,22 @@ export class GentlePomoView extends ItemView {
       });
     });
 
+    // ⏭ next link. Hidden below two links, like the list button.
+    this.nextStationBtn = musicRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn gp-hidden",
+      attr: { type: "button" },
+    });
+    this.nextStationBtn.appendChild(buildMusicIcon("next-station"));
+    this.nextStationBtn.setAttribute("aria-label", "Next music link");
+    this.registerDomEvent(this.nextStationBtn, "click", (evt) => {
+      evt.preventDefault();
+      // Keep playing only if something is audibly playing right now — or if a
+      // previous press is still waiting for its player. Without the second
+      // clause, tapping through 1→2→3 to find a station ends in silence: press
+      // two sees a player that has not finished loading and reads it as stopped.
+      void this.nextMusicStation(this.isMusicPlayingForUser() || this.autoPlayOnReady !== null);
+    });
+
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
     // The embed talks back over the shared window message bus. Source and
@@ -547,6 +571,15 @@ export class GentlePomoView extends ItemView {
         this.musicPlayerReady = true;
         // Apply the saved volume as soon as the player can take commands.
         this.postMusicVolume();
+        // Hand a ⏭ press over to the station it actually asked for. The stored
+        // URL is compared against the one THIS frame was built for, so a flag
+        // that somehow outlived its rebuild dies here instead of starting music
+        // the user never asked to hear.
+        const handOffTo = this.autoPlayOnReady;
+        this.autoPlayOnReady = null;
+        if (handOffTo !== null && handOffTo === this.musicSourceUrl) {
+          this.startMusicPlayback();
+        }
       } else if (msg.type === "error") {
         this.notifyMusicError(msg.code);
       } else if (msg.type === "state") {
@@ -804,6 +837,7 @@ export class GentlePomoView extends ItemView {
       // is playing, which is the part that has to survive at any count.
       const multi = rows.length > 1;
       this.stationListBtn?.toggleClass("gp-hidden", !multi);
+      this.nextStationBtn?.toggleClass("gp-hidden", !multi);
       // A list left open under a picker that just lost its choices would spring
       // back open the next time the section is shown.
       if (!multi) this.setStationListVisible(false);
@@ -948,6 +982,61 @@ export class GentlePomoView extends ItemView {
    * changed and the iframe not. Teardown is instant, so this cannot desync.
    */
   /**
+   * Start playback the way ▶️ does: park the volume at silence and arm the
+   * fade, so it begins when audio does rather than being spent on the buffering
+   * gap. Shared with the ⏭ hand-off so the two can never drift apart.
+   */
+  private startMusicPlayback() {
+    this.armMusicFadeIn();
+    this.postToMusicPlayer(buildPlayerCommand("playVideo"));
+  }
+
+  /**
+   * Whether the user would say music is playing right now. Deliberately not
+   * shared with updateMusicButtons, which reads the incoming state and skips
+   * the readiness check.
+   *
+   * A running fade-out counts as NOT playing even though musicPlayerState is
+   * still PLAYING: setMusicButtonsPlaying deliberately does not advance that
+   * field, so the player is audible but on its way to a pause the user already
+   * asked for. Same for a pending ⏹.
+   */
+  private isMusicPlayingForUser(): boolean {
+    if (!this.musicPlayerReady) return false;
+    if (this.musicFadePhase === "out" || this.musicStopPending) return false;
+    return this.isAudibleState(this.musicPlayerState);
+  }
+
+  /**
+   * ⏭: move to the next slot holding a link, wrapping and stepping over empty
+   * ones. `continuePlayback` carries the music across the switch.
+   *
+   * Switching tears the iframe down, which is what stops the audio, so
+   * continuing means starting the NEW player once it is ready — never a fade
+   * across the gap. A fade would have to carry "now actually switch" in a ramp
+   * completion callback, and cancelMusicRamps drops those, so a duck or a ▶️
+   * inside the window would leave the setting changed and the iframe not.
+   */
+  private async nextMusicStation(continuePlayback: boolean): Promise<void> {
+    const urls = this.plugin.musicStationUrls();
+    // Step from the RESOLVED slot: the stored index is only a preference, and
+    // stepping from a stale one can land on the slot already playing, where
+    // selectMusicStation's "already selected" early return swallows the press.
+    const from = resolveStationIndex(urls, this.plugin.settings.musicStationIndex);
+    const to = nextStationIndex(urls, from);
+    if (to === from) return;
+    // Which frame was playing before the switch. Two slots may hold identical
+    // URLs, in which case the embed key never moves, nothing is torn down and
+    // the music never stopped — handing over there would drop it to silence and
+    // swell it back for no reason.
+    const framePlaying = this.musicIframe;
+    await this.selectMusicStation(to);
+    if (!continuePlayback) return;
+    if (this.musicIframe === null || this.musicIframe === framePlaying) return;
+    this.autoPlayOnReady = this.musicSourceUrl;
+  }
+
+  /**
    * Open or close the station list. Mirrors the task selector's expander, and
    * closes that one on the way — on mobile both lose their height cap and the
    * task list sits above the music section, so leaving both open would push the
@@ -1037,6 +1126,9 @@ export class GentlePomoView extends ItemView {
     // this ordering load-bearing. Resolving the station from settings here would
     // be wrong: teardown is invoked FROM the switch's own rebuild, so by this
     // point the settings already name the INCOMING station.
+    // A hand-off belongs to the frame it was armed for; this one is going away.
+    // (The ⏭ path arms AFTER its rebuild, so it never clears its own flag.)
+    this.autoPlayOnReady = null;
     if (this.musicStopPending) this.plugin.clearMusicPosition(this.musicSourceUrl);
     else this.plugin.flushMusicPosition();
     this.pendingResumeSeconds = null;
@@ -1254,6 +1346,14 @@ export class GentlePomoView extends ItemView {
    * — it's paused, so that is inaudible, and ▶️ re-parks it at 0 regardless.
    */
   private fadeMusicOut(onLanding: () => void) {
+    // A ⏸ or ⏹ press always cancels a pending ⏭ hand-off, and it must be
+    // cleared HERE rather than only in destroyMusicIframe: the early return
+    // below lands immediately and destroys nothing, so during the second or two
+    // a new station takes to load, a press would otherwise leave the flag
+    // standing — the stopVideo is dropped (no handshake yet), the incoming
+    // station's position is wiped, and then the player becomes ready and starts
+    // playing. The plugin would answer Stop with sound.
+    this.autoPlayOnReady = null;
     const from = this.musicRampLevel ?? this.plugin.settings.musicVolume;
     this.clearMusicRampTimers();
     // Swap the buttons now rather than a fade-length later, so the press never
