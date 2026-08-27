@@ -46,7 +46,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - Paste a YouTube link — video, 24/7 live stream (Lofi Girl!), or playlist — and a ▶️ play/pause/stop row appears in the panel. **Audio-only by design**: no video is ever shown.
 - **Up to three links**, each with an optional short name. A line above the controls says what's playing; the list button opens the picker.
 - **⏭ next link** carries the audio across the switch. Picking one from the list doesn't — press ▶️ to start it.
-- **⏮ / ⏩** move through a playlist, on their own row that appears only when the link is genuinely a playlist.
+- **⏪ / ⏩** move through a playlist, on their own row that appears only when the link is genuinely a playlist.
 - **Links check and name themselves**: paste one and a bad link says so, while the name box fills in from the title. Type over it any time.
 - **Fades in and out** on every control — ▶️, ⏸, ⏹ and track skips all ease rather than cut. Change your mind mid-fade and it carries on.
 - **Gentle ducking**: session cues briefly dip the music and ease it back up, so they stay audible without jolting the mix.
