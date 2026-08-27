@@ -789,7 +789,8 @@ export type PlayerCommandFunc =
   | "stopVideo"
   | "setVolume"
   | "seekTo"
-  | "nextVideo";
+  | "nextVideo"
+  | "previousVideo";
 
 /**
  * Serialize a player command. The embed expects a JSON *string*, not an

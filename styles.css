@@ -1392,9 +1392,11 @@
    matter to a station live here. */
 .gp-station-current {
   width: 100%;
-  /* Matches .gp-controls' own 0.75rem row gap — the caption is a row in that
-     rhythm, not a label glued to the buttons. */
-  margin-bottom: 0.75rem;
+  /* Its own breathing room on both sides: clear of the hairline above, and well
+     clear of the transport below — .gp-controls' 0.75rem row gap alone read as
+     the caption being glued to the buttons. */
+  margin-top: 0.5rem;
+  margin-bottom: 1.1rem;
   display: flex;
   align-items: baseline;
   justify-content: center;
@@ -1405,9 +1407,30 @@
   line-height: 1.3;
 }
 
+/* "Music" and "Now playing" both exist, stacked in one grid cell, and cross-fade
+   into each other. Grid rather than absolute positioning so the cell sizes
+   itself to the longer word: the wording can change without the line reflowing,
+   and there are no timers involved. */
 .gp-station-current-label {
+  display: grid;
   flex-shrink: 0;
   opacity: 0.75;
+}
+
+.gp-station-label-idle,
+.gp-station-label-playing {
+  grid-area: 1 / 1;
+  white-space: nowrap;
+  transition: opacity 0.45s ease;
+}
+
+.gp-station-label-playing,
+.gp-station-current.is-playing .gp-station-label-idle {
+  opacity: 0;
+}
+
+.gp-station-current.is-playing .gp-station-label-playing {
+  opacity: 1;
 }
 
 /* Both names truncate rather than wrap, and each may shrink: min-width:0 is
@@ -1478,6 +1501,55 @@
    specifies a plain class reset, so they kept a filled background in dark mode
    and the hover never showed.) The tabindex added in the view is what keeps
    them keyboard-operable without reintroducing that. */
+/* Playlist transport. Only meaningful for a playlist, so the whole row eases in
+   and out rather than blinking — same curve and durations as the session
+   controls' .gp-animated-wrapper, but collapsing vertically since it is a row.
+   It must never be .gp-hidden: display:none cannot animate. */
+.gp-music-video-row {
+  overflow: hidden;
+  max-height: calc(var(--gp-icon-btn-size, 42px) + 4px);
+  margin-top: 0.75rem;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    max-height 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    opacity 0.3s ease,
+    margin-top 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+
+.gp-music-video-row.gp-hidden-animated {
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.94);
+  pointer-events: none;
+}
+
+/* ⏮ is ⏩'s artwork reflected. A reflection is an isometry, so the mirrored
+   glyph keeps exactly the same stroke weight — redrawing it would not. */
+.gp-icon-flip-x {
+  transform: scaleX(-1);
+}
+
+/* The row still appears and disappears, it just stops sliding and fading to do
+   it. The mirrored glyph's transform is layout, not motion, so it stays. */
+@media (prefers-reduced-motion: reduce) {
+  .gp-music-video-row {
+    transition: none;
+    transform: none;
+  }
+
+  .gp-music-video-row.gp-hidden-animated {
+    transform: none;
+  }
+
+  .gp-station-label-idle,
+  .gp-station-label-playing {
+    transition: none;
+  }
+}
+
 .gp-station-item:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;

@@ -171,7 +171,6 @@ export class GentlePomoView extends ItemView {
   // configurations compare equal — and a missed change here is a stale picker.
   private lastStationUiKey: string | null = null;
   private stationCaption: HTMLDivElement | null = null;
-  private stationCaptionLabel: HTMLSpanElement | null = null;
   private stationCaptionName: HTMLSpanElement | null = null;
   private stationCaptionTrack: HTMLSpanElement | null = null;
   /** Title of the item the embed is actually on; only shown for a playlist. */
@@ -185,6 +184,7 @@ export class GentlePomoView extends ItemView {
   private stationListBtn: HTMLButtonElement | null = null;
   private nextStationBtn: HTMLButtonElement | null = null;
   private nextVideoBtn: HTMLButtonElement | null = null;
+  private musicVideoRow: HTMLDivElement | null = null;
   // When ⏩ last asked the playlist to advance. Only used to hold the
   // "the music ended" notice, which is wrong in answer to that button.
   private musicAdvanceRequestedAt: number | null = null;
@@ -429,10 +429,12 @@ export class GentlePomoView extends ItemView {
     // a control: the list button below opens the picker, so making this
     // clickable too would be a second, heavier affordance for the same thing.
     this.stationCaption = this.musicSection.createDiv("gp-station-current");
-    this.stationCaptionLabel = this.stationCaption.createSpan({
-      cls: "gp-station-current-label",
-      text: "Music",
-    });
+    // Both words exist at once, stacked in one grid cell and cross-faded by a
+    // class. No timers, and no width jump when the wording changes — the cell
+    // is always as wide as the longer of the two.
+    const captionLabel = this.stationCaption.createSpan("gp-station-current-label");
+    captionLabel.createSpan({ cls: "gp-station-label-idle", text: "Music" });
+    captionLabel.createSpan({ cls: "gp-station-label-playing", text: "Now playing" });
     this.stationCaptionName = this.stationCaption.createSpan("gp-station-current-name");
     this.stationCaptionTrack = this.stationCaption.createSpan("gp-station-current-track gp-hidden");
 
@@ -542,17 +544,37 @@ export class GentlePomoView extends ItemView {
       void this.nextMusicStation(this.isMusicPlayingForUser() || this.autoPlayOnReady !== null);
     });
 
-    // ⏩ next video in the playlist. Shown only when the active link names a
-    // real playlist — see the visibility rule in applySettings.
-    this.nextVideoBtn = musicRow.createEl("button", {
-      cls: "gp-btn gp-icon-btn gp-hidden",
+    // Playlist transport, on its own row so the first one keeps its four
+    // controls at a comfortable size in a 260px column. The whole row animates
+    // in and out, since it only applies to a playlist.
+    this.musicVideoRow = this.musicSection.createDiv(
+      "gp-controls-row gp-music-video-row gp-hidden-animated"
+    );
+
+    const prevVideoBtn = this.musicVideoRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
+      attr: { type: "button" },
+    });
+    // The same artwork as ⏩, mirrored in CSS rather than drawn again: a
+    // reflection preserves stroke length, so the pair cannot drift in weight.
+    const prevIcon = buildMusicIcon("next-video");
+    prevIcon.addClass("gp-icon-flip-x");
+    prevVideoBtn.appendChild(prevIcon);
+    prevVideoBtn.setAttribute("aria-label", "Previous video in playlist");
+    this.registerDomEvent(prevVideoBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.stepPlaylist("previousVideo");
+    });
+
+    this.nextVideoBtn = this.musicVideoRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
       attr: { type: "button" },
     });
     this.nextVideoBtn.appendChild(buildMusicIcon("next-video"));
     this.nextVideoBtn.setAttribute("aria-label", "Next video in playlist");
     this.registerDomEvent(this.nextVideoBtn, "click", (evt) => {
       evt.preventDefault();
-      this.advancePlaylist();
+      this.stepPlaylist("nextVideo");
     });
 
     // The link list, below the button that opens it. Built once — every slot's
@@ -991,7 +1013,9 @@ export class GentlePomoView extends ItemView {
       // would appear on every looped video and merely restart the track. Sitting
       // inside the musicKey guard is what keeps it fresh: both the URL and the
       // loop flag are already in that key.
-      this.nextVideoBtn?.toggleClass("gp-hidden", parsed?.playlistId == null);
+      // gp-hidden-animated, not gp-hidden: display:none cannot animate, and this
+      // row is meant to ease in and out the way the session controls do.
+      this.musicVideoRow?.toggleClass("gp-hidden-animated", parsed?.playlistId == null);
       // Same reason the task selector clears its own flag when hidden: a list
       // left open behind a hidden section reappears with it.
       if (!this.musicSectionVisible) this.setStationListVisible(false);
@@ -1058,14 +1082,14 @@ export class GentlePomoView extends ItemView {
    * changed and the iframe not. Teardown is instant, so this cannot desync.
    */
   /**
-   * ⏩: ask the embed for the next item of the playlist.
+   * ⏩ / ⏮: ask the embed for the next or previous item of the playlist.
    *
-   * Only while audio is actually running. From a cued or paused player
-   * nextVideo would load AND play the next item — sound the user did not ask
+   * Only while audio is actually running. From a cued or paused player these
+   * would load AND play the item — sound the user did not ask
    * for, and with no fade behind it — so that case gets the same explanatory
    * Notice a too-early ▶️ gets rather than a button that does nothing.
    */
-  private advancePlaylist() {
+  private stepPlaylist(direction: "nextVideo" | "previousVideo") {
     if (this.musicFadePhase === "out" || this.musicStopPending) return;
     if (!this.musicPlayerReady) {
       new Notice(
@@ -1074,7 +1098,7 @@ export class GentlePomoView extends ItemView {
       return;
     }
     if (!this.isAudibleState(this.musicPlayerState)) {
-      new Notice("Gentle pomodoro: press ▶️ first — skipping ahead needs the music playing.");
+      new Notice("Gentle pomodoro: press ▶️ first — skipping tracks needs the music playing.");
       return;
     }
     // Ride the same ramp ▶️/⏸/⏹ use: fade the outgoing track down, switch on the
@@ -1104,7 +1128,7 @@ export class GentlePomoView extends ItemView {
       // change at all — so a nulled duration would never be restored, and
       // isResumablePosition reads a null duration as "live stream" and stops
       // recording for the rest of the track. The stream corrects both fields.
-      this.postToMusicPlayer(buildPlayerCommand("nextVideo"));
+      this.postToMusicPlayer(buildPlayerCommand(direction));
       // Ease the new item up from the silence the fade-out left. The player was
       // never halted, so armMusicFadeIn takes its "still running" branch and
       // ramps straight up from musicRampLevel (0) — and that ramp holds itself
@@ -1197,7 +1221,7 @@ export class GentlePomoView extends ItemView {
     const key = `${playing ? "1" : "0"}\n${this.stationName}\n${track}`;
     if (key === this.lastStationCaptionKey) return;
     this.lastStationCaptionKey = key;
-    this.stationCaptionLabel?.setText(playing ? "Now playing" : "Music");
+    this.stationCaption?.toggleClass("is-playing", playing);
     this.stationCaptionName?.setText(this.stationName);
     this.stationCaptionTrack?.setText(track);
     this.stationCaptionTrack?.toggleClass("gp-hidden", track === "");
