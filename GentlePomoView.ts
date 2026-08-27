@@ -1077,21 +1077,41 @@ export class GentlePomoView extends ItemView {
       new Notice("Gentle pomodoro: press ▶️ first — skipping ahead needs the music playing.");
       return;
     }
-    this.musicAdvanceRequestedAt = Date.now();
-    // A seek that was posted for the OUTGOING item must not outlive it.
-    // trackMusicPosition ignores every clock reading below resumeSeekLanding,
-    // so leaving it armed means the new item records nothing until its clock
-    // climbs past the old item's offset — on a resumed long track, the rest of
-    // the session.
-    this.pendingResumeSeconds = null;
-    this.resumeSeekLanding = null;
-    // musicCurrentDuration and musicCurrentVideoId are deliberately NOT
-    // cleared. duration rides only the fuller payloads that accompany a state
-    // change, and an advance that turns out to be a no-op produces no state
-    // change at all — so a nulled duration would never be restored, and
-    // isResumablePosition reads a null duration as "live stream" and stops
-    // recording for the rest of the track. The stream corrects both fields.
-    this.postToMusicPlayer(buildPlayerCommand("nextVideo"));
+    // Ride the same ramp ▶️/⏸/⏹ use: fade the outgoing track down, switch on the
+    // landing, and let the fade-in carry the new one up. Posting nextVideo bare
+    // cut one track dead and dropped the next in at full volume, which is the
+    // one thing this feature family exists to avoid.
+    //
+    // The transport keeps showing "playing" throughout — this is a skip, not a
+    // pause. And because the pending switch lives in the ramp's completion
+    // callback, a ⏸ or ⏹ landing inside the fade cancels the advance and wins,
+    // which is the behaviour that reads correctly.
+    this.fadeMusicOut(() => {
+      // Stamped here rather than at the click: this is the moment ENDED could
+      // fire, and the grace window should start from it.
+      this.musicAdvanceRequestedAt = Date.now();
+      // A seek posted for the OUTGOING item must not outlive it.
+      // trackMusicPosition ignores every clock reading below resumeSeekLanding,
+      // so leaving it armed means the new item records nothing until its clock
+      // climbs past the old item's offset — on a resumed long track, the rest
+      // of the session. Cleared on the landing, so an advance that a ⏸ cancels
+      // leaves the outgoing item's bookkeeping untouched.
+      this.pendingResumeSeconds = null;
+      this.resumeSeekLanding = null;
+      // musicCurrentDuration and musicCurrentVideoId are deliberately NOT
+      // cleared. duration rides only the fuller payloads that accompany a state
+      // change, and an advance that turns out to be a no-op produces no state
+      // change at all — so a nulled duration would never be restored, and
+      // isResumablePosition reads a null duration as "live stream" and stops
+      // recording for the rest of the track. The stream corrects both fields.
+      this.postToMusicPlayer(buildPlayerCommand("nextVideo"));
+      // Ease the new item up from the silence the fade-out left. The player was
+      // never halted, so armMusicFadeIn takes its "still running" branch and
+      // ramps straight up from musicRampLevel (0) — and that ramp holds itself
+      // while the new item buffers, so the rise is spent on audio rather than
+      // on the gap before it.
+      this.armMusicFadeIn();
+    }, true);
   }
 
   /**
@@ -1520,7 +1540,7 @@ export class GentlePomoView extends ItemView {
    * position instantly. The player is deliberately left at volume 0 afterwards
    * — it's paused, so that is inaudible, and ▶️ re-parks it at 0 regardless.
    */
-  private fadeMusicOut(onLanding: () => void) {
+  private fadeMusicOut(onLanding: () => void, keepShowingPlaying = false) {
     // A ⏸ or ⏹ press always cancels a pending ⏭ hand-off, and it must be
     // cleared HERE rather than only in destroyMusicIframe: the early return
     // below lands immediately and destroys nothing, so during the second or two
@@ -1535,7 +1555,11 @@ export class GentlePomoView extends ItemView {
     // Swap the buttons now rather than a fade-length later, so the press never
     // looks ignored. The only thing that un-does the pending command is a ▶️
     // press, and that puts the buttons back itself.
-    this.setMusicButtonsPlaying(false);
+    //
+    // ⏩ opts out: skipping to the next track is not a pause, and flashing ▶️
+    // (and "Music") for the length of the fade before flipping straight back
+    // would read as the player stumbling.
+    if (!keepShowingPlaying) this.setMusicButtonsPlaying(false);
     if (!this.musicPlayerReady || !this.isAudibleState(this.musicPlayerState) || from <= 0) {
       this.musicFadePhase = null;
       onLanding();
