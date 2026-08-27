@@ -1567,7 +1567,7 @@
   pointer-events: none;
 }
 
-/* ⏮ is ⏩'s artwork reflected. A reflection is an isometry, so the mirrored
+/* ⏪ is ⏩'s artwork reflected. A reflection is an isometry, so the mirrored
    glyph keeps exactly the same stroke weight — redrawing it would not. */
 .gp-icon-flip-x {
   transform: scaleX(-1);

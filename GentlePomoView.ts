@@ -1113,7 +1113,7 @@ export class GentlePomoView extends ItemView {
    * changed and the iframe not. Teardown is instant, so this cannot desync.
    */
   /**
-   * ⏩ / ⏮: ask the embed for the next or previous item of the playlist.
+   * ⏩ / ⏪: ask the embed for the next or previous item of the playlist.
    *
    * Only while audio is actually running. From a cued or paused player these
    * would load AND play the item — sound the user did not ask
@@ -1200,7 +1200,7 @@ export class GentlePomoView extends ItemView {
     if (!this.musicPlayerReady) return false;
     if (this.musicStopPending) return false;
     // Read the transport, do not re-derive it. A fade-out is NOT by itself a
-    // pause any more: since ⏩/⏮ started fading, musicFadePhase === "out" covers
+    // pause any more: since ⏩/⏪ started fading, musicFadePhase === "out" covers
     // a skip too, and treating that as stopped made ⏭ pressed inside a skip
     // hand over nothing — the new station loaded silent while the panel still
     // read "Now playing". The mirror was worse: a ⏸ landing nulls musicFadePhase
