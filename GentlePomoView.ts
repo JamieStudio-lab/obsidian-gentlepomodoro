@@ -26,7 +26,12 @@ import {
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
-import { buildDayNightIcon, DAY_NIGHT_ICON_ORDER, type DayNightIcon } from "./icons";
+import {
+  buildDayNightIcon,
+  buildMusicIcon,
+  DAY_NIGHT_ICON_ORDER,
+  type DayNightIcon,
+} from "./icons";
 import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
 import {
@@ -47,7 +52,7 @@ import {
   planResume,
   MUSIC_STATION_LIMIT,
   resolveStationIndex,
-  stationLabel,
+  buildStationList,
   type ResumePlan,
 } from "./youtubeMusic";
 
@@ -163,8 +168,12 @@ export class GentlePomoView extends ItemView {
   // and a printable separator could be typed into one, making two different
   // configurations compare equal — and a missed change here is a stale picker.
   private lastStationUiKey: string | null = null;
-  private stationRow: HTMLDivElement | null = null;
-  private stationBtns: HTMLButtonElement[] = [];
+  private stationSelectorRow: HTMLDivElement | null = null;
+  private stationBtnText: HTMLDivElement | null = null;
+  private stationListContainer: HTMLDivElement | null = null;
+  private stationListBtn: HTMLButtonElement | null = null;
+  private stationRows: HTMLButtonElement[] = [];
+  private stationListVisible = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -355,6 +364,7 @@ export class GentlePomoView extends ItemView {
     this.registerDomEvent(this.taskBtn, "click", () => {
       this.taskListVisible = !this.taskListVisible;
       if (this.taskListVisible) {
+        this.setStationListVisible(false);
         this.taskListContainer.addClass("gp-visible");
         void this.loadTasks();
       } else {
@@ -377,34 +387,71 @@ export class GentlePomoView extends ItemView {
     // showMusicPlayer/musicUrl settings against the DOM.
     this.musicSection = controls.createDiv("gp-music-section");
 
-    // Station picker. Built once with a fixed set of buttons and only ever
-    // re-labelled or hidden afterwards — never rebuilt per tick. Selecting is
-    // all it does: it never starts playback, so tapping a station can never
-    // surprise the user with sound (and the "no autoplay on startup" rule needs
-    // no special case, because there is no autoplay path at all).
-    this.stationRow = this.musicSection.createDiv("gp-station-row");
-    const stationPicker = this.stationRow.createDiv({
-      cls: "gp-segmented gp-station-picker",
-      attr: { role: "radiogroup", "aria-label": "Music station" },
+    // Station picker, shaped like the task selector above it: a full-width box
+    // naming what is playing, which opens a list of the configured links. Built
+    // once — every slot's row exists from the start and is only ever re-labelled
+    // or hidden, never re-created, because the pre-1.13 settings path commits on
+    // every keystroke and a rebuild-per-reconcile would leak a detached row (and
+    // its listener, which Component.registerDomEvent releases on unload rather
+    // than on removal) for every character typed into a URL.
+    //
+    // Selecting is all a row does: it never starts playback, so tapping a
+    // station cannot surprise the user with sound. The ⏭ button in the controls
+    // row is the one exception, and it carries its own explicit opt-in.
+    this.stationSelectorRow = this.musicSection.createDiv(
+      "gp-controls-row gp-station-selector-row"
+    );
+    const stationBtn = this.stationSelectorRow.createEl("button", {
+      cls: "gp-btn gp-btn-full",
+      attr: { type: "button", "aria-haspopup": "listbox", "aria-expanded": "false" },
+    });
+    stationBtn.createDiv("gp-task-btn-label").setText("Music");
+    this.stationBtnText = stationBtn.createDiv("gp-task-btn-text");
+    this.stationBtnText.setText("No music link");
+    this.registerDomEvent(stationBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.toggleStationList();
+    });
+
+    this.stationListContainer = this.musicSection.createDiv({
+      cls: "gp-task-list gp-station-list",
+      attr: { role: "listbox", "aria-label": "Music links" },
     });
     for (let slot = 0; slot < MUSIC_STATION_LIMIT; slot++) {
-      const btn = stationPicker.createEl("button", {
-        cls: "gp-segmented-btn gp-station-btn",
-        attr: { type: "button", role: "radio", "aria-checked": "false" },
+      const row = this.stationListContainer.createEl("button", {
+        cls: "gp-task-item gp-station-item gp-hidden",
+        attr: { type: "button", role: "option", "aria-selected": "false" },
       });
-      this.stationBtns.push(btn);
-      this.registerDomEvent(btn, "click", (evt) => {
+      // Label and tick are separate children so relabelling never has to clear
+      // the row (setText on the button itself would drop the icon).
+      row.createSpan("gp-station-item-label");
+      setIcon(row.createDiv("gp-task-check-icon"), "check");
+      this.stationRows.push(row);
+      this.registerDomEvent(row, "click", (evt) => {
         evt.preventDefault();
+        // Close first, synchronously. selectMusicStation awaits saveSettings and
+        // then fans out through applySettingsToOpenViews, which re-enters
+        // applySettings on this very view — closing afterwards would be racing
+        // a reconcile that has already repainted the row under this handler.
+        this.setStationListVisible(false);
         void this.selectMusicStation(slot);
       });
     }
 
     const musicRow = this.musicSection.createDiv("gp-controls-row");
 
-    // Decorative glyph so the row reads as the music row, not more timer buttons.
-    const musicGlyph = musicRow.createSpan("gp-music-row-icon");
-    setIcon(musicGlyph, "music");
-    musicGlyph.setAttribute("aria-hidden", "true");
+    // Opens the same list as the box. Only shown once there is a choice to make
+    // — with one link it would be a control that changes nothing.
+    this.stationListBtn = musicRow.createEl("button", {
+      cls: "gp-btn gp-icon-btn gp-hidden",
+      attr: { type: "button" },
+    });
+    this.stationListBtn.appendChild(buildMusicIcon("station-list"));
+    this.stationListBtn.setAttribute("aria-label", "Show music links");
+    this.registerDomEvent(this.stationListBtn, "click", (evt) => {
+      evt.preventDefault();
+      this.toggleStationList();
+    });
 
     this.musicPlayBtn = musicRow.createEl("button", { cls: "gp-btn gp-icon-btn" });
     setIcon(this.musicPlayBtn, "play");
@@ -729,24 +776,37 @@ export class GentlePomoView extends ItemView {
       // holds any more. Idempotent and write-free unless something actually
       // changed, which is what makes it safe to call from every open view.
       this.plugin.reconcileMusicStations();
-      let filled = 0;
-      for (let slot = 0; slot < this.stationBtns.length; slot++) {
-        const btn = this.stationBtns[slot];
-        if (!btn) continue;
-        const url = (stationUrls[slot] ?? "").trim();
-        const used = url !== "";
-        if (used) filled++;
-        btn.toggleClass("gp-hidden", !used);
-        btn.setText(stationLabel(stationNames[slot] ?? "", slot));
+      const rows = buildStationList(stationUrls, stationNames, activeSlot);
+      // Rows are positional — row N is always slot N — so an empty slot keeps
+      // its (hidden) row rather than shifting the ones after it. buildStationList
+      // returns filled slots only, hence the lookup by slot rather than by index.
+      for (let slot = 0; slot < this.stationRows.length; slot++) {
+        const row = this.stationRows[slot];
+        if (!row) continue;
+        const entry = rows.find((candidate) => candidate.slot === slot) ?? null;
+        row.toggleClass("gp-hidden", entry === null);
+        row.toggleClass("gp-task-selected", entry?.active === true);
+        row.setAttribute("aria-selected", entry?.active === true ? "true" : "false");
+        const label = row.querySelector(".gp-station-item-label");
+        if (label instanceof HTMLElement) label.setText(entry?.label ?? "");
         // The full link lives in the tooltip: a name is optional, and a URL is
-        // far too long to render on a button in a narrow sidebar.
-        btn.setAttribute("title", used ? url : "");
-        btn.setAttribute("aria-checked", used && slot === activeSlot ? "true" : "false");
-        btn.toggleClass("is-active", used && slot === activeSlot);
+        // far too long to render in a narrow sidebar. Deliberately `title` and
+        // not `aria-label` — the latter REPLACES the accessible name, so a
+        // screen reader would announce a 60-character URL instead of the
+        // station's name.
+        if (entry === null) row.removeAttribute("title");
+        else row.setAttribute("title", entry.url);
       }
-      // One station is the pre-0.5.7 experience, so the row stays out of the way
-      // entirely — no wasted vertical space in the short-panel (gp-compact) mode.
-      this.stationRow?.toggleClass("gp-hidden", filled < 2);
+      const activeEntry = rows.find((candidate) => candidate.active) ?? null;
+      this.stationBtnText?.setText(activeEntry?.label ?? "No music link");
+      // With one link there is nothing to switch between, so the shortcut button
+      // would be a control that changes nothing. The box above still names what
+      // is playing, which is the part that has to survive at any count.
+      const multi = rows.length > 1;
+      this.stationListBtn?.toggleClass("gp-hidden", !multi);
+      // A list left open under a picker that just lost its choices would spring
+      // back open the next time the section is shown.
+      if (!multi) this.setStationListVisible(false);
     }
 
     // Music player reconciliation. Runs here so the per-tick call and the settings
@@ -826,6 +886,9 @@ export class GentlePomoView extends ItemView {
       this.musicSectionVisible =
         this.plugin.settings.showMusicPlayer && activeMusicUrl.trim() !== "";
       this.musicSection?.toggleClass("gp-hidden", !this.musicSectionVisible);
+      // Same reason the task selector clears its own flag when hidden: a list
+      // left open behind a hidden section reappears with it.
+      if (!this.musicSectionVisible) this.setStationListVisible(false);
       if (embedUrl !== this.lastMusicEmbedUrl || sourceUrl !== this.lastMusicSourceUrl) {
         this.lastMusicEmbedUrl = embedUrl;
         this.lastMusicSourceUrl = sourceUrl;
@@ -884,6 +947,29 @@ export class GentlePomoView extends ItemView {
    * press or another reconcile inside the fade window would leave the setting
    * changed and the iframe not. Teardown is instant, so this cannot desync.
    */
+  /**
+   * Open or close the station list. Mirrors the task selector's expander, and
+   * closes that one on the way — on mobile both lose their height cap and the
+   * task list sits above the music section, so leaving both open would push the
+   * thing just opened below the fold.
+   */
+  private setStationListVisible(visible: boolean) {
+    if (visible === this.stationListVisible) return;
+    this.stationListVisible = visible;
+    this.stationListContainer?.toggleClass("gp-visible", visible);
+    this.stationSelectorRow
+      ?.querySelector(".gp-btn-full")
+      ?.setAttribute("aria-expanded", visible ? "true" : "false");
+    if (visible && this.taskListVisible) {
+      this.taskListVisible = false;
+      this.taskListContainer.removeClass("gp-visible");
+    }
+  }
+
+  private toggleStationList() {
+    this.setStationListVisible(!this.stationListVisible);
+  }
+
   private async selectMusicStation(slot: number): Promise<void> {
     const urls = this.plugin.musicStationUrls();
     if ((urls[slot] ?? "").trim() === "") return; // empty slot: nothing to select

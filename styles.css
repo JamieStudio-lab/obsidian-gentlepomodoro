@@ -1382,36 +1382,48 @@
   width: 100%;
 }
 
-/* Station picker. Reuses the segmented control (Low/Mid/High volume) so the
-   panel keeps one vocabulary for "pick one of these". Centred on its own row
-   above the transport, and hidden entirely when fewer than two links are
-   configured — a single-link setup then looks exactly as it did before. */
-.gp-station-row {
-  display: flex;
-  justify-content: center;
-  width: 100%;
+/* Station picker. Shaped like the task selector above it — a full-width box
+   naming what is playing, which opens a list of the configured links — so the
+   panel keeps one vocabulary for "pick one of these". The box shows at any link
+   count, because it is also the only place the active station is named: the
+   per-row tooltip does nothing on touch. */
+.gp-station-selector-row {
   margin-bottom: 8px;
 }
 
-.gp-station-picker {
-  max-width: 100%;
+/* The list itself is a .gp-task-list, so the expander, the scroll cap and both
+   mobile overrides are inherited rather than duplicated. Only the row styling
+   below is specific to stations. */
+.gp-station-list {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
 }
 
-/* Names are user-typed and a narrow sidebar is unforgiving: cap each button and
-   ellipsize rather than letting one long name push the others off the row. The
-   full link is always available as the button's tooltip. */
-.gp-station-btn {
-  max-width: 8em;
+/* .gp-task-item is written for a div; these rows are real buttons so they are
+   keyboard-operable, which the task rows are not. Undo the UA button styling
+   and let the shared rule do the rest. */
+.gp-station-item {
+  width: 100%;
+  border: none;
+  background: none;
+  box-shadow: none;
+  font-family: inherit;
+  text-align: left;
+}
+
+/* Names are user-typed and a narrow sidebar is unforgiving: ellipsize rather
+   than wrapping a long name onto a second line. (.gp-task-item deliberately
+   lets task text wrap — a task needs reading, a station needs recognising.) */
+.gp-station-item-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Decorative row glyph so the row reads as "music", not more timer buttons. */
-.gp-music-row-icon {
-  display: flex;
-  align-items: center;
-  color: var(--text-muted);
+/* The tick is built into every row and revealed by .gp-task-selected, whose own
+   rule (higher specificity) turns it back on for the active station. */
+.gp-station-item .gp-task-check-icon {
+  display: none;
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a
