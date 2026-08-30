@@ -1,9 +1,17 @@
-import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
 
 import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
-import { LogManager, effectiveFocusBaseSeconds, shouldFireGoalNotice } from "./logManager";
+import {
+  FocusTotalTracker,
+  focusGoalText,
+  formatHoursMinutes,
+  liveFocusSeconds,
+  type FocusTotalHost,
+} from "./focusTotals";
+import { LogManager, shouldFireGoalNotice } from "./logManager";
+import { SettingsStore, coerceToDefaults } from "./settingsStore";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -12,24 +20,16 @@ import {
   scanAllPomodoroMarkersInVault,
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
+import { MusicStationStore, type MusicStationStoreHost } from "./musicStationStore";
 import { TimerEngine } from "./TimerEngine";
 import {
   DEFAULT_SETTINGS,
-  FOCUS_TOTAL_CACHE_TTL_MS,
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
-import {
-  MUSIC_STATION_LIMIT,
-  findPositionForUrl,
-  musicPositionAppliesToUrl,
-  normalizeMusicPositions,
-  resolveStationIndex,
-  retainPositionsForUrls,
-  stationsAreSettled,
-} from "./youtubeMusic";
+import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
 
@@ -49,17 +49,27 @@ export default class GentlePomoPlugin extends Plugin {
   private statusTimeEl: HTMLElement | null = null;
   private statusFocusTotal: HTMLElement | null = null;
   private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
-  private statusFocusBaseSeconds = 0;
-  /** Local date (YYYY-MM-DD) the cached base was fetched for; other days count as 0. */
-  private statusFocusBaseDate: string | null = null;
-  private statusFocusLastFetchMs = 0;
-  private statusFocusFetchInFlight = false;
+  /** Today's logged focus total, TTL- and date-stamped. */
+  private readonly focusTotals = new FocusTotalTracker(this.createFocusTotalHost());
+  /** Reads and writes data.json, and reports when either fails. */
+  private readonly settingsStore = new SettingsStore({
+    read: () => this.loadData(),
+    write: (data) => this.writePluginData(data),
+    now: () => Date.now(),
+    notice: (message) => {
+      new Notice(message);
+    },
+    warn: (message, error) => {
+      logger.error(message, error);
+    },
+  });
   private statusTimerListener: TimerListener | null = null;
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
   private repairInFlight = false;
-  /** Set when the remembered music position has moved since the last save. */
-  private musicPositionDirty = false;
+  /** Station slots and their remembered positions. Constructed here rather
+   *  than in onload because loadSettings() reconciles through it. */
+  private readonly musicStations = new MusicStationStore(this.createMusicStationHost());
 
   override async onload() {
     await this.loadSettings();
@@ -401,7 +411,23 @@ export default class GentlePomoPlugin extends Plugin {
   }
 
   async loadSettings() {
-    const loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
+    // data.json is hand-editable and sync-merged, so it can arrive malformed
+    // through no fault of ours. loadData() never throws on that — it returns
+    // `undefined` (see DataRead) — so the damage has to be read off the result,
+    // not caught. Starting on the defaults is recoverable; writing over a file
+    // we could not read is not.
+    const read = await this.settingsStore.read();
+    const loadFailed = read.kind === "damaged";
+    // Fields whose type disagrees with the default are dropped here: a
+    // hand-edited `"tasksPath": 123` is valid JSON and a valid object, and the
+    // first `.trim()` on it would take onload down a few lines below.
+    const loaded =
+      read.kind === "ok"
+        ? (coerceToDefaults(
+            read.data,
+            DEFAULT_SETTINGS as unknown as Record<string, unknown>
+          ) as Partial<GentlePomoSettings> | null)
+        : null;
     // Migrate legacy "sunset" → "classic" (renamed in 2026-05-26). Saved
     // once so future loads don't repeat the rewrite.
     let migrated = false;
@@ -436,7 +462,13 @@ export default class GentlePomoPlugin extends Plugin {
       // URL stamp. An unstamped one is left behind deliberately — its
       // provenance is unknown, and guessing would guess wrong in exactly the
       // case the stamp was added for.
-      const legacyUrl = this.settings.lastMusicUrl;
+      // Typed `string | null`, but its default is null — so coerceToDefaults
+      // deliberately lets any type through (a null default carries no type to
+      // check against) and the reader is responsible. This is that reader: a
+      // hand-edited numeric value here would throw out of onload and take the
+      // whole plugin down.
+      const legacyUrl =
+        typeof this.settings.lastMusicUrl === "string" ? this.settings.lastMusicUrl : null;
       if (
         legacyUrl !== null &&
         legacyUrl.trim() !== "" &&
@@ -461,13 +493,54 @@ export default class GentlePomoPlugin extends Plugin {
     // running reconcile, so there is one source of truth for both; its own save
     // is harmless here but the migrated flag below already covers this load.
     this.reconcileMusicStations();
-    if (migrated) {
+    // Never write back over a file we could not read. `migrated` is true on
+    // that path anyway (a null `loaded` derives the task-selector default), so
+    // without this guard the very first thing a failed load does is overwrite
+    // the settings the user still has, and can still fix by hand.
+    if (migrated && !loadFailed) {
       await this.saveSettings();
     }
   }
 
+  /**
+   * Persist settings.
+   *
+   * Wrapped because no caller is in a position to handle a rejection: five fire
+   * and forget (`void this.saveSettings()`), and the rest are awaited inside
+   * handlers that Obsidian itself does not await. An unhandled rejection here
+   * is therefore invisible — the user changes a setting, watches the UI agree,
+   * and finds it reverted after a restart with nothing to explain it. A vault
+   * write can fail for reasons that have nothing to do with this plugin: a
+   * read-only vault, a sync client holding the file, storage pressure on
+   * mobile. writeLog has carried the same guard since 0.3.0.
+   */
   async saveSettings() {
-    await this.saveData(this.settings);
+    await this.settingsStore.save(this.settings);
+  }
+
+  /**
+   * Write data.json ourselves rather than through `Plugin.saveData()`.
+   *
+   * `saveData()` is `vault.writePluginData` → `Vault.writeJson`, and that
+   * method's try/catch has an **empty catch body**: every failure resolves
+   * `undefined`. So there is no way to learn that a save failed through it, and
+   * a try/catch around it is a handler that can never run. `vault.adapter.write`
+   * is what `writeJson` itself calls, minus the swallow, so this is the same
+   * write with the failure left visible — the same reason `writeLog` reaches
+   * for the adapter. Byte-for-byte the same output, too: `writeJson` stringifies
+   * with an indent of 2 and no replacer.
+   *
+   * Skipping `saveData` also skips its `_lastDataModifiedTime` stamp, which is
+   * inert here: Obsidian's `_onConfigFileChange` returns immediately unless the
+   * plugin implements `onExternalSettingsChange`, and this one does not.
+   */
+  private async writePluginData(data: unknown): Promise<void> {
+    const dir = this.manifest.dir;
+    if (dir === undefined) throw new Error("plugin directory is unknown");
+    await this.app.vault.adapter.write(
+      normalizePath(`${dir}/data.json`),
+      JSON.stringify(data, undefined, 2)
+    );
   }
 
   private maybeAutoOpenView() {
@@ -625,26 +698,13 @@ export default class GentlePomoPlugin extends Plugin {
    *  (a base fetched on an earlier day counts as 0 until the refetch lands)
    *  plus the live in-progress focus session. */
   private currentFocusSeconds(state: TimerState): number {
-    const base = effectiveFocusBaseSeconds(
-      this.statusFocusBaseSeconds,
-      this.statusFocusBaseDate,
-      todayLocalStr()
-    );
-    return base + this.getLiveFocusSeconds(state);
+    return this.focusTotals.loggedSeconds() + liveFocusSeconds(state);
   }
 
   /** "Today Xh / Yh" focus-time + goal text and whether the goal is met, from the
    *  current focus total. Shared by the status bar and the in-view mobile meter. */
   private focusGoalText(state: TimerState): { text: string; met: boolean } {
-    const focusTotalSeconds = this.currentFocusSeconds(state);
-    const goalMinutes = this.settings.dailyFocusGoalMinutes;
-    let text = `Today ${this.formatHoursMinutes(focusTotalSeconds)}`;
-    let met = false;
-    if (goalMinutes > 0) {
-      text += ` / ${this.formatHoursMinutes(goalMinutes * 60)}`;
-      met = focusTotalSeconds >= goalMinutes * 60;
-    }
-    return { text, met };
+    return focusGoalText(this.currentFocusSeconds(state), this.settings.dailyFocusGoalMinutes);
   }
 
   /** Push the current focus-goal text into a view's in-view meter. Independent of the
@@ -677,179 +737,67 @@ export default class GentlePomoPlugin extends Plugin {
       if (leaf.view instanceof GentlePomoView) leaf.view.applySettings();
     }
   }
+  /**
+   * The store's view of the plugin. `settings` is a call rather than a
+   * captured reference because loadSettings() replaces the object wholesale —
+   * a snapshot taken here would leave the store reading and writing the
+   * pre-load settings for the rest of the session.
+   */
+  private createMusicStationHost(): MusicStationStoreHost {
+    return {
+      settings: () => this.settings,
+      save: () => {
+        void this.saveSettings();
+      },
+    };
+  }
 
-  /** The three station URLs, slot order. The single place that spelling lives. */
+  /* ===== Music stations =====
+   *
+   * The rules themselves live in MusicStationStore, which takes the settings
+   * and a save hook and nothing else — so the provenance and retire rules that
+   * 0.5.6 and 0.5.7 were spent on are reachable from a test. These stay as the
+   * plugin's public surface because the view and the settings tab call them.
+   */
+
+  /** The three station URLs, slot order. */
   musicStationUrls(): string[] {
-    return [this.settings.musicUrl, this.settings.musicUrl2, this.settings.musicUrl3];
+    return this.musicStations.stationUrls();
   }
 
   /** The station URL that should actually play, after resolving a stale index. */
   activeMusicUrl(): string {
-    const urls = this.musicStationUrls();
-    return urls[resolveStationIndex(urls, this.settings.musicStationIndex)] ?? "";
+    return this.musicStations.activeUrl();
   }
 
-  /**
-   * The remembered position for one station URL, or null when the feature is
-   * off or nothing is stored for it. Read once per iframe build — never on the
-   * render hot path.
-   *
-   * Takes the URL rather than reading the active one, because the caller knows
-   * which station it is building for and this must not depend on the index
-   * having already been updated.
-   */
+  /** The remembered position for one station URL, or null. */
   musicResumeState(url: string): MusicResumeState | null {
-    if (!this.settings.musicResume) return null;
-    return findPositionForUrl(this.settings.musicPositions, url);
+    return this.musicStations.resumeState(url);
   }
 
-  /**
-   * Drop positions that belong to links no station holds any more.
-   *
-   * This is the whole retire rule, and it is driven by the SLOT LIST rather
-   * than by what is playing — which is what lets it correctly forget an
-   * inactive slot's position, something a "did the playing URL change?" hook
-   * never could. Editing a slot and clearing a slot are the same event to it,
-   * so neither needs its own path; switching stations is not an event at all,
-   * because every slot's URL is still there.
-   *
-   * Skipped entirely while any slot holds a half-typed URL: the pre-1.13
-   * settings path commits on every keystroke, and this erase is immediate and
-   * destructive. Anything skipped here is still refused by planResume's own URL
-   * check, so a stale position can never be *applied* — only left in place.
-   */
+  /** Heal the selected slot and drop positions no slot holds any more. */
   reconcileMusicStations(): void {
-    const urls = this.musicStationUrls();
-    let changed = false;
-
-    // Heal the selected slot so what is stored matches what actually plays.
-    // Without this the stored index can point at an EMPTY slot while playback
-    // runs on the fallback — and then filling that empty slot would silently
-    // move playback onto it, because the fallback stops applying. Writing the
-    // resolution back means editing a slot you are not listening to can never
-    // change what plays.
-    const resolved = resolveStationIndex(urls, this.settings.musicStationIndex);
-    if (resolved !== this.settings.musicStationIndex) {
-      this.settings.musicStationIndex = resolved;
-      changed = true;
-    }
-
-    // Drop positions belonging to links no slot holds any more. Skipped while
-    // any slot holds a half-typed URL: the pre-1.13 settings path commits on
-    // every keystroke, and this erase is immediate and destructive. Anything
-    // skipped here is still refused by planResume's own URL check, so a stale
-    // position can never be applied — only left in place.
-    if (stationsAreSettled(urls)) {
-      const next = retainPositionsForUrls(this.settings.musicPositions, urls);
-      if (next.length !== this.settings.musicPositions.length) {
-        this.settings.musicPositions = next;
-        this.musicPositionDirty = false;
-        changed = true;
-      }
-    }
-
-    // One save for both, and none at all in the common case — which matters
-    // because every open view runs this from the same change-gated block.
-    if (changed) void this.saveSettings();
+    this.musicStations.reconcile();
   }
 
-  /**
-   * Track where the music has reached. Called from the embed's ~4Hz message
-   * stream, so it stays a short scan and a dirty flag — the disk write is
-   * deferred to flushMusicPosition (boundaries + the slow interval), because
-   * data.json lives in the vault and every save is sync traffic.
-   */
+  /** Track where the music has reached (in memory; flushed on boundaries). */
   recordMusicPosition(position: MusicResumeState): void {
-    if (!this.settings.musicResume) return;
-    // Provenance travels WITH the position, from the iframe that produced it —
-    // never read off this.settings here. Both settings paths assign the URL and
-    // only then `await saveSettings()`, and the outgoing iframe keeps streaming
-    // across that await: stamping the live setting would relabel the old
-    // track's position with the new URL, and the URL checks would then wave it
-    // through onto a station it never came from.
-    if (position.url === null || position.url.trim() === "") return;
-    const seconds = Math.floor(position.seconds);
-    const entry = findPositionForUrl(this.settings.musicPositions, position.url);
-    if (
-      entry !== null &&
-      entry.videoId === position.videoId &&
-      entry.playlistId === position.playlistId &&
-      entry.seconds === seconds &&
-      entry.url === position.url
-    ) {
-      return; // same whole second — the 4Hz stream collapses to ~1 update/sec
-    }
-    if (entry !== null) {
-      // Safe to mutate: loadSettings always installs a fresh array of fresh
-      // objects, so this can never reach the frozen DEFAULT_SETTINGS one.
-      entry.videoId = position.videoId;
-      entry.playlistId = position.playlistId;
-      entry.seconds = seconds;
-      entry.url = position.url;
-    } else {
-      if (this.settings.musicPositions.length >= MUSIC_STATION_LIMIT) {
-        // Reachable whenever the retire sweep is frozen — one unparseable slot
-        // holds stationsAreSettled false indefinitely, and orphans then pile up.
-        // Evict an entry NO slot still holds, never index 0: the array is in
-        // insertion order, so the oldest entry is typically the user's main
-        // station, and dropping it silently loses a position that is still in
-        // use. Only fall back to the oldest if every entry is still live, which
-        // really is the tripwire case.
-        const live = this.musicStationUrls();
-        const orphan = this.settings.musicPositions.findIndex(
-          (candidate) => !live.some((url) => musicPositionAppliesToUrl(candidate.url, url))
-        );
-        if (orphan >= 0) {
-          this.settings.musicPositions.splice(orphan, 1);
-        } else {
-          logger.warn("music positions exceeded the station limit; dropping the oldest");
-          this.settings.musicPositions.shift();
-        }
-      }
-      this.settings.musicPositions.push({
-        videoId: position.videoId,
-        playlistId: position.playlistId,
-        seconds,
-        url: position.url,
-      });
-    }
-    this.musicPositionDirty = true;
+    this.musicStations.record(position);
   }
 
-  /**
-   * Forget one station's position — ⏹ Stop and a finished track both mean "open
-   * this from the top next time". Saved at once rather than on the next
-   * boundary: it answers a deliberate action, not a background sample.
-   *
-   * Takes the URL the caller was actually playing. The view passes its frozen
-   * copy rather than the active setting, because a Stop can land after the user
-   * has already switched stations — resolving it here would clear the incoming
-   * station's position instead.
-   */
+  /** Forget one station's position — ⏹ Stop, and a finished track. */
   clearMusicPosition(url: string | null): void {
-    this.musicPositionDirty = false;
-    if (url === null) return;
-    const next = this.settings.musicPositions.filter(
-      (position) => !musicPositionAppliesToUrl(position.url, url)
-    );
-    if (next.length === this.settings.musicPositions.length) return;
-    this.settings.musicPositions = next;
-    void this.saveSettings();
+    this.musicStations.clear(url);
   }
 
-  /** Forget every station's position — used when the resume feature is switched off. */
+  /** Forget every station's position — used when resume is switched off. */
   clearAllMusicPositions(): void {
-    this.musicPositionDirty = false;
-    if (this.settings.musicPositions.length === 0) return;
-    this.settings.musicPositions = [];
-    void this.saveSettings();
+    this.musicStations.clearAll();
   }
 
   /** Persist a moved position. No-op when it hasn't changed since the last save. */
   flushMusicPosition(): void {
-    if (!this.musicPositionDirty) return;
-    this.musicPositionDirty = false;
-    void this.saveSettings();
+    this.musicStations.flush();
   }
 
   /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —
@@ -874,66 +822,48 @@ export default class GentlePomoPlugin extends Plugin {
     ) {
       return;
     }
-    const goalHm = this.formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
+    const goalHm = formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
     new Notice(`[GentlePomo] Daily focus goal hit: ${goalHm}`);
     this.settings.lastGoalHitDate = today;
     void this.saveSettings();
   }
 
-  private getLiveFocusSeconds(state: TimerState): number {
-    if (state.mode !== "focus") return 0;
-    if (!state.isRunning && state.remainingMs === state.totalMs) return 0;
-    const elapsedMs = state.totalMs - state.remainingMs;
-    const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
-    return elapsedSeconds;
-  }
-
-  /** Drop the focus-total TTL so the next check refetches immediately. Called
-   *  by LogManager.writeLog the moment a focus line lands, so the refetch —
-   *  and the goal notice riding on its landing — arrives with the
-   *  end-of-session bell rather than up to a TTL later. (If a fetch is
-   *  already in flight at that instant, its landing re-stamps the TTL and the
-   *  fresh line waits for the next beat — worst case ~90s, self-healing.) */
+  /** A log line was just written; the next refresh must actually read the file. */
   invalidateFocusTotalCache(): void {
-    this.statusFocusLastFetchMs = 0;
+    this.focusTotals.invalidate();
   }
 
-  private async maybeRefreshFocusTotal() {
-    if (this.statusFocusFetchInFlight) return;
-    const now = Date.now();
-    const today = todayLocalStr();
-    // Midnight rollover invalidates the base immediately; the TTL alone would
-    // let yesterday's total linger into the new day.
-    const baseStale = this.statusFocusBaseDate !== today;
-    if (!baseStale && now - this.statusFocusLastFetchMs < FOCUS_TOTAL_CACHE_TTL_MS) return;
-
-    this.statusFocusFetchInFlight = true;
-    try {
-      // `today` is resolved before the read so the stamp matches the day the
-      // log file was picked, even if midnight passes during the await.
-      const totalSeconds = await this.logManager.getTodayFocusSeconds();
-      this.statusFocusBaseSeconds = totalSeconds;
-      this.statusFocusBaseDate = today;
-      this.statusFocusLastFetchMs = Date.now();
-      // Goal-notice check rides on the landing. Guard: if midnight passed
-      // during the await, `totalSeconds` describes yesterday's file — don't
-      // feed it to today's check (the now-stale stamp forces a refetch on the
-      // next beat, which re-lands with the new day's total).
-      if (today === todayLocalStr()) {
-        this.maybeFireGoalNotice(totalSeconds);
-      }
-      const state = this.timer.getState();
-      this.updateStatusBar(state, true);
-      // The status-bar path mirrors into open views only while the bar exists;
-      // push directly so the in-view meter corrects with the bar hidden too.
-      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
-        if (leaf.view instanceof GentlePomoView) {
-          this.refreshViewGoalProgress(leaf.view, state);
+  /**
+   * The tracker's view of the plugin. The two landing hooks are deliberately
+   * separate: repainting a stale number for a moment is harmless and
+   * self-correcting, while firing the once-per-day notice off one is not.
+   */
+  private createFocusTotalHost(): FocusTotalHost {
+    return {
+      now: () => Date.now(),
+      today: () => todayLocalStr(),
+      fetchLoggedSeconds: () => this.logManager.getTodayFocusSeconds(),
+      checkGoalNotice: (loggedSeconds) => {
+        this.maybeFireGoalNotice(loggedSeconds);
+      },
+      onLanded: () => {
+        const state = this.timer.getState();
+        this.updateStatusBar(state, true);
+        // The status-bar path mirrors into open views only while the bar
+        // exists; push directly so the in-view meter corrects with the bar
+        // hidden too.
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+          if (leaf.view instanceof GentlePomoView) {
+            this.refreshViewGoalProgress(leaf.view, state);
+          }
         }
-      }
-    } finally {
-      this.statusFocusFetchInFlight = false;
-    }
+      },
+    };
+  }
+
+  /** Read the logged total if the cache is due, then repaint and check the goal. */
+  private maybeRefreshFocusTotal(): Promise<void> {
+    return this.focusTotals.refresh();
   }
 
   private formatSeconds(totalSeconds: number, overtime = false): string {
@@ -941,12 +871,5 @@ export default class GentlePomoPlugin extends Plugin {
     const s = totalSeconds % 60;
     const timeText = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
     return overtime ? `+${timeText}` : timeText;
-  }
-
-  private formatHoursMinutes(totalSeconds: number): string {
-    const totalMinutes = Math.floor(totalSeconds / 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return `${hours}h ${minutes}m`;
   }
 }
