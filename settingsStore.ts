@@ -70,7 +70,11 @@ export function coerceToDefaults<T extends Record<string, unknown>>(
     const fallback = defaults[key];
     // A null default carries no type information — `lastGoalHitDate` and
     // `lastMusicUrl` are null until first written, then strings — so anything
-    // is allowed through and the reader stays responsible for it.
+    // is allowed through and the reader stays responsible for it. That is a
+    // standing rule with a known past violation: `loadSettings`' legacy
+    // position fold called `.trim()` on `lastMusicUrl` unguarded, and threw out
+    // of `onload`. Any new reader of a null-defaulted field must check the type
+    // itself.
     if (fallback === null) continue;
     const value = out[key];
     if (value === null || value === undefined) {

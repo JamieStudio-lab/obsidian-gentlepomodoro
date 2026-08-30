@@ -69,7 +69,6 @@ export default class GentlePomoPlugin extends Plugin {
   private repairInFlight = false;
   /** Station slots and their remembered positions. Constructed here rather
    *  than in onload because loadSettings() reconciles through it. */
-  /** Station slots and their remembered positions. */
   private readonly musicStations = new MusicStationStore(this.createMusicStationHost());
 
   override async onload() {
@@ -463,7 +462,13 @@ export default class GentlePomoPlugin extends Plugin {
       // URL stamp. An unstamped one is left behind deliberately — its
       // provenance is unknown, and guessing would guess wrong in exactly the
       // case the stamp was added for.
-      const legacyUrl = this.settings.lastMusicUrl;
+      // Typed `string | null`, but its default is null — so coerceToDefaults
+      // deliberately lets any type through (a null default carries no type to
+      // check against) and the reader is responsible. This is that reader: a
+      // hand-edited numeric value here would throw out of onload and take the
+      // whole plugin down.
+      const legacyUrl =
+        typeof this.settings.lastMusicUrl === "string" ? this.settings.lastMusicUrl : null;
       if (
         legacyUrl !== null &&
         legacyUrl.trim() !== "" &&

@@ -127,6 +127,18 @@ describe("reconcile", () => {
   });
 });
 
+describe("the damaged-data.json guarantee", () => {
+  it("writes nothing when the settings are exactly the defaults", () => {
+    // Load-bearing for the promise that a data.json we could not read is left
+    // alone: loadSettings runs this reconcile BEFORE the `!loadFailed` guard on
+    // the migration save, and on a damaged read the settings are the defaults
+    // verbatim. If reconcile saved here, the file would be overwritten anyway.
+    const fresh = make({ musicUrl: "", musicUrl2: "", musicUrl3: "" });
+    fresh.store.reconcile();
+    expect(fresh.saves()).toBe(0);
+  });
+});
+
 describe("record", () => {
   it("stores a position under the URL it was stamped with", () => {
     ctx.store.record(position(A, 42));

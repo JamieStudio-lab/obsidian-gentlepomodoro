@@ -238,6 +238,38 @@ describe("controls are wired through setControlValue", () => {
     expect(ctx.settings.longBreakMinutes).toBe(25);
   });
 
+  it("does not persist a blank number box as zero", () => {
+    // Both paths commit on every keystroke, so clearing a field to retype it
+    // must not write an intermediate value — and Number("") is 0, which for
+    // the daily focus goal is the value that DISABLES it. The pre-0.5.8
+    // imperative path used parseInt, which rejected a blank box; routing both
+    // paths through Number() quietly lost that.
+    const seeded = makeTab({ dailyFocusGoalMinutes: 120 });
+    seeded.tab.display();
+    const goal = componentOf(seeded.el, "Daily focus goal (minutes)");
+    goal.change?.("" as never);
+    goal.change?.("   " as never);
+    expect(seeded.settings.dailyFocusGoalMinutes).toBe(120);
+    // A real zero is still how the goal is switched off.
+    goal.change?.("0" as never);
+    expect(seeded.settings.dailyFocusGoalMinutes).toBe(0);
+  });
+
+  it("keeps rejecting a blank box for every other number field", () => {
+    const seeded = makeTab({ longBreakMinutes: 15, longBreakEvery: 4, taskSelectorDays: 7 });
+    seeded.tab.display();
+    for (const [name, expected] of [
+      ["Long break duration (minutes)", 15],
+      ["Long break frequency", 4],
+    ] as const) {
+      componentOf(seeded.el, name).change?.("" as never);
+    }
+    componentOf(seeded.el, "Task lookahead window").change?.("" as never);
+    expect(seeded.settings.longBreakMinutes).toBe(15);
+    expect(seeded.settings.longBreakEvery).toBe(4);
+    expect(seeded.settings.taskSelectorDays).toBe(7);
+  });
+
   it("offers every lookahead option, in order", () => {
     ctx.tab.display();
     expect(componentOf(ctx.el, "Task lookahead window").options.map((o) => o.value)).toEqual([

@@ -64,6 +64,23 @@ const MUSIC_NAME_KEYS = ["musicName1", "musicName2", "musicName3"] as const;
 const MUSIC_NAME_PLACEHOLDERS = ["Lofi", "Rain", "Piano"] as const;
 
 /**
+ * A number field's committed value, or null when it should not be written.
+ *
+ * A blank box means "mid-edit", not zero. Both settings paths commit on every
+ * keystroke, so clearing a field to retype it must not persist an intermediate
+ * value — and `Number("")` is `0`, which for the daily focus goal is the value
+ * that DISABLES it. The pre-0.5.8 imperative path used `parseInt`, which
+ * returns NaN for a blank box and rejected it; routing both paths through
+ * `Number()` quietly lost that. Obsidian 1.13 hands this a number, so a real
+ * `0` still arrives as `0` and is unaffected.
+ */
+function numericSetting(value: unknown): number | null {
+  if (typeof value === "string" && value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
  * Render one stored value into a text/dropdown box. getControlValue is typed
  * `unknown` (that is the 1.13 contract), and every control this tab renders
  * holds a string, a number or a boolean — anything else is a bug, and an empty
@@ -560,8 +577,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   /**
    * Obsidian 1.13+ renders settings itself from these, which is also what puts
    * them in the settings search index. A pure projection of settingGroups() —
-   * the only thing dropped is the button text, which the 1.13 action shape has
-   * no room for (there the whole row is the control).
+   * the only things dropped are the button text and the destructive flag,
+   * neither of which the 1.13 action shape has room for (there the whole row
+   * is the control).
    */
   override getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
     return this.settingGroups().map((group) => ({
@@ -598,9 +616,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       }
       case "taskSelectorDays": {
-        const n = parseInt(String(value), 10);
-        if (!Number.isFinite(n) || n <= 0) return;
-        settings.taskSelectorDays = n;
+        const n = numericSetting(value);
+        if (n === null || n <= 0) return;
+        settings.taskSelectorDays = Math.floor(n);
         break;
       }
       case "logFolderPath":
@@ -656,20 +674,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         this.applySettingsToOpenViews();
         return;
       case "longBreakMinutes": {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n <= 0) return;
+        const n = numericSetting(value);
+        if (n === null || n <= 0) return;
         settings.longBreakMinutes = Math.floor(n);
         break;
       }
       case "longBreakEvery": {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 1) return;
+        const n = numericSetting(value);
+        if (n === null || n < 1) return;
         settings.longBreakEvery = Math.floor(n);
         break;
       }
       case "dailyFocusGoalMinutes": {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 0) return;
+        const n = numericSetting(value);
+        if (n === null || n < 0) return;
         settings.dailyFocusGoalMinutes = Math.floor(n);
         break;
       }
