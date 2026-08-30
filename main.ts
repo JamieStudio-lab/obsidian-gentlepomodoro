@@ -1,4 +1,4 @@
-import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
 
 import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
@@ -11,6 +11,7 @@ import {
   type FocusTotalHost,
 } from "./focusTotals";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
+import { SettingsStore, coerceToDefaults } from "./settingsStore";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -26,7 +27,6 @@ import {
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
-  SETTINGS_SAVE_RENOTIFY_MS,
 } from "./constants";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
@@ -51,8 +51,18 @@ export default class GentlePomoPlugin extends Plugin {
   private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
   /** Today's logged focus total, TTL- and date-stamped. */
   private readonly focusTotals = new FocusTotalTracker(this.createFocusTotalHost());
-  /** When the last settings write failed, so a broken vault can't nag per keystroke. */
-  private settingsSaveFailedAt: number | null = null;
+  /** Reads and writes data.json, and reports when either fails. */
+  private readonly settingsStore = new SettingsStore({
+    read: () => this.loadData(),
+    write: (data) => this.writePluginData(data),
+    now: () => Date.now(),
+    notice: (message) => {
+      new Notice(message);
+    },
+    warn: (message, error) => {
+      logger.error(message, error);
+    },
+  });
   private statusTimerListener: TimerListener | null = null;
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
@@ -403,20 +413,22 @@ export default class GentlePomoPlugin extends Plugin {
 
   async loadSettings() {
     // data.json is hand-editable and sync-merged, so it can arrive malformed
-    // through no fault of ours — and loadData() parses it, so letting that
-    // throw takes onload down and the whole plugin with it. Starting on the
-    // defaults is recoverable; not loading at all is not.
-    let loaded: Partial<GentlePomoSettings> | null = null;
-    let loadFailed = false;
-    try {
-      loaded = (await this.loadData()) as Partial<GentlePomoSettings> | null;
-    } catch (e) {
-      loadFailed = true;
-      logger.error("Could not read data.json; starting from the defaults", e);
-      new Notice(
-        "Gentle pomodoro: couldn't read its settings file, so it started with the defaults. The file itself is untouched — fix or delete data.json and reload the plugin."
-      );
-    }
+    // through no fault of ours. loadData() never throws on that — it returns
+    // `undefined` (see DataRead) — so the damage has to be read off the result,
+    // not caught. Starting on the defaults is recoverable; writing over a file
+    // we could not read is not.
+    const read = await this.settingsStore.read();
+    const loadFailed = read.kind === "damaged";
+    // Fields whose type disagrees with the default are dropped here: a
+    // hand-edited `"tasksPath": 123` is valid JSON and a valid object, and the
+    // first `.trim()` on it would take onload down a few lines below.
+    const loaded =
+      read.kind === "ok"
+        ? (coerceToDefaults(
+            read.data,
+            DEFAULT_SETTINGS as unknown as Record<string, unknown>
+          ) as Partial<GentlePomoSettings> | null)
+        : null;
     // Migrate legacy "sunset" → "classic" (renamed in 2026-05-26). Saved
     // once so future loads don't repeat the rewrite.
     let migrated = false;
@@ -498,22 +510,32 @@ export default class GentlePomoPlugin extends Plugin {
    * mobile. writeLog has carried the same guard since 0.3.0.
    */
   async saveSettings() {
-    try {
-      await this.saveData(this.settings);
-      this.settingsSaveFailedAt = null;
-    } catch (e) {
-      logger.error("Could not save settings", e);
-      const now = Date.now();
-      if (
-        this.settingsSaveFailedAt === null ||
-        now - this.settingsSaveFailedAt > SETTINGS_SAVE_RENOTIFY_MS
-      ) {
-        this.settingsSaveFailedAt = now;
-        new Notice(
-          "Gentle pomodoro: couldn't save its settings — check that the vault is writable. Changes made now will be lost when Obsidian restarts."
-        );
-      }
-    }
+    await this.settingsStore.save(this.settings);
+  }
+
+  /**
+   * Write data.json ourselves rather than through `Plugin.saveData()`.
+   *
+   * `saveData()` is `vault.writePluginData` → `Vault.writeJson`, and that
+   * method's try/catch has an **empty catch body**: every failure resolves
+   * `undefined`. So there is no way to learn that a save failed through it, and
+   * a try/catch around it is a handler that can never run. `vault.adapter.write`
+   * is what `writeJson` itself calls, minus the swallow, so this is the same
+   * write with the failure left visible — the same reason `writeLog` reaches
+   * for the adapter. Byte-for-byte the same output, too: `writeJson` stringifies
+   * with an indent of 2 and no replacer.
+   *
+   * Skipping `saveData` also skips its `_lastDataModifiedTime` stamp, which is
+   * inert here: Obsidian's `_onConfigFileChange` returns immediately unless the
+   * plugin implements `onExternalSettingsChange`, and this one does not.
+   */
+  private async writePluginData(data: unknown): Promise<void> {
+    const dir = this.manifest.dir;
+    if (dir === undefined) throw new Error("plugin directory is unknown");
+    await this.app.vault.adapter.write(
+      normalizePath(`${dir}/data.json`),
+      JSON.stringify(data, undefined, 2)
+    );
   }
 
   private maybeAutoOpenView() {

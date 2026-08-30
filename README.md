@@ -27,7 +27,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 ### 📊 Daily focus goal
 
 - Set a daily focus target (default 2h, set to 0 to disable).
-- Status bar shows progress: `Today 1h 12m / 2h`. Turns green when the goal is met.
+- Status bar shows progress: `Today 1h 12m / 2h 0m`. Turns green when the goal is met.
 - One-time "goal hit" notice each day. Resets automatically at local midnight.
 
 ### 📝 Dataview-friendly daily logs
@@ -130,7 +130,7 @@ Timers, logs, and sounds are all local (audio cues are bundled into `main.js`). 
 
 **Playing the audio.** With a music link set and **Show music player** on, the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. This happens only while the timer panel is open; clearing the link or turning the toggle off stops it entirely.
 
-**Checking a link.** When you paste or edit a link in the settings, the plugin makes one small request to `www.youtube-nocookie.com/oembed` about that link, to tell you if YouTube can't find it and to offer a name for it. It is sent shortly after you stop typing, and it carries only the video or playlist ID you pasted. Unlike the player above, this happens even with the timer panel closed and **Show music player** off — those control playback, not the settings page. No request is made for an empty slot, and answers are remembered for the session so editing the same link twice doesn't ask twice.
+**Checking a link.** When you paste or edit a link in the settings, the plugin makes one small request to `www.youtube-nocookie.com/oembed` about that link, to tell you if YouTube can't find it and to offer a name for it. It is sent shortly after you stop typing, and it carries only the video or playlist ID you pasted. Unlike the player above, this happens even with the timer panel closed and **Show music player** off — those control playback, not the settings page. No request is made for an empty slot, and a link YouTube confirms is remembered for the session, so editing the same working link twice doesn't ask twice. A link it can't find is re-checked at most once a minute, in case it was only just published.
 
 YouTube's handling of both is covered by [Google's privacy policy](https://policies.google.com/privacy).
 

@@ -13,7 +13,14 @@ export class TAbstractFile {
 
 export class Plugin {}
 export class ItemView {}
-export class PluginSettingTab {}
+export class PluginSettingTab {
+  app: unknown;
+  plugin: unknown;
+  constructor(app: unknown, plugin: unknown) {
+    this.app = app;
+    this.plugin = plugin;
+  }
+}
 export class Modal {}
 export class WorkspaceLeaf {}
 export class Notice {

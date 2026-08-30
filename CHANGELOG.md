@@ -4,16 +4,17 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.8] — 2026-08-27
+## [0.5.8] — 2026-08-30
 
 ### Fixed
 
 - **Settings that could not be saved failed silently.** If the vault could not be written — a read-only folder, a sync client holding the file, storage pressure on a phone — a setting you changed appeared to take, and then came back the way it was after a restart, with nothing to explain it. The plugin now tells you when a save fails. It says so at most once a minute, so a jammed disk cannot bury you in messages while you type.
-- **A damaged settings file took the whole plugin down with it.** `data.json` lives in your vault, so it can be edited by hand or merged by sync into something the plugin cannot read. That used to stop the plugin loading at all. It now starts on the defaults and says so — and, importantly, does not write over the file it could not read, so a fixable `data.json` is still there to fix.
+- **A damaged settings file was quietly replaced.** `data.json` lives in your vault, so it can be edited by hand or merged by sync into something the plugin cannot read. When that happened the plugin started on the defaults without a word — and then saved them over the unreadable file, so whatever had been in it was gone. It now tells you instead, and leaves the file alone, so a fixable `data.json` is still there to fix.
+- **One bad value in that file could stop the plugin loading.** A setting edited to the wrong kind of value — a number where text belongs — is still perfectly valid JSON, so nothing above catches it, and the plugin failed to start at all. Any setting whose value is the wrong shape now falls back to its default. Settings the plugin doesn't recognise are left untouched, so moving back and forth between versions doesn't lose anything.
 
 ### Notes
 
-- **Most of this release is internal.** The music player, the settings page and the daily-goal bookkeeping were reorganised so their rules can be tested; nothing about them should look or behave differently. Tests went from 291 to 430, and the parts of the plugin where every past music bug actually lived are now covered.
+- **Most of this release is internal.** The music player, the settings page and the daily-goal bookkeeping were reorganised so their rules can be tested; nothing about them should look or behave differently. Tests went from 291 to 449, and the parts of the plugin where every past music bug actually lived are now covered.
 - On Obsidian versions before 1.13, the settings page is now generated from the same description the newer settings page uses, rather than written out a second time by hand. The two could previously drift apart, and only the newer one was visible to anyone testing. One consequence: a number field there now refuses entries like `5abc` instead of quietly storing `5`, matching what Obsidian 1.13 already did.
 
 ## [0.5.7] — 2026-08-27
