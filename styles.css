@@ -279,11 +279,18 @@
 .gp-timer-shape {
   position: absolute;
   inset: 0;
-  border-radius: var(--gp-radius-shape); /* Soft rounded corners (Squircle-ish) */
+  /* Both are theme slots with today's value as the fallback, so a theme that
+     declares neither renders exactly as before. The CLIP is not a slot: a
+     theme may change the radius, it may not remove overflow: hidden — the
+     frosted pane's backdrop-filter and its iOS pulse workaround are both
+     written against that clipped surface. */
+  border-radius: var(--gp-shape-radius, var(--gp-radius-shape));
   overflow: hidden;
 
-  /* CHANGED: Set a dark background to prevent underlying orange layers from bleeding through edges */
-  background-color: #1e1e1e;
+  /* The flat colour behind the artwork. Classic needs it dark so the orange
+     gradient does not bleed at the clipped edges; frosted paints its own
+     pale base over it. */
+  background-color: var(--gp-shape-base, #1e1e1e);
 
   /* CHANGED: Use dynamic shadow color matching the timer theme */
   box-shadow: var(--gp-elev-rest);
@@ -318,8 +325,18 @@
 
 /* --- The Color Layers --- */
 
+/* Every theme's artwork nodes are built once, for every theme, and carry
+   `gp-art`. They are hidden by default and each theme shows only its own, in
+   its own block — so no theme's CSS ever names another theme's nodes. The old
+   arrangement had frosted-glass hiding classic's three layers by name, which
+   needs N x (N-1) rules to add a third theme and made "classic" whatever was
+   left over rather than a theme in its own right. */
+.gp-art {
+  display: none;
+}
+
 /* Layer 1: Summer Daylight (Bottom) */
-.gp-layer-day {
+.gp-theme-classic .gp-layer-day {
   position: absolute;
   inset: 0;
   background: var(--gp-mode-focus-gradient);
@@ -327,7 +344,7 @@
 }
 
 /* Layer 1.5: Dusk / Dawn (Middle) */
-.gp-layer-dusk {
+.gp-theme-classic .gp-layer-dusk {
   position: absolute;
   inset: 0;
   /* A rich purple/pink gradient to bridge Day and Night */
@@ -342,7 +359,7 @@
 }
 
 /* Layer 2: Night / Northern Lights (Top) */
-.gp-layer-night {
+.gp-theme-classic .gp-layer-night {
   position: absolute;
   inset: 0;
   /* Deep blue/purple to teal/green aurora look */
@@ -354,6 +371,24 @@
 
   /* CHANGED: Increased transition time for a smoother color reset on stop */
   transition: opacity var(--gp-dur-ambient) ease-out;
+}
+
+/* --- Classic theme ---
+   Three stacked gradient sheets, cross-faded by the two opacity variables
+   GentlePomoView publishes. It reads those rather than deriving them from
+   --gp-progress on purpose: the scalar is already eased 0.8s on
+   .gp-timer-visual, and these layers ease again, so a derived value would
+   double the fade to ~1.6s on every skip and reset. */
+.gp-theme-classic {
+  --gp-shape-base: #1e1e1e;
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
+}
+
+.gp-theme-classic .gp-layer-day,
+.gp-theme-classic .gp-layer-dusk,
+.gp-theme-classic .gp-layer-night {
+  display: block;
 }
 
 /* --- Typography --- */
@@ -1156,20 +1191,14 @@
    advances (set by the timer listener in GentlePomoView). The orbs sit
    behind a backdrop-filter pane that blurs them into soft bokeh. */
 
-/* Frosted-glass DOM nodes are always built; hidden by default so the
-   classic theme renders unchanged. */
-.gp-glass-orbs,
-.gp-glass-pane,
-.gp-glass-highlight {
-  display: none;
-}
-
-/* When the frosted-glass theme is active, hide the classic gradient
-   layers and show the glass-theme nodes. */
-.gp-theme-frosted-glass .gp-layer-day,
-.gp-theme-frosted-glass .gp-layer-dusk,
-.gp-theme-frosted-glass .gp-layer-night {
-  display: none;
+/* Pale-lavender base — keeps the composition luminous so it lands at
+   "twilight" not "midnight" by the end of a focus session. Declared as a
+   token rather than as an override of .gp-timer-shape: the theme now fills a
+   slot instead of out-specifying a shared rule. */
+.gp-theme-frosted-glass {
+  --gp-shape-base: #ede5f3;
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
 }
 
 .gp-theme-frosted-glass .gp-glass-orbs,
@@ -1178,20 +1207,14 @@
   display: block;
 }
 
-/* Pale-lavender base — keeps the composition luminous so it lands at
-   "twilight" not "midnight" by the end of a focus session. */
-.gp-theme-frosted-glass .gp-timer-shape {
-  background-color: #ede5f3;
-}
-
-.gp-glass-orbs {
+.gp-theme-frosted-glass .gp-glass-orbs {
   position: absolute;
   inset: 0;
   z-index: 1; /* above the (hidden) gradient layers, below the pane */
   border-radius: inherit;
 }
 
-.gp-orb {
+.gp-theme-frosted-glass .gp-orb {
   position: absolute;
   /* Oversized so three orbs together blanket the shape — no center "dead
      zone" where the pale base shows through. .gp-timer-shape's
@@ -1212,7 +1235,7 @@
 /* Warm/cool endpoints are exposed as custom properties per orb so the
    dark-mode block below can swap just the warm value into fireplace
    tones without restating the whole radial-gradient. */
-.gp-orb-1 {
+.gp-theme-frosted-glass .gp-orb-1 {
   --gp-orb-warm: #f6d365; /* sunny morning yellow */
   --gp-orb-cool: #a594c9; /* soft lavender */
   top: -25%;
@@ -1226,7 +1249,7 @@
   animation: gp-orb-drift-1 65s ease-in-out infinite;
 }
 
-.gp-orb-2 {
+.gp-theme-frosted-glass .gp-orb-2 {
   --gp-orb-warm: #ff8c9c; /* warm pink */
   --gp-orb-cool: #e0a5bd; /* dusty rose */
   top: -10%;
@@ -1240,7 +1263,7 @@
   animation: gp-orb-drift-2 58s ease-in-out infinite;
 }
 
-.gp-orb-3 {
+.gp-theme-frosted-glass .gp-orb-3 {
   --gp-orb-warm: #ff9145; /* sunset orange */
   --gp-orb-cool: #b8c5e8; /* soft periwinkle */
   bottom: -25%;
@@ -1312,7 +1335,7 @@
 /* The frosted glass surface itself. backdrop-filter blurs everything
    behind (the orbs); the inset shadows give a soft top-bright,
    bottom-dark "3D" lip. */
-.gp-glass-pane {
+.gp-theme-frosted-glass .gp-glass-pane {
   position: absolute;
   inset: 0;
   z-index: 2;
@@ -1330,7 +1353,7 @@
 }
 
 /* Top-edge sheen — sells the glass as a curved surface catching light. */
-.gp-glass-highlight {
+.gp-theme-frosted-glass .gp-glass-highlight {
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -1352,8 +1375,8 @@
    notch in luminance so they read as soft washes rather than light
    sources. Top sheen + 1px white top-edge highlight stay (catch-light
    on glass looks right in both modes). */
-.theme-dark .gp-theme-frosted-glass .gp-timer-shape {
-  background-color: #2a2438;
+.theme-dark .gp-theme-frosted-glass {
+  --gp-shape-base: #2a2438;
 }
 
 .theme-dark .gp-theme-frosted-glass .gp-glass-pane {
@@ -1364,19 +1387,19 @@
    like flame on a winter night against the deep-plum dark base. Cool
    endpoints stay pastel-twilight: the arc reads as fire-at-peak →
    embers settling into twilight as --gp-progress advances. */
-.theme-dark .gp-orb-1 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-1 {
   --gp-orb-warm: #ffae40; /* warm orange */
 }
 
-.theme-dark .gp-orb-2 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-2 {
   --gp-orb-warm: #ff9333; /* vivid mid-orange */
 }
 
-.theme-dark .gp-orb-3 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-3 {
   --gp-orb-warm: #ff7530; /* deep orange */
 }
 
-.theme-dark .gp-orb {
+.theme-dark .gp-theme-frosted-glass .gp-orb {
   /* Near-natural luminance so the orange flames glow softly without
      overpowering the dim plum glass. Saturate stays at 155% to keep
      the fire feel. */

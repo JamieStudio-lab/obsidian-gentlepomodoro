@@ -168,18 +168,20 @@ export class GentlePomoView extends ItemView {
     // Create Shape
     this.timerShape = visual.createDiv("gp-timer-shape");
 
+    // Artwork nodes for BOTH themes are built once, here, and carry `gp-art`:
+    // hidden by default in CSS, and each theme's own block shows only its own.
     // Create Layers in Order: Day -> Dusk -> Night
-    this.timerShape.createDiv("gp-layer-day");
-    this.timerShape.createDiv("gp-layer-dusk");
-    this.timerShape.createDiv("gp-layer-night");
+    this.timerShape.createDiv("gp-art gp-layer-day");
+    this.timerShape.createDiv("gp-art gp-layer-dusk");
+    this.timerShape.createDiv("gp-art gp-layer-night");
 
     // Frosted-glass theme layers (CSS-toggled per theme; built once here).
-    const orbs = this.timerShape.createDiv("gp-glass-orbs");
+    const orbs = this.timerShape.createDiv("gp-art gp-glass-orbs");
     orbs.createDiv("gp-orb gp-orb-1");
     orbs.createDiv("gp-orb gp-orb-2");
     orbs.createDiv("gp-orb gp-orb-3");
-    this.timerShape.createDiv("gp-glass-pane");
-    this.timerShape.createDiv("gp-glass-highlight");
+    this.timerShape.createDiv("gp-art gp-glass-pane");
+    this.timerShape.createDiv("gp-art gp-glass-highlight");
 
     const content = visual.createDiv("gp-timer-content");
     this.dayNightIndicator = content.createDiv("gp-daynight-indicator");
@@ -702,7 +704,13 @@ export class GentlePomoView extends ItemView {
   }
 
   applySettings() {
-    const theme = this.plugin.settings.theme;
+    // Resolve rather than compare, so an unrecognised stored value still lands
+    // on a real theme. Artwork is opt-in per theme now, so a theme class that
+    // matched nothing would leave the square empty; before 0.6.0 it fell
+    // through to classic's unscoped rules and the damage was invisible.
+    // coerceToDefaults cannot catch this: a bogus theme id is still a string,
+    // so it has the same type as the default and passes.
+    const theme = this.plugin.settings.theme === "frosted-glass" ? "frosted-glass" : "classic";
     this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
     this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
 
