@@ -6,7 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.1] — 2026-09-01
 
-<!-- PLACEHOLDER — written from the diff at the end of the branch. -->
+The visible half of the design-system work 0.6.0 laid the groundwork for. The
+timer square finally sets in one typeface, the day/night badge stops
+contradicting the artwork it sits on, and every control the panel builds has a
+focus ring. The two shipped themes are otherwise left looking exactly as they
+looked.
+
+### Fixed
+
+- **The day/night badge was a whole phase behind the timer.** It showed a sun
+  for the entire first half of a focus session and only reached the moon once
+  you ran into overtime — while the square behind it faded all the way to night.
+  Badge and artwork now come from the same value, so they cannot disagree again.
+- **Three typefaces inside the timer square.** The clock, the mode label, the
+  end time and the overtime total each named a different font — or, in one case,
+  none at all. Invisible on a Mac, where the first font in every list is
+  installed; on Windows and Linux the clock was rounded and the label beneath it
+  was not. All four now use the same face.
+- **The overtime total jittered sideways once a second.** It is the visible
+  clock once a session runs over, and it was the one ticking number in the
+  plugin without fixed-width figures.
+- **The keyboard could reach controls you could not see.** The settings panel,
+  the Stop / Reset / −5 / +5 groups and the task list are hidden by collapsing
+  them, which does not remove them from the tab order — so Tab could land on
+  "Reset to defaults" inside a closed panel and Enter would fire it. All three
+  are now properly inert while closed.
+
+### Added
+
+- **A focus ring on every control.** Five had none at all, including the panel's
+  most-used button, and three others had three different treatments. Rows inside
+  the scrolling lists get an inset ring so it is not clipped at the top and
+  bottom of the list.
+- **The task picker is keyboard-operable.** Arrow to a row and press Enter or
+  Space, the way the music-link picker already worked. Closing it puts focus
+  back on the task button instead of dropping you at the top of the panel.
+
+### Changed
+
+- **The day/night badge is bigger and clearer** — a larger pill and a larger
+  glyph. Sunrise and sunset used to differ only in whether two small ticks were
+  diagonal or horizontal, which at that size nobody could see; each now carries
+  an arrow pointing the way the sun is going.
+- Eleven text sizes become six. Seven of them shift by less than a pixel.
+
+### Internal
+
+- On-artwork text colours become per-theme slots, defaulting to exactly today's
+  values, plus a scrim that both shipped themes set to zero. This is what lets a
+  future theme use artwork the plugin did not draw — white text hardcoded for a
+  dark square cannot survive an arbitrary picture. One deliberate sub-perceptual
+  change: the mode label's text shadow moves from 0.2 to 0.22 alpha so it can
+  share one token.
+- The four badge glyphs become data rather than a branch, so a theme can supply
+  its own set.
+- 475 → 488 tests. The new day/night suite is mutation-checked against five
+  breakages, including a verbatim restoration of the phase bug above.
 
 ## [0.6.0] — 2026-09-01
 
