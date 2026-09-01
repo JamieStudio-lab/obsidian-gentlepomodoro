@@ -38,6 +38,25 @@
   min-height: 0;
 }
 
+/* Registers --gp-progress as an animatable <number>: the timer's 0→1 sky
+   phase, published from GentlePomoView and read by every theme.
+
+   WITHOUT THIS REGISTRATION a custom property is raw text substitution, so
+   dependent color-mix() values snap on every JS update instead of easing —
+   the "skip" button feels jarring rather than smooth.
+
+   IT LIVES HERE, NOT IN A THEME BLOCK. Until 0.6.0 it sat inside the
+   frosted-glass section while its consumer — the transition on
+   .gp-timer-visual below — is shared by every theme. Registration is
+   document-global, so that placement rendered identically and was purely a
+   trap: deleting or relocating the frosted-glass block would have silently
+   un-smoothed the classic theme and every future one. */
+@property --gp-progress {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 /* --- The Abstract Shape Container ---
    Sticky to the top of the scrolling leaf so the focus color block + time
    number remain visible while the user scrolls through settings / tasks. */
@@ -58,10 +77,10 @@
   /* Enables responsive scaling based on the actual sidebar width */
   container-type: inline-size;
 
-  /* Smooth interpolation of --gp-progress (registered via @property
-     in the frosted-glass block) so the orbs ease through color phases
-     when the user clicks skip/reset. Matches the 0.8s opacity ease-out
-     used by the classic theme's dusk/night layers. */
+  /* Smooth interpolation of --gp-progress (registered via @property just
+     above) so a theme eases through its colour phases when the user clicks
+     skip/reset. Matches the 0.8s opacity ease-out used by the classic
+     theme's dusk/night layers. */
   transition: --gp-progress 0.8s ease-out;
 }
 
@@ -943,18 +962,6 @@
    colors interpolate through the sunrise→sunset palette as --gp-progress
    advances (set by the timer listener in GentlePomoView). The orbs sit
    behind a backdrop-filter pane that blurs them into soft bokeh. */
-
-/* Register --gp-progress as an animatable <number> so the engine can
-   interpolate it through transitions. Without this, CSS variable
-   changes are raw text substitution and dependent color-mix() values
-   in the orb backgrounds would snap on every JS update — making the
-   "skip" button feel jarring instead of smooth. The transition itself
-   is declared on .gp-timer-visual above. */
-@property --gp-progress {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
 
 /* Frosted-glass DOM nodes are always built; hidden by default so the
    classic theme renders unchanged. */
