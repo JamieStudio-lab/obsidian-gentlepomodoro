@@ -6,7 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.0] — 2026-09-01
 
-<!-- PLACEHOLDER — written from the diff at the end of the branch. -->
+A structural release. The plugin gets a design system — named values for
+spacing, type, corners, motion and depth — and the two themes become genuinely
+independent of each other. **Nothing in the timer panel looks any different**,
+which was the requirement: the visible polish this unlocks lands in 0.6.1.
+
+### Changed
+
+- **The download is a third of the size.** `main.js` went from 1.94 MB to 721 KB.
+  Almost two thirds of every release was a debugging sourcemap that only the
+  developer could use, shipped because the development and release builds shared
+  one configuration. They are separate now.
+- **Themes no longer depend on each other.** "Classic" was never really a theme —
+  it was whatever was left after Frosted Glass hid the parts it did not want, by
+  name. Each theme now owns its own artwork and declares its own colours, and
+  neither mentions the other. Adding a theme is two steps instead of five, and
+  the plugin's theme contract is written down in THEMES.md for anyone who wants
+  to contribute one.
+- **An unreadable theme name in `data.json` now lands on Classic** instead of on
+  whatever happened to be left over. Hand-editing or a sync merge can put a value
+  there that no theme matches, and it is a string like any other, so nothing
+  earlier in the load could catch it.
+
+### Fixed
+
+- **A shadow setting that never existed.** The timer's drop shadow was written to
+  read a colour the plugin never defined, so for the whole life of the theme
+  feature every theme quietly fell back to plain black. It now has an owner in
+  each theme — still black today, and available to a theme that wants to tint it.
+
+### Internal
+
+- `styles.css` gains a token layer: 11 font sizes, ~70 spacing values across two
+  unit systems, 7 corner radii and 12 durations written 14 different ways
+  collapse onto named scales, across 169 substitutions. Verified by resolving
+  every token back and diffing against the previous file — the only value that
+  moved is a border radius that renders identically.
+- New `DESIGN.md` records the rules a stylesheet change has to obey, including
+  the ones that look like tidy-ups and break things silently.
+- New `themes.ts` is the single place a theme is registered; a missing entry is
+  now a compile error rather than a theme that silently stores the wrong value.
+- New test suite over `styles.css` itself — undeclared tokens, dead tokens,
+  cross-theme references, and the two values that must agree with TypeScript.
+  Mutation-checked: nine deliberate breakages, nine caught. 452 → 475 tests.
 
 ## [0.5.8] — 2026-08-30
 
