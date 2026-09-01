@@ -1,3 +1,184 @@
+/* =========================================================================
+   DESIGN TOKENS
+   -------------------------------------------------------------------------
+   See DESIGN.md for the layering, the artwork-vs-chrome rule, and the
+   "do not break" register. Three things about this block specifically:
+
+   ON :root, NOT .gp-root. Four plugin surfaces render outside the view
+   container — the status bar (addStatusBarItem), the confirm modal, the
+   settings-tab error line, and the leaf-content min-height selector at the
+   top of this file. A .gp-root-scoped block misses all four, and misses them
+   invisibly, because the timer panel — where anyone would look to check — is
+   fine.
+
+   NO THEME TOKENS HERE. A theme's ink, scrim, shape and shadow colours live
+   only inside its own .gp-theme-<id> block. Putting them on :root would make
+   them shared defaults that themes override, which is exactly the structure
+   that made "classic" the implicit default in the first place, moved down one
+   layer.
+
+   ONLY WHAT IS CONSUMED. Every token below is read somewhere in this file. A
+   scale step that names a single one-off measurement is not consolidation —
+   it is a rename that looks deliberate. Opacity and icon-size ramps were
+   drafted and dropped for exactly that reason; so were `ease`, `ease-out` and
+   `ease-in-out`, which are CSS keywords that gain nothing from indirection.
+   ========================================================================= */
+:root {
+  /* --- Spacing ---------------------------------------------------------
+     PIXELS, DELIBERATELY. The three constants this layout is solved
+     against — the 260px control column, the 42/56px buttons, the 44/50px
+     touch floors — are all px. In rem the gaps would grow with Obsidian's
+     UI scale while the column did not, and the row-fits-in-260px
+     arithmetic only holds while both axes scale together. Type stays rem,
+     because type genuinely should scale. */
+  --gp-space-1: 2px;
+  --gp-space-2: 4px;
+  --gp-space-3: 6px;
+  --gp-space-4: 8px;
+  --gp-space-5: 12px;
+  --gp-space-6: 14px; /* earns its step: 12 tightens the touch row, 16 overflows it */
+  --gp-space-7: 16px;
+  --gp-space-8: 20px;
+  --gp-space-9: 24px;
+
+  /* --- Type ------------------------------------------------------------
+     Four fixed steps. The two fluid sizes (the clock and the overtime
+     total) stay written out at their use site: both are clamp(... cqi ...)
+     against the timer square's own container, and naming a single-use
+     value consolidates nothing. Four sizes remain off-scale for now —
+     0.95 / 0.78 / 0.72 / 0.70rem — because snapping them moves pixels, and
+     0.6.0 does not. They land in 0.6.1. */
+  --gp-text-body: 0.9rem;
+  --gp-text-label: 0.85rem;
+  --gp-text-caption: 0.8rem;
+  --gp-text-micro: 0.75rem;
+
+  --gp-weight-medium: 500;
+  --gp-weight-strong: 600;
+  --gp-weight-display: 700; /* the file's only 700: small rounded type over a live gradient reads thin at 600 */
+
+  /* --- Shape -----------------------------------------------------------
+     --gp-radius-pill is 999px; the toggle slider's 12px maps to it rather
+     than to -lg, because 12 is exactly half its 24px track and it is a
+     pill by intent. Same pixels today, but it stays a pill if the track
+     height ever changes. The literal 50% on the orbs and the toggle knob
+     stays literal — those are true circles, not a radius step. */
+  --gp-radius-xs: 4px;
+  --gp-radius-sm: 6px;
+  --gp-radius-md: 8px;
+  --gp-radius-lg: 12px;
+  --gp-radius-pill: 999px;
+  --gp-radius-shape: 35px; /* the timer square's squircle */
+
+  /* --- Motion ----------------------------------------------------------
+     Twelve durations were written fourteen ways: this file contained both
+     `0.2s` and `200ms`, and both `0.26s` and `260ms`. The five ambient
+     tempos stay literal at their use sites — the 8s breath, the 6s and 1s
+     overtime pair, and the 65s/58s/72s orb drifts, whose mutual
+     non-divisibility is the point.
+
+     --gp-ease-overshoot was spelled out ten times with a comment asserting
+     the agreement in prose and enforcing it nowhere. */
+  --gp-dur-instant: 100ms;
+  --gp-dur-fast: 200ms;
+  --gp-dur-reveal: 260ms;
+  --gp-dur-panel: 350ms;
+  --gp-dur-collapse: 500ms;
+  --gp-dur-list-slow: 550ms;
+  --gp-dur-ambient: 800ms;
+  --gp-ease-overshoot: cubic-bezier(0.2, 0.9, 0.4, 1.1);
+
+  /* --- Surfaces --------------------------------------------------------
+     --gp-elev-* keep the rgba(var(--gp-shadow-rgb, ...)) channel form on
+     purpose. That variable is read six times and declared nowhere, so every
+     theme has always rendered a plain black shadow via the fallback — but it
+     is already threaded through both pulse keyframes, which makes it the
+     per-theme accent hook, not dead weight. It gets an owner when the theme
+     blocks land. NOTE it supplies three comma-separated CHANNELS, not a
+     colour: "improving" it to a hex or color() makes all six shadows invalid
+     at computed-value time and the timer's depth silently disappears. */
+  --gp-rule: 1px solid var(--background-modifier-border);
+  --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+
+  /* --- Mode identity ---------------------------------------------------
+     Duplicated byte-for-byte across a component boundary no scope can span:
+     the timer's gradient layers live in the view, the matching status-bar
+     dot is created by addStatusBarItem() and can never be reached by a
+     .gp-root- or .gp-theme-* selector. Theme-INDEPENDENT by design — this is
+     mode identity, not artwork. */
+  --gp-mode-focus-gradient: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  --gp-mode-break-gradient: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+
+  /* --- Structural constants --------------------------------------------
+     Not scale steps. Each is a solved equation with its own failure mode,
+     which is why they are named rather than rounded onto the ramp above. */
+
+  /* A BUDGET, not a size. Five music controls come to 5x42 + 4x12 = 258px.
+     .gp-controls-row is justify-content: center with non-shrinking children,
+     so an over-wide row loses content off BOTH ends with no way to scroll
+     back to the start — which is why the decorative music glyph was deleted
+     to buy the fifth control its 258px. */
+  --gp-control-column: 260px;
+
+  /* Headroom above a computed natural width (2x42 + 12 = 96 against a 100px
+     cap). Deliberately not --gp-space-2: it must survive independently if
+     the spacing ramp is ever re-tuned. */
+  --gp-row-slack: 4px;
+
+  /* Height of a settings-panel control: rows, number inputs, the segmented
+     track, the reset button. All four are already overridden together on
+     touch, which is the proof they are one concept. */
+  --gp-control-h: 32px;
+
+  /* The TOTAL subtraction from the track, not a padding. Desktop 32 - 4 = 28,
+     touch 50 - 8 = 42. The two tiers genuinely differ, so any shared formula
+     that multiplies or picks one number mis-sizes the other by 4px — visible
+     as a mis-centred pill rather than a broken layout, which is how it would
+     survive review. */
+  --gp-segmented-inset: 4px;
+
+  /* The bare 44px three comments cite in prose. Naming it makes the
+     invariant "44 > 36" expressible between two tokens rather than narrated:
+     an icon button may shrink to this, and never below the glyph floor. */
+  --gp-tap-floor: 44px;
+
+  /* One element, four sizes, previously in four unrelated blocks.
+     --gp-clock-max-touch holds a whole expression, which is legal for a
+     custom property and keeps the 280/38vh pair from being split. */
+  --gp-clock-min: 200px;
+  --gp-clock-max: 220px;
+  --gp-clock-max-touch: min(280px, 38vh);
+  --gp-clock-compact: 150px;
+
+  /* Two tokens deliberately hold the same 320px: one is the resize-divider
+     floor on the leaf-content element, the other is an animation cap that
+     doubles as a scroll cap and is neutralised to `none` on mobile. A
+     mechanical same-value-same-token pass would fuse them, and the next
+     change to one would silently move the other. */
+  --gp-leaf-min-height: 320px;
+  --gp-panel-max-height: 320px;
+  --gp-list-max-height: 250px;
+
+  /* MUST STAY em. var() substitutes token TEXT, so these still resolve
+     against each using element's own font-size — which is the point, since a
+     type-scale change then cannot make a cap smaller than its content. In px
+     it silently could, and every one of these has overflow: hidden, so the
+     failure is clipped content with no error and no scrollbar. */
+  --gp-reveal-cap: 2.5em;
+  --gp-caption-word-cap: 7em;
+
+  --gp-root-pad: 20px;
+
+  /* Hoisted from .gp-controls-row, where they were declared on the only
+     element that used them. On :root so the music row's max-height calc
+     stops depending on being a .gp-controls-row itself. The touch tier
+     redefines all three together, at the bottom of this file. */
+  --gp-control-gap: 12px;
+  --gp-icon-btn-size: 42px;
+  --gp-icon-svg-size: 20px;
+}
+
 /* Enforce the minimum height on the leaf-content itself (not .gp-root)
    so Obsidian's resize-divider actually stops at 320px instead of just
    letting our internal layout overflow. */
