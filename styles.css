@@ -53,6 +53,22 @@
   --gp-text-caption: 0.8rem;
   --gp-text-micro: 0.75rem;
 
+  /* The plugin's own voice, and the ONLY font-family it declares. Four
+     elements share the 220px timer square, and before 0.6.1 they used three
+     different stacks: the clock named seven families, the mode label and end
+     time named three, and the overtime total named none at all and fell
+     through to Obsidian's interface font. On a Mac that is invisible, because
+     the first name in every list is installed — which is exactly why it
+     shipped. On Windows or Linux the clock rendered rounded and the label 4px
+     beneath it did not. */
+  --gp-font-rounded:
+    "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI",
+    sans-serif;
+
+  /* Tracking for the three uppercase eyebrow labels. Small caps set solid
+     without it; the value is shared, so it is named once. */
+  --gp-tracking-eyebrow: 0.05em;
+
   --gp-weight-medium: 500;
   --gp-weight-strong: 600;
   --gp-weight-display: 700; /* the file's only 700: small rounded type over a live gradient reads thin at 600 */
@@ -380,6 +396,7 @@
    .gp-timer-visual, and these layers ease again, so a derived value would
    double the fade to ~1.6s on every skip and reset. */
 .gp-theme-classic {
+  --gp-font-display: var(--gp-font-rounded);
   --gp-shape-base: #1e1e1e;
   --gp-shape-radius: var(--gp-radius-shape);
   --gp-shadow-rgb: 0, 0, 0;
@@ -479,9 +496,7 @@
        4. Segoe UI: Windows default (not rounded, but cleaner than Arial)
        5. sans-serif: Fallback
     */
-  font-family:
-    "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI",
-    sans-serif;
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
   color: #ffffff;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 
@@ -525,10 +540,10 @@
   margin-top: 0;
   font-size: var(--gp-text-caption);
   text-transform: uppercase;
-  letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
+  letter-spacing: 0.08em; /* em, so tracking follows the size token instead of drifting from it */
   color: rgba(255, 255, 255, 0.9);
   font-weight: var(--gp-weight-display);
-  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
@@ -541,11 +556,10 @@
    same recipe as .gp-total-time — and because .gp-timer-visual is a fixed square,
    the reveal grows inside it, so the controls below never shift. */
 .gp-end-time {
-  font-size: 0.72rem;
+  font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
-  letter-spacing: 0.3px;
   color: rgba(255, 255, 255, 0.82);
-  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -744,9 +758,9 @@
 
 /* The label "Select Task" or "Current Task" (Small top row) */
 .gp-task-btn-label {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-muted);
   font-weight: var(--gp-weight-strong);
   width: 100%;
@@ -755,7 +769,7 @@
 
 /* The actual task text (Main row) */
 .gp-task-btn-text {
-  font-size: 0.95rem;
+  font-size: var(--gp-text-body);
   color: var(--text-normal);
   width: 100%;
   text-align: left;
@@ -839,10 +853,10 @@
 
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-faint);
   margin-top: var(--gp-space-8);
   margin-bottom: var(--gp-space-4);
@@ -1032,7 +1046,7 @@
 }
 
 .gp-status-focus-total {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   opacity: 0.65;
   margin-left: var(--gp-space-2);
 }
@@ -1085,7 +1099,7 @@
   font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-muted);
   margin-top: var(--gp-space-5);
   margin-bottom: var(--gp-space-2);
@@ -1180,7 +1194,7 @@
 }
 
 .gp-task-empty-hint {
-  font-size: 0.78rem;
+  font-size: var(--gp-text-caption);
   line-height: 1.4;
   color: var(--text-muted);
 }
@@ -1196,6 +1210,7 @@
    token rather than as an override of .gp-timer-shape: the theme now fills a
    slot instead of out-specifying a shared rule. */
 .gp-theme-frosted-glass {
+  --gp-font-display: var(--gp-font-rounded);
   --gp-shape-base: #ede5f3;
   --gp-shape-radius: var(--gp-radius-shape);
   --gp-shadow-rgb: 0, 0, 0;
@@ -1450,7 +1465,12 @@
 .gp-total-time {
   font-size: clamp(0.75rem, 10cqi, 1rem);
   font-weight: var(--gp-weight-medium);
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
   color: var(--text-muted);
+  /* It is the VISIBLE clock during overtime — .gp-state-running hides
+     .gp-timer-time — and was the one ticking number in the plugin without
+     tabular figures, so the total jittered sideways once a second. */
+  font-variant-numeric: tabular-nums;
   margin: 0;
   margin-bottom: 0;
   opacity: 0; /* Hidden by default */
@@ -1626,7 +1646,7 @@
   gap: var(--gp-space-3);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--gp-text-caption);
   line-height: 1.3;
 }
 

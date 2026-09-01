@@ -59,6 +59,18 @@ describe("token hygiene", () => {
   });
 });
 
+/**
+ * What a theme must declare. Every one is read by a shared rule with today's
+ * value as an inline fallback, so a theme that declares nothing still renders —
+ * the list is what THEMES.md publishes as the theme API.
+ */
+const CONTRACT_TOKENS = [
+  "--gp-font-display",
+  "--gp-shape-base",
+  "--gp-shape-radius",
+  "--gp-shadow-rgb",
+];
+
 describe("theme independence", () => {
   const themeBlocks = THEME_IDS.map((id) => ({ id, cls: themeClass(id) }));
 
@@ -66,7 +78,7 @@ describe("theme independence", () => {
     for (const { id, cls } of themeBlocks) {
       const block = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(css);
       expect(block, `no .${cls} token block in styles.css — see THEMES.md`).not.toBeNull();
-      for (const token of ["--gp-shape-base", "--gp-shape-radius", "--gp-shadow-rgb"]) {
+      for (const token of CONTRACT_TOKENS) {
         expect(block?.[1], `theme "${id}" must declare ${token}`).toContain(token);
       }
     }
@@ -156,7 +168,7 @@ describe("raw values outside the scale", () => {
     // A token declared halfway down the file is how the old --gp-progress
     // registration ended up inside one theme's section while a shared rule
     // depended on it.
-    const themeScoped = new Set(["--gp-shape-base", "--gp-shape-radius", "--gp-shadow-rgb"]);
+    const themeScoped = new Set(CONTRACT_TOKENS);
     const stray = [...rules.matchAll(/^\s*(--gp-[a-z0-9-]+)\s*:/gm)]
       .map((m) => m[1])
       .filter((t) => !themeScoped.has(t))
