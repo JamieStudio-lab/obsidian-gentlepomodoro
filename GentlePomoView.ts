@@ -1,4 +1,5 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import {
@@ -168,18 +169,20 @@ export class GentlePomoView extends ItemView {
     // Create Shape
     this.timerShape = visual.createDiv("gp-timer-shape");
 
+    // Artwork nodes for BOTH themes are built once, here, and carry `gp-art`:
+    // hidden by default in CSS, and each theme's own block shows only its own.
     // Create Layers in Order: Day -> Dusk -> Night
-    this.timerShape.createDiv("gp-layer-day");
-    this.timerShape.createDiv("gp-layer-dusk");
-    this.timerShape.createDiv("gp-layer-night");
+    this.timerShape.createDiv("gp-art gp-layer-day");
+    this.timerShape.createDiv("gp-art gp-layer-dusk");
+    this.timerShape.createDiv("gp-art gp-layer-night");
 
     // Frosted-glass theme layers (CSS-toggled per theme; built once here).
-    const orbs = this.timerShape.createDiv("gp-glass-orbs");
+    const orbs = this.timerShape.createDiv("gp-art gp-glass-orbs");
     orbs.createDiv("gp-orb gp-orb-1");
     orbs.createDiv("gp-orb gp-orb-2");
     orbs.createDiv("gp-orb gp-orb-3");
-    this.timerShape.createDiv("gp-glass-pane");
-    this.timerShape.createDiv("gp-glass-highlight");
+    this.timerShape.createDiv("gp-art gp-glass-pane");
+    this.timerShape.createDiv("gp-art gp-glass-highlight");
 
     const content = visual.createDiv("gp-timer-content");
     this.dayNightIndicator = content.createDiv("gp-daynight-indicator");
@@ -702,9 +705,14 @@ export class GentlePomoView extends ItemView {
   }
 
   applySettings() {
-    const theme = this.plugin.settings.theme;
-    this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
-    this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
+    // Driven by the registry, so a new theme needs no change here. resolveTheme
+    // rather than a comparison: artwork is opt-in per theme since 0.6.0, so an
+    // id matching no theme would leave the square empty — before that it fell
+    // through to classic's unscoped rules and the damage was invisible.
+    const theme = resolveTheme(this.plugin.settings.theme);
+    for (const id of THEME_IDS) {
+      this.containerEl.toggleClass(themeClass(id), id === theme);
+    }
 
     const state = this.lastState ?? this.timer.getState();
 

@@ -1,8 +1,197 @@
+/* =========================================================================
+   DESIGN TOKENS
+   -------------------------------------------------------------------------
+   See DESIGN.md for the layering, the artwork-vs-chrome rule, and the
+   "do not break" register. Three things about this block specifically:
+
+   ON :root, NOT .gp-root. Four plugin surfaces render outside the view
+   container — the status bar (addStatusBarItem), the confirm modal, the
+   settings-tab error line, and the leaf-content min-height selector at the
+   top of this file. A .gp-root-scoped block misses all four, and misses them
+   invisibly, because the timer panel — where anyone would look to check — is
+   fine.
+
+   NO THEME TOKENS HERE. A theme's ink, scrim, shape and shadow colours live
+   only inside its own .gp-theme-<id> block. Putting them on :root would make
+   them shared defaults that themes override, which is exactly the structure
+   that made "classic" the implicit default in the first place, moved down one
+   layer.
+
+   ONLY WHAT IS CONSUMED. Every token below is read somewhere in this file. A
+   scale step that names a single one-off measurement is not consolidation —
+   it is a rename that looks deliberate. Opacity and icon-size ramps were
+   drafted and dropped for exactly that reason; so were `ease`, `ease-out` and
+   `ease-in-out`, which are CSS keywords that gain nothing from indirection.
+   ========================================================================= */
+:root {
+  /* --- Spacing ---------------------------------------------------------
+     PIXELS, DELIBERATELY. The three constants this layout is solved
+     against — the 260px control column, the 42/56px buttons, the 44/50px
+     touch floors — are all px. In rem the gaps would grow with Obsidian's
+     UI scale while the column did not, and the row-fits-in-260px
+     arithmetic only holds while both axes scale together. Type stays rem,
+     because type genuinely should scale. */
+  --gp-space-1: 2px;
+  --gp-space-2: 4px;
+  --gp-space-3: 6px;
+  --gp-space-4: 8px;
+  --gp-space-5: 12px;
+  --gp-space-6: 14px; /* earns its step: 12 tightens the touch row, 16 overflows it */
+  --gp-space-7: 16px;
+  --gp-space-8: 20px;
+  --gp-space-9: 24px;
+
+  /* --- Type ------------------------------------------------------------
+     Four fixed steps. The two fluid sizes (the clock and the overtime
+     total) stay written out at their use site: both are clamp(... cqi ...)
+     against the timer square's own container, and naming a single-use
+     value consolidates nothing. Four sizes remain off-scale for now —
+     0.95 / 0.78 / 0.72 / 0.70rem — because snapping them moves pixels, and
+     0.6.0 does not. They land in 0.6.1. */
+  --gp-text-body: 0.9rem;
+  --gp-text-label: 0.85rem;
+  --gp-text-caption: 0.8rem;
+  --gp-text-micro: 0.75rem;
+
+  --gp-weight-medium: 500;
+  --gp-weight-strong: 600;
+  --gp-weight-display: 700; /* the file's only 700: small rounded type over a live gradient reads thin at 600 */
+
+  /* --- Shape -----------------------------------------------------------
+     --gp-radius-pill is 999px; the toggle slider's 12px maps to it rather
+     than to -lg, because 12 is exactly half its 24px track and it is a
+     pill by intent. Same pixels today, but it stays a pill if the track
+     height ever changes. The literal 50% on the orbs and the toggle knob
+     stays literal — those are true circles, not a radius step. */
+  --gp-radius-xs: 4px;
+  --gp-radius-sm: 6px;
+  --gp-radius-md: 8px;
+  --gp-radius-lg: 12px;
+  --gp-radius-pill: 999px;
+  --gp-radius-shape: 35px; /* the timer square's squircle */
+
+  /* --- Motion ----------------------------------------------------------
+     Twelve distinct durations were written fourteen ways: this file
+     contained both `0.2s` and `200ms`, and both `0.26s` and `260ms`. Eight
+     steps absorb 45 of those declarations EXACTLY — no timing moves.
+
+     Four values deliberately keep their literals rather than snap, because
+     0.6.0 changes nothing a user could notice: 150ms (x2), 220ms (x1),
+     250ms (x6) and 1s (x1). They join the scale in 0.6.1, where a 20-50ms
+     shift can be listed as an intended change.
+
+     The ambient tempos stay literal at their use sites — the 8s breath, the
+     6s and 1s overtime pair, and the 65s/58s/72s orb drifts, whose mutual
+     non-divisibility is the point.
+
+     --gp-ease-overshoot was spelled out ten times with a comment asserting
+     the agreement in prose and enforcing it nowhere. */
+  --gp-dur-instant: 100ms;
+  --gp-dur-fast: 200ms;
+  --gp-dur-reveal: 260ms;
+  --gp-dur-open: 300ms;
+  --gp-dur-panel: 350ms;
+  --gp-dur-collapse: 500ms;
+  --gp-dur-list-slow: 550ms;
+  --gp-dur-ambient: 800ms;
+  --gp-ease-overshoot: cubic-bezier(0.2, 0.9, 0.4, 1.1);
+
+  /* --- Surfaces --------------------------------------------------------
+     --gp-elev-* keep the rgba(var(--gp-shadow-rgb, ...)) channel form on
+     purpose. That variable is read six times and declared nowhere, so every
+     theme has always rendered a plain black shadow via the fallback — but it
+     is already threaded through both pulse keyframes, which makes it the
+     per-theme accent hook, not dead weight. It gets an owner when the theme
+     blocks land. NOTE it supplies three comma-separated CHANNELS, not a
+     colour: "improving" it to a hex or color() makes all six shadows invalid
+     at computed-value time and the timer's depth silently disappears. */
+  --gp-rule: 1px solid var(--background-modifier-border);
+  --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+
+  /* --- Mode identity ---------------------------------------------------
+     Duplicated byte-for-byte across a component boundary no scope can span:
+     the timer's gradient layers live in the view, the matching status-bar
+     dot is created by addStatusBarItem() and can never be reached by a
+     .gp-root- or .gp-theme-* selector. Theme-INDEPENDENT by design — this is
+     mode identity, not artwork. */
+  --gp-mode-focus-gradient: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  --gp-mode-break-gradient: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+
+  /* --- Structural constants --------------------------------------------
+     Not scale steps. Each is a solved equation with its own failure mode,
+     which is why they are named rather than rounded onto the ramp above. */
+
+  /* A BUDGET, not a size. Five music controls come to 5x42 + 4x12 = 258px.
+     .gp-controls-row is justify-content: center with non-shrinking children,
+     so an over-wide row loses content off BOTH ends with no way to scroll
+     back to the start — which is why the decorative music glyph was deleted
+     to buy the fifth control its 258px. */
+  --gp-control-column: 260px;
+
+  /* Headroom above a computed natural width (2x42 + 12 = 96 against a 100px
+     cap). Deliberately not --gp-space-2: it must survive independently if
+     the spacing ramp is ever re-tuned. */
+  --gp-row-slack: 4px;
+
+  /* Height of a settings-panel control: rows, number inputs, the segmented
+     track, the reset button. All four are already overridden together on
+     touch, which is the proof they are one concept. */
+  --gp-control-h: 32px;
+
+  /* The TOTAL subtraction from the track, not a padding. Desktop 32 - 4 = 28,
+     touch 50 - 8 = 42. The two tiers genuinely differ, so any shared formula
+     that multiplies or picks one number mis-sizes the other by 4px — visible
+     as a mis-centred pill rather than a broken layout, which is how it would
+     survive review. */
+  --gp-segmented-inset: 4px;
+
+  /* The bare 44px three comments cite in prose. Naming it makes the
+     invariant "44 > 36" expressible between two tokens rather than narrated:
+     an icon button may shrink to this, and never below the glyph floor. */
+  --gp-tap-floor: 44px;
+
+  /* One element, four sizes, previously in four unrelated blocks.
+     --gp-clock-max-touch holds a whole expression, which is legal for a
+     custom property and keeps the 280/38vh pair from being split. */
+  --gp-clock-min: 200px;
+  --gp-clock-max: 220px;
+  --gp-clock-max-touch: min(280px, 38vh);
+  --gp-clock-compact: 150px;
+
+  /* Two tokens deliberately hold the same 320px: one is the resize-divider
+     floor on the leaf-content element, the other is an animation cap that
+     doubles as a scroll cap and is neutralised to `none` on mobile. A
+     mechanical same-value-same-token pass would fuse them, and the next
+     change to one would silently move the other. */
+  --gp-leaf-min-height: 320px;
+  --gp-panel-max-height: 320px;
+  --gp-list-max-height: 250px;
+
+  /* MUST STAY em. var() substitutes token TEXT, so these still resolve
+     against each using element's own font-size — which is the point, since a
+     type-scale change then cannot make a cap smaller than its content. In px
+     it silently could, and every one of these has overflow: hidden, so the
+     failure is clipped content with no error and no scrollbar. */
+  --gp-reveal-cap: 2.5em;
+  --gp-caption-word-cap: 7em;
+
+  --gp-root-pad: 20px;
+
+  /* Hoisted from .gp-controls-row, where they were declared on the only
+     element that used them. On :root so the music row's max-height calc
+     stops depending on being a .gp-controls-row itself. The touch tier
+     redefines all three together, at the bottom of this file. */
+  --gp-control-gap: 12px;
+  --gp-icon-btn-size: 42px;
+  --gp-icon-svg-size: 20px;
+}
+
 /* Enforce the minimum height on the leaf-content itself (not .gp-root)
    so Obsidian's resize-divider actually stops at 320px instead of just
    letting our internal layout overflow. */
 .workspace-leaf-content[data-type="gentle-pomo-view"] {
-  min-height: 320px;
+  min-height: var(--gp-leaf-min-height);
 }
 
 /* Container Layout */
@@ -11,7 +200,7 @@
   flex-direction: column;
   align-items: center;
   height: 100%;
-  padding: 20px;
+  padding: var(--gp-root-pad);
 
   /* Both axes scroll when content exceeds the leaf. Horizontal scroll
      kicks in on narrow sidebars where the natural row width exceeds
@@ -38,6 +227,25 @@
   min-height: 0;
 }
 
+/* Registers --gp-progress as an animatable <number>: the timer's 0→1 sky
+   phase, published from GentlePomoView and read by every theme.
+
+   WITHOUT THIS REGISTRATION a custom property is raw text substitution, so
+   dependent color-mix() values snap on every JS update instead of easing —
+   the "skip" button feels jarring rather than smooth.
+
+   IT LIVES HERE, NOT IN A THEME BLOCK. Until 0.6.0 it sat inside the
+   frosted-glass section while its consumer — the transition on
+   .gp-timer-visual below — is shared by every theme. Registration is
+   document-global, so that placement rendered identically and was purely a
+   trap: deleting or relocating the frosted-glass block would have silently
+   un-smoothed the classic theme and every future one. */
+@property --gp-progress {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 /* --- The Abstract Shape Container ---
    Sticky to the top of the scrolling leaf so the focus color block + time
    number remain visible while the user scrolls through settings / tasks. */
@@ -46,10 +254,12 @@
   top: 0;
   z-index: 5;
   background: var(--background-primary);
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--gp-space-9);
   width: 100%;
-  min-width: 200px; /* Floor — clock stays readable even on narrow sidebars (leaf scrolls horizontally if needed) */
-  max-width: 220px; /* Smaller, fits sidebar better */
+  /* Floor — the clock stays readable even on narrow sidebars; the leaf
+     scrolls horizontally if it has to. */
+  min-width: var(--gp-clock-min);
+  max-width: var(--gp-clock-max); /* Smaller, fits sidebar better */
   aspect-ratio: 1 / 1; /* Keep it square-ish */
   display: flex;
   justify-content: center;
@@ -58,30 +268,37 @@
   /* Enables responsive scaling based on the actual sidebar width */
   container-type: inline-size;
 
-  /* Smooth interpolation of --gp-progress (registered via @property
-     in the frosted-glass block) so the orbs ease through color phases
-     when the user clicks skip/reset. Matches the 0.8s opacity ease-out
-     used by the classic theme's dusk/night layers. */
-  transition: --gp-progress 0.8s ease-out;
+  /* Smooth interpolation of --gp-progress (registered via @property just
+     above) so a theme eases through its colour phases when the user clicks
+     skip/reset. Matches the var(--gp-dur-ambient) opacity ease-out used by the classic
+     theme's dusk/night layers. */
+  transition: --gp-progress var(--gp-dur-ambient) ease-out;
 }
 
 /* The Shape Wrapper */
 .gp-timer-shape {
   position: absolute;
   inset: 0;
-  border-radius: 35px; /* Soft rounded corners (Squircle-ish) */
+  /* Both are theme slots with today's value as the fallback, so a theme that
+     declares neither renders exactly as before. The CLIP is not a slot: a
+     theme may change the radius, it may not remove overflow: hidden — the
+     frosted pane's backdrop-filter and its iOS pulse workaround are both
+     written against that clipped surface. */
+  border-radius: var(--gp-shape-radius, var(--gp-radius-shape));
   overflow: hidden;
 
-  /* CHANGED: Set a dark background to prevent underlying orange layers from bleeding through edges */
-  background-color: #1e1e1e;
+  /* The flat colour behind the artwork. Classic needs it dark so the orange
+     gradient does not bleed at the clipped edges; frosted paints its own
+     pale base over it. */
+  background-color: var(--gp-shape-base, #1e1e1e);
 
   /* CHANGED: Use dynamic shadow color matching the timer theme */
-  box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  box-shadow: var(--gp-elev-rest);
 
   /* CHANGED: Added box-shadow to transition list. */
   transition:
-    transform 0.8s ease-out,
-    box-shadow 0.8s ease-out;
+    transform var(--gp-dur-ambient) ease-out,
+    box-shadow var(--gp-dur-ambient) ease-out;
 
   z-index: 1; /* Above background layers, below content */
 }
@@ -94,30 +311,40 @@
 @keyframes gp-gentle-pulse {
   0% {
     transform: scale(1);
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
   50% {
     transform: scale(1.03);
-    box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+    box-shadow: var(--gp-elev-lift);
   }
   100% {
     transform: scale(1);
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
 }
 
 /* --- The Color Layers --- */
 
+/* Every theme's artwork nodes are built once, for every theme, and carry
+   `gp-art`. They are hidden by default and each theme shows only its own, in
+   its own block — so no theme's CSS ever names another theme's nodes. The old
+   arrangement had frosted-glass hiding classic's three layers by name, which
+   needs N x (N-1) rules to add a third theme and made "classic" whatever was
+   left over rather than a theme in its own right. */
+.gp-art {
+  display: none;
+}
+
 /* Layer 1: Summer Daylight (Bottom) */
-.gp-layer-day {
+.gp-theme-classic .gp-layer-day {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  background: var(--gp-mode-focus-gradient);
   z-index: 0;
 }
 
 /* Layer 1.5: Dusk / Dawn (Middle) */
-.gp-layer-dusk {
+.gp-theme-classic .gp-layer-dusk {
   position: absolute;
   inset: 0;
   /* A rich purple/pink gradient to bridge Day and Night */
@@ -128,22 +355,40 @@
   opacity: var(--gp-dusk-opacity, 0);
 
   /* CHANGED: Increased transition time for a smoother color reset on stop */
-  transition: opacity 0.8s ease-out;
+  transition: opacity var(--gp-dur-ambient) ease-out;
 }
 
 /* Layer 2: Night / Northern Lights (Top) */
-.gp-layer-night {
+.gp-theme-classic .gp-layer-night {
   position: absolute;
   inset: 0;
   /* Deep blue/purple to teal/green aurora look */
-  background: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+  background: var(--gp-mode-break-gradient);
   z-index: 1;
 
   /* Opacity controlled by JS via CSS variable */
   opacity: var(--gp-night-opacity, 0);
 
   /* CHANGED: Increased transition time for a smoother color reset on stop */
-  transition: opacity 0.8s ease-out;
+  transition: opacity var(--gp-dur-ambient) ease-out;
+}
+
+/* --- Classic theme ---
+   Three stacked gradient sheets, cross-faded by the two opacity variables
+   GentlePomoView publishes. It reads those rather than deriving them from
+   --gp-progress on purpose: the scalar is already eased 0.8s on
+   .gp-timer-visual, and these layers ease again, so a derived value would
+   double the fade to ~1.6s on every skip and reset. */
+.gp-theme-classic {
+  --gp-shape-base: #1e1e1e;
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
+}
+
+.gp-theme-classic .gp-layer-day,
+.gp-theme-classic .gp-layer-dusk,
+.gp-theme-classic .gp-layer-night {
+  display: block;
 }
 
 /* --- Typography --- */
@@ -166,7 +411,7 @@
   z-index: 4;
   pointer-events: none;
   opacity: 0.82;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--gp-dur-fast) ease;
 }
 
 /* Hide the day/night indicator once the WHOLE side panel (leaf width)
@@ -184,8 +429,8 @@
   justify-content: center;
   min-width: 26px;
   height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
+  padding: 0 var(--gp-space-3);
+  border-radius: var(--gp-radius-pill);
   /* Dark "scrim" pill so the icon stays readable on light (orange) gradients */
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.14));
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -226,7 +471,7 @@
   /* Scale down smoothly in narrow sidebars; upper bound is the original 3.5rem */
   font-size: clamp(2rem, 26cqi, 3.5rem);
   /* Slightly bolder weight usually looks better for rounded fonts */
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   /* Font stack:
        1. SF Pro Rounded: macOS/iOS
        2. Arial Rounded MT Bold: Windows (with Office)
@@ -249,7 +494,7 @@
 
   /* Visibility Logic */
   transition:
-    opacity 0.3s ease,
+    opacity var(--gp-dur-open) ease,
     color 0.25s ease,
     text-shadow 0.25s ease;
   opacity: 1;
@@ -278,11 +523,11 @@
 
 .gp-mode-label {
   margin-top: 0;
-  font-size: 0.8rem;
+  font-size: var(--gp-text-caption);
   text-transform: uppercase;
   letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
   color: rgba(255, 255, 255, 0.9);
-  font-weight: 700;
+  font-weight: var(--gp-weight-display);
   font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
@@ -297,7 +542,7 @@
    the reveal grows inside it, so the controls below never shift. */
 .gp-end-time {
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   letter-spacing: 0.3px;
   color: rgba(255, 255, 255, 0.82);
   font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
@@ -313,17 +558,17 @@
   transform: translateY(-6px);
   will-change: max-height, opacity, transform;
   transition:
-    max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 200ms ease,
-    transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    margin-top 260ms ease;
+    max-height var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    margin-top var(--gp-dur-reveal) ease;
 }
 
 /* Revealed while a session is running (before overtime). */
 .gp-end-time.gp-visible {
   margin-top: 0.4rem;
   opacity: 1;
-  max-height: 2.5em;
+  max-height: var(--gp-reveal-cap);
   transform: translateY(0);
 }
 
@@ -331,8 +576,10 @@
 .gp-controls {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem; /* Space between rows */
-  width: 260px; /* Fixed — controls don't shrink on narrow sidebars; leaf scrolls horizontally instead */
+  gap: var(--gp-space-5); /* Space between rows */
+  /* Fixed — controls don't shrink on narrow sidebars; the leaf scrolls
+     horizontally instead. */
+  width: var(--gp-control-column);
 
   position: relative;
   z-index: 2; /* ensure controls sit above any visual layers */
@@ -382,10 +629,10 @@
 
   /* Animation properties */
   transition:
-    max-width 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 0.3s ease,
-    margin 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+    max-width var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-open) ease,
+    margin var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    transform var(--gp-dur-collapse) var(--gp-ease-overshoot);
 
   opacity: 1;
   transform: translateX(0) scale(1);
@@ -411,13 +658,13 @@
 
 /* Specifics for Adjust Wrapper (+/-) */
 .gp-adjust-wrapper {
-  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
+  max-width: calc(2 * var(--gp-icon-btn-size) + var(--gp-control-gap) + var(--gp-row-slack));
   /* Removed margin-right to keep spacing consistent via flex gap */
 }
 
 /* Specifics for Secondary Controls (Stop/Reset) */
 .gp-secondary-controls {
-  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
+  max-width: calc(2 * var(--gp-icon-btn-size) + var(--gp-control-gap) + var(--gp-row-slack));
   /* Removed margin-left to keep spacing consistent via flex gap */
 }
 
@@ -426,14 +673,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--gp-radius-lg);
+  border: var(--gp-rule);
   background: var(--interactive-normal);
   cursor: pointer;
   /* Make transition faster for a snappier feel */
   transition:
-    background 0.1s ease,
-    transform 0.1s ease;
+    background var(--gp-dur-instant) ease,
+    transform var(--gp-dur-instant) ease;
   color: var(--text-normal);
 }
 
@@ -484,14 +731,14 @@
 .gp-btn-full {
   width: 100%;
   min-height: 52px; /* Increased height for 2 rows */
-  padding: 4px 12px;
+  padding: var(--gp-space-2) var(--gp-space-5);
   display: flex;
   flex-direction: column; /* Stack content vertically */
   align-items: flex-start; /* Align text to left */
   justify-content: center;
-  gap: 2px;
-  font-weight: 500;
-  font-size: 0.9rem;
+  gap: var(--gp-space-1);
+  font-weight: var(--gp-weight-medium);
+  font-size: var(--gp-text-body);
   line-height: 1.2;
 }
 
@@ -501,7 +748,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   width: 100%;
   text-align: left;
 }
@@ -539,24 +786,24 @@
   transform: translateY(-6px);
 
   transition:
-    max-height 0.35s ease,
+    max-height var(--gp-dur-panel) ease,
     opacity 0.25s ease,
-    transform 0.35s ease,
-    padding 0.35s ease,
-    margin 0.35s ease,
-    border-color 0.35s ease;
+    transform var(--gp-dur-panel) ease,
+    padding var(--gp-dur-panel) ease,
+    margin var(--gp-dur-panel) ease,
+    border-color var(--gp-dur-panel) ease;
 }
 
 .gp-settings-panel.gp-visible {
   /* Fixed shorter cap. Settings panel is intentionally compact and
      scrolls internally past this height, regardless of leaf size. */
-  max-height: 320px;
+  max-height: var(--gp-panel-max-height);
   opacity: 1;
   transform: translateY(0);
-  padding-top: 1rem;
-  padding-bottom: 1rem;
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+  padding-top: var(--gp-space-7);
+  padding-bottom: var(--gp-space-7);
+  margin-top: var(--gp-space-4);
+  margin-bottom: var(--gp-space-4);
   border-top-color: var(--background-modifier-border);
   border-bottom-color: var(--background-modifier-border);
   /* Scroll the panel internally if its natural content exceeds max-height. */
@@ -573,8 +820,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 32px;
-  font-size: 0.9rem;
+  min-height: var(--gp-control-h);
+  font-size: var(--gp-text-body);
   color: var(--text-muted);
 }
 
@@ -584,21 +831,21 @@
 
 .gp-settings-row input[type="number"] {
   width: 80px;
-  height: 32px;
+  height: var(--gp-control-h);
   text-align: center;
-  border-radius: 6px;
+  border-radius: var(--gp-radius-sm);
   font-variant-numeric: tabular-nums;
 }
 
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
-  margin-top: 1.25rem;
-  margin-bottom: 0.5rem;
+  margin-top: var(--gp-space-8);
+  margin-bottom: var(--gp-space-4);
 }
 
 .gp-settings-section-label:first-child {
@@ -625,9 +872,9 @@
   position: absolute;
   inset: 0;
   background-color: var(--background-modifier-border);
-  border-radius: 12px;
+  border-radius: var(--gp-radius-pill);
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color var(--gp-dur-fast) ease;
 }
 
 .gp-toggle-slider::before {
@@ -640,7 +887,7 @@
   background-color: var(--text-on-accent, #ffffff);
   border-radius: 50%;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.2s ease;
+  transition: transform var(--gp-dur-fast) ease;
 }
 
 .gp-toggle input:checked + .gp-toggle-slider {
@@ -659,9 +906,9 @@
 .gp-segmented {
   display: inline-flex;
   background: var(--background-modifier-border);
-  border-radius: 6px;
-  padding: 2px;
-  height: 32px;
+  border-radius: var(--gp-radius-sm);
+  padding: var(--gp-space-1);
+  height: var(--gp-control-h);
   align-items: center;
   flex: 0 0 auto;
 }
@@ -670,13 +917,13 @@
   background: transparent;
   border: none;
   color: var(--text-muted);
-  padding: 0 12px;
-  height: 28px;
+  padding: 0 var(--gp-space-5);
+  height: calc(var(--gp-control-h) - var(--gp-segmented-inset));
   min-width: 40px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gp-radius-xs);
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
@@ -698,20 +945,20 @@
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
 .gp-settings-reset {
-  margin-top: 0.5rem;
+  margin-top: var(--gp-space-4);
 }
 
 .gp-reset-button {
   display: block;
   width: 100%;
-  height: 32px;
+  height: var(--gp-control-h);
   background: transparent;
-  border: 1px solid var(--background-modifier-border);
+  border: var(--gp-rule);
   color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--gp-radius-sm);
 }
 
 .gp-reset-button:hover {
@@ -731,27 +978,27 @@
 .gp-status {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--gp-space-2);
   cursor: pointer;
 }
 
 .gp-status-dot {
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--gp-radius-pill);
   background: var(--text-muted);
   opacity: 0.8;
   transition:
-    background-color 0.2s ease,
-    transform 0.1s ease;
+    background-color var(--gp-dur-fast) ease,
+    transform var(--gp-dur-instant) ease;
 }
 
 .gp-status-dot.gp-mode-focus {
-  background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  background: var(--gp-mode-focus-gradient);
 }
 
 .gp-status-dot.gp-mode-break {
-  background: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+  background: var(--gp-mode-break-gradient);
 }
 
 .gp-status-dot.gp-running {
@@ -761,8 +1008,8 @@
 .gp-status-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
+  gap: var(--gp-space-2);
+  font-size: var(--gp-text-micro);
   opacity: 0.8;
 }
 
@@ -774,8 +1021,8 @@
   transform: translateY(-2px);
   transition:
     max-width 0.25s ease,
-    opacity 0.2s ease,
-    transform 0.2s ease;
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-fast) ease;
 }
 
 .gp-status.gp-show-time .gp-status-time {
@@ -787,13 +1034,13 @@
 .gp-status-focus-total {
   font-size: 0.7rem;
   opacity: 0.65;
-  margin-left: 4px;
+  margin-left: var(--gp-space-2);
 }
 
 .gp-status-focus-total.gp-status-goal-met {
   color: var(--text-success, var(--color-green, #4ade80));
   opacity: 1;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 /* Disabled State for Buttons */
@@ -819,48 +1066,48 @@
   max-height: 0;
   overflow-y: auto;
   background-color: var(--background-secondary);
-  border-radius: 12px;
-  margin-top: 0.5rem;
+  border-radius: var(--gp-radius-lg);
+  margin-top: var(--gp-space-4);
   transition:
-    max-height 0.3s ease-in-out,
-    padding 0.3s ease;
+    max-height var(--gp-dur-open) ease-in-out,
+    padding var(--gp-dur-open) ease;
   border: 1px solid transparent;
 }
 
 .gp-task-list.gp-visible {
-  max-height: 250px; /* Increased slightly for groups */
+  max-height: var(--gp-list-max-height); /* Increased slightly for groups */
   border-color: var(--background-modifier-border);
-  padding: 0.5rem;
+  padding: var(--gp-space-4);
 }
 
 /* NEW: Group Header Style */
 .gp-task-group-header {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-top: 0.75rem;
-  margin-bottom: 0.25rem;
-  padding-left: 0.5rem;
-  border-bottom: 1px solid var(--background-modifier-border);
-  padding-bottom: 2px;
+  margin-top: var(--gp-space-5);
+  margin-bottom: var(--gp-space-2);
+  padding-left: var(--gp-space-4);
+  border-bottom: var(--gp-rule);
+  padding-bottom: var(--gp-space-1);
 }
 
 .gp-task-group-header:first-child {
-  margin-top: 0.25rem;
+  margin-top: var(--gp-space-2);
 }
 
 .gp-task-item {
-  padding: 6px 12px; /* Slightly more compact */
-  border-radius: 8px;
+  padding: var(--gp-space-3) var(--gp-space-5); /* Slightly more compact */
+  border-radius: var(--gp-radius-md);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--gp-text-label);
   color: var(--text-normal);
-  transition: background-color 0.1s ease;
+  transition: background-color var(--gp-dur-instant) ease;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gp-space-4);
   line-height: 1.3;
 }
 
@@ -877,7 +1124,7 @@
 .gp-task-item.gp-task-selected {
   background-color: var(--interactive-accent);
   color: var(--text-on-accent);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 .gp-task-item.gp-task-selected:hover {
@@ -903,7 +1150,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--gp-space-1);
   padding: 18px 14px 20px;
   text-align: center;
 }
@@ -911,7 +1158,7 @@
 .gp-task-empty-icon {
   display: flex;
   justify-content: center;
-  margin-bottom: 6px;
+  margin-bottom: var(--gp-space-3);
   color: var(--text-faint);
 }
 
@@ -927,8 +1174,8 @@
 }
 
 .gp-task-empty-title {
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: var(--gp-text-label);
+  font-weight: var(--gp-weight-strong);
   color: var(--text-normal);
 }
 
@@ -944,32 +1191,14 @@
    advances (set by the timer listener in GentlePomoView). The orbs sit
    behind a backdrop-filter pane that blurs them into soft bokeh. */
 
-/* Register --gp-progress as an animatable <number> so the engine can
-   interpolate it through transitions. Without this, CSS variable
-   changes are raw text substitution and dependent color-mix() values
-   in the orb backgrounds would snap on every JS update — making the
-   "skip" button feel jarring instead of smooth. The transition itself
-   is declared on .gp-timer-visual above. */
-@property --gp-progress {
-  syntax: "<number>";
-  inherits: true;
-  initial-value: 0;
-}
-
-/* Frosted-glass DOM nodes are always built; hidden by default so the
-   classic theme renders unchanged. */
-.gp-glass-orbs,
-.gp-glass-pane,
-.gp-glass-highlight {
-  display: none;
-}
-
-/* When the frosted-glass theme is active, hide the classic gradient
-   layers and show the glass-theme nodes. */
-.gp-theme-frosted-glass .gp-layer-day,
-.gp-theme-frosted-glass .gp-layer-dusk,
-.gp-theme-frosted-glass .gp-layer-night {
-  display: none;
+/* Pale-lavender base — keeps the composition luminous so it lands at
+   "twilight" not "midnight" by the end of a focus session. Declared as a
+   token rather than as an override of .gp-timer-shape: the theme now fills a
+   slot instead of out-specifying a shared rule. */
+.gp-theme-frosted-glass {
+  --gp-shape-base: #ede5f3;
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
 }
 
 .gp-theme-frosted-glass .gp-glass-orbs,
@@ -978,20 +1207,14 @@
   display: block;
 }
 
-/* Pale-lavender base — keeps the composition luminous so it lands at
-   "twilight" not "midnight" by the end of a focus session. */
-.gp-theme-frosted-glass .gp-timer-shape {
-  background-color: #ede5f3;
-}
-
-.gp-glass-orbs {
+.gp-theme-frosted-glass .gp-glass-orbs {
   position: absolute;
   inset: 0;
   z-index: 1; /* above the (hidden) gradient layers, below the pane */
   border-radius: inherit;
 }
 
-.gp-orb {
+.gp-theme-frosted-glass .gp-orb {
   position: absolute;
   /* Oversized so three orbs together blanket the shape — no center "dead
      zone" where the pale base shows through. .gp-timer-shape's
@@ -1006,13 +1229,13 @@
   opacity: 0.95;
   /* color-mix(in oklab, ...) interpolates in a perceptually-even space,
      so the hue shift looks like a slow sunset rather than a muddy fade. */
-  transition: background 0.8s ease-out;
+  transition: background var(--gp-dur-ambient) ease-out;
 }
 
 /* Warm/cool endpoints are exposed as custom properties per orb so the
    dark-mode block below can swap just the warm value into fireplace
    tones without restating the whole radial-gradient. */
-.gp-orb-1 {
+.gp-theme-frosted-glass .gp-orb-1 {
   --gp-orb-warm: #f6d365; /* sunny morning yellow */
   --gp-orb-cool: #a594c9; /* soft lavender */
   top: -25%;
@@ -1026,7 +1249,7 @@
   animation: gp-orb-drift-1 65s ease-in-out infinite;
 }
 
-.gp-orb-2 {
+.gp-theme-frosted-glass .gp-orb-2 {
   --gp-orb-warm: #ff8c9c; /* warm pink */
   --gp-orb-cool: #e0a5bd; /* dusty rose */
   top: -10%;
@@ -1040,7 +1263,7 @@
   animation: gp-orb-drift-2 58s ease-in-out infinite;
 }
 
-.gp-orb-3 {
+.gp-theme-frosted-glass .gp-orb-3 {
   --gp-orb-warm: #ff9145; /* sunset orange */
   --gp-orb-cool: #b8c5e8; /* soft periwinkle */
   bottom: -25%;
@@ -1112,7 +1335,7 @@
 /* The frosted glass surface itself. backdrop-filter blurs everything
    behind (the orbs); the inset shadows give a soft top-bright,
    bottom-dark "3D" lip. */
-.gp-glass-pane {
+.gp-theme-frosted-glass .gp-glass-pane {
   position: absolute;
   inset: 0;
   z-index: 2;
@@ -1130,7 +1353,7 @@
 }
 
 /* Top-edge sheen — sells the glass as a curved surface catching light. */
-.gp-glass-highlight {
+.gp-theme-frosted-glass .gp-glass-highlight {
   position: absolute;
   inset: 0;
   z-index: 3;
@@ -1152,8 +1375,8 @@
    notch in luminance so they read as soft washes rather than light
    sources. Top sheen + 1px white top-edge highlight stay (catch-light
    on glass looks right in both modes). */
-.theme-dark .gp-theme-frosted-glass .gp-timer-shape {
-  background-color: #2a2438;
+.theme-dark .gp-theme-frosted-glass {
+  --gp-shape-base: #2a2438;
 }
 
 .theme-dark .gp-theme-frosted-glass .gp-glass-pane {
@@ -1164,19 +1387,19 @@
    like flame on a winter night against the deep-plum dark base. Cool
    endpoints stay pastel-twilight: the arc reads as fire-at-peak →
    embers settling into twilight as --gp-progress advances. */
-.theme-dark .gp-orb-1 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-1 {
   --gp-orb-warm: #ffae40; /* warm orange */
 }
 
-.theme-dark .gp-orb-2 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-2 {
   --gp-orb-warm: #ff9333; /* vivid mid-orange */
 }
 
-.theme-dark .gp-orb-3 {
+.theme-dark .gp-theme-frosted-glass .gp-orb-3 {
   --gp-orb-warm: #ff7530; /* deep orange */
 }
 
-.theme-dark .gp-orb {
+.theme-dark .gp-theme-frosted-glass .gp-orb {
   /* Near-natural luminance so the orange flames glow softly without
      overpowering the dim plum glass. Saturate stays at 155% to keep
      the fire feel. */
@@ -1226,7 +1449,7 @@
 /* --- Total Time (Overtime Only) --- */
 .gp-total-time {
   font-size: clamp(0.75rem, 10cqi, 1rem);
-  font-weight: 500;
+  font-weight: var(--gp-weight-medium);
   color: var(--text-muted);
   margin: 0;
   margin-bottom: 0;
@@ -1238,10 +1461,10 @@
   transform: translateY(-6px);
   will-change: max-height, opacity, transform;
   transition:
-    max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 200ms ease,
-    transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    margin-bottom 260ms ease,
+    max-height var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    margin-bottom var(--gp-dur-reveal) ease,
     color 0.25s ease,
     text-shadow 0.25s ease;
 }
@@ -1249,7 +1472,7 @@
 /* Show it when we are in overtime */
 .gp-state-overtime .gp-total-time {
   opacity: 1;
-  max-height: 2.5em;
+  max-height: var(--gp-reveal-cap);
   margin-bottom: 0.65rem;
   transform: translateY(0);
 }
@@ -1346,8 +1569,8 @@
    Updated from main.ts via GentlePomoView.setGoalProgress(). */
 .gp-goal-progress {
   display: none;
-  margin-top: 0.5rem;
-  font-size: 0.8rem;
+  margin-top: var(--gp-space-4);
+  font-size: var(--gp-text-caption);
   color: var(--text-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -1355,7 +1578,7 @@
 
 .gp-goal-progress.gp-goal-met {
   color: var(--interactive-accent);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 /* =========================================================================
@@ -1374,7 +1597,7 @@
 .gp-music-divider {
   width: 100%;
   height: 1px;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--gp-space-4);
   background: var(--background-modifier-border);
 }
 
@@ -1395,12 +1618,12 @@
   /* Its own breathing room on both sides: clear of the hairline above, and well
      clear of the transport below — .gp-controls' 0.75rem row gap alone read as
      the caption being glued to the buttons. */
-  margin-top: 0.5rem;
+  margin-top: var(--gp-space-4);
   margin-bottom: 1.1rem;
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 6px;
+  gap: var(--gp-space-3);
   min-width: 0;
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -1443,7 +1666,7 @@
   overflow: hidden;
   white-space: nowrap;
   /* Comfortably past "Now playing" at this size; it only ever caps the ease. */
-  max-width: 7em;
+  max-width: var(--gp-caption-word-cap);
   opacity: 1;
   /* Arriving is the default: wait out the departing word, then open. */
   --gp-caption-delay: var(--gp-caption-fade, 0.5s);
@@ -1463,7 +1686,7 @@
 /* Arriving, and more specific than the Leaving rule above, so the delay returns. */
 .gp-station-current.is-playing .gp-station-label-playing {
   --gp-caption-delay: var(--gp-caption-fade, 0.5s);
-  max-width: 7em;
+  max-width: var(--gp-caption-word-cap);
   opacity: 1;
 }
 
@@ -1512,7 +1735,7 @@
 .gp-station-current-name::before,
 .gp-station-current-track::before {
   content: "|";
-  margin-right: 6px;
+  margin-right: var(--gp-space-3);
   opacity: 0.45;
 }
 
@@ -1545,19 +1768,19 @@
    colours in the list are the hover and the active row. */
 .gp-station-list {
   background-color: transparent;
-  /* Slower than the task list's 0.3s. That one is a working list you open to
+  /* Slower than the task list's var(--gp-dur-open). That one is a working list you open to
      get something done; this is a mood control, and it should feel unhurried.
      The mobile override that kills the transition outright still wins — it is
      `body.is-mobile .gp-task-list`, which out-specifies this. */
   transition:
-    max-height 0.55s ease-in-out,
-    padding 0.55s ease;
+    max-height var(--gp-dur-list-slow) ease-in-out,
+    padding var(--gp-dur-list-slow) ease;
   /* Flex rather than margins so the spacing sits only BETWEEN rendered rows: an
      unused middle slot is display:none, so it contributes no gap, and the last
      visible row gains no trailing space even when a hidden slot follows it. */
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gp-space-3);
 }
 
 /* Rows are divs, exactly like .gp-task-item, so they need no reset at all —
@@ -1572,15 +1795,15 @@
    It must never be .gp-hidden: display:none cannot animate. */
 .gp-music-video-row {
   overflow: hidden;
-  max-height: calc(var(--gp-icon-btn-size, 42px) + 4px);
-  margin-top: 0.75rem;
+  max-height: calc(var(--gp-icon-btn-size) + var(--gp-row-slack));
+  margin-top: var(--gp-space-5);
   opacity: 1;
   transform: translateY(0) scale(1);
   transition:
-    max-height 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 0.3s ease,
-    margin-top 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+    max-height var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-open) ease,
+    margin-top var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    transform var(--gp-dur-collapse) var(--gp-ease-overshoot);
 }
 
 .gp-music-video-row.gp-hidden-animated {
@@ -1668,7 +1891,18 @@ body:not(.is-mobile) .modal.gp-confirm-modal {
    ========================================================================= */
 body.is-mobile,
 body.is-tablet {
-  --gp-tap-min: 50px; /* Comfortable touch target (above the 44px Apple HIG minimum) */
+  --gp-tap-min: 50px;
+
+  /* The four settings-panel controls all take their height from
+     --gp-control-h, so redefining it here is what used to be four separate
+     override rules. --gp-segmented-inset is the TOTAL subtraction from the
+     track, not a padding, and the two tiers genuinely differ: desktop
+     32 - 4 = 28, touch 50 - 8 = 42. Any formula that multiplies it, or that
+     picks one tier's number for both, mis-sizes the other by 4px — which
+     shows as a pill sitting slightly off-centre rather than as a broken
+     layout, and is exactly how it would survive review. */
+  --gp-control-h: var(--gp-tap-min);
+  --gp-segmented-inset: 8px; /* Comfortable touch target (above the 44px Apple HIG minimum) */
 }
 
 /* Obsidian mobile renders the app at a larger base scale, so the desktop glyph
@@ -1703,7 +1937,7 @@ body.is-tablet .gp-icon-btn svg.svg-icon {
    proportionally on short viewports, freeing room for the centering spacers. */
 body.is-mobile .gp-timer-visual,
 body.is-tablet .gp-timer-visual {
-  max-width: min(280px, 38vh);
+  max-width: var(--gp-clock-max-touch);
 }
 
 /* Compact panel (e.g. iPhone landscape — a short, wide leaf). Detection is done in
@@ -1720,9 +1954,9 @@ body.is-mobile .gp-root.gp-compact .gp-timer-visual {
      containing block — .gp-timer-shape is position:absolute;inset:0, so static would
      let it escape the 150px box and fill the panel. */
   position: relative;
-  max-width: 150px;
+  max-width: var(--gp-clock-compact);
   min-width: 0;
-  margin-bottom: 1rem;
+  margin-bottom: var(--gp-space-7);
 }
 
 /* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor of a
@@ -1757,7 +1991,7 @@ body.is-mobile .gp-icon-btn,
 body.is-tablet .gp-icon-btn {
   flex: 0 1 var(--gp-icon-btn-size);
   width: auto;
-  min-width: 44px;
+  min-width: var(--gp-tap-floor);
   max-width: var(--gp-icon-btn-size);
   height: auto;
   aspect-ratio: 1 / 1;
@@ -1766,35 +2000,19 @@ body.is-tablet .gp-icon-btn {
 /* iPad's sidebar is narrow — trim side padding so buttons stay nearer full size and
    the row fits even at Obsidian's minimum sidebar width. iPhone keeps the 20px base. */
 body.is-tablet .gp-root {
-  padding-left: 12px;
-  padding-right: 12px;
+  padding-left: var(--gp-space-5);
+  padding-right: var(--gp-space-5);
 }
 
-/* Touch-target floors (≥44px) for the smaller interactive elements. */
-body.is-mobile .gp-segmented,
-body.is-tablet .gp-segmented {
-  height: var(--gp-tap-min);
-}
-
+/* Touch-target floors (≥44px) for the smaller interactive elements. The four
+   height rules that used to live here are gone: the segmented track, the
+   segmented button, the reset button, the settings row and its number input
+   all size from --gp-control-h, which the token block above redefines for
+   touch. Only the wider hit area is left, which is not derivable from a
+   height. */
 body.is-mobile .gp-segmented-btn,
 body.is-tablet .gp-segmented-btn {
-  height: calc(var(--gp-tap-min) - 8px);
   min-width: 52px;
-}
-
-body.is-mobile .gp-reset-button,
-body.is-tablet .gp-reset-button {
-  height: var(--gp-tap-min);
-}
-
-body.is-mobile .gp-settings-row,
-body.is-tablet .gp-settings-row {
-  min-height: var(--gp-tap-min);
-}
-
-body.is-mobile .gp-settings-row input[type="number"],
-body.is-tablet .gp-settings-row input[type="number"] {
-  height: var(--gp-tap-min);
 }
 
 /* Bigger task-picker button and dropdown rows — the primary touch targets for
@@ -1807,7 +2025,7 @@ body.is-tablet .gp-btn-full {
 
 body.is-mobile .gp-task-item,
 body.is-tablet .gp-task-item {
-  padding: 14px;
+  padding: var(--gp-space-6);
   min-height: var(--gp-tap-min);
 }
 
@@ -1834,7 +2052,7 @@ body.is-tablet .gp-root {
      the list reaches its end. */
   overscroll-behavior-y: contain;
   /* Keep the last row clear of the iPhone home indicator / Obsidian mobile nav. */
-  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  padding-bottom: max(var(--gp-root-pad), env(safe-area-inset-bottom));
   /* .gp-root is the leaf-content element itself (the view empties containerEl and
      uses it directly). On mobile its height:100% doesn't resolve — the leaf chain
      gives no definite ancestor height — so it collapses to content height, the
@@ -1899,7 +2117,7 @@ body.is-tablet .gp-task-list.gp-visible {
 
 /* Give the countdown number its own GPU layer on touch so its opacity fade composites
    independently of the frosted-glass backdrop-filter's continuous repaints and the ~1Hz
-   ancestor style recalcs — otherwise iOS intermittently drops the 0.3s fade (abrupt hide)
+   ancestor style recalcs — otherwise iOS intermittently drops the var(--gp-dur-open) fade (abrupt hide)
    and mis-rasterizes the text-shadow at the bottom of the digits. Safe: .gp-timer-time
    has no other transform. */
 body.is-mobile .gp-timer-time,
@@ -1919,10 +2137,10 @@ body.is-tablet .gp-timer-time {
 @keyframes gp-gentle-pulse-glow {
   0%,
   100% {
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
   50% {
-    box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+    box-shadow: var(--gp-elev-lift);
   }
 }
 
@@ -1951,7 +2169,7 @@ body.is-tablet .gp-timer-time {
 .gp-setting-error {
   flex-basis: 100%;
   min-width: 0;
-  margin-top: 4px;
+  margin-top: var(--gp-space-2);
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
   text-align: right;

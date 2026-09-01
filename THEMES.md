@@ -7,9 +7,27 @@ Visual themes for the Gentle Pomodoro timer view. Each theme should preserve the
 - **Classic** — the original (formerly "Sunset / Aurora"). Three stacked gradient layers (day → dusk → night) whose opacities blend as progress advances. Squircle shape, gentle 8s scale pulse, day/night SVG badge.
 - **Frosted Glass** — three soft color orbs drifting behind a frosted-glass pane. Orb hues interpolate through the sunrise→sunset palette via `--gp-progress` + `color-mix(in oklab, ...)`. Backdrop-filter blur gives the depth-of-field look.
 
+## Planned
+
+### Rooftop Skyline — pixel art
+
+A pixel-art city silhouette along the bottom third, dithered sky above, and
+**windows that light up as night falls**. The only concept considered where the
+artwork itself reports progress: you can read roughly how far into a session you
+are without looking at a number. Reverses cleanly — on a break the windows go
+dark as dawn comes up.
+
+Three plates (day / dusk / night) cross-faded on `--gp-progress`, shipped at
+source resolution and scaled with `image-rendering: pixelated`. Four things it
+needs that the two shipped themes did not: a bitmap face for the clock (so
+font-family joins the token list above), opting out of the 8s scale pulse to the
+shadow-only breath (resampling a bitmap at 1.03x shimmers), its own day/night
+badge glyphs, and a much smaller `--gp-shape-radius` — a hard pixel grid meeting
+a smooth 35px curve reads as a rendering fault.
+
 ## Future ideas
 
-Saved during the Frosted Glass implementation (2026-05-25). Not yet implemented — see [the Frosted Glass plan](#shipped) for the wiring pattern (settings flag, theme class on `.gp-root`, DOM nodes always built and CSS-toggled).
+Not yet implemented. See [The theme API](#the-theme-api) for what a theme is required to provide and the two steps to register one.
 
 ### 1. Moon Phases — Night Sky
 
@@ -101,12 +119,68 @@ A perfect circle with a glowing "ember" core built from layered radial gradients
 - **Vibe:** warm, cozy, candle-like — the warmest theme of the set.
 - **Implementation notes:** single div with three stacked `background-image: radial-gradient(...)` (core, mid, halo) using progress-driven `color-mix()` for each stop. No extra DOM needed beyond the existing `.gp-timer-shape`.
 
-## Wiring pattern (for whoever picks one up next)
+## The theme API
 
-1. Add the new value to the `theme` union in [types.ts](types.ts) and update the default in [constants.ts](constants.ts) if needed.
-2. In `GentlePomoView.onOpen()` ([GentlePomoView.ts:60](GentlePomoView.ts#L60)), build any theme-specific DOM nodes — they live alongside the existing ones and are CSS-toggled.
-3. In `applySettings()` ([GentlePomoView.ts:306](GentlePomoView.ts#L306)), toggle `gp-theme-<name>` on `containerEl`.
-4. Add an option to the segmented control in `renderSettingsPanel()` ([GentlePomoView.ts:458](GentlePomoView.ts#L458)).
-5. Scope the new CSS rules to `.gp-theme-<name>` and hide the inactive theme's DOM nodes via `display: none`.
+These names are a **public contract**: they will not change without a changelog
+entry. Everything else in [styles.css](styles.css) — the layout, component and
+spacing classes, and the `--gp-space-*` / `--gp-text-*` / `--gp-dur-*` scales —
+is internal and may change in any release.
 
-The `--gp-progress` CSS variable is already published on `.gp-timer-visual` each tick (in the listener) — use it with `color-mix(in oklab, A, B calc(var(--gp-progress) * 100%))` for any color interpolation.
+### What the plugin gives you
+
+| Name                                      | What it is                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gp-progress`                           | **The contract.** A number, 0 → 1. 0 is the start of the arc, 1 is the end. Already mode-flipped, so it counts up during focus and back down during a break — a theme never needs to know which it is in. Registered with `@property`, so it interpolates rather than snapping. |
+| `--gp-dusk-opacity`, `--gp-night-opacity` | The same journey pre-split for a three-layer cross-fade: `dusk = 2p` capped at 1, `night = 2p − 1` clamped. Use these if you stack layers; use `--gp-progress` if you interpolate colour.                                                                                       |
+| `.gp-theme-<id>`                          | Your class, put on the view container. Scope everything you write to it.                                                                                                                                                                                                        |
+| `.gp-timer-shape`                         | The clipped square your artwork lives in. Structure is shared; paint is yours.                                                                                                                                                                                                  |
+| `.gp-art`                                 | Put this on every artwork node you add. It is hidden by default; your block shows your own.                                                                                                                                                                                     |
+
+### What you declare
+
+Each is read by a shared rule with today's value as a fallback, so a theme that
+declares nothing still renders.
+
+| Token               | Meaning                                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gp-shape-base`   | The flat colour behind your artwork.                                                                                                                                                                          |
+| `--gp-shape-radius` | The square's corner rounding. You may change it. You may **not** remove `overflow: hidden` — the frosted pane's `backdrop-filter` and its iOS pulse workaround are both written against that clipped surface. |
+| `--gp-shadow-rgb`   | Three comma-separated RGB **channels** for the drop shadow — `0, 0, 0`, not a hex. A colour here makes all six shadow declarations invalid at computed-value time and the timer's depth silently disappears.  |
+
+### The one appearance rule
+
+**At `--gp-progress: 0` it must look like day. At `1` it must look like night.**
+That is the whole shared metaphor, and it is deliberately a sentence rather than
+a mechanism — Classic fades gradients, Frosted Glass mixes colours in `oklab`, a
+pixel theme cross-fades bitmaps. How you get there is yours.
+
+### Adding a theme
+
+Two steps.
+
+1. An entry in `THEMES` in [themes.ts](themes.ts) — `id: "Label"`. The id type,
+   the default, the settings dropdown, the CSS class and the resolver all derive
+   from it, so a missing entry is a compile error and the view needs no change.
+2. A `.gp-theme-<id>` block in [styles.css](styles.css): declare the three
+   tokens above, and show your own `.gp-art` nodes. If your artwork needs new
+   DOM, build it in `GentlePomoView.onOpen` beside the existing nodes and give
+   it `gp-art`.
+
+**Never name another theme's classes.** Before 0.6.0, Frosted Glass hid
+Classic's three layers by name, which is why "classic" was not really a theme at
+all — it was whatever was left over. That pattern needs N × (N−1) rules; this
+one needs one block per theme.
+
+### Two rules that are easy to get wrong
+
+- **Pick exactly one smoothing route.** Either read the eased `--gp-progress`,
+  or put your own `transition` on the thing you animate. `--gp-progress` is
+  already transitioned 0.8s on `.gp-timer-visual`, so doing both doubles every
+  skip and reset to roughly 1.6s.
+- **Gate any animation you add on `prefers-reduced-motion`.** A theme-scoped
+  selector out-specifies the shared `animation: none` block, so an ungated
+  animation re-enables motion for exactly the people who turned it off — with no
+  error and nothing visible on your own machine. This has already shipped here
+  once; see the wrapper on the mobile frosted pulse.
+
+See [DESIGN.md](DESIGN.md) for the rules governing the rest of the stylesheet.

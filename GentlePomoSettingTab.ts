@@ -9,6 +9,7 @@ import {
   type SettingGroupItem,
   type TextComponent,
 } from "obsidian";
+import { THEMES, resolveTheme } from "./themes";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -426,7 +427,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: {
               type: "dropdown",
               key: "theme",
-              options: { classic: "Classic", "frosted-glass": "Frosted glass" },
+              options: { ...THEMES },
             },
           },
           {
@@ -669,7 +670,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         return;
       case "theme":
-        settings.theme = value === "frosted-glass" ? "frosted-glass" : "classic";
+        settings.theme = resolveTheme(value);
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
