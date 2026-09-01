@@ -121,6 +121,23 @@
      blocks land. NOTE it supplies three comma-separated CHANNELS, not a
      colour: "improving" it to a hex or color() makes all six shadows invalid
      at computed-value time and the timer's depth silently disappears. */
+  /* --- Focus -----------------------------------------------------------
+     One ring, two application modes. The OUTWARD offset is the default; the
+     INSET one is mandatory rather than stylistic for rows inside a scrolling
+     list, because .gp-task-list is overflow-y: auto with a max-height, so an
+     outward ring on the first or last visible row is clipped by the scroll
+     container. Normalising every ring to +1px would silently delete the
+     focus indicator at exactly the two rows most likely to have it. */
+  /* Width and colour stay SEPARATE rather than becoming one `outline`
+     shorthand: the toggle draws its ring as a box-shadow, and box-shadow has
+     no `solid` keyword — a shared shorthand there is invalid at
+     computed-value time, so the property is dropped and the ring silently
+     disappears. */
+  --gp-focus-ring-width: 2px;
+  --gp-focus-ring-color: var(--interactive-accent);
+  --gp-focus-ring-offset: 1px;
+  --gp-focus-ring-offset-inset: -2px;
+
   --gp-rule: 1px solid var(--background-modifier-border);
   --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
   --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
@@ -787,6 +804,24 @@
 }
 
 /* Full Width Button (Task Selector) */
+/* Every control the panel builds gets the same ring. Before 0.6.1 five of
+   them had none at all — .gp-btn (the panel's most-used control), .gp-btn-full,
+   .gp-icon-btn, .gp-reset-button and .gp-task-item — while three others had
+   three mutually incompatible recipes.
+
+   ORDER IS LOAD-BEARING: .gp-station-item:focus-visible ties with
+   .gp-task-item:focus-visible on specificity and is written later, so it keeps
+   winning and keeps its inset offset. Moving this block below it would clip
+   the station list's ring at the scroll edges. */
+.gp-btn:focus-visible,
+.gp-btn-full:focus-visible,
+.gp-icon-btn:focus-visible,
+.gp-reset-button:focus-visible,
+.gp-task-item:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+}
+
 .gp-btn-full {
   width: 100%;
   min-height: 52px; /* Increased height for 2 rows */
@@ -958,7 +993,9 @@
 }
 
 .gp-toggle input:focus-visible + .gp-toggle-slider {
-  box-shadow: 0 0 0 2px var(--interactive-accent);
+  /* A ring drawn as a shadow, because the visible control is the slider and
+     the focusable element is the visually-hidden checkbox behind it. */
+  box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color);
 }
 
 /* --- Segmented control (Low / Mid / High volume) --- */
@@ -998,8 +1035,8 @@
 }
 
 .gp-segmented-btn:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 1px;
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
 }
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
@@ -1930,9 +1967,13 @@
   }
 }
 
+/* Inset, and not by preference: .gp-task-list is overflow-y: auto with a
+   max-height, so an outward ring on the first or last visible row is clipped
+   by the scroll container. Ties with the shared .gp-task-item rule above and
+   wins on source order. */
 .gp-station-item:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: -2px;
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset-inset);
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a

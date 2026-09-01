@@ -274,12 +274,17 @@ export class GentlePomoView extends ItemView {
       this.timer.addMinutes(5);
     });
 
-    const settingsBtn = row2.createEl("button", { cls: "gp-btn gp-icon-btn" });
+    const settingsBtn = row2.createEl("button", {
+      cls: "gp-btn gp-icon-btn",
+      // Seeded here rather than only in the handler, so the very first render
+      // already says what the button does.
+      attr: { "aria-expanded": "false" },
+    });
     setIcon(settingsBtn, "settings");
     this.registerDomEvent(settingsBtn, "click", (evt) => {
       evt.preventDefault();
       this.settingsVisible = !this.settingsVisible;
-      this.settingsPanel.toggleClass("gp-visible", this.settingsVisible);
+      this.setSettingsPanelVisible(this.settingsVisible);
       settingsBtn.setAttribute("aria-expanded", this.settingsVisible ? "true" : "false");
       if (this.settingsVisible) {
         this.renderSettingsPanel();
@@ -292,7 +297,14 @@ export class GentlePomoView extends ItemView {
     });
 
     // --- Settings Panel ---
+    // `inert` is SEEDED at construction, not left to the first toggle. The
+    // panel is populated unconditionally with about a dozen controls,
+    // including "Reset to defaults", and it is hidden by max-height: 0 — which
+    // removes nothing from the tab order. Before 0.6.1 you could Tab straight
+    // into an invisible settings panel and press Enter on a reset button you
+    // could not see.
     this.settingsPanel = controls.createDiv("gp-settings-panel");
+    this.settingsPanel.toggleAttribute("inert", true);
     this.renderSettingsPanel();
 
     // ROW 3: Task Selector
@@ -311,14 +323,38 @@ export class GentlePomoView extends ItemView {
       if (this.taskListVisible) {
         this.setStationListVisible(false);
         this.taskListContainer.addClass("gp-visible");
+        this.taskListContainer.toggleAttribute("inert", false);
         void this.loadTasks();
       } else {
         this.taskListContainer.removeClass("gp-visible");
+        this.taskListContainer.toggleAttribute("inert", true);
       }
     });
 
     // --- Task List Container ---
-    this.taskListContainer = controls.createDiv("gp-task-list");
+    this.taskListContainer = controls.createDiv("gp-task-list", (el) => {
+      el.setAttribute("role", "listbox");
+      el.setAttribute("aria-label", "Tasks");
+      // Seeded closed, for the same reason as the settings panel above.
+      el.toggleAttribute("inert", true);
+    });
+    // ONE delegated handler, registered once, rather than a listener per row.
+    // loadTasks() rebuilds every row on each open and Component.registerDomEvent
+    // releases on unload rather than on removal, so a per-row listener would
+    // accumulate against detached nodes for the life of the session. Dispatching
+    // the element's own click keeps activation on exactly the path the mouse
+    // uses, so the two can never diverge.
+    this.registerDomEvent(this.taskListContainer, "keydown", (evt: KeyboardEvent) => {
+      if (evt.key !== "Enter" && evt.key !== " ") return;
+      // closest() rather than instanceof: an Obsidian pop-out window is a
+      // different realm, where `instanceof HTMLElement` is false and the rows
+      // would silently stop responding.
+      const row = (evt.target as Element | null)?.closest<HTMLElement>(".gp-task-item");
+      if (!row || !this.taskListContainer.contains(row)) return;
+      // Space would scroll the panel out from under the list.
+      evt.preventDefault();
+      row.click();
+    });
 
     // --- Music (audio-only lofi playback) ---
     // Hairline between the task selector and the music row. Reconciled in
@@ -544,19 +580,11 @@ export class GentlePomoView extends ItemView {
       if (state.isRunning) {
         startBtn.addClass("gp-hidden");
         pauseBtn.removeClass("gp-hidden");
-        this.secondaryControlsWrapper.removeClass("gp-hidden-animated");
-        this.adjustWrapper.removeClass("gp-hidden-animated");
+        this.setSecondaryControlsHidden(false);
       } else {
         startBtn.removeClass("gp-hidden");
         pauseBtn.addClass("gp-hidden");
-
-        if (state.remainingMs !== state.totalMs) {
-          this.secondaryControlsWrapper.removeClass("gp-hidden-animated");
-          this.adjustWrapper.removeClass("gp-hidden-animated");
-        } else {
-          this.secondaryControlsWrapper.addClass("gp-hidden-animated");
-          this.adjustWrapper.addClass("gp-hidden-animated");
-        }
+        this.setSecondaryControlsHidden(state.remainingMs === state.totalMs);
       }
 
       if (state.remainingMs <= 5 * ONE_MINUTE_MS) {
@@ -718,6 +746,7 @@ export class GentlePomoView extends ItemView {
     if (!showSelector && this.taskListVisible) {
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
+      this.taskListContainer.toggleAttribute("inert", true);
     }
 
     // Station picker reconciliation. Separate from the embed reconcile below and
@@ -1066,6 +1095,43 @@ export class GentlePomoView extends ItemView {
    * task list sits above the music section, so leaving both open would push the
    * thing just opened below the fold.
    */
+  /**
+   * Collapse or reveal the Stop / Reset / -5 / +5 groups.
+   *
+   * The class and the `inert` attribute must move together: gp-hidden-animated
+   * collapses the wrapper to max-width: 0, which removes NOTHING from the tab
+   * order, and pointer-events: none does not gate Enter on a focused control.
+   * Before 0.6.1 a paused-at-full timer still let you Tab to a Stop button
+   * that was not on screen.
+   */
+  private setSecondaryControlsHidden(hidden: boolean) {
+    for (const el of [this.secondaryControlsWrapper, this.adjustWrapper]) {
+      el.toggleClass("gp-hidden-animated", hidden);
+      el.toggleAttribute("inert", hidden);
+    }
+  }
+
+  /**
+   * Close the task picker after a row is activated, and hand focus back.
+   *
+   * The row that was just used is now inside an inert container, so focus would
+   * be dropped to the document and a keyboard user would land back at the top
+   * of the panel. The station list already does this; the two pickers are meant
+   * to be indistinguishable.
+   */
+  private closeTaskList() {
+    this.taskListVisible = false;
+    this.taskListContainer.removeClass("gp-visible");
+    this.taskListContainer.toggleAttribute("inert", true);
+    this.taskBtn?.focus();
+  }
+
+  /** Same pairing for the settings panel, which hides by max-height instead. */
+  private setSettingsPanelVisible(visible: boolean) {
+    this.settingsPanel.toggleClass("gp-visible", visible);
+    this.settingsPanel.toggleAttribute("inert", !visible);
+  }
+
   private setStationListVisible(visible: boolean) {
     if (visible === this.stationListVisible) return;
     this.stationListVisible = visible;
@@ -1079,6 +1145,7 @@ export class GentlePomoView extends ItemView {
     if (visible && this.taskListVisible) {
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
+      this.taskListContainer.toggleAttribute("inert", true);
     }
   }
 
@@ -1210,14 +1277,16 @@ export class GentlePomoView extends ItemView {
     this.taskListContainer.empty();
 
     const clearItem = this.taskListContainer.createDiv("gp-task-item");
+    clearItem.setAttribute("role", "option");
+    clearItem.setAttribute("aria-selected", "false");
+    clearItem.setAttribute("tabindex", "0");
     clearItem.addClass("gp-task-item-clear");
     setIcon(clearItem, "x-circle");
     clearItem.createSpan({ text: "Unlink Current Task" });
 
     this.registerDomEvent(clearItem, "click", () => {
       this.timer.setTask(NO_TASK_LABEL);
-      this.taskListVisible = false;
-      this.taskListContainer.removeClass("gp-visible");
+      this.closeTaskList();
     });
 
     const tasks = await fetchTasks(this.plugin.app, {
@@ -1253,6 +1322,9 @@ export class GentlePomoView extends ItemView {
 
       for (const task of group.items) {
         const item = this.taskListContainer.createDiv("gp-task-item");
+        item.setAttribute("role", "option");
+        item.setAttribute("tabindex", "0");
+        item.setAttribute("aria-selected", "false");
         item.createSpan({ text: task.displayText });
 
         if (
@@ -1260,14 +1332,14 @@ export class GentlePomoView extends ItemView {
           task.path === this.timer.currentTaskPath
         ) {
           item.addClass("gp-task-selected");
+          item.setAttribute("aria-selected", "true");
           const iconContainer = item.createDiv("gp-task-check-icon");
           setIcon(iconContainer, "check");
         }
 
         this.registerDomEvent(item, "click", () => {
           this.timer.setTask(task.cleanText, task.path, task.taskId);
-          this.taskListVisible = false;
-          this.taskListContainer.removeClass("gp-visible");
+          this.closeTaskList();
         });
       }
     }

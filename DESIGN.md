@@ -122,11 +122,14 @@ to `.gp-root.gp-hidden`, which would never match. It must out-specify `.gp-stati
 ### 3. Anything hidden by animation must also be `inert`, seeded at construction.
 
 `max-height: 0`, `max-width: 0` and `opacity: 0` remove nothing from the tab order, and
-`pointer-events: none` does not gate Enter on a focused control. This shipped as a bug and is fixed
-only for the newest region — `.gp-music-video-row` toggles `inert` in
-[GentlePomoView.ts](GentlePomoView.ts) with a comment naming the failure. Two older regions still
-leak: the settings panel (`:523`, populated unconditionally with ~12 controls including "Reset to
-defaults") and both `.gp-animated-wrapper` groups (`:395`) holding Stop / Reset / −5 / +5.
+`pointer-events: none` does not gate Enter on a focused control. This shipped as a bug and was closed region by region:
+`.gp-music-video-row` in 0.5.7, then in 0.6.1 the settings panel (populated unconditionally with
+~12 controls including "Reset to defaults"), both `.gp-animated-wrapper` groups holding
+Stop / Reset / −5 / +5, and the task list. Each pairs its class with `inert` through one setter —
+`setSecondaryControlsHidden`, `setSettingsPanelVisible`, `closeTaskList` — so the two cannot drift.
+
+Closing a list also has to **hand focus back**. The row that was just activated is inside the newly
+inert container, so focus falls to the document and a keyboard user lands at the top of the panel.
 
 Seeding matters: the station list sets `inert` at construction precisely because the visibility
 setter early-returns when unchanged, so delegating it would arm the attribute only after the first

@@ -117,6 +117,48 @@ describe("theme independence", () => {
   });
 });
 
+describe("focus rings", () => {
+  // Both rules are (0,2,0), so ONLY source order decides. The station list is
+  // overflow-y: auto with a max-height, so it needs the inset offset or the
+  // ring is clipped at the first and last visible row — the two rows most
+  // likely to have it. If the shared rule ever moves below, that clipping
+  // comes back and only at the scroll edges.
+  it("declares the shared row ring before the station list's inset one", () => {
+    // Comments are stripped first: the prose above these rules names both
+    // selectors, and matching that text finds the wrong order.
+    const code = rules.replace(/\/\*[\s\S]*?\*\//g, "");
+    const shared = code.indexOf(".gp-task-item:focus-visible");
+    const station = code.indexOf(".gp-station-item:focus-visible");
+    expect(shared, "the shared focus rule is gone").toBeGreaterThan(-1);
+    expect(station, "the station focus rule is gone").toBeGreaterThan(-1);
+    expect(shared).toBeLessThan(station);
+  });
+
+  it("gives every control class a ring", () => {
+    for (const cls of [
+      ".gp-btn",
+      ".gp-btn-full",
+      ".gp-icon-btn",
+      ".gp-reset-button",
+      ".gp-task-item",
+      ".gp-segmented-btn",
+      ".gp-station-item",
+    ]) {
+      expect(rules, `${cls} has no :focus-visible rule`).toContain(`${cls}:focus-visible`);
+    }
+  });
+
+  // box-shadow has no `solid` keyword, so a shared `outline` shorthand is
+  // invalid there at computed-value time and the property is dropped —
+  // the toggle's ring disappears with nothing to show for it.
+  it("keeps the ring's width and colour separate, never one shorthand", () => {
+    expect(rules).toContain(
+      "box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color)"
+    );
+    expect(tokenBlock).not.toMatch(/--gp-focus-ring:\s/);
+  });
+});
+
 describe("values that must agree with TypeScript", () => {
   // The view holds the two caption names invisible for CAPTION_NAME_FADE_MS and
   // repaints in the gap the CSS fade opens. Longer in CSS repaints mid-fade;
