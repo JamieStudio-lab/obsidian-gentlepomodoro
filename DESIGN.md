@@ -58,6 +58,19 @@ so an over-wide row loses content off **both** ends with no way to scroll back. 
 `--gp-row-slack`, the segmented-control insets, the clock's four sizes, and the `em`-based reveal
 caps.
 
+**Ink is a theme's business.** The four pieces of text on the artwork read `--gp-ink*` slots that each
+theme declares for itself. Both shipped themes declare identical values — they are not sharing a
+default, they independently chose the same one, which is what independence costs and is the point.
+`--gp-scrim-alpha` (0 for both) drives `.gp-timer-shape::after`, a veil between artwork and text; it
+is the only lever that makes an arbitrary supplied picture safe for white text, and it is a
+pseudo-element so it needs no DOM node and no place in the artwork switch.
+
+**Frosted Glass is the one theme whose legibility is not fully token-driven.** Its two
+orb-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
+`.gp-orb` so overtime text stays readable. They were kept deliberately in 0.6.1 rather than retired,
+to leave the shipped themes looking exactly as they look. A raster theme cannot copy that trick; it
+has the scrim instead.
+
 **Theme-contract tokens are the exception: they live only inside `.gp-theme-<id>` blocks, never on
 `:root`.** Putting them on `:root` makes them shared defaults that themes override, which is exactly
 the structure that made Classic the implicit default in the first place, moved down one layer.

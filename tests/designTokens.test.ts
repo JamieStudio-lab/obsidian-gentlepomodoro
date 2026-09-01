@@ -66,6 +66,15 @@ describe("token hygiene", () => {
  */
 const CONTRACT_TOKENS = [
   "--gp-font-display",
+  "--gp-ink",
+  "--gp-ink-dim",
+  "--gp-ink-soft",
+  "--gp-ink-faint",
+  "--gp-ink-shadow-lg",
+  "--gp-ink-shadow",
+  "--gp-ink-overtime",
+  "--gp-ink-overtime-glow",
+  "--gp-scrim-alpha",
   "--gp-shape-base",
   "--gp-shape-radius",
   "--gp-shadow-rgb",
