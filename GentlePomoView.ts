@@ -14,6 +14,8 @@ import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
 import {
   buildDayNightIcon,
+  dayNightIconFor,
+  skyPhase,
   buildMusicIcon,
   DAY_NIGHT_ICON_ORDER,
   type DayNightIcon,
@@ -616,34 +618,25 @@ export class GentlePomoView extends ItemView {
         }
 
         // --- Gradient Transition Logic ---
-        let progress = 0;
-        if (state.totalMs > 0) {
-          progress = 1 - state.remainingMs / state.totalMs;
-        }
-        progress = Math.max(0, Math.min(1, progress));
-
-        let skyPhase = 0;
-        if (state.mode === "focus") {
-          skyPhase = progress;
-        } else {
-          skyPhase = 1 - progress;
-        }
+        // skyPhase() is shared with the day/night badge (icons.ts). Deriving it
+        // twice is what let the badge run a whole phase behind the artwork.
+        const phase = skyPhase(state);
 
         let duskOpacity = 0;
         let nightOpacity = 0;
-        if (skyPhase < 0.5) {
-          duskOpacity = skyPhase * 2;
+        if (phase < 0.5) {
+          duskOpacity = phase * 2;
           nightOpacity = 0;
         } else {
           duskOpacity = 1;
-          nightOpacity = (skyPhase - 0.5) * 2;
+          nightOpacity = (phase - 0.5) * 2;
         }
         visual.style.setProperty("--gp-dusk-opacity", duskOpacity.toString());
         visual.style.setProperty("--gp-night-opacity", nightOpacity.toString());
         // Consumed by frosted-glass orb color-mix() in styles.css. Uses skyPhase
         // (not raw progress) so orbs warm→cool on focus and cool→warm on break,
         // matching the classic theme's narrative arc.
-        visual.style.setProperty("--gp-progress", skyPhase.toString());
+        visual.style.setProperty("--gp-progress", phase.toString());
       }
     };
 
@@ -925,7 +918,7 @@ export class GentlePomoView extends ItemView {
     this.dayNightIndicator.toggleClass("gp-hidden", !enabled);
     if (!enabled) return;
 
-    const icon = this.getDayNightIcon(state);
+    const icon = dayNightIconFor(state);
     for (const key of DAY_NIGHT_ICON_ORDER) {
       this.dayNightIconEls[key]?.toggleClass("is-active", key === icon);
     }
@@ -1210,18 +1203,6 @@ export class GentlePomoView extends ItemView {
     if (dayDelta <= 0) return `Ends ${time}`;
     const suffix = dayDelta === 1 ? "+1 day" : `+${dayDelta} days`;
     return `Ends ${time} (${suffix})`;
-  }
-
-  private getDayNightIcon(state: TimerState): DayNightIcon {
-    if (state.mode === "focus") {
-      if (state.remainingMs <= 0) return "moon";
-      if (state.remainingMs <= state.totalMs / 2) return "sunset";
-      return "sun";
-    }
-
-    if (state.remainingMs <= 0) return "sun";
-    if (state.remainingMs <= state.totalMs / 2) return "sunrise";
-    return "moon";
   }
 
   /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */

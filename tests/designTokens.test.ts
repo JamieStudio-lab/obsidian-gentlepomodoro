@@ -70,6 +70,7 @@ const CONTRACT_TOKENS = [
   "--gp-ink-dim",
   "--gp-ink-soft",
   "--gp-ink-faint",
+  "--gp-ink-badge",
   "--gp-ink-shadow-lg",
   "--gp-ink-shadow",
   "--gp-ink-overtime",
@@ -143,7 +144,6 @@ describe("raw values outside the scale", () => {
    */
   const ALLOWED_DURATIONS = new Set([
     "0.15s", // segmented-control hover; snaps to the scale in 0.6.1
-    "220ms", // day/night icon fade; shares a reduced-motion block with 0.2s
     "0.25s", // six sites; snapping to 200ms is a visible 50ms change
     "1s", // the overtime settle, paired with the 6s breath below
     "0s", // an explicit zero, not a tempo

@@ -428,6 +428,7 @@
   --gp-ink-dim: rgba(255, 255, 255, 0.9);
   --gp-ink-soft: rgba(255, 255, 255, 0.82);
   --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
   --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
   --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   --gp-ink-overtime: #ff6b6b;
@@ -485,23 +486,26 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  height: 18px;
-  padding: 0 var(--gp-space-3);
+  /* Grown in 0.6.1: a 14px glyph in an 18px pill read as an afterthought at
+     the top of a 220px square. The badge is absolutely positioned inside
+     .gp-timer-content, so growing it moves nothing else. */
+  min-width: 32px;
+  height: 22px;
+  padding: 0 var(--gp-space-4);
   border-radius: var(--gp-radius-pill);
   /* Dark "scrim" pill so the icon stays readable on light (orange) gradients */
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.14));
   border: 1px solid rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--gp-ink-badge, rgba(255, 255, 255, 0.92));
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
 .gp-daynight-icon-stack {
   position: relative;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .gp-daynight-icon {
@@ -511,7 +515,7 @@
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 220ms ease;
+  transition: opacity var(--gp-dur-fast) ease;
 }
 
 .gp-daynight-icon.is-active {
@@ -1266,6 +1270,7 @@
   --gp-ink-dim: rgba(255, 255, 255, 0.9);
   --gp-ink-soft: rgba(255, 255, 255, 0.82);
   --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
   --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
   --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
   --gp-ink-overtime: #ff6b6b;
