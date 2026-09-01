@@ -1,4 +1,5 @@
 import { Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
+import { DEFAULT_THEME } from "./themes";
 
 import { confirmAction } from "./confirmModal";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
@@ -432,7 +433,7 @@ export default class GentlePomoPlugin extends Plugin {
     // once so future loads don't repeat the rewrite.
     let migrated = false;
     if (loaded && (loaded.theme as unknown) === "sunset") {
-      loaded.theme = "classic";
+      loaded.theme = DEFAULT_THEME;
       migrated = true;
     }
     // First-run/upgrade default for the task-selector toggle: derive it once from

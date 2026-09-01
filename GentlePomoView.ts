@@ -1,4 +1,5 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import {
@@ -704,15 +705,14 @@ export class GentlePomoView extends ItemView {
   }
 
   applySettings() {
-    // Resolve rather than compare, so an unrecognised stored value still lands
-    // on a real theme. Artwork is opt-in per theme now, so a theme class that
-    // matched nothing would leave the square empty; before 0.6.0 it fell
+    // Driven by the registry, so a new theme needs no change here. resolveTheme
+    // rather than a comparison: artwork is opt-in per theme since 0.6.0, so an
+    // id matching no theme would leave the square empty — before that it fell
     // through to classic's unscoped rules and the damage was invisible.
-    // coerceToDefaults cannot catch this: a bogus theme id is still a string,
-    // so it has the same type as the default and passes.
-    const theme = this.plugin.settings.theme === "frosted-glass" ? "frosted-glass" : "classic";
-    this.containerEl.toggleClass("gp-theme-classic", theme === "classic");
-    this.containerEl.toggleClass("gp-theme-frosted-glass", theme === "frosted-glass");
+    const theme = resolveTheme(this.plugin.settings.theme);
+    for (const id of THEME_IDS) {
+      this.containerEl.toggleClass(themeClass(id), id === theme);
+    }
 
     const state = this.lastState ?? this.timer.getState();
 

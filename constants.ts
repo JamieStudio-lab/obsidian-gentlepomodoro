@@ -1,5 +1,6 @@
 import type { GentlePomoSettings } from "./types";
 import type { MusicResumeState } from "./youtubeMusic";
+import { DEFAULT_THEME } from "./themes";
 
 // Central home for shared, static values so they aren't duplicated as magic strings/numbers.
 export const VIEW_TYPE_GENTLE_POMO = "gentle-pomo-view";
@@ -133,7 +134,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   showStatusBarTimeLeft: false,
   showDayNightIndicator: true,
   showEndTime: true,
-  theme: "classic",
+  theme: DEFAULT_THEME,
   soundEnabled: true,
   soundVolume: 0.7,
   tasksPath: "",

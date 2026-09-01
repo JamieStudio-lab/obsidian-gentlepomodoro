@@ -1,4 +1,5 @@
 import type { MusicResumeState } from "./youtubeMusic";
+import type { PomoTheme } from "./themes";
 
 // Two timer phases used throughout the plugin.
 export type PomoMode = "focus" | "break";
@@ -26,7 +27,7 @@ export interface GentlePomoSettings {
   showEndTime: boolean;
 
   // Appearance
-  theme: "classic" | "frosted-glass";
+  theme: PomoTheme;
 
   // Audio
   soundEnabled: boolean;
