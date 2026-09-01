@@ -71,10 +71,17 @@
   --gp-radius-shape: 35px; /* the timer square's squircle */
 
   /* --- Motion ----------------------------------------------------------
-     Twelve durations were written fourteen ways: this file contained both
-     `0.2s` and `200ms`, and both `0.26s` and `260ms`. The five ambient
-     tempos stay literal at their use sites — the 8s breath, the 6s and 1s
-     overtime pair, and the 65s/58s/72s orb drifts, whose mutual
+     Twelve distinct durations were written fourteen ways: this file
+     contained both `0.2s` and `200ms`, and both `0.26s` and `260ms`. Eight
+     steps absorb 45 of those declarations EXACTLY — no timing moves.
+
+     Four values deliberately keep their literals rather than snap, because
+     0.6.0 changes nothing a user could notice: 150ms (x2), 220ms (x1),
+     250ms (x6) and 1s (x1). They join the scale in 0.6.1, where a 20-50ms
+     shift can be listed as an intended change.
+
+     The ambient tempos stay literal at their use sites — the 8s breath, the
+     6s and 1s overtime pair, and the 65s/58s/72s orb drifts, whose mutual
      non-divisibility is the point.
 
      --gp-ease-overshoot was spelled out ten times with a comment asserting
@@ -82,6 +89,7 @@
   --gp-dur-instant: 100ms;
   --gp-dur-fast: 200ms;
   --gp-dur-reveal: 260ms;
+  --gp-dur-open: 300ms;
   --gp-dur-panel: 350ms;
   --gp-dur-collapse: 500ms;
   --gp-dur-list-slow: 550ms;
@@ -183,7 +191,7 @@
    so Obsidian's resize-divider actually stops at 320px instead of just
    letting our internal layout overflow. */
 .workspace-leaf-content[data-type="gentle-pomo-view"] {
-  min-height: 320px;
+  min-height: var(--gp-leaf-min-height);
 }
 
 /* Container Layout */
@@ -192,7 +200,7 @@
   flex-direction: column;
   align-items: center;
   height: 100%;
-  padding: 20px;
+  padding: var(--gp-root-pad);
 
   /* Both axes scroll when content exceeds the leaf. Horizontal scroll
      kicks in on narrow sidebars where the natural row width exceeds
@@ -246,10 +254,12 @@
   top: 0;
   z-index: 5;
   background: var(--background-primary);
-  margin-bottom: 1.5rem;
+  margin-bottom: var(--gp-space-9);
   width: 100%;
-  min-width: 200px; /* Floor — clock stays readable even on narrow sidebars (leaf scrolls horizontally if needed) */
-  max-width: 220px; /* Smaller, fits sidebar better */
+  /* Floor — the clock stays readable even on narrow sidebars; the leaf
+     scrolls horizontally if it has to. */
+  min-width: var(--gp-clock-min);
+  max-width: var(--gp-clock-max); /* Smaller, fits sidebar better */
   aspect-ratio: 1 / 1; /* Keep it square-ish */
   display: flex;
   justify-content: center;
@@ -260,28 +270,28 @@
 
   /* Smooth interpolation of --gp-progress (registered via @property just
      above) so a theme eases through its colour phases when the user clicks
-     skip/reset. Matches the 0.8s opacity ease-out used by the classic
+     skip/reset. Matches the var(--gp-dur-ambient) opacity ease-out used by the classic
      theme's dusk/night layers. */
-  transition: --gp-progress 0.8s ease-out;
+  transition: --gp-progress var(--gp-dur-ambient) ease-out;
 }
 
 /* The Shape Wrapper */
 .gp-timer-shape {
   position: absolute;
   inset: 0;
-  border-radius: 35px; /* Soft rounded corners (Squircle-ish) */
+  border-radius: var(--gp-radius-shape); /* Soft rounded corners (Squircle-ish) */
   overflow: hidden;
 
   /* CHANGED: Set a dark background to prevent underlying orange layers from bleeding through edges */
   background-color: #1e1e1e;
 
   /* CHANGED: Use dynamic shadow color matching the timer theme */
-  box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  box-shadow: var(--gp-elev-rest);
 
   /* CHANGED: Added box-shadow to transition list. */
   transition:
-    transform 0.8s ease-out,
-    box-shadow 0.8s ease-out;
+    transform var(--gp-dur-ambient) ease-out,
+    box-shadow var(--gp-dur-ambient) ease-out;
 
   z-index: 1; /* Above background layers, below content */
 }
@@ -294,15 +304,15 @@
 @keyframes gp-gentle-pulse {
   0% {
     transform: scale(1);
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
   50% {
     transform: scale(1.03);
-    box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+    box-shadow: var(--gp-elev-lift);
   }
   100% {
     transform: scale(1);
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
 }
 
@@ -312,7 +322,7 @@
 .gp-layer-day {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  background: var(--gp-mode-focus-gradient);
   z-index: 0;
 }
 
@@ -328,7 +338,7 @@
   opacity: var(--gp-dusk-opacity, 0);
 
   /* CHANGED: Increased transition time for a smoother color reset on stop */
-  transition: opacity 0.8s ease-out;
+  transition: opacity var(--gp-dur-ambient) ease-out;
 }
 
 /* Layer 2: Night / Northern Lights (Top) */
@@ -336,14 +346,14 @@
   position: absolute;
   inset: 0;
   /* Deep blue/purple to teal/green aurora look */
-  background: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+  background: var(--gp-mode-break-gradient);
   z-index: 1;
 
   /* Opacity controlled by JS via CSS variable */
   opacity: var(--gp-night-opacity, 0);
 
   /* CHANGED: Increased transition time for a smoother color reset on stop */
-  transition: opacity 0.8s ease-out;
+  transition: opacity var(--gp-dur-ambient) ease-out;
 }
 
 /* --- Typography --- */
@@ -366,7 +376,7 @@
   z-index: 4;
   pointer-events: none;
   opacity: 0.82;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--gp-dur-fast) ease;
 }
 
 /* Hide the day/night indicator once the WHOLE side panel (leaf width)
@@ -384,8 +394,8 @@
   justify-content: center;
   min-width: 26px;
   height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
+  padding: 0 var(--gp-space-3);
+  border-radius: var(--gp-radius-pill);
   /* Dark "scrim" pill so the icon stays readable on light (orange) gradients */
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.14));
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -426,7 +436,7 @@
   /* Scale down smoothly in narrow sidebars; upper bound is the original 3.5rem */
   font-size: clamp(2rem, 26cqi, 3.5rem);
   /* Slightly bolder weight usually looks better for rounded fonts */
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   /* Font stack:
        1. SF Pro Rounded: macOS/iOS
        2. Arial Rounded MT Bold: Windows (with Office)
@@ -449,7 +459,7 @@
 
   /* Visibility Logic */
   transition:
-    opacity 0.3s ease,
+    opacity var(--gp-dur-open) ease,
     color 0.25s ease,
     text-shadow 0.25s ease;
   opacity: 1;
@@ -478,11 +488,11 @@
 
 .gp-mode-label {
   margin-top: 0;
-  font-size: 0.8rem;
+  font-size: var(--gp-text-caption);
   text-transform: uppercase;
   letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
   color: rgba(255, 255, 255, 0.9);
-  font-weight: 700;
+  font-weight: var(--gp-weight-display);
   font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
@@ -497,7 +507,7 @@
    the reveal grows inside it, so the controls below never shift. */
 .gp-end-time {
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   letter-spacing: 0.3px;
   color: rgba(255, 255, 255, 0.82);
   font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
@@ -513,17 +523,17 @@
   transform: translateY(-6px);
   will-change: max-height, opacity, transform;
   transition:
-    max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 200ms ease,
-    transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    margin-top 260ms ease;
+    max-height var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    margin-top var(--gp-dur-reveal) ease;
 }
 
 /* Revealed while a session is running (before overtime). */
 .gp-end-time.gp-visible {
   margin-top: 0.4rem;
   opacity: 1;
-  max-height: 2.5em;
+  max-height: var(--gp-reveal-cap);
   transform: translateY(0);
 }
 
@@ -531,8 +541,10 @@
 .gp-controls {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem; /* Space between rows */
-  width: 260px; /* Fixed — controls don't shrink on narrow sidebars; leaf scrolls horizontally instead */
+  gap: var(--gp-space-5); /* Space between rows */
+  /* Fixed — controls don't shrink on narrow sidebars; the leaf scrolls
+     horizontally instead. */
+  width: var(--gp-control-column);
 
   position: relative;
   z-index: 2; /* ensure controls sit above any visual layers */
@@ -582,10 +594,10 @@
 
   /* Animation properties */
   transition:
-    max-width 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 0.3s ease,
-    margin 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+    max-width var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-open) ease,
+    margin var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    transform var(--gp-dur-collapse) var(--gp-ease-overshoot);
 
   opacity: 1;
   transform: translateX(0) scale(1);
@@ -611,13 +623,13 @@
 
 /* Specifics for Adjust Wrapper (+/-) */
 .gp-adjust-wrapper {
-  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
+  max-width: calc(2 * var(--gp-icon-btn-size) + var(--gp-control-gap) + var(--gp-row-slack));
   /* Removed margin-right to keep spacing consistent via flex gap */
 }
 
 /* Specifics for Secondary Controls (Stop/Reset) */
 .gp-secondary-controls {
-  max-width: calc(2 * var(--gp-icon-btn-size, 42px) + var(--gp-control-gap, 12px) + 4px);
+  max-width: calc(2 * var(--gp-icon-btn-size) + var(--gp-control-gap) + var(--gp-row-slack));
   /* Removed margin-left to keep spacing consistent via flex gap */
 }
 
@@ -626,14 +638,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--gp-radius-lg);
+  border: var(--gp-rule);
   background: var(--interactive-normal);
   cursor: pointer;
   /* Make transition faster for a snappier feel */
   transition:
-    background 0.1s ease,
-    transform 0.1s ease;
+    background var(--gp-dur-instant) ease,
+    transform var(--gp-dur-instant) ease;
   color: var(--text-normal);
 }
 
@@ -684,14 +696,14 @@
 .gp-btn-full {
   width: 100%;
   min-height: 52px; /* Increased height for 2 rows */
-  padding: 4px 12px;
+  padding: var(--gp-space-2) var(--gp-space-5);
   display: flex;
   flex-direction: column; /* Stack content vertically */
   align-items: flex-start; /* Align text to left */
   justify-content: center;
-  gap: 2px;
-  font-weight: 500;
-  font-size: 0.9rem;
+  gap: var(--gp-space-1);
+  font-weight: var(--gp-weight-medium);
+  font-size: var(--gp-text-body);
   line-height: 1.2;
 }
 
@@ -701,7 +713,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   width: 100%;
   text-align: left;
 }
@@ -739,24 +751,24 @@
   transform: translateY(-6px);
 
   transition:
-    max-height 0.35s ease,
+    max-height var(--gp-dur-panel) ease,
     opacity 0.25s ease,
-    transform 0.35s ease,
-    padding 0.35s ease,
-    margin 0.35s ease,
-    border-color 0.35s ease;
+    transform var(--gp-dur-panel) ease,
+    padding var(--gp-dur-panel) ease,
+    margin var(--gp-dur-panel) ease,
+    border-color var(--gp-dur-panel) ease;
 }
 
 .gp-settings-panel.gp-visible {
   /* Fixed shorter cap. Settings panel is intentionally compact and
      scrolls internally past this height, regardless of leaf size. */
-  max-height: 320px;
+  max-height: var(--gp-panel-max-height);
   opacity: 1;
   transform: translateY(0);
-  padding-top: 1rem;
-  padding-bottom: 1rem;
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+  padding-top: var(--gp-space-7);
+  padding-bottom: var(--gp-space-7);
+  margin-top: var(--gp-space-4);
+  margin-bottom: var(--gp-space-4);
   border-top-color: var(--background-modifier-border);
   border-bottom-color: var(--background-modifier-border);
   /* Scroll the panel internally if its natural content exceeds max-height. */
@@ -773,8 +785,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 32px;
-  font-size: 0.9rem;
+  min-height: var(--gp-control-h);
+  font-size: var(--gp-text-body);
   color: var(--text-muted);
 }
 
@@ -784,21 +796,21 @@
 
 .gp-settings-row input[type="number"] {
   width: 80px;
-  height: 32px;
+  height: var(--gp-control-h);
   text-align: center;
-  border-radius: 6px;
+  border-radius: var(--gp-radius-sm);
   font-variant-numeric: tabular-nums;
 }
 
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
-  margin-top: 1.25rem;
-  margin-bottom: 0.5rem;
+  margin-top: var(--gp-space-8);
+  margin-bottom: var(--gp-space-4);
 }
 
 .gp-settings-section-label:first-child {
@@ -825,9 +837,9 @@
   position: absolute;
   inset: 0;
   background-color: var(--background-modifier-border);
-  border-radius: 12px;
+  border-radius: var(--gp-radius-pill);
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color var(--gp-dur-fast) ease;
 }
 
 .gp-toggle-slider::before {
@@ -840,7 +852,7 @@
   background-color: var(--text-on-accent, #ffffff);
   border-radius: 50%;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-  transition: transform 0.2s ease;
+  transition: transform var(--gp-dur-fast) ease;
 }
 
 .gp-toggle input:checked + .gp-toggle-slider {
@@ -859,9 +871,9 @@
 .gp-segmented {
   display: inline-flex;
   background: var(--background-modifier-border);
-  border-radius: 6px;
-  padding: 2px;
-  height: 32px;
+  border-radius: var(--gp-radius-sm);
+  padding: var(--gp-space-1);
+  height: var(--gp-control-h);
   align-items: center;
   flex: 0 0 auto;
 }
@@ -870,13 +882,13 @@
   background: transparent;
   border: none;
   color: var(--text-muted);
-  padding: 0 12px;
-  height: 28px;
+  padding: 0 var(--gp-space-5);
+  height: calc(var(--gp-control-h) - var(--gp-segmented-inset));
   min-width: 40px;
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gp-radius-xs);
   transition:
     background-color 0.15s ease,
     color 0.15s ease;
@@ -898,20 +910,20 @@
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
 .gp-settings-reset {
-  margin-top: 0.5rem;
+  margin-top: var(--gp-space-4);
 }
 
 .gp-reset-button {
   display: block;
   width: 100%;
-  height: 32px;
+  height: var(--gp-control-h);
   background: transparent;
-  border: 1px solid var(--background-modifier-border);
+  border: var(--gp-rule);
   color: var(--text-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--gp-radius-sm);
 }
 
 .gp-reset-button:hover {
@@ -931,27 +943,27 @@
 .gp-status {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--gp-space-2);
   cursor: pointer;
 }
 
 .gp-status-dot {
   width: 9px;
   height: 9px;
-  border-radius: 999px;
+  border-radius: var(--gp-radius-pill);
   background: var(--text-muted);
   opacity: 0.8;
   transition:
-    background-color 0.2s ease,
-    transform 0.1s ease;
+    background-color var(--gp-dur-fast) ease,
+    transform var(--gp-dur-instant) ease;
 }
 
 .gp-status-dot.gp-mode-focus {
-  background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+  background: var(--gp-mode-focus-gradient);
 }
 
 .gp-status-dot.gp-mode-break {
-  background: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+  background: var(--gp-mode-break-gradient);
 }
 
 .gp-status-dot.gp-running {
@@ -961,8 +973,8 @@
 .gp-status-label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 0.75rem;
+  gap: var(--gp-space-2);
+  font-size: var(--gp-text-micro);
   opacity: 0.8;
 }
 
@@ -974,8 +986,8 @@
   transform: translateY(-2px);
   transition:
     max-width 0.25s ease,
-    opacity 0.2s ease,
-    transform 0.2s ease;
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-fast) ease;
 }
 
 .gp-status.gp-show-time .gp-status-time {
@@ -987,13 +999,13 @@
 .gp-status-focus-total {
   font-size: 0.7rem;
   opacity: 0.65;
-  margin-left: 4px;
+  margin-left: var(--gp-space-2);
 }
 
 .gp-status-focus-total.gp-status-goal-met {
   color: var(--text-success, var(--color-green, #4ade80));
   opacity: 1;
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 /* Disabled State for Buttons */
@@ -1019,48 +1031,48 @@
   max-height: 0;
   overflow-y: auto;
   background-color: var(--background-secondary);
-  border-radius: 12px;
-  margin-top: 0.5rem;
+  border-radius: var(--gp-radius-lg);
+  margin-top: var(--gp-space-4);
   transition:
-    max-height 0.3s ease-in-out,
-    padding 0.3s ease;
+    max-height var(--gp-dur-open) ease-in-out,
+    padding var(--gp-dur-open) ease;
   border: 1px solid transparent;
 }
 
 .gp-task-list.gp-visible {
-  max-height: 250px; /* Increased slightly for groups */
+  max-height: var(--gp-list-max-height); /* Increased slightly for groups */
   border-color: var(--background-modifier-border);
-  padding: 0.5rem;
+  padding: var(--gp-space-4);
 }
 
 /* NEW: Group Header Style */
 .gp-task-group-header {
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
-  margin-top: 0.75rem;
-  margin-bottom: 0.25rem;
-  padding-left: 0.5rem;
-  border-bottom: 1px solid var(--background-modifier-border);
-  padding-bottom: 2px;
+  margin-top: var(--gp-space-5);
+  margin-bottom: var(--gp-space-2);
+  padding-left: var(--gp-space-4);
+  border-bottom: var(--gp-rule);
+  padding-bottom: var(--gp-space-1);
 }
 
 .gp-task-group-header:first-child {
-  margin-top: 0.25rem;
+  margin-top: var(--gp-space-2);
 }
 
 .gp-task-item {
-  padding: 6px 12px; /* Slightly more compact */
-  border-radius: 8px;
+  padding: var(--gp-space-3) var(--gp-space-5); /* Slightly more compact */
+  border-radius: var(--gp-radius-md);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--gp-text-label);
   color: var(--text-normal);
-  transition: background-color 0.1s ease;
+  transition: background-color var(--gp-dur-instant) ease;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gp-space-4);
   line-height: 1.3;
 }
 
@@ -1077,7 +1089,7 @@
 .gp-task-item.gp-task-selected {
   background-color: var(--interactive-accent);
   color: var(--text-on-accent);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 .gp-task-item.gp-task-selected:hover {
@@ -1103,7 +1115,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: var(--gp-space-1);
   padding: 18px 14px 20px;
   text-align: center;
 }
@@ -1111,7 +1123,7 @@
 .gp-task-empty-icon {
   display: flex;
   justify-content: center;
-  margin-bottom: 6px;
+  margin-bottom: var(--gp-space-3);
   color: var(--text-faint);
 }
 
@@ -1127,8 +1139,8 @@
 }
 
 .gp-task-empty-title {
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: var(--gp-text-label);
+  font-weight: var(--gp-weight-strong);
   color: var(--text-normal);
 }
 
@@ -1194,7 +1206,7 @@
   opacity: 0.95;
   /* color-mix(in oklab, ...) interpolates in a perceptually-even space,
      so the hue shift looks like a slow sunset rather than a muddy fade. */
-  transition: background 0.8s ease-out;
+  transition: background var(--gp-dur-ambient) ease-out;
 }
 
 /* Warm/cool endpoints are exposed as custom properties per orb so the
@@ -1414,7 +1426,7 @@
 /* --- Total Time (Overtime Only) --- */
 .gp-total-time {
   font-size: clamp(0.75rem, 10cqi, 1rem);
-  font-weight: 500;
+  font-weight: var(--gp-weight-medium);
   color: var(--text-muted);
   margin: 0;
   margin-bottom: 0;
@@ -1426,10 +1438,10 @@
   transform: translateY(-6px);
   will-change: max-height, opacity, transform;
   transition:
-    max-height 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 200ms ease,
-    transform 260ms cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    margin-bottom 260ms ease,
+    max-height var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-reveal) var(--gp-ease-overshoot),
+    margin-bottom var(--gp-dur-reveal) ease,
     color 0.25s ease,
     text-shadow 0.25s ease;
 }
@@ -1437,7 +1449,7 @@
 /* Show it when we are in overtime */
 .gp-state-overtime .gp-total-time {
   opacity: 1;
-  max-height: 2.5em;
+  max-height: var(--gp-reveal-cap);
   margin-bottom: 0.65rem;
   transform: translateY(0);
 }
@@ -1534,8 +1546,8 @@
    Updated from main.ts via GentlePomoView.setGoalProgress(). */
 .gp-goal-progress {
   display: none;
-  margin-top: 0.5rem;
-  font-size: 0.8rem;
+  margin-top: var(--gp-space-4);
+  font-size: var(--gp-text-caption);
   color: var(--text-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -1543,7 +1555,7 @@
 
 .gp-goal-progress.gp-goal-met {
   color: var(--interactive-accent);
-  font-weight: 600;
+  font-weight: var(--gp-weight-strong);
 }
 
 /* =========================================================================
@@ -1562,7 +1574,7 @@
 .gp-music-divider {
   width: 100%;
   height: 1px;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--gp-space-4);
   background: var(--background-modifier-border);
 }
 
@@ -1583,12 +1595,12 @@
   /* Its own breathing room on both sides: clear of the hairline above, and well
      clear of the transport below — .gp-controls' 0.75rem row gap alone read as
      the caption being glued to the buttons. */
-  margin-top: 0.5rem;
+  margin-top: var(--gp-space-4);
   margin-bottom: 1.1rem;
   display: flex;
   align-items: baseline;
   justify-content: center;
-  gap: 6px;
+  gap: var(--gp-space-3);
   min-width: 0;
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -1631,7 +1643,7 @@
   overflow: hidden;
   white-space: nowrap;
   /* Comfortably past "Now playing" at this size; it only ever caps the ease. */
-  max-width: 7em;
+  max-width: var(--gp-caption-word-cap);
   opacity: 1;
   /* Arriving is the default: wait out the departing word, then open. */
   --gp-caption-delay: var(--gp-caption-fade, 0.5s);
@@ -1651,7 +1663,7 @@
 /* Arriving, and more specific than the Leaving rule above, so the delay returns. */
 .gp-station-current.is-playing .gp-station-label-playing {
   --gp-caption-delay: var(--gp-caption-fade, 0.5s);
-  max-width: 7em;
+  max-width: var(--gp-caption-word-cap);
   opacity: 1;
 }
 
@@ -1700,7 +1712,7 @@
 .gp-station-current-name::before,
 .gp-station-current-track::before {
   content: "|";
-  margin-right: 6px;
+  margin-right: var(--gp-space-3);
   opacity: 0.45;
 }
 
@@ -1733,19 +1745,19 @@
    colours in the list are the hover and the active row. */
 .gp-station-list {
   background-color: transparent;
-  /* Slower than the task list's 0.3s. That one is a working list you open to
+  /* Slower than the task list's var(--gp-dur-open). That one is a working list you open to
      get something done; this is a mood control, and it should feel unhurried.
      The mobile override that kills the transition outright still wins — it is
      `body.is-mobile .gp-task-list`, which out-specifies this. */
   transition:
-    max-height 0.55s ease-in-out,
-    padding 0.55s ease;
+    max-height var(--gp-dur-list-slow) ease-in-out,
+    padding var(--gp-dur-list-slow) ease;
   /* Flex rather than margins so the spacing sits only BETWEEN rendered rows: an
      unused middle slot is display:none, so it contributes no gap, and the last
      visible row gains no trailing space even when a hidden slot follows it. */
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gp-space-3);
 }
 
 /* Rows are divs, exactly like .gp-task-item, so they need no reset at all —
@@ -1760,15 +1772,15 @@
    It must never be .gp-hidden: display:none cannot animate. */
 .gp-music-video-row {
   overflow: hidden;
-  max-height: calc(var(--gp-icon-btn-size, 42px) + 4px);
-  margin-top: 0.75rem;
+  max-height: calc(var(--gp-icon-btn-size) + var(--gp-row-slack));
+  margin-top: var(--gp-space-5);
   opacity: 1;
   transform: translateY(0) scale(1);
   transition:
-    max-height 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    opacity 0.3s ease,
-    margin-top 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1),
-    transform 0.5s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+    max-height var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    opacity var(--gp-dur-open) ease,
+    margin-top var(--gp-dur-collapse) var(--gp-ease-overshoot),
+    transform var(--gp-dur-collapse) var(--gp-ease-overshoot);
 }
 
 .gp-music-video-row.gp-hidden-animated {
@@ -1856,7 +1868,18 @@ body:not(.is-mobile) .modal.gp-confirm-modal {
    ========================================================================= */
 body.is-mobile,
 body.is-tablet {
-  --gp-tap-min: 50px; /* Comfortable touch target (above the 44px Apple HIG minimum) */
+  --gp-tap-min: 50px;
+
+  /* The four settings-panel controls all take their height from
+     --gp-control-h, so redefining it here is what used to be four separate
+     override rules. --gp-segmented-inset is the TOTAL subtraction from the
+     track, not a padding, and the two tiers genuinely differ: desktop
+     32 - 4 = 28, touch 50 - 8 = 42. Any formula that multiplies it, or that
+     picks one tier's number for both, mis-sizes the other by 4px — which
+     shows as a pill sitting slightly off-centre rather than as a broken
+     layout, and is exactly how it would survive review. */
+  --gp-control-h: var(--gp-tap-min);
+  --gp-segmented-inset: 8px; /* Comfortable touch target (above the 44px Apple HIG minimum) */
 }
 
 /* Obsidian mobile renders the app at a larger base scale, so the desktop glyph
@@ -1891,7 +1914,7 @@ body.is-tablet .gp-icon-btn svg.svg-icon {
    proportionally on short viewports, freeing room for the centering spacers. */
 body.is-mobile .gp-timer-visual,
 body.is-tablet .gp-timer-visual {
-  max-width: min(280px, 38vh);
+  max-width: var(--gp-clock-max-touch);
 }
 
 /* Compact panel (e.g. iPhone landscape — a short, wide leaf). Detection is done in
@@ -1908,9 +1931,9 @@ body.is-mobile .gp-root.gp-compact .gp-timer-visual {
      containing block — .gp-timer-shape is position:absolute;inset:0, so static would
      let it escape the 150px box and fill the panel. */
   position: relative;
-  max-width: 150px;
+  max-width: var(--gp-clock-compact);
   min-width: 0;
-  margin-bottom: 1rem;
+  margin-bottom: var(--gp-space-7);
 }
 
 /* Layout reflow: drop the fixed 260px width + horizontal-scroll model in favor of a
@@ -1945,7 +1968,7 @@ body.is-mobile .gp-icon-btn,
 body.is-tablet .gp-icon-btn {
   flex: 0 1 var(--gp-icon-btn-size);
   width: auto;
-  min-width: 44px;
+  min-width: var(--gp-tap-floor);
   max-width: var(--gp-icon-btn-size);
   height: auto;
   aspect-ratio: 1 / 1;
@@ -1954,35 +1977,19 @@ body.is-tablet .gp-icon-btn {
 /* iPad's sidebar is narrow — trim side padding so buttons stay nearer full size and
    the row fits even at Obsidian's minimum sidebar width. iPhone keeps the 20px base. */
 body.is-tablet .gp-root {
-  padding-left: 12px;
-  padding-right: 12px;
+  padding-left: var(--gp-space-5);
+  padding-right: var(--gp-space-5);
 }
 
-/* Touch-target floors (≥44px) for the smaller interactive elements. */
-body.is-mobile .gp-segmented,
-body.is-tablet .gp-segmented {
-  height: var(--gp-tap-min);
-}
-
+/* Touch-target floors (≥44px) for the smaller interactive elements. The four
+   height rules that used to live here are gone: the segmented track, the
+   segmented button, the reset button, the settings row and its number input
+   all size from --gp-control-h, which the token block above redefines for
+   touch. Only the wider hit area is left, which is not derivable from a
+   height. */
 body.is-mobile .gp-segmented-btn,
 body.is-tablet .gp-segmented-btn {
-  height: calc(var(--gp-tap-min) - 8px);
   min-width: 52px;
-}
-
-body.is-mobile .gp-reset-button,
-body.is-tablet .gp-reset-button {
-  height: var(--gp-tap-min);
-}
-
-body.is-mobile .gp-settings-row,
-body.is-tablet .gp-settings-row {
-  min-height: var(--gp-tap-min);
-}
-
-body.is-mobile .gp-settings-row input[type="number"],
-body.is-tablet .gp-settings-row input[type="number"] {
-  height: var(--gp-tap-min);
 }
 
 /* Bigger task-picker button and dropdown rows — the primary touch targets for
@@ -1995,7 +2002,7 @@ body.is-tablet .gp-btn-full {
 
 body.is-mobile .gp-task-item,
 body.is-tablet .gp-task-item {
-  padding: 14px;
+  padding: var(--gp-space-6);
   min-height: var(--gp-tap-min);
 }
 
@@ -2022,7 +2029,7 @@ body.is-tablet .gp-root {
      the list reaches its end. */
   overscroll-behavior-y: contain;
   /* Keep the last row clear of the iPhone home indicator / Obsidian mobile nav. */
-  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  padding-bottom: max(var(--gp-root-pad), env(safe-area-inset-bottom));
   /* .gp-root is the leaf-content element itself (the view empties containerEl and
      uses it directly). On mobile its height:100% doesn't resolve — the leaf chain
      gives no definite ancestor height — so it collapses to content height, the
@@ -2087,7 +2094,7 @@ body.is-tablet .gp-task-list.gp-visible {
 
 /* Give the countdown number its own GPU layer on touch so its opacity fade composites
    independently of the frosted-glass backdrop-filter's continuous repaints and the ~1Hz
-   ancestor style recalcs — otherwise iOS intermittently drops the 0.3s fade (abrupt hide)
+   ancestor style recalcs — otherwise iOS intermittently drops the var(--gp-dur-open) fade (abrupt hide)
    and mis-rasterizes the text-shadow at the bottom of the digits. Safe: .gp-timer-time
    has no other transform. */
 body.is-mobile .gp-timer-time,
@@ -2107,10 +2114,10 @@ body.is-tablet .gp-timer-time {
 @keyframes gp-gentle-pulse-glow {
   0%,
   100% {
-    box-shadow: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+    box-shadow: var(--gp-elev-rest);
   }
   50% {
-    box-shadow: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+    box-shadow: var(--gp-elev-lift);
   }
 }
 
@@ -2139,7 +2146,7 @@ body.is-tablet .gp-timer-time {
 .gp-setting-error {
   flex-basis: 100%;
   min-width: 0;
-  margin-top: 4px;
+  margin-top: var(--gp-space-2);
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
   text-align: right;
