@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.1] — 2026-09-01
+## [0.6.1] — 2026-09-02
 
 The visible half of the design-system work 0.6.0 laid the groundwork for. The
 timer square finally sets in one typeface, the day/night badge stops
