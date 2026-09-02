@@ -53,6 +53,22 @@
   --gp-text-caption: 0.8rem;
   --gp-text-micro: 0.75rem;
 
+  /* The plugin's own voice, and the ONLY font-family it declares. Four
+     elements share the 220px timer square, and before 0.6.1 they used three
+     different stacks: the clock named seven families, the mode label and end
+     time named three, and the overtime total named none at all and fell
+     through to Obsidian's interface font. On a Mac that is invisible, because
+     the first name in every list is installed — which is exactly why it
+     shipped. On Windows or Linux the clock rendered rounded and the label 4px
+     beneath it did not. */
+  --gp-font-rounded:
+    "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI",
+    sans-serif;
+
+  /* Tracking for the three uppercase eyebrow labels. Small caps set solid
+     without it; the value is shared, so it is named once. */
+  --gp-tracking-eyebrow: 0.05em;
+
   --gp-weight-medium: 500;
   --gp-weight-strong: 600;
   --gp-weight-display: 700; /* the file's only 700: small rounded type over a live gradient reads thin at 600 */
@@ -105,6 +121,23 @@
      blocks land. NOTE it supplies three comma-separated CHANNELS, not a
      colour: "improving" it to a hex or color() makes all six shadows invalid
      at computed-value time and the timer's depth silently disappears. */
+  /* --- Focus -----------------------------------------------------------
+     One ring, two application modes. The OUTWARD offset is the default; the
+     INSET one is mandatory rather than stylistic for rows inside a scrolling
+     list, because .gp-task-list is overflow-y: auto with a max-height, so an
+     outward ring on the first or last visible row is clipped by the scroll
+     container. Normalising every ring to +1px would silently delete the
+     focus indicator at exactly the two rows most likely to have it. */
+  /* Width and colour stay SEPARATE rather than becoming one `outline`
+     shorthand: the toggle draws its ring as a box-shadow, and box-shadow has
+     no `solid` keyword — a shared shorthand there is invalid at
+     computed-value time, so the property is dropped and the ring silently
+     disappears. */
+  --gp-focus-ring-width: 2px;
+  --gp-focus-ring-color: var(--interactive-accent);
+  --gp-focus-ring-offset: 1px;
+  --gp-focus-ring-offset-inset: -2px;
+
   --gp-rule: 1px solid var(--background-modifier-border);
   --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
   --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
@@ -325,6 +358,23 @@
 
 /* --- The Color Layers --- */
 
+/* The scrim: a dark veil between the artwork and the text, driven by the
+   per-theme --gp-scrim-alpha and painting nothing at all while that is 0.
+   A ::after rather than a real element on purpose — it needs no DOM node, no
+   TypeScript, and no place in the artwork switch below. z-index 4 puts it
+   above every artwork layer (the glass highlight tops out at 3) and the
+   shape's own overflow: hidden clips it to the rounded corners; the text
+   lives in .gp-timer-content, a SIBLING of the shape at a higher level, so
+   one veil covers all four pieces of text without touching any of them. */
+.gp-timer-shape::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  background-color: rgba(0, 0, 0, var(--gp-scrim-alpha, 0));
+}
+
 /* Every theme's artwork nodes are built once, for every theme, and carry
    `gp-art`. They are hidden by default and each theme shows only its own, in
    its own block — so no theme's CSS ever names another theme's nodes. The old
@@ -380,6 +430,32 @@
    .gp-timer-visual, and these layers ease again, so a derived value would
    double the fade to ~1.6s on every skip and reset. */
 .gp-theme-classic {
+  --gp-font-display: var(--gp-font-rounded);
+  /* --- Ink: text that sits ON the artwork -------------------------------
+     Hardcoded before 0.6.1, on the assumption every theme paints a dark,
+     saturated square. A photograph or a pixel plate breaks that assumption,
+     so each theme now owns its own. Both shipped themes declare the same
+     values independently rather than sharing a default — that is what
+     "independent" costs, and it is the point.
+
+     These are the slots the deferred contrast work will retune: white on the
+     idle daylight gradient currently measures about 1.46:1, and once it is a
+     token the fix is one line per theme instead of six patched rules. */
+  --gp-ink: #ffffff;
+  --gp-ink-dim: rgba(255, 255, 255, 0.9);
+  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
+  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  --gp-ink-overtime: #ff6b6b;
+  --gp-ink-overtime-glow: 0 0 15px rgba(255, 107, 107, 0.5);
+
+  /* A dark veil between the artwork and the text, 0 to 1. Zero for both
+     shipped themes — their artwork is controlled, so they need none. It is
+     the only lever that makes an ARBITRARY supplied picture safe for white
+     text, which is why it exists before the theme that needs it. */
+  --gp-scrim-alpha: 0;
   --gp-shape-base: #1e1e1e;
   --gp-shape-radius: var(--gp-radius-shape);
   --gp-shadow-rgb: 0, 0, 0;
@@ -427,23 +503,26 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  height: 18px;
-  padding: 0 var(--gp-space-3);
+  /* Grown in 0.6.1: a 14px glyph in an 18px pill read as an afterthought at
+     the top of a 220px square. The badge is absolutely positioned inside
+     .gp-timer-content, so growing it moves nothing else. */
+  min-width: 32px;
+  height: 22px;
+  padding: 0 var(--gp-space-4);
   border-radius: var(--gp-radius-pill);
   /* Dark "scrim" pill so the icon stays readable on light (orange) gradients */
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.14));
   border: 1px solid rgba(255, 255, 255, 0.2);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--gp-ink-badge, rgba(255, 255, 255, 0.92));
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
 .gp-daynight-icon-stack {
   position: relative;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .gp-daynight-icon {
@@ -453,7 +532,7 @@
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 220ms ease;
+  transition: opacity var(--gp-dur-fast) ease;
 }
 
 .gp-daynight-icon.is-active {
@@ -479,11 +558,9 @@
        4. Segoe UI: Windows default (not rounded, but cleaner than Arial)
        5. sans-serif: Fallback
     */
-  font-family:
-    "SF Pro Rounded", "Arial Rounded MT Bold", "Varela Round", "Quicksand", "Nunito", "Segoe UI",
-    sans-serif;
-  color: #ffffff;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
+  color: var(--gp-ink, #ffffff);
+  text-shadow: var(--gp-ink-shadow-lg, 0 2px 10px rgba(0, 0, 0, 0.2));
 
   /* Crucial: keeps the numbers from jittering left/right as they change */
   font-variant-numeric: tabular-nums;
@@ -502,8 +579,8 @@
 
 /* Overtime Text Style */
 .gp-overtime {
-  color: #ff6b6b; /* Reddish tint to indicate overtime */
-  text-shadow: 0 0 15px rgba(255, 107, 107, 0.5);
+  color: var(--gp-ink-overtime, #ff6b6b); /* Reddish tint to indicate overtime */
+  text-shadow: var(--gp-ink-overtime-glow, 0 0 15px rgba(255, 107, 107, 0.5));
 }
 
 /* When running, hide the time... */
@@ -525,11 +602,11 @@
   margin-top: 0;
   font-size: var(--gp-text-caption);
   text-transform: uppercase;
-  letter-spacing: 1px; /* Reduced spacing slightly for rounded font */
-  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.08em; /* em, so tracking follows the size token instead of drifting from it */
+  color: var(--gp-ink-dim, rgba(255, 255, 255, 0.9));
   font-weight: var(--gp-weight-display);
-  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
+  text-shadow: var(--gp-ink-shadow, 0 1px 4px rgba(0, 0, 0, 0.22));
 }
 
 /* Estimated end time ("Ends 15:30"). The calm counterpart to the countdown:
@@ -541,12 +618,11 @@
    same recipe as .gp-total-time — and because .gp-timer-visual is a fixed square,
    the reveal grows inside it, so the controls below never shift. */
 .gp-end-time {
-  font-size: 0.72rem;
+  font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
-  letter-spacing: 0.3px;
-  color: rgba(255, 255, 255, 0.82);
-  font-family: "SF Pro Rounded", "Arial Rounded MT Bold", sans-serif;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  color: var(--gp-ink-soft, rgba(255, 255, 255, 0.82));
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
+  text-shadow: var(--gp-ink-shadow, 0 1px 4px rgba(0, 0, 0, 0.22));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 
@@ -728,6 +804,24 @@
 }
 
 /* Full Width Button (Task Selector) */
+/* Every control the panel builds gets the same ring. Before 0.6.1 five of
+   them had none at all — .gp-btn (the panel's most-used control), .gp-btn-full,
+   .gp-icon-btn, .gp-reset-button and .gp-task-item — while three others had
+   three mutually incompatible recipes.
+
+   ORDER IS LOAD-BEARING: .gp-station-item:focus-visible ties with
+   .gp-task-item:focus-visible on specificity and is written later, so it keeps
+   winning and keeps its inset offset. Moving this block below it would clip
+   the station list's ring at the scroll edges. */
+.gp-btn:focus-visible,
+.gp-btn-full:focus-visible,
+.gp-icon-btn:focus-visible,
+.gp-reset-button:focus-visible,
+.gp-task-item:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+}
+
 .gp-btn-full {
   width: 100%;
   min-height: 52px; /* Increased height for 2 rows */
@@ -744,9 +838,9 @@
 
 /* The label "Select Task" or "Current Task" (Small top row) */
 .gp-task-btn-label {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-muted);
   font-weight: var(--gp-weight-strong);
   width: 100%;
@@ -755,7 +849,7 @@
 
 /* The actual task text (Main row) */
 .gp-task-btn-text {
-  font-size: 0.95rem;
+  font-size: var(--gp-text-body);
   color: var(--text-normal);
   width: 100%;
   text-align: left;
@@ -839,10 +933,10 @@
 
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-faint);
   margin-top: var(--gp-space-8);
   margin-bottom: var(--gp-space-4);
@@ -899,7 +993,9 @@
 }
 
 .gp-toggle input:focus-visible + .gp-toggle-slider {
-  box-shadow: 0 0 0 2px var(--interactive-accent);
+  /* A ring drawn as a shadow, because the visible control is the slider and
+     the focusable element is the visually-hidden checkbox behind it. */
+  box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color);
 }
 
 /* --- Segmented control (Low / Mid / High volume) --- */
@@ -939,8 +1035,8 @@
 }
 
 .gp-segmented-btn:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 1px;
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
 }
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
@@ -1032,7 +1128,7 @@
 }
 
 .gp-status-focus-total {
-  font-size: 0.7rem;
+  font-size: var(--gp-text-micro);
   opacity: 0.65;
   margin-left: var(--gp-space-2);
 }
@@ -1085,7 +1181,7 @@
   font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-strong);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--gp-tracking-eyebrow);
   color: var(--text-muted);
   margin-top: var(--gp-space-5);
   margin-bottom: var(--gp-space-2);
@@ -1180,7 +1276,7 @@
 }
 
 .gp-task-empty-hint {
-  font-size: 0.78rem;
+  font-size: var(--gp-text-caption);
   line-height: 1.4;
   color: var(--text-muted);
 }
@@ -1196,6 +1292,32 @@
    token rather than as an override of .gp-timer-shape: the theme now fills a
    slot instead of out-specifying a shared rule. */
 .gp-theme-frosted-glass {
+  --gp-font-display: var(--gp-font-rounded);
+  /* --- Ink: text that sits ON the artwork -------------------------------
+     Hardcoded before 0.6.1, on the assumption every theme paints a dark,
+     saturated square. A photograph or a pixel plate breaks that assumption,
+     so each theme now owns its own. Both shipped themes declare the same
+     values independently rather than sharing a default — that is what
+     "independent" costs, and it is the point.
+
+     These are the slots the deferred contrast work will retune: white on the
+     idle daylight gradient currently measures about 1.46:1, and once it is a
+     token the fix is one line per theme instead of six patched rules. */
+  --gp-ink: #ffffff;
+  --gp-ink-dim: rgba(255, 255, 255, 0.9);
+  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
+  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  --gp-ink-overtime: #ff6b6b;
+  --gp-ink-overtime-glow: 0 0 15px rgba(255, 107, 107, 0.5);
+
+  /* A dark veil between the artwork and the text, 0 to 1. Zero for both
+     shipped themes — their artwork is controlled, so they need none. It is
+     the only lever that makes an ARBITRARY supplied picture safe for white
+     text, which is why it exists before the theme that needs it. */
+  --gp-scrim-alpha: 0;
   --gp-shape-base: #ede5f3;
   --gp-shape-radius: var(--gp-radius-shape);
   --gp-shadow-rgb: 0, 0, 0;
@@ -1450,7 +1572,12 @@
 .gp-total-time {
   font-size: clamp(0.75rem, 10cqi, 1rem);
   font-weight: var(--gp-weight-medium);
-  color: var(--text-muted);
+  font-family: var(--gp-font-display, var(--gp-font-rounded));
+  color: var(--gp-ink-faint, var(--text-muted));
+  /* It is the VISIBLE clock during overtime — .gp-state-running hides
+     .gp-timer-time — and was the one ticking number in the plugin without
+     tabular figures, so the total jittered sideways once a second. */
+  font-variant-numeric: tabular-nums;
   margin: 0;
   margin-bottom: 0;
   opacity: 0; /* Hidden by default */
@@ -1479,7 +1606,7 @@
 
 /* NEW: Specific color for Break/Daylight mode */
 /* Uses a soft white instead of dark grey to look cleaner on the orange background */
-.gp-state-overtime.gp-mode-break .gp-total-time {
+.gp-theme-classic .gp-state-overtime.gp-mode-break .gp-total-time {
   color: rgba(255, 255, 255, 0.85);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
 }
@@ -1626,7 +1753,7 @@
   gap: var(--gp-space-3);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: var(--gp-text-caption);
   line-height: 1.3;
 }
 
@@ -1840,9 +1967,13 @@
   }
 }
 
+/* Inset, and not by preference: .gp-task-list is overflow-y: auto with a
+   max-height, so an outward ring on the first or last visible row is clipped
+   by the scroll container. Ties with the shared .gp-task-item rule above and
+   wins on source order. */
 .gp-station-item:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: -2px;
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset-inset);
 }
 
 /* Visually-hidden iframe host. Hidden-but-rendered (NOT display:none): a

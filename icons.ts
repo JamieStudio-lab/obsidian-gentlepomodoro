@@ -1,66 +1,114 @@
 // Inline SVG icons for the day/night indicator. Kept hand-coded (rather than
 // using setIcon from Obsidian) so the four shapes share a single stack and
 // don't introduce a separate icon-stylesheet dependency.
+//
+// The badge's PHASE lives here too, beside the glyphs it selects. It used to be
+// derived independently in GentlePomoView from raw remainingMs while the
+// artwork was driven by skyPhase — and the two disagreed, badly: the badge
+// showed a sun for the entire first half of a focus session and its moon was
+// unreachable outside overtime, so it ran a whole phase behind the square it
+// sits on. One function now feeds both, which is the only way they cannot
+// drift again.
+
+import type { TimerState } from "./types";
 
 export type DayNightIcon = "sun" | "sunset" | "moon" | "sunrise";
 
 export const DAY_NIGHT_ICON_ORDER: DayNightIcon[] = ["sun", "sunset", "moon", "sunrise"];
+
+/**
+ * The theme contract's scalar: 0 = day, 1 = night.
+ *
+ * Mode-flipped, so a focus session runs 0 -> 1 and a break runs 1 -> 0 and no
+ * consumer has to know which it is in. Published to CSS as `--gp-progress`, and
+ * split into the two layer opacities the classic theme cross-fades.
+ */
+export function skyPhase(state: TimerState): number {
+  const progress = state.totalMs > 0 ? 1 - state.remainingMs / state.totalMs : 0;
+  const clamped = Math.max(0, Math.min(1, progress));
+  return state.mode === "focus" ? clamped : 1 - clamped;
+}
+
+/**
+ * Which glyph the badge shows, quantised from the same scalar the artwork uses.
+ *
+ * Thirds, not halves: the square passes through day, dusk and night, so the
+ * badge needs three bands to track it. The middle glyph is the only thing that
+ * depends on direction — a break climbs back toward day, so it rises.
+ */
+export function dayNightIconFor(state: TimerState): DayNightIcon {
+  const phase = skyPhase(state);
+  if (phase < 1 / 3) return "sun";
+  if (phase < 2 / 3) return state.mode === "focus" ? "sunset" : "sunrise";
+  return "moon";
+}
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const createSvgEl = <K extends keyof SVGElementTagNameMap>(tag: K): SVGElementTagNameMap[K] =>
   activeDocument.createElementNS(SVG_NS, tag);
 
+interface DayNightShape {
+  /** Drawn before the paths, for shapes with a solid disc at their centre. */
+  circles?: { cx: number; cy: number; r: number }[];
+  paths: string[];
+}
+
+/**
+ * A record rather than a branch, so a theme that needs its own glyph set (a
+ * pixel theme cannot use smooth vector line art) supplies data instead of code.
+ *
+ * Redrawn in 0.6.1 to sit at 16px instead of 14px, with a heavier stroke. The
+ * pair that needed it most was sunset/sunrise: they differed only in whether
+ * two tiny side ticks were diagonal or horizontal, which at this size was not a
+ * distinction anyone could see. They now carry an arrow that points the way the
+ * sun is going, and the fussy ray clusters that read as noise are gone.
+ */
+const DAY_NIGHT_SHAPES: Record<DayNightIcon, DayNightShape> = {
+  sun: {
+    circles: [{ cx: 12, cy: 12, r: 4.5 }],
+    paths: [
+      "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41",
+    ],
+  },
+  sunset: {
+    paths: ["M5 18h14", "M7.5 18a4.5 4.5 0 0 1 9 0", "M12 3v5", "M9.5 5.5 12 8l2.5-2.5"],
+  },
+  sunrise: {
+    paths: ["M5 18h14", "M7.5 18a4.5 4.5 0 0 1 9 0", "M12 8V3", "M9.5 5.5 12 3l2.5 2.5"],
+  },
+  moon: {
+    paths: ["M21 12.6A8.5 8.5 0 0 1 11.4 3a7 7 0 1 0 9.6 9.6Z"],
+  },
+};
+
 export function buildDayNightIcon(icon: DayNightIcon): SVGSVGElement {
+  const shape = DAY_NIGHT_SHAPES[icon];
   const svg = createSvgEl("svg");
   svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "14");
-  svg.setAttribute("height", "14");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
+  // Nothing in styles.css sets stroke-width for these (unlike .gp-icon-btn svg,
+  // where a CSS rule beats the attribute), so this value is the one that lands.
+  svg.setAttribute("stroke-width", "2.5");
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
 
-  const addPath = (d: string) => {
-    const p = createSvgEl("path");
-    p.setAttribute("d", d);
-    svg.appendChild(p);
-  };
-
-  if (icon === "sun") {
-    const c = createSvgEl("circle");
-    c.setAttribute("cx", "12");
-    c.setAttribute("cy", "12");
-    c.setAttribute("r", "4");
-    svg.appendChild(c);
-    addPath(
-      "M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-    );
-    return svg;
+  for (const c of shape.circles ?? []) {
+    const el = createSvgEl("circle");
+    el.setAttribute("cx", String(c.cx));
+    el.setAttribute("cy", String(c.cy));
+    el.setAttribute("r", String(c.r));
+    svg.appendChild(el);
   }
-
-  if (icon === "sunset") {
-    addPath("M6 18h12");
-    addPath("M7 18a5 5 0 0 1 10 0");
-    addPath("M12 3v3");
-    addPath("M5 12h2M17 12h2");
-    addPath("M7 9l1.2 1.2M17 9l-1.2 1.2");
-    return svg;
+  for (const d of shape.paths) {
+    const el = createSvgEl("path");
+    el.setAttribute("d", d);
+    svg.appendChild(el);
   }
-
-  if (icon === "sunrise") {
-    addPath("M6 18h12");
-    addPath("M7 18a5 5 0 0 1 10 0");
-    addPath("M12 3v3");
-    addPath("M5 12h2M17 12h2");
-    addPath("M4 15h2M18 15h2");
-    return svg;
-  }
-
-  // moon
-  addPath("M21 12.6A8.5 8.5 0 0 1 11.4 3a7 7 0 1 0 9.6 9.6Z");
   return svg;
 }
 

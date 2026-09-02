@@ -59,6 +59,28 @@ describe("token hygiene", () => {
   });
 });
 
+/**
+ * What a theme must declare. Every one is read by a shared rule with today's
+ * value as an inline fallback, so a theme that declares nothing still renders —
+ * the list is what THEMES.md publishes as the theme API.
+ */
+const CONTRACT_TOKENS = [
+  "--gp-font-display",
+  "--gp-ink",
+  "--gp-ink-dim",
+  "--gp-ink-soft",
+  "--gp-ink-faint",
+  "--gp-ink-badge",
+  "--gp-ink-shadow-lg",
+  "--gp-ink-shadow",
+  "--gp-ink-overtime",
+  "--gp-ink-overtime-glow",
+  "--gp-scrim-alpha",
+  "--gp-shape-base",
+  "--gp-shape-radius",
+  "--gp-shadow-rgb",
+];
+
 describe("theme independence", () => {
   const themeBlocks = THEME_IDS.map((id) => ({ id, cls: themeClass(id) }));
 
@@ -66,7 +88,7 @@ describe("theme independence", () => {
     for (const { id, cls } of themeBlocks) {
       const block = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(css);
       expect(block, `no .${cls} token block in styles.css — see THEMES.md`).not.toBeNull();
-      for (const token of ["--gp-shape-base", "--gp-shape-radius", "--gp-shadow-rgb"]) {
+      for (const token of CONTRACT_TOKENS) {
         expect(block?.[1], `theme "${id}" must declare ${token}`).toContain(token);
       }
     }
@@ -92,6 +114,48 @@ describe("theme independence", () => {
 
   it("hides artwork by default so a theme only has to show its own", () => {
     expect(rules).toMatch(/\.gp-art\s*\{[^}]*display:\s*none/);
+  });
+});
+
+describe("focus rings", () => {
+  // Both rules are (0,2,0), so ONLY source order decides. The station list is
+  // overflow-y: auto with a max-height, so it needs the inset offset or the
+  // ring is clipped at the first and last visible row — the two rows most
+  // likely to have it. If the shared rule ever moves below, that clipping
+  // comes back and only at the scroll edges.
+  it("declares the shared row ring before the station list's inset one", () => {
+    // Comments are stripped first: the prose above these rules names both
+    // selectors, and matching that text finds the wrong order.
+    const code = rules.replace(/\/\*[\s\S]*?\*\//g, "");
+    const shared = code.indexOf(".gp-task-item:focus-visible");
+    const station = code.indexOf(".gp-station-item:focus-visible");
+    expect(shared, "the shared focus rule is gone").toBeGreaterThan(-1);
+    expect(station, "the station focus rule is gone").toBeGreaterThan(-1);
+    expect(shared).toBeLessThan(station);
+  });
+
+  it("gives every control class a ring", () => {
+    for (const cls of [
+      ".gp-btn",
+      ".gp-btn-full",
+      ".gp-icon-btn",
+      ".gp-reset-button",
+      ".gp-task-item",
+      ".gp-segmented-btn",
+      ".gp-station-item",
+    ]) {
+      expect(rules, `${cls} has no :focus-visible rule`).toContain(`${cls}:focus-visible`);
+    }
+  });
+
+  // box-shadow has no `solid` keyword, so a shared `outline` shorthand is
+  // invalid there at computed-value time and the property is dropped —
+  // the toggle's ring disappears with nothing to show for it.
+  it("keeps the ring's width and colour separate, never one shorthand", () => {
+    expect(rules).toContain(
+      "box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color)"
+    );
+    expect(tokenBlock).not.toMatch(/--gp-focus-ring:\s/);
   });
 });
 
@@ -122,7 +186,6 @@ describe("raw values outside the scale", () => {
    */
   const ALLOWED_DURATIONS = new Set([
     "0.15s", // segmented-control hover; snaps to the scale in 0.6.1
-    "220ms", // day/night icon fade; shares a reduced-motion block with 0.2s
     "0.25s", // six sites; snapping to 200ms is a visible 50ms change
     "1s", // the overtime settle, paired with the 6s breath below
     "0s", // an explicit zero, not a tempo
@@ -156,7 +219,7 @@ describe("raw values outside the scale", () => {
     // A token declared halfway down the file is how the old --gp-progress
     // registration ended up inside one theme's section while a shared rule
     // depended on it.
-    const themeScoped = new Set(["--gp-shape-base", "--gp-shape-radius", "--gp-shadow-rgb"]);
+    const themeScoped = new Set(CONTRACT_TOKENS);
     const stray = [...rules.matchAll(/^\s*(--gp-[a-z0-9-]+)\s*:/gm)]
       .map((m) => m[1])
       .filter((t) => !themeScoped.has(t))
