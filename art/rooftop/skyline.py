@@ -18,8 +18,8 @@ segments share one dot pattern, because lofi-cozy's two-segment BAYER4 skies
 drew a hard dotted seam across the day plates. Same colours, no seam, and
 every light band pushed below the clock text (see SKY_KEYS).
 
-Layer set (see pixlib.ThemeLayers): sky-1..5 opaque, stars / buildings /
-windows-1..3 transparent. Every pixel is an Endesga 32 index.
+Layer set (see pixlib.ThemeLayers): sky-1..8 opaque, stars / buildings /
+windows-1..6 transparent. Every pixel is an Endesga 32 index.
 """
 
 import os
@@ -62,16 +62,13 @@ def inside_clip(x: int, y: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Sky: five plates, top -> horizon, as row-keyed colour ramps. Every segment
+# Sky: eight plates, top -> horizon, as row-keyed colour ramps. Every segment
 # between two keys is one BAYER8 dither, and the matrix is anchored to canvas
 # coordinates, so segments and plates all share one dot pattern. Colours are
-# lofi-cozy's:
-#   day        deep blue at the very top, FLAT blue through the clock, a cyan
-#              haze only in the lowest rows, where the dip shows it
-#   afternoon  the same blue, hazing to grey then peach then sand low down
-#   dusk       slate -> plum -> magenta, salmon and amber on the horizon
-#   late dusk  ink arriving at the top, the dusk colours lower, clay low
-#   night      ink / navy, a slate glow just above the rooftops
+# lofi-cozy's five, with three designed in-betweens (late day, golden hour,
+# twilight) added at the user's request so that no cross-fade has to bridge
+# a large hue jump: an opacity blend of blue and magenta passes through a
+# grey nothing chose, while a designed plate keeps the saturation.
 #
 # The rule that placed the keys: the white text runs to about row 90 (the
 # clock digits end near row 80, the "Ends" line under them near 90), so no
@@ -80,10 +77,21 @@ def inside_clip(x: int, y: int) -> bool:
 # white on that cyan is nearly invisible.
 # ---------------------------------------------------------------------------
 SKY_KEYS = [
+    # 1 day: deep at the very top, flat blue, a cyan haze in the dip
     [(0, C["blue_deep"]), (22, C["blue"]), (94, C["blue"]), (116, C["cyan"]), (128, C["cyan"])],
+    # 2 late day: the haze goes pale
+    [(0, C["blue_deep"]), (26, C["blue"]), (94, C["blue"]), (112, C["grey_light"]), (128, C["grey_light"])],
+    # 3 afternoon: grey, then peach and sand at the horizon
     [(0, C["blue_deep"]), (22, C["blue"]), (92, C["blue"]), (106, C["grey_light"]), (118, C["peach"]), (128, C["sand"])],
+    # 4 golden hour: the blue dusts over, salmon and orange low
+    [(0, C["blue_deep"]), (28, C["grey_blue"]), (84, C["grey_blue"]), (100, C["salmon"]), (116, C["amber"]), (128, C["orange"])],
+    # 5 dusk: slate -> plum -> magenta, salmon and amber on the horizon
     [(0, C["slate"]), (30, C["plum"]), (72, C["magenta"]), (104, C["salmon"]), (128, C["amber"])],
+    # 6 late dusk: ink arriving at the top, the dusk colours lower, clay low
     [(0, C["ink"]), (28, C["navy"]), (66, C["plum"]), (102, C["magenta"]), (128, C["clay"])],
+    # 7 twilight: navy, a last plum glow just above the roofs
+    [(0, C["ink"]), (30, C["ink"]), (70, C["navy"]), (104, C["slate"]), (120, C["plum"]), (128, C["plum"])],
+    # 8 night: ink / navy, a slate glow above the rooftops
     [(0, C["ink"]), (40, C["ink"]), (84, C["navy"]), (112, C["navy"]), (128, C["slate"])],
 ]
 
@@ -172,13 +180,14 @@ def buildings_layer() -> Canvas:
 # ink, so it keeps clear of the slate edge and the roof; caps carry none.
 # About 55% of cells light; of those ~62% yellow, the rest the dimmer amber,
 # so the lit city glows unevenly. Lit panes are shuffled and dealt round-robin
-# into three waves, so each wave is spread across the whole skyline.
+# into WINDOW_WAVES waves, so each wave is spread across the whole skyline.
 # ---------------------------------------------------------------------------
 PANE = 2
 PITCH_X, PITCH_Y = 3, 4
 LIT_FRACTION = 0.55
 YELLOW_FRACTION = 0.62
 WINDOW_BOTTOM = 124  # last row a pane may occupy
+WINDOW_WAVES = 6
 
 
 def window_grid(x0: int, x1: int, roof: int) -> tuple[list[int], list[int]]:
@@ -214,9 +223,9 @@ def windows_layers(bld: Canvas, rng: random.Random) -> list[Canvas]:
                 if rng.random() < LIT_FRACTION:
                     lit.append((cx, fy, YELLOW if rng.random() < YELLOW_FRACTION else AMBER))
     rng.shuffle(lit)
-    waves = [Canvas(W, H) for _ in range(3)]
+    waves = [Canvas(W, H) for _ in range(WINDOW_WAVES)]
     for i, (cx, fy, colour) in enumerate(lit):
-        waves[i % 3].rect(cx, fy, PANE, PANE, colour)
+        waves[i % WINDOW_WAVES].rect(cx, fy, PANE, PANE, colour)
     return waves
 
 

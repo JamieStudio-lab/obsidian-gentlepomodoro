@@ -24,11 +24,17 @@ const EXPECTED_ORDER = [
   "sky-3",
   "sky-4",
   "sky-5",
+  "sky-6",
+  "sky-7",
+  "sky-8",
   "stars",
   "buildings",
   "windows-1",
   "windows-2",
   "windows-3",
+  "windows-4",
+  "windows-5",
+  "windows-6",
 ];
 
 /** Width and height from a PNG's IHDR chunk — the first chunk, at a fixed offset. */
@@ -40,7 +46,7 @@ function pngSize(bytes: Buffer): { width: number; height: number } {
 }
 
 describe("the plate list", () => {
-  it("names the ten plates, bottom to top, in the order the CSS stacks them", () => {
+  it("names the sixteen plates, bottom to top, in the order the CSS stacks them", () => {
     expect(ROOFTOP_LAYERS.map((l) => l.cls)).toEqual(EXPECTED_ORDER.map((n) => `gp-rooftop-${n}`));
   });
 
@@ -76,7 +82,7 @@ describe("the plate files", () => {
   });
 
   // Every byte here is base64-expanded by a third and shipped inside main.js
-  // to every device. Ten indexed plates come to about 11 KB; the budget is
+  // to every device. Sixteen indexed plates come to about 18 KB; the budget is
   // loose enough for a redraw and tight enough that a truecolor export from
   // Aseprite (roughly 4x the size) fails here rather than in a release.
   it("stay inside the size budget", () => {
@@ -85,7 +91,7 @@ describe("the plate files", () => {
       expect(bytes.length, `${name}.png`).toBeLessThanOrEqual(2048);
       total += bytes.length;
     }
-    expect(total).toBeLessThanOrEqual(16 * 1024);
+    expect(total).toBeLessThanOrEqual(24 * 1024);
   });
 });
 

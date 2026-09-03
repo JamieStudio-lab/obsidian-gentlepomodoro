@@ -53,12 +53,20 @@ SKY_RAMPS: dict[str, list[int]] = {
 }
 
 # --------------------------------------------------------------------------
-# The timeline every variant is previewed on, and that the CSS will implement.
+# The timeline every plate set is previewed on, and that the CSS implements.
 # progress p runs 0 (day) -> 1 (night); breaks play it backwards.
+#   sky      plate 1 is the base; plate k (2..n) rises over the (k-1)th of
+#            n-1 equal spans of the session, on top of the one before
+#   windows  wave j (1..m) eases on around its threshold, thresholds spaced
+#            evenly from WINDOW_FIRST_AT to WINDOW_LAST_AT, each over
+#            1/WINDOW_RAMP of the session (1% — a glow-up, not a snap)
+#   stars    fade in across STARS_FADE
+# The plate and wave counts are whatever the set provides; the formulas
+# below and the rules in styles.css must agree for the counts shipped.
 # --------------------------------------------------------------------------
-SKY_PLATES = 5
-WINDOW_WAVES = 3
-WINDOW_WAVE_AT = [0.40, 0.60, 0.80]  # wave k switches on when p >= this
+WINDOW_FIRST_AT = 0.40
+WINDOW_LAST_AT = 0.80
+WINDOW_RAMP = 100
 STARS_FADE = (0.65, 1.0)  # stars fade in across this range
 
 
@@ -66,16 +74,22 @@ def clamp01(v: float) -> float:
     return 0.0 if v < 0 else 1.0 if v > 1 else v
 
 
-def sky_opacity(plate: int, p: float) -> float:
-    """Opacity of sky plate `plate` (1-based) at progress p. Plate 1 is the base."""
+def sky_opacity(plate: int, p: float, n: int) -> float:
+    """Opacity of sky plate `plate` (1-based, of n) at progress p. Plate 1 is the base."""
     if plate == 1:
         return 1.0
-    step = 1.0 / (SKY_PLATES - 1)
-    return clamp01((p - (plate - 2) * step) / step)
+    return clamp01(p * (n - 1) - (plate - 2))
 
 
-def window_opacity(wave: int, p: float) -> float:
-    return 1.0 if p >= WINDOW_WAVE_AT[wave - 1] else 0.0
+def window_at(wave: int, m: int) -> float:
+    """The progress at which window wave `wave` (1-based, of m) starts to light."""
+    if m == 1:
+        return WINDOW_FIRST_AT
+    return WINDOW_FIRST_AT + (wave - 1) * (WINDOW_LAST_AT - WINDOW_FIRST_AT) / (m - 1)
+
+
+def window_opacity(wave: int, p: float, m: int) -> float:
+    return clamp01((p - window_at(wave, m)) * WINDOW_RAMP)
 
 
 def stars_opacity(p: float) -> float:
@@ -269,15 +283,15 @@ def sheet(images: Sequence[Image.Image], gap: int = 8, bg: tuple[int, int, int] 
 class ThemeLayers:
     """
     Exactly what the plugin ships for this theme, in stacking order:
-      sky[1..5]   opaque, cross-faded on progress
-      stars       transparent, fades in late
-      buildings   transparent, static (the only layer with the cat)
-      windows[1..3] transparent, each switches on at its wave threshold
+      sky[1..n]     opaque, cross-faded on progress
+      stars         transparent, fades in late
+      buildings     transparent, static (the only layer with the cat)
+      windows[1..m] transparent, each eases on at its wave threshold
     """
 
     def __init__(self, sky: Sequence[Canvas], stars: Canvas, buildings: Canvas, windows: Sequence[Canvas]):
-        assert len(sky) == SKY_PLATES, f"need {SKY_PLATES} sky plates"
-        assert len(windows) == WINDOW_WAVES, f"need {WINDOW_WAVES} window waves"
+        assert len(sky) >= 2, "need at least two sky plates"
+        assert len(windows) >= 1, "need at least one window wave"
         self.sky, self.stars, self.buildings, self.windows = list(sky), stars, buildings, list(windows)
 
     def validate(self) -> list[str]:
@@ -302,10 +316,11 @@ class ThemeLayers:
         return problems
 
     def layers_at(self, p: float) -> list[tuple[Canvas, float]]:
-        out: list[tuple[Canvas, float]] = [(s, sky_opacity(i, p)) for i, s in enumerate(self.sky, 1)]
+        n, m = len(self.sky), len(self.windows)
+        out: list[tuple[Canvas, float]] = [(s, sky_opacity(i, p, n)) for i, s in enumerate(self.sky, 1)]
         out.append((self.stars, stars_opacity(p)))
         out.append((self.buildings, 1.0))
-        out.extend((w, window_opacity(i, p)) for i, w in enumerate(self.windows, 1))
+        out.extend((w, window_opacity(i, p, m)) for i, w in enumerate(self.windows, 1))
         return out
 
     def save(self, outdir: str) -> None:
@@ -316,7 +331,7 @@ class ThemeLayers:
         for i, w in enumerate(self.windows, 1):
             w.save(os.path.join(outdir, f"windows-{i}.png"))
 
-    def preview(self, outdir: str, steps: Sequence[float] = (0.0, 0.25, 0.5, 0.75, 1.0)) -> str:
+    def preview(self, outdir: str, steps: Sequence[float] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)) -> str:
         """A strip of the timeline at 4x (craft) over a strip at 2x (about real retina size)."""
         frames = [render(self.layers_at(p)) for p in steps]
         big = sheet([upscale(f, 4) for f in frames])

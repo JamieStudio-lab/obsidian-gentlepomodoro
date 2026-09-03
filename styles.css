@@ -1694,16 +1694,16 @@
 /* =========================================================================
    Theme 3: Rooftop Skyline (pixel art)
    -------------------------------------------------------------------------
-   The first raster theme. Ten 128x128 plates from art/rooftop/plates, bundled
+   The first raster theme. Sixteen 128x128 plates from art/rooftop/plates, bundled
    into main.js as data URLs (Obsidian installs three files, so a loose image
    is missing for every user — rooftopArt.ts), built as
    <img class="gp-art gp-rooftop …"> in GentlePomoView.onOpen and shown only
-   here. The whole set is 11 KB.
+   here. The whole set is 18 KB.
 
    Everything moves on --gp-progress alone, read straight off the eased value
    the view publishes — no second transition on any plate (THEMES.md: "pick
-   exactly one smoothing route"). Five sky plates cross-fade across the
-   session; the window waves switch on at 40 / 60 / 80 %; the stars fade in
+   exactly one smoothing route"). Eight sky plates cross-fade across the
+   session; six window waves ease on between 40 % and 80 %; the stars fade in
    over the last third. skyPhase() already runs the arc backwards on a break,
    so a break plays the same plates in reverse and the windows go out one
    wave at a time. These thresholds are the ones art/rooftop/pixlib.py
@@ -1755,22 +1755,35 @@
 }
 
 /* Sky: plate 1 is the base and never fades; each later plate rises over one
-   quarter of the session on top of the one before. Plates share one dither
+   seventh of the session on top of the one before (eight plates, seven
+   spans: progress x 7 minus the plate's rank). Plates share one dither
    pattern, so a half-faded pair is a colour blend, not two patterns. */
 .gp-theme-rooftop-skyline .gp-rooftop-sky-2 {
-  opacity: clamp(0, var(--gp-progress) * 4, 1);
+  opacity: clamp(0, var(--gp-progress) * 7 - 0, 1);
 }
 
 .gp-theme-rooftop-skyline .gp-rooftop-sky-3 {
-  opacity: clamp(0, (var(--gp-progress) - 0.25) * 4, 1);
+  opacity: clamp(0, var(--gp-progress) * 7 - 1, 1);
 }
 
 .gp-theme-rooftop-skyline .gp-rooftop-sky-4 {
-  opacity: clamp(0, (var(--gp-progress) - 0.5) * 4, 1);
+  opacity: clamp(0, var(--gp-progress) * 7 - 2, 1);
 }
 
 .gp-theme-rooftop-skyline .gp-rooftop-sky-5 {
-  opacity: clamp(0, (var(--gp-progress) - 0.75) * 4, 1);
+  opacity: clamp(0, var(--gp-progress) * 7 - 3, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-sky-6 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 4, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-sky-7 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 5, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-sky-8 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 6, 1);
 }
 
 /* Stars: nothing until two-thirds through, then in over the last third. */
@@ -1778,20 +1791,32 @@
   opacity: clamp(0, (var(--gp-progress) - 0.65) / 0.35, 1);
 }
 
-/* Windows: a ramp so steep it is a switch — fully on across a quarter of one
-   percent of the session, which the 0.8s ease on --gp-progress turns into a
-   lamp flicking on rather than a dimmer. A real step function is not
-   available to a computed value; this is the same thing. */
+/* Windows: six waves at thresholds spaced evenly from 40% to 80% of the
+   session, each easing on over 1% of it — fifteen seconds of a 25-minute
+   focus, a glow-up rather than a pop. A real step is not available to a
+   computed value; a ramp this steep is the same thing with a soft edge. */
 .gp-theme-rooftop-skyline .gp-rooftop-windows-1 {
-  opacity: clamp(0, (var(--gp-progress) - 0.4) * 400, 1);
+  opacity: clamp(0, (var(--gp-progress) - 0.4) * 100, 1);
 }
 
 .gp-theme-rooftop-skyline .gp-rooftop-windows-2 {
-  opacity: clamp(0, (var(--gp-progress) - 0.6) * 400, 1);
+  opacity: clamp(0, (var(--gp-progress) - 0.48) * 100, 1);
 }
 
 .gp-theme-rooftop-skyline .gp-rooftop-windows-3 {
-  opacity: clamp(0, (var(--gp-progress) - 0.8) * 400, 1);
+  opacity: clamp(0, (var(--gp-progress) - 0.56) * 100, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-windows-4 {
+  opacity: clamp(0, (var(--gp-progress) - 0.64) * 100, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-windows-5 {
+  opacity: clamp(0, (var(--gp-progress) - 0.72) * 100, 1);
+}
+
+.gp-theme-rooftop-skyline .gp-rooftop-windows-6 {
+  opacity: clamp(0, (var(--gp-progress) - 0.8) * 100, 1);
 }
 
 /* The running-state size pulse resamples a bitmap at 1.03x every frame,

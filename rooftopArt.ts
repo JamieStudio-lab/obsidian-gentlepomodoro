@@ -21,11 +21,17 @@ import sky2 from "./art/rooftop/plates/sky-2.png";
 import sky3 from "./art/rooftop/plates/sky-3.png";
 import sky4 from "./art/rooftop/plates/sky-4.png";
 import sky5 from "./art/rooftop/plates/sky-5.png";
+import sky6 from "./art/rooftop/plates/sky-6.png";
+import sky7 from "./art/rooftop/plates/sky-7.png";
+import sky8 from "./art/rooftop/plates/sky-8.png";
 import stars from "./art/rooftop/plates/stars.png";
 import buildings from "./art/rooftop/plates/buildings.png";
 import windows1 from "./art/rooftop/plates/windows-1.png";
 import windows2 from "./art/rooftop/plates/windows-2.png";
 import windows3 from "./art/rooftop/plates/windows-3.png";
+import windows4 from "./art/rooftop/plates/windows-4.png";
+import windows5 from "./art/rooftop/plates/windows-5.png";
+import windows6 from "./art/rooftop/plates/windows-6.png";
 
 export interface RooftopLayer {
   /** The class the theme's CSS addresses. Its suffix is the plate's file name. */
@@ -35,10 +41,11 @@ export interface RooftopLayer {
 }
 
 /**
- * Bottom to top: the five sky plates (1 is the base, 2–5 cross-fade in over
- * successive quarters of the session), the stars (fade in over the last
- * third), the buildings (static — the only layer that never changes, so it
- * can never ghost), then the three window waves (switch on at 40 / 60 / 80 %).
+ * Bottom to top: the eight sky plates (1 is the base; 2–8 each cross-fade in
+ * over one seventh of the session, on top of the one before), the stars (fade
+ * in over the last third), the buildings (static — the only layer that never
+ * changes, so it can never ghost), then the six window waves (each eases on
+ * over about 1% of the session, at thresholds spaced evenly from 40% to 80%).
  */
 export const ROOFTOP_LAYERS: readonly RooftopLayer[] = [
   { cls: "gp-rooftop-sky-1", src: sky1 },
@@ -46,9 +53,15 @@ export const ROOFTOP_LAYERS: readonly RooftopLayer[] = [
   { cls: "gp-rooftop-sky-3", src: sky3 },
   { cls: "gp-rooftop-sky-4", src: sky4 },
   { cls: "gp-rooftop-sky-5", src: sky5 },
+  { cls: "gp-rooftop-sky-6", src: sky6 },
+  { cls: "gp-rooftop-sky-7", src: sky7 },
+  { cls: "gp-rooftop-sky-8", src: sky8 },
   { cls: "gp-rooftop-stars", src: stars },
   { cls: "gp-rooftop-buildings", src: buildings },
   { cls: "gp-rooftop-windows-1", src: windows1 },
   { cls: "gp-rooftop-windows-2", src: windows2 },
   { cls: "gp-rooftop-windows-3", src: windows3 },
+  { cls: "gp-rooftop-windows-4", src: windows4 },
+  { cls: "gp-rooftop-windows-5", src: windows5 },
+  { cls: "gp-rooftop-windows-6", src: windows6 },
 ];
