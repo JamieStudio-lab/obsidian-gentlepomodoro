@@ -1,7 +1,7 @@
 """
 skyline.py — generates the Rooftop Skyline theme's plates.
 
-This is the artwork's source. The ten PNGs in plates/ are its output and are
+This is the artwork's source. The sixteen PNGs in plates/ are its output and are
 what the plugin bundles; edit this file (or the PNGs in Aseprite) and re-run:
 
     cd art/rooftop && python3 skyline.py
@@ -46,10 +46,14 @@ MID_X0, MID_X1, MID_MIN_ROOF = 40, 88, 96  # the centre dip: roofs (both planes)
 STAR_MAX_Y = 60
 STAR_MIN_DIST = 4
 
-# The square is clipped with the plugin's 35px squircle (--gp-radius-shape).
-# At 128px on ~220px that is a corner arc of about 20 art pixels. Windows
-# and stars keep clear of it so nothing lit is sliced in half by the corner.
-CORNER_R = 21
+# The square is clipped with the plugin's 35px squircle (--gp-radius-shape),
+# and the square is not one size: 200px at the desktop floor, ~220px normally,
+# up to 280px on a phone, 150px in compact mode (iPhone landscape). In art
+# pixels the arc is 35 * 128 / size: 16 at 280, 20 at 220, 22.4 at 200, 30 at
+# 150. Windows and stars keep clear of the arc at every size down to the
+# desktop floor, so nothing lit is sliced in half by the corner there; the
+# 150px compact square may cut a corner pane, accepted and documented.
+CORNER_R = 24
 
 INK = C["ink"]  # the silhouette
 EDGE = C["slate"]  # the one secondary shade: a 1px lit edge on every block's left side
@@ -116,7 +120,7 @@ def sky_plates() -> list[Canvas]:
 
 # ---------------------------------------------------------------------------
 # Buildings: TWO PLANES.
-#   FAR   a lower, wider row in navy, drawn first. It shows in the gaps and
+#   FAR   a lower, wider row in slate, drawn first. It shows in the gaps and
 #         above the near row's shorter blocks, and reads as distance with
 #         nothing more than a second shade.
 #   NEAR  the ink row with a 1px slate left edge, drawn over it.
@@ -232,20 +236,29 @@ PLANES = [
 ]
 
 
-def window_grid(x0: int, x1: int, roof: int) -> tuple[list[int], list[int]]:
-    w = x1 - x0 + 1
+def window_grid(x0: int, x1: int, roof: int, edge: bool) -> tuple[list[int], list[int]]:
+    """Column and floor origins for a block. The grid is centred on the block's
+    FACE — the columns to the right of the slate edge when the plane draws one —
+    so the first pane does not sit against the lit edge while a gap is left on
+    the right."""
+    face_x0 = x0 + 1 if edge and x0 > 0 else x0
+    w = x1 - face_x0 + 1
     ncols = (w + PITCH_X - 4) // PITCH_X
     span = ncols * PITCH_X - (PITCH_X - PANE)
     off = (w - span) // 2
-    cols = [x0 + off + i * PITCH_X for i in range(ncols)]
+    cols = [face_x0 + off + i * PITCH_X for i in range(ncols)]
     floors = list(range(roof + 2, WINDOW_BOTTOM - PANE + 2, PITCH_Y))
     return cols, floors
 
 
-def pane_fits(bld: Canvas, x: int, y: int, shade: int) -> bool:
+def pane_fits(plane: Canvas, others: Canvas, x: int, y: int, shade: int) -> bool:
+    """All four pixels are this plane's plain shade on the plane drawn ALONE, and
+    nothing from the other plane covers them. The composite cannot be trusted
+    for the far plane: the near plane's slate edge is the same colour as far
+    slate, so a far pane could straddle a near building's outline."""
     for dy in range(PANE):
         for dx in range(PANE):
-            if bld.get(x + dx, y + dy) != shade:
+            if plane.get(x + dx, y + dy) != shade or others.get(x + dx, y + dy) != T:
                 return False
             if not inside_clip(x + dx, y + dy):
                 return False
@@ -256,12 +269,16 @@ def pane_fits(bld: Canvas, x: int, y: int, shade: int) -> bool:
 
 def windows_layers(bld: Canvas, rng: random.Random) -> list[Canvas]:
     lit: list[tuple[int, int, int]] = []
-    for _name, blocks, shade, lit_fraction, yellow_fraction in PLANES:
+    near_only, far_only = Canvas(W, H), Canvas(W, H)
+    draw_plane(near_only, NEAR, INK, edge=True)
+    draw_plane(far_only, FAR, FAR_SHADE, edge=False)
+    for name, blocks, shade, lit_fraction, yellow_fraction in PLANES:
+        plane, others = (near_only, Canvas(W, H)) if name == "near" else (far_only, near_only)
         for b in blocks:
-            cols, floors = window_grid(b["x0"], b["x1"], b["roof"])
+            cols, floors = window_grid(b["x0"], b["x1"], b["roof"], edge=(name == "near"))
             for fy in floors:
                 for cx in cols:
-                    if not pane_fits(bld, cx, fy, shade):
+                    if not pane_fits(plane, others, cx, fy, shade):
                         continue
                     if rng.random() < lit_fraction:
                         lit.append((cx, fy, YELLOW if rng.random() < yellow_fraction else AMBER))
@@ -350,11 +367,20 @@ def brief_checks(t: ThemeLayers) -> list[str]:
         for x2, y2 in stars[i + 1 :]:
             if (x - x2) ** 2 + (y - y2) ** 2 < STAR_MIN_DIST**2:
                 out.append(f"stars too close: ({x},{y}) and ({x2},{y2})")
+    near_only = Canvas(W, H)
+    draw_plane(near_only, NEAR, INK, edge=True)
     for i, w in enumerate(t.windows, 1):
         for y in range(H):
             for x in range(W):
-                if w.get(x, y) != T and not inside_clip(x, y):
+                if w.get(x, y) == T:
+                    continue
+                if not inside_clip(x, y):
                     out.append(f"windows-{i} pixel under the corner clip at ({x},{y})")
+                # a lit pixel on the composite's slate could be a far pane sitting on
+                # the near plane's slate EDGE; only a pane with the near plane clear
+                # beneath it, or fully on ink, is legitimate
+                if t.buildings.get(x, y) == FAR_SHADE and near_only.get(x, y) != T:
+                    out.append(f"windows-{i} pane on the near plane's edge at ({x},{y})")
     counts = [w.w * w.h - w.count(T) for w in t.windows]
     if max(counts) - min(counts) > 8:
         out.append(f"window waves uneven: {counts}")

@@ -3,11 +3,11 @@
 The plates behind the **Rooftop Skyline** timer theme, and the script that
 draws them.
 
-| Path         | What it is                                                                                                 |
-| ------------ | ---------------------------------------------------------------------------------------------------------- |
-| `skyline.py` | The design: sky ramps, the two planes of buildings, the cat, the window grid, the stars. Run it to redraw. |
-| `pixlib.py`  | A small strict toolkit: palette-indexed canvas, ordered dither, indexed-PNG output, the timeline preview.  |
-| `plates/`    | The output the plugin ships — sixteen 128×128 indexed PNGs — plus `preview.png`, a strip of the timeline.  |
+| Path         | What it is                                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `skyline.py` | The design: sky ramps, the two planes of buildings, the cat, the window grid, the stars. Run it to redraw.              |
+| `pixlib.py`  | A small strict toolkit: palette-indexed canvas, ordered dither, indexed-PNG output, the timeline preview.               |
+| `plates/`    | The output the plugin ships — sixteen 128×128 indexed PNGs, about 6.7 KB — plus `preview.png`, a strip of the timeline. |
 
 Everything is MIT with the rest of the plugin. The palette is
 [Endesga 32](https://lospec.com/palette-list/endesga-32) by Endesga (palettes
@@ -57,9 +57,11 @@ After a redraw, run the plugin's tests and build from the repo root:
 npm test && npm run build
 ```
 
-`tests/rooftopArt.test.ts` holds every plate to 128×128 and the set under a
-byte budget (2 KB a plate, 24 KB together) — a truecolor export is roughly
-four times the size and fails there rather than in a release.
+`tests/rooftopArt.test.ts` holds every plate to 128×128, to **indexed** colour
+(IHDR colour type 3 — an RGB or RGBA export is a different file type, and only
+the type check can catch it) and the set under a byte budget (1 KB a plate,
+10 KB together; the set is about 6.7 KB). Do not pad the palette to 256
+entries — that alone was 60% of each plate's bytes in the first cut.
 
 ## Editing by hand
 
@@ -74,8 +76,9 @@ that keep an edit shippable:
 - Sky plates: same dot pattern on all eight (same dither matrix, anchored to
   the canvas), or a half-faded pair shows two patterns instead of one blend.
   Nothing pale above row 92 — the clock text sits there.
-- Keep lit pixels out of the corner arcs (about 20 px radius) and 4 px in from
-  the left and right edges.
+- Keep lit pixels out of the corner arcs (24 px radius — the 35px clip is 22
+  source pixels at the 200px desktop floor; the 150px compact square may cut
+  a corner pane, accepted) and 4 px in from the left and right edges.
 - Export as indexed PNG, 100% scale, one file per layer, same names.
 
 Then `npm test && npm run build`, and reload the plugin.

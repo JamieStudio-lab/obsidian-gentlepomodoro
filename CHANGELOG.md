@@ -21,7 +21,7 @@ CSS, and the first to use the scrim 0.6.1 put in place for exactly that.
   buildings — a slate city in the distance behind the ink one in front — the
   plugin's shared rounded corners, and a cat on a roof right of centre.
 - The artwork is drawn by a script in `art/rooftop/` on the Endesga 32
-  palette and shipped as sixteen 128×128 indexed PNGs, 17 KB in all, bundled
+  palette and shipped as sixteen 128×128 indexed PNGs, under 7 KB in all, bundled
   into `main.js`. The files open in Aseprite with their palette intact and can
   be hand-edited; the script's `--layout` flag tries alternative arrangements.
 
@@ -37,10 +37,11 @@ CSS, and the first to use the scrim 0.6.1 put in place for exactly that.
   (scaling a bitmap 1.03× shimmers on a pixel grid). That swap has to exclude
   overtime: it out-ranked the shared overtime rule and the breathing glow
   vanished on this theme alone, until the user noticed.
-- 488 → 498 tests. The plate list, the files on disk, the stylesheet and the
-  build config must agree; every plate is 128×128 and inside a size budget; the
-  theme's block reads `--gp-progress` and declares no transition; the pulse
-  opt-out stays gated on reduced motion and stays out of overtime.
+- 488 → 504 tests. The plate list, the files on disk, the stylesheet's rules
+  and thresholds, the view's node-building line and the build config must all
+  agree; every plate is 128×128, indexed, and inside a size budget; the theme's
+  block reads `--gp-progress` and declares no transition; the pulse opt-out
+  stays gated on reduced motion and stays out of overtime.
 
 ## [0.6.1] — 2026-09-02
 

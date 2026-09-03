@@ -133,13 +133,17 @@ is internal and may change in any release.
 ### What you declare
 
 Each is read by a shared rule with today's value as a fallback, so a theme that
-declares nothing still renders.
+declares nothing still renders — but `tests/designTokens.test.ts` requires every
+registered theme's block to declare all fourteen, so a new theme must.
 
-| Token               | Meaning                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gp-shape-base`   | The flat colour behind your artwork.                                                                                                                                                                          |
-| `--gp-shape-radius` | The square's corner rounding. You may change it. You may **not** remove `overflow: hidden` — the frosted pane's `backdrop-filter` and its iOS pulse workaround are both written against that clipped surface. |
-| `--gp-shadow-rgb`   | Three comma-separated RGB **channels** for the drop shadow — `0, 0, 0`, not a hex. A colour here makes all six shadow declarations invalid at computed-value time and the timer's depth silently disappears.  |
+| Token                                 | Meaning                                                                                                                                                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--gp-font-display`                   | The face the four pieces of on-artwork text set in. All three shipped themes point it at `--gp-font-rounded`.                                                                                                 |
+| `--gp-ink` … `--gp-ink-overtime-glow` | The nine ink slots: text colour, its dim / soft / faint tiers, the badge, two text shadows, the overtime colour and its glow. Every shipped theme declares the same white-on-dark values independently.       |
+| `--gp-scrim-alpha`                    | A dark veil between the artwork and the text, 0 to 1. 0 for the two gradient themes; Rooftop Skyline sets 0.1. The lever that makes an arbitrary picture safe for white text.                                 |
+| `--gp-shape-base`                     | The flat colour behind your artwork.                                                                                                                                                                          |
+| `--gp-shape-radius`                   | The square's corner rounding. You may change it. You may **not** remove `overflow: hidden` — the frosted pane's `backdrop-filter` and its iOS pulse workaround are both written against that clipped surface. |
+| `--gp-shadow-rgb`                     | Three comma-separated RGB **channels** for the drop shadow — `0, 0, 0`, not a hex. A colour here makes all six shadow declarations invalid at computed-value time and the timer's depth silently disappears.  |
 
 ### Raster themes
 
@@ -155,8 +159,11 @@ nothing else.
   already take; `rollup.config.mjs` includes `**/*.png`, `audio-modules.d.ts`
   declares the module type. Keep them small: indexed PNG at source resolution.
   [tests/rooftopArt.test.ts](tests/rooftopArt.test.ts) holds every plate to
-  128×128 and the set under a byte budget, because every byte is base64-expanded
-  and shipped to every device.
+  128×128, to IHDR colour type 3 (indexed — an RGB export is a different file
+  type, not a bigger one, so only the type check can catch it) and the set
+  under a byte budget, because every byte is base64-expanded and shipped to
+  every device. Do not pad the palette to 256 entries: that was 60% of each
+  plate's bytes in the first cut.
 - **Nodes.** One `<img class="gp-art gp-rooftop …">` per plate, built in
   `GentlePomoView.onOpen` beside the other artwork, `alt=""` and
   `aria-hidden`. Real images rather than `background-image`, so no style is
@@ -182,8 +189,10 @@ none`.
 - **What the plates must respect.** The clock text sits over the middle of the
   square — roughly rows 24 to 92 of 128 — so nothing pale may sit there; the
   Rooftop sky keys every light band below row 92 and takes a 0.10 scrim for the
-  rest. The 35px corner clips about 20 source pixels at each corner; keep
-  anything lit out of that arc. A break runs `--gp-progress` backwards, so the
+  rest. The 35px corner clips 35 × 128 ÷ size source pixels at each corner —
+  16 on a 280px phone square, 20 at 220px, 22 at the 200px desktop floor, 30
+  in the 150px compact square; keep anything lit out of the arc down to the
+  desktop floor (Rooftop uses 24) and accept that compact may cut a corner pane. A break runs `--gp-progress` backwards, so the
   middle plates must read as dawn as well as dusk: no directional sun or moon.
   And every plate that cross-fades must share one composition — anything that
   moves between plates ghosts — which is why Rooftop's buildings are one static

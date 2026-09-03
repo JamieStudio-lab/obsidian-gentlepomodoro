@@ -434,7 +434,7 @@
   /* --- Ink: text that sits ON the artwork -------------------------------
      Hardcoded before 0.6.1, on the assumption every theme paints a dark,
      saturated square. A photograph or a pixel plate breaks that assumption,
-     so each theme now owns its own. Both shipped themes declare the same
+     so each theme now owns its own. Every shipped theme declares the same
      values independently rather than sharing a default — that is what
      "independent" costs, and it is the point.
 
@@ -1296,7 +1296,7 @@
   /* --- Ink: text that sits ON the artwork -------------------------------
      Hardcoded before 0.6.1, on the assumption every theme paints a dark,
      saturated square. A photograph or a pixel plate breaks that assumption,
-     so each theme now owns its own. Both shipped themes declare the same
+     so each theme now owns its own. Every shipped theme declares the same
      values independently rather than sharing a default — that is what
      "independent" costs, and it is the point.
 
@@ -1698,7 +1698,7 @@
    into main.js as data URLs (Obsidian installs three files, so a loose image
    is missing for every user — rooftopArt.ts), built as
    <img class="gp-art gp-rooftop …"> in GentlePomoView.onOpen and shown only
-   here. The whole set is 18 KB.
+   here. The whole set is under 7 KB.
 
    Everything moves on --gp-progress alone, read straight off the eased value
    the view publishes — no second transition on any plate (THEMES.md: "pick
@@ -1840,6 +1840,9 @@
     animation-name: gp-gentle-pulse-glow;
   }
 }
+
+/* ===== end of Theme 3: Rooftop Skyline. The rules below are shared chrome,
+   not the theme's; tests/designTokens.test.ts polices the theme up to here. ===== */
 
 /* In-view daily-goal progress line. Hidden on desktop (the status bar carries
    it there); revealed on mobile, where Obsidian hides the status bar entirely.

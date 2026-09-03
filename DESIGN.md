@@ -22,15 +22,16 @@ The plugin draws two kinds of thing, and they get opposite treatment.
 the file today and they are all correct; do not re-mint them as `--gp-*`. Conversely, nothing inside
 `.gp-timer-visual` may read `--text-*` or `--background-*`.
 
-The proof that the boundary is real: `.gp-total-time` ([styles.css:1230](styles.css)) is the one
+The proof that the boundary is real: `.gp-total-time` is the one
 on-artwork element coloured with a chrome token, and it pays for it with three colour overrides
-(`:1259`, `:1268`, `:1293`) plus two orb desaturations (`:1280`, `:1308`) — and still leaves
+(the `.theme-dark` / `.theme-light` Frosted Glass rules on `.gp-total-time` and `.gp-overtime`) plus
+two orb desaturations (`.gp-state-overtime.gp-mode-break .gp-orb`, one per Obsidian theme) — and still leaves
 classic + light Obsidian + focus overtime uncovered, where the grey lands on the night gradient at
 about 2.34:1.
 
-Also delete rules that merely restate an Obsidian default rather than adding one: `:765`
-(`.gp-status-label` re-states `--status-bar-font-size`), `:864` and `:1407` (`line-height: 1.3`
-re-states the inherited `--line-height-tight`).
+Also delete rules that merely restate an Obsidian default rather than adding one: `.gp-status-label`
+re-states `--status-bar-font-size`, and two `line-height: 1.3` declarations re-state the inherited
+`--line-height-tight`.
 
 ## Token layers
 
@@ -59,8 +60,8 @@ so an over-wide row loses content off **both** ends with no way to scroll back. 
 caps.
 
 **Ink is a theme's business.** The four pieces of text on the artwork read `--gp-ink*` slots that each
-theme declares for itself. Both shipped themes declare identical values — they are not sharing a
-default, they independently chose the same one, which is what independence costs and is the point.
+theme declares for itself. All three shipped themes declare identical values — they are not sharing
+a default, they independently chose the same one, which is what independence costs and is the point.
 `--gp-scrim-alpha` drives `.gp-timer-shape::after`, a veil between artwork and text; it is the only
 lever that makes an arbitrary supplied picture safe for white text, and it is a pseudo-element so
 it needs no DOM node and no place in the artwork switch. Classic and Frosted Glass set it to 0;
@@ -88,7 +89,8 @@ the structure that made Classic the implicit default in the first place, moved d
   touch, and a hard 150px in compact mode. A fixed size re-breaks the exact layout compact mode
   exists to fix, and there is no media-query substitute — `@media (max-height)` and `(orientation)`
   were both tried and neither engages in Obsidian's mobile webview.
-- **Reveal caps stay `em`** (`2.5em` at `:326` and `:1252`, `7em` at `:1446`/`:1466`). `var()`
+- **Reveal caps stay `em`** (`2.5em` on `.gp-end-time.gp-visible` and `.gp-state-overtime .gp-total-time`,
+  `7em` on the two caption words). `var()`
   substitutes token _text_, so an `em` cap still resolves against each element's own font-size —
   which is the point, since a type-scale change then cannot make the cap too small. In px it
   silently could.
@@ -99,11 +101,11 @@ the structure that made Classic the implicit default in the first place, moved d
 
 Two behaviours are decided by source order alone, both between rules of equal specificity:
 
-- `.gp-controls-row > *:not(:last-child)` (`:369`) must stay **before**
-  `.gp-animated-wrapper.gp-hidden-animated` (`:395`) — `:not()` contributes class-level specificity,
+- `.gp-controls-row > *:not(:last-child)` must stay **before**
+  `.gp-animated-wrapper.gp-hidden-animated` — `:not()` contributes class-level specificity,
   so only order decides. Reversed, a collapsed wrapper keeps its 12px margin and the row shows a gap
   where the buttons were.
-- `.gp-task-list` (`:817`) must stay **before** `.gp-station-list` (`:1546`). If the task list wins,
+- `.gp-task-list` must stay **before** `.gp-station-list`. If the task list wins,
   the station picker gets the filled background and the faster open animation, and its two
   deliberate differences vanish in a way that reads as a theme quirk.
 
@@ -112,15 +114,15 @@ dangerous one here.
 
 ### 2. Variant classes stay double-class.
 
-`.gp-task-item.gp-task-selected .gp-task-check-icon` (`:888`, specificity 0,3,0) is the only thing
-beating `.gp-station-item .gp-task-check-icon { display: none }` (`:1538`, 0,2,0). Flattened to a
+`.gp-task-item.gp-task-selected .gp-task-check-icon` (specificity 0,3,0) is the only thing
+beating `.gp-station-item .gp-task-check-icon { display: none }` (0,2,0). Flattened to a
 single BEM-style class it drops to 0,2,0, ties, and the later rule wins — so **the tick on the
 station you are listening to disappears**, which is the only indicator of which station is playing.
 No test can see it.
 
-`.gp-root .gp-hidden` (`:812`) is a descendant selector, not a compound one — do not "simplify" it
+`.gp-root .gp-hidden` is a descendant selector, not a compound one — do not "simplify" it
 to `.gp-root.gp-hidden`, which would never match. It must out-specify `.gp-station-current`
-(`:1400`), `.gp-station-list` (`:1558`) and `.gp-task-item` (`:861`), all `display: flex` at 0,1,0.
+`.gp-station-list` and `.gp-task-item`, all `display: flex` at 0,1,0.
 
 ### 3. Anything hidden by animation must also be `inert`, seeded at construction.
 
@@ -147,23 +149,22 @@ Media queries add no specificity, so any rule more specific than the `transition
 silently re-enables motion for exactly the users who opted out — with no error and nothing visible
 on the developer's machine. The file already records two incidents: the caption labels must keep
 **exactly one** `transition` shorthand at 0,1,0 with the delay cascaded through
-`--gp-caption-delay`, and the mobile frosted pulse (`:1929`) needs its
+`--gp-caption-delay`, and the mobile frosted pulse (`body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape`) needs its
 `@media (prefers-reduced-motion: no-preference)` wrapper because its selector is 0,4,1 against a
 0,2,0 `animation: none`.
 
-Zeroing a duration token is **not** a substitute for the explicit `transform: none` resets at
-`:1332` and `:1604`. A collapsed element's resting state _is_ a transform, so a zero duration makes
+Zeroing a duration token is **not** a substitute for the explicit `transform: none` resets in the
+reduced-motion blocks. A collapsed element's resting state _is_ a transform, so a zero duration makes
 it jump there instantly rather than not move.
 
 ### 5. Every reveal cap is a magic number that must stay bigger than its content.
 
 All have `overflow: hidden`, so raising a font-size, adding a settings row or localising a string
-clips content with no error and no scrollbar: `.gp-end-time.gp-visible` 2.5em (`:326`),
-`.gp-state-overtime .gp-total-time` 2.5em (`:1252`), `.gp-task-list.gp-visible` 250px (`:831`),
-`.gp-settings-panel.gp-visible` 320px (`:553`), `.gp-status-time` 64px (`:782`), the caption words
-7em (`:1446`, `:1466`).
+clips content with no error and no scrollbar: `.gp-end-time.gp-visible` 2.5em,
+`.gp-state-overtime .gp-total-time` 2.5em, `.gp-task-list.gp-visible` 250px,
+`.gp-settings-panel.gp-visible` 320px, `.gp-status-time` 64px, the caption words 7em.
 
-Related: `.gp-settings-panel`'s collapsed `border-top/bottom: 1px solid transparent` (`:537`) must
+Related: `.gp-settings-panel`'s collapsed `border-top/bottom: 1px solid transparent` must
 stay. Border _colour_ is animatable while _adding_ a border is not, and those 2px of reserved border
 box are what stop the panel jumping at the end of the reveal.
 
@@ -171,18 +172,18 @@ box are what stop the panel jumping at the end of the reveal.
 
 Each fails only on a device the maintainer does not develop on.
 
-1. The WebKit SVG floor (`:1686`) must stay `min-width`/`min-height` + `flex-shrink: 0` on the
+1. The WebKit SVG floor (`body.is-mobile .gp-icon-btn svg.svg-icon` and its tablet twin) must stay `min-width`/`min-height` + `flex-shrink: 0` on the
    two-class `svg.svg-icon` selector. WebKit collapses an SVG flex item's main axis to ~8px on iPad
    and a plain `width`, even `!important`, does not fix it. Any hand-built SVG inside a
    `.gp-icon-btn` must carry the `svg-icon` class.
-2. `.gp-icon-btn svg` sizing stays absolute px (`:461`). `em` resolves against a font-size Obsidian
+2. `.gp-icon-btn svg` sizing stays absolute px. `em` resolves against a font-size Obsidian
    overrides per device; `%` collapses in iPad WebKit.
-3. `body.is-mobile .gp-timer-time { transform: translateZ(0) }` (`:1900`) is a GPU-layer workaround
+3. `body.is-mobile .gp-timer-time { transform: translateZ(0) }` is a GPU-layer workaround
    whose safety argument is literally "it has no other transform". Adding one invalidates it.
-4. `.gp-music-player` stays **rendered** at 1×1 with `opacity: 0` (`:1625`) — never `display: none`,
+4. `.gp-music-player` stays **rendered** at 1×1 with `opacity: 0` — never `display: none`,
    never `visibility: hidden`, never `clip-path` (Obsidian review flags it as only partially
    supported). Removal is what stops playback.
-5. `.gp-compact` uses `position: relative`, not `static` (`:1718`). `.gp-timer-shape` is
+5. `.gp-compact` uses `position: relative`, not `static`. `.gp-timer-shape` is
    `position: absolute; inset: 0`, and `static` would let it escape the 150px box.
 
 ### 7. Never set a static style value from TypeScript.
@@ -197,22 +198,24 @@ non-literal value passes.
 
 ### 8. Four values are duplicated across the CSS/TS boundary.
 
-Only comments hold them in sync. Change them together:
+Three of the five are test-held (the fade and the leaf selector by `designTokens`, the plate
+selectors by `rooftopArt`); the status-dot gradients and the mode classes are held by comments
+only. Change them together:
 
-| CSS                                           | TypeScript                                                    |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| `--gp-name-fade: 0.28s` (`:1501`)             | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                   |
-| `[data-type="gentle-pomo-view"]` (`:4`)       | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                        |
-| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot` (`:750`, `:754`)             |
-| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar  |
-| `.gp-rooftop-*` selectors                     | `ROOFTOP_LAYERS` in rooftopArt.ts — the one pair a test holds |
+| CSS                                           | TypeScript                                                             |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `--gp-name-fade: 0.28s`                       | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                            |
+| `[data-type="gentle-pomo-view"]`              | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                                 |
+| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot`                                       |
+| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar           |
+| `.gp-rooftop-*` selectors                     | `ROOFTOP_LAYERS` in rooftopArt.ts (held by `tests/rooftopArt.test.ts`) |
 
 The last is why the mode gradients must reach `:root`: the status bar is created by
 `addStatusBarItem()` and can never be reached by a `.gp-root`- or `.gp-theme-*`-scoped rule.
 
 ### 9. Product decisions that look like accessibility defects and are not.
 
-- **The running countdown is hidden by design** (`:265`) — that is the "gentle" premise. Fix the
+- **The running countdown is hidden by design** (`.gp-state-running .gp-timer-time { opacity: 0 }`) — that is the "gentle" premise. Fix the
   white-on-gradient contrast with the scrim, never by revealing it.
 - **Station rows use `title`, not `aria-label`.** `aria-label` _replaces_ the accessible name, so
   the obvious upgrade would have a screen reader announce a 60-character URL instead of the station
@@ -221,7 +224,7 @@ The last is why the mode gradients must reach `:root`: the status bar is created
   styling out-specifies a plain class reset, so they kept a filled background in dark mode and the
   hover never showed. Fixing the task list means **copying** the div + `tabindex` + Enter/Space
   pattern, not improving on it.
-- **`@media (hover: hover)` gates only the two timer reveals** (`:269`), because iOS sticky-hover
+- **`@media (hover: hover)` gates only the two timer reveals**, because iOS sticky-hover
   pins the countdown open and defeats the auto-hide. It is deliberately not applied to the six
   ordinary hover-feedback rules.
 

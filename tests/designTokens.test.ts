@@ -84,7 +84,7 @@ const CONTRACT_TOKENS = [
 describe("theme independence", () => {
   const themeBlocks = THEME_IDS.map((id) => ({ id, cls: themeClass(id) }));
 
-  it("gives every registered theme a block declaring the three contract tokens", () => {
+  it("gives every registered theme a block declaring every contract token", () => {
     for (const { id, cls } of themeBlocks) {
       const block = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(css);
       expect(block, `no .${cls} token block in styles.css — see THEMES.md`).not.toBeNull();
@@ -120,16 +120,30 @@ describe("theme independence", () => {
     expect(rules).toMatch(/\.gp-art\s*\{[^}]*display:\s*none/);
   });
 
-  /** The text between the Rooftop Skyline banner and the next section banner. */
+  /**
+   * The text between the Rooftop Skyline banner and the section's own end
+   * banner. Empty when either is missing — the first test below says which,
+   * so a renamed banner fails three tests rather than aborting the file.
+   */
   const rooftop = (() => {
     const title = rules.indexOf("Theme 3: Rooftop Skyline");
-    expect(title, "the Rooftop Skyline section is gone").toBeGreaterThan(-1);
+    if (title === -1) return "";
     // From the banner's own opening `/*`, so the comment stripper below sees
-    // the banner as a comment rather than leaving its prose in the text.
+    // the banner as a comment rather than leaving its prose in the text; to
+    // the end banner, because the chrome rules after the theme (the goal
+    // progress line) are not the theme's and must not be policed as it.
     const start = rules.lastIndexOf("/* ====", title);
-    const next = rules.indexOf("/* ====", title);
-    return rules.slice(start, next === -1 ? undefined : next);
+    const end = rules.indexOf("end of Theme 3", title);
+    return end === -1 ? "" : rules.slice(start, end);
   })();
+
+  it("has a Rooftop Skyline section closed by its own end banner", () => {
+    expect(rules.indexOf("Theme 3: Rooftop Skyline"), "the section banner is gone").toBeGreaterThan(
+      -1
+    );
+    expect(rules.indexOf("end of Theme 3"), "the section's end banner is gone").toBeGreaterThan(-1);
+    expect(rooftop.length).toBeGreaterThan(0);
+  });
 
   // THEMES.md, "pick exactly one smoothing route": --gp-progress is already
   // eased 0.8s on .gp-timer-visual. A theme that reads it AND transitions its

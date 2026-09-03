@@ -172,7 +172,7 @@ export class GentlePomoView extends ItemView {
     // Create Shape
     this.timerShape = visual.createDiv("gp-timer-shape");
 
-    // Artwork nodes for BOTH themes are built once, here, and carry `gp-art`:
+    // Artwork nodes for EVERY theme are built once, here, and carry `gp-art`:
     // hidden by default in CSS, and each theme's own block shows only its own.
     // Create Layers in Order: Day -> Dusk -> Night
     this.timerShape.createDiv("gp-art gp-layer-day");
@@ -187,7 +187,7 @@ export class GentlePomoView extends ItemView {
     this.timerShape.createDiv("gp-art gp-glass-pane");
     this.timerShape.createDiv("gp-art gp-glass-highlight");
 
-    // Rooftop Skyline: ten bitmap plates (rooftopArt.ts), bundled as data
+    // Rooftop Skyline: the bitmap plates (rooftopArt.ts), bundled as data
     // URLs. Real <img> elements rather than background-images, so no style is
     // written from TypeScript and styles.css carries no base64. Hidden with
     // the rest of the artwork until the theme block shows them.

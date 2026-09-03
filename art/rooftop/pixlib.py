@@ -154,7 +154,9 @@ class Canvas:
         for hexv in palette:
             flat.extend(int(hexv[i : i + 2], 16) for i in (1, 3, 5))
         flat.extend((0, 0, 0))  # the transparent slot
-        flat.extend([0] * (768 - len(flat)))
+        # No padding to 256 entries: Pillow writes a PLTE of exactly the
+        # entries given, Aseprite opens a 33-entry palette intact, and the
+        # padding was 60% of every plate's bytes — zeros shipped in main.js.
         img.putpalette(flat)
         img.putdata([TRANSPARENT_SLOT if v == T else v for v in self.data])
         img.info["transparency"] = TRANSPARENT_SLOT
