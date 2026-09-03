@@ -27,7 +27,10 @@ export default (commandLineArgs) => ({
   external: ["obsidian"],
   plugins: [
     url({
-      include: ["**/*.mp3"],
+      // The audio cues and, since 0.6.2, the Rooftop Skyline plates. Obsidian
+      // installs three files, so an image that is not inside main.js does not
+      // reach users at all — see rooftopArt.ts.
+      include: ["**/*.mp3", "**/*.png"],
       limit: Infinity, // always inline as a base64 data URL; never emit a separate file
     }),
     typescript(),

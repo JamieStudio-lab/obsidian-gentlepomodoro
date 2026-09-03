@@ -286,6 +286,7 @@ describe("controls are wired through setControlValue", () => {
     expect(componentOf(ctx.el, "Theme").options).toEqual([
       { value: "classic", label: "Classic" },
       { value: "frosted-glass", label: "Frosted glass" },
+      { value: "rooftop-skyline", label: "Rooftop skyline" },
     ]);
   });
 });

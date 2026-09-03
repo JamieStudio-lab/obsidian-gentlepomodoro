@@ -98,7 +98,11 @@ describe("theme independence", () => {
     // Frosted Glass used to hide Classic's three layers by name, which is why
     // "classic" was not a theme at all — it was whatever was left over. That
     // shape needs N x (N-1) rules; catching it here keeps it at one block each.
-    const OWN = { classic: /gp-layer-/, "frosted-glass": /gp-(?:glass|orb)/ } as const;
+    const OWN = {
+      classic: /gp-layer-/,
+      "frosted-glass": /gp-(?:glass|orb)/,
+      "rooftop-skyline": /gp-rooftop/,
+    } as const;
     for (const { id, cls } of themeBlocks) {
       for (const other of themeBlocks) {
         if (other.id === id) continue;
@@ -114,6 +118,43 @@ describe("theme independence", () => {
 
   it("hides artwork by default so a theme only has to show its own", () => {
     expect(rules).toMatch(/\.gp-art\s*\{[^}]*display:\s*none/);
+  });
+
+  /** The text between the Rooftop Skyline banner and the next section banner. */
+  const rooftop = (() => {
+    const title = rules.indexOf("Theme 3: Rooftop Skyline");
+    expect(title, "the Rooftop Skyline section is gone").toBeGreaterThan(-1);
+    // From the banner's own opening `/*`, so the comment stripper below sees
+    // the banner as a comment rather than leaving its prose in the text.
+    const start = rules.lastIndexOf("/* ====", title);
+    const next = rules.indexOf("/* ====", title);
+    return rules.slice(start, next === -1 ? undefined : next);
+  })();
+
+  // THEMES.md, "pick exactly one smoothing route": --gp-progress is already
+  // eased 0.8s on .gp-timer-visual. A theme that reads it AND transitions its
+  // own plates doubles every skip and reset to ~1.6s — the reason Classic
+  // still takes two pre-computed opacities from the view instead.
+  it("moves the Rooftop Skyline plates on --gp-progress and on nothing else", () => {
+    expect(rooftop).toMatch(/var\(--gp-progress\)/);
+    expect(rooftop.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/transition/);
+  });
+
+  // A theme-scoped animation selector out-specifies the shared reduced-motion
+  // `animation: none`, so an ungated one re-enables motion for exactly the
+  // people who turned it off. This shipped once already (the mobile frosted
+  // pulse); the gate is the fix, and this keeps it on the rooftop's opt-out.
+  it("gates the Rooftop Skyline pulse opt-out on prefers-reduced-motion", () => {
+    const sel = ".gp-theme-rooftop-skyline .gp-state-running .gp-timer-shape";
+    const at = rooftop.indexOf(sel);
+    expect(at, "the pulse opt-out is gone").toBeGreaterThan(-1);
+    const gate = rooftop.lastIndexOf("@media (prefers-reduced-motion: no-preference)", at);
+    expect(gate, "the opt-out is not inside a no-preference media block").toBeGreaterThan(-1);
+    // and no closing brace of that block sits between the gate and the rule
+    const between = rooftop.slice(gate, at);
+    const opens = (between.match(/\{/g) ?? []).length;
+    const closes = (between.match(/\}/g) ?? []).length;
+    expect(opens - closes, "the opt-out sits after the gated block closed").toBe(1);
   });
 });
 

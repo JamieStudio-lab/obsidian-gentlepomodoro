@@ -4,3 +4,9 @@ declare module "*.mp3" {
   const url: string;
   export default url;
 }
+
+// The Rooftop Skyline plates (rooftopArt.ts) take the same route.
+declare module "*.png" {
+  const url: string;
+  export default url;
+}
