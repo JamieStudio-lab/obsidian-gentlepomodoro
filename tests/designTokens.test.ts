@@ -101,7 +101,7 @@ describe("theme independence", () => {
     const OWN = {
       classic: /gp-layer-/,
       "frosted-glass": /gp-(?:glass|orb)/,
-      "rooftop-skyline": /gp-rooftop/,
+      "pixel-city": /gp-pixel-city/,
     } as const;
     for (const { id, cls } of themeBlocks) {
       for (const other of themeBlocks) {
@@ -121,12 +121,12 @@ describe("theme independence", () => {
   });
 
   /**
-   * The text between the Rooftop Skyline banner and the section's own end
+   * The text between the Pixel City banner and the section's own end
    * banner. Empty when either is missing — the first test below says which,
    * so a renamed banner fails four tests rather than aborting the file.
    */
-  const rooftop = (() => {
-    const title = rules.indexOf("Theme 3: Rooftop Skyline");
+  const pixelCity = (() => {
+    const title = rules.indexOf("Theme 3: Pixel City");
     if (title === -1) return "";
     // From the banner's own opening `/*`, so the comment stripper below sees
     // the banner as a comment rather than leaving its prose in the text; to
@@ -137,13 +137,11 @@ describe("theme independence", () => {
     return end === -1 ? "" : rules.slice(start, end);
   })();
 
-  it("has a Rooftop Skyline section closed by its own end banner", () => {
-    expect(rules.indexOf("Theme 3: Rooftop Skyline"), "the section banner is gone").toBeGreaterThan(
-      -1
-    );
+  it("has a Pixel City section closed by its own end banner", () => {
+    expect(rules.indexOf("Theme 3: Pixel City"), "the section banner is gone").toBeGreaterThan(-1);
     const end = rules.indexOf("end of Theme 3");
     expect(end, "the section's end banner is gone").toBeGreaterThan(-1);
-    expect(rooftop.length).toBeGreaterThan(0);
+    expect(pixelCity.length).toBeGreaterThan(0);
     // The banner must sit between the theme's last rule and the first chrome
     // rule after it — or the slice above polices chrome again, or misses a
     // theme rule that drifted below the banner.
@@ -151,8 +149,8 @@ describe("theme independence", () => {
       rules.indexOf(".gp-goal-progress {")
     );
     const after = rules.slice(end).replace(/\/\*[\s\S]*?\*\//g, "");
-    expect(after, "a Rooftop Skyline rule sits below the end banner").not.toContain(
-      ".gp-theme-rooftop-skyline"
+    expect(after, "a Pixel City rule sits below the end banner").not.toContain(
+      ".gp-theme-pixel-city"
     );
   });
 
@@ -160,32 +158,31 @@ describe("theme independence", () => {
   // eased 0.8s on .gp-timer-visual. A theme that reads it AND transitions its
   // own plates doubles every skip and reset to ~1.6s — the reason Classic
   // still takes two pre-computed opacities from the view instead.
-  it("moves the Rooftop Skyline plates on --gp-progress and on nothing else", () => {
-    expect(rooftop).toMatch(/var\(--gp-progress\)/);
-    expect(rooftop.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/transition/);
+  it("moves the Pixel City plates on --gp-progress and on nothing else", () => {
+    expect(pixelCity).toMatch(/var\(--gp-progress\)/);
+    expect(pixelCity.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/transition/);
   });
 
   // A theme-scoped animation selector out-specifies the shared reduced-motion
   // `animation: none`, so an ungated one re-enables motion for exactly the
   // people who turned it off. This shipped once already (the mobile frosted
-  // pulse); the gate is the fix, and this keeps it on the rooftop's opt-out.
+  // pulse); the gate is the fix, and this keeps it on the Pixel City opt-out.
   // Overtime is still running. The opt-out out-specifies the shared overtime
   // rule, so unless it excludes that state it replaces the blue / orange
   // breathing glow with the plain breath — which is what the first cut did.
-  it("leaves the overtime glow alone on the Rooftop Skyline", () => {
-    expect(rooftop).toContain(".gp-state-running:not(.gp-state-overtime) .gp-timer-shape");
-    expect(rooftop).not.toMatch(/\.gp-state-running \.gp-timer-shape/);
+  it("leaves the overtime glow alone on the Pixel City", () => {
+    expect(pixelCity).toContain(".gp-state-running:not(.gp-state-overtime) .gp-timer-shape");
+    expect(pixelCity).not.toMatch(/\.gp-state-running \.gp-timer-shape/);
   });
 
-  it("gates the Rooftop Skyline pulse opt-out on prefers-reduced-motion", () => {
-    const sel =
-      ".gp-theme-rooftop-skyline .gp-state-running:not(.gp-state-overtime) .gp-timer-shape";
-    const at = rooftop.indexOf(sel);
+  it("gates the Pixel City pulse opt-out on prefers-reduced-motion", () => {
+    const sel = ".gp-theme-pixel-city .gp-state-running:not(.gp-state-overtime) .gp-timer-shape";
+    const at = pixelCity.indexOf(sel);
     expect(at, "the pulse opt-out is gone").toBeGreaterThan(-1);
-    const gate = rooftop.lastIndexOf("@media (prefers-reduced-motion: no-preference)", at);
+    const gate = pixelCity.lastIndexOf("@media (prefers-reduced-motion: no-preference)", at);
     expect(gate, "the opt-out is not inside a no-preference media block").toBeGreaterThan(-1);
     // and no closing brace of that block sits between the gate and the rule
-    const between = rooftop.slice(gate, at);
+    const between = pixelCity.slice(gate, at);
     const opens = (between.match(/\{/g) ?? []).length;
     const closes = (between.match(/\}/g) ?? []).length;
     expect(opens - closes, "the opt-out sits after the gated block closed").toBe(1);

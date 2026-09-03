@@ -1692,12 +1692,12 @@
 }
 
 /* =========================================================================
-   Theme 3: Rooftop Skyline (pixel art)
+   Theme 3: Pixel City (pixel art)
    -------------------------------------------------------------------------
-   The first raster theme. Sixteen 128x128 plates from art/rooftop/plates, bundled
+   The first raster theme. Sixteen 128x128 plates from art/pixel-city/plates, bundled
    into main.js as data URLs (Obsidian installs three files, so a loose image
-   is missing for every user — rooftopArt.ts), built as
-   <img class="gp-art gp-rooftop …"> in GentlePomoView.onOpen and shown only
+   is missing for every user — pixelCityArt.ts), built as
+   <img class="gp-art gp-pixel-city …"> in GentlePomoView.onOpen and shown only
    here. The whole set is under 7 KB.
 
    Everything moves on --gp-progress alone, read straight off the eased value
@@ -1706,10 +1706,10 @@
    session; six window waves ease on between 40 % and 80 %; the stars fade in
    over the last third. skyPhase() already runs the arc backwards on a break,
    so a break plays the same plates in reverse and the windows go out one
-   wave at a time. These thresholds are the ones art/rooftop/pixlib.py
+   wave at a time. These thresholds are the ones art/pixel-city/pixlib.py
    previews with; change them together.
    ========================================================================= */
-.gp-theme-rooftop-skyline {
+.gp-theme-pixel-city {
   --gp-font-display: var(--gp-font-rounded);
   /* Ink: the same values the other two themes declare, declared again. */
   --gp-ink: #ffffff;
@@ -1724,7 +1724,7 @@
 
   /* The first theme to use the scrim: a tenth of black between the plates
      and the text. The day plate is a flat mid blue behind the clock and every
-     pale band is keyed below the text (art/rooftop/skyline.py, SKY_KEYS), but
+     pale band is keyed below the text (art/pixel-city/skyline.py, SKY_KEYS), but
      a bitmap cannot be retuned per Obsidian theme the way a gradient can, so
      the veil carries the rest. The user chose 0.10 on the lineup page. */
   --gp-scrim-alpha: 0.1;
@@ -1737,7 +1737,7 @@
   --gp-shadow-rgb: 0, 0, 0;
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop {
+.gp-theme-pixel-city .gp-pixel-city {
   display: block;
   position: absolute;
   inset: 0;
@@ -1758,36 +1758,36 @@
    seventh of the session on top of the one before (eight plates, seven
    spans: progress x 7 minus the plate's rank). Plates share one dither
    pattern, so a half-faded pair is a colour blend, not two patterns. */
-.gp-theme-rooftop-skyline .gp-rooftop-sky-2 {
+.gp-theme-pixel-city .gp-pixel-city-sky-2 {
   opacity: clamp(0, var(--gp-progress) * 7 - 0, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-3 {
+.gp-theme-pixel-city .gp-pixel-city-sky-3 {
   opacity: clamp(0, var(--gp-progress) * 7 - 1, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-4 {
+.gp-theme-pixel-city .gp-pixel-city-sky-4 {
   opacity: clamp(0, var(--gp-progress) * 7 - 2, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-5 {
+.gp-theme-pixel-city .gp-pixel-city-sky-5 {
   opacity: clamp(0, var(--gp-progress) * 7 - 3, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-6 {
+.gp-theme-pixel-city .gp-pixel-city-sky-6 {
   opacity: clamp(0, var(--gp-progress) * 7 - 4, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-7 {
+.gp-theme-pixel-city .gp-pixel-city-sky-7 {
   opacity: clamp(0, var(--gp-progress) * 7 - 5, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-sky-8 {
+.gp-theme-pixel-city .gp-pixel-city-sky-8 {
   opacity: clamp(0, var(--gp-progress) * 7 - 6, 1);
 }
 
 /* Stars: nothing until two-thirds through, then in over the last third. */
-.gp-theme-rooftop-skyline .gp-rooftop-stars {
+.gp-theme-pixel-city .gp-pixel-city-stars {
   opacity: clamp(0, (var(--gp-progress) - 0.65) / 0.35, 1);
 }
 
@@ -1795,27 +1795,27 @@
    session, each easing on over 1% of it — fifteen seconds of a 25-minute
    focus, a glow-up rather than a pop. A real step is not available to a
    computed value; a ramp this steep is the same thing with a soft edge. */
-.gp-theme-rooftop-skyline .gp-rooftop-windows-1 {
+.gp-theme-pixel-city .gp-pixel-city-windows-1 {
   opacity: clamp(0, (var(--gp-progress) - 0.4) * 100, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-windows-2 {
+.gp-theme-pixel-city .gp-pixel-city-windows-2 {
   opacity: clamp(0, (var(--gp-progress) - 0.48) * 100, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-windows-3 {
+.gp-theme-pixel-city .gp-pixel-city-windows-3 {
   opacity: clamp(0, (var(--gp-progress) - 0.56) * 100, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-windows-4 {
+.gp-theme-pixel-city .gp-pixel-city-windows-4 {
   opacity: clamp(0, (var(--gp-progress) - 0.64) * 100, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-windows-5 {
+.gp-theme-pixel-city .gp-pixel-city-windows-5 {
   opacity: clamp(0, (var(--gp-progress) - 0.72) * 100, 1);
 }
 
-.gp-theme-rooftop-skyline .gp-rooftop-windows-6 {
+.gp-theme-pixel-city .gp-pixel-city-windows-6 {
   opacity: clamp(0, (var(--gp-progress) - 0.8) * 100, 1);
 }
 
@@ -1836,12 +1836,12 @@
      for exactly the people who turned it off — THEMES.md, "two rules that
      are easy to get wrong". */
 @media (prefers-reduced-motion: no-preference) {
-  .gp-theme-rooftop-skyline .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
+  .gp-theme-pixel-city .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
     animation-name: gp-gentle-pulse-glow;
   }
 }
 
-/* ===== end of Theme 3: Rooftop Skyline. The rules below are shared chrome,
+/* ===== end of Theme 3: Pixel City. The rules below are shared chrome,
    not the theme's; tests/designTokens.test.ts polices the theme up to here. ===== */
 
 /* In-view daily-goal progress line. Hidden on desktop (the status bar carries

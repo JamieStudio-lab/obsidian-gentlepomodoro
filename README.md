@@ -1,6 +1,6 @@
 # Gentle Pomodoro
 
-A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (drifting color orbs behind a frosted pane) or Rooftop Skyline (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
+A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (drifting color orbs behind a frosted pane) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
 > **v0.6.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
@@ -8,7 +8,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 
 ### 🍅 Gentle visual timer
 
-- **Three themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (three drifting color orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode) and **Rooftop Skyline** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
+- **Three themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (three drifting color orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode) and **Pixel City** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
 - Ambient shape that transitions through warm → cool colors as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
@@ -83,7 +83,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
-- **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Rooftop skyline`), day/night indicator, and **estimated end time** (shown while a session runs).
+- **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -155,7 +155,7 @@ CI on every push runs lint, format-check, tests, and build. Release tags push a 
 
 - **Ding sound** — [Universfield](https://pixabay.com/users/universfield-28281460/) via [Pixabay](https://pixabay.com/sound-effects/).
 - **Bell sounds** — [freesound_community](https://pixabay.com/users/freesound_community-46691455/) via [Pixabay](https://pixabay.com/sound-effects/).
-- **Rooftop Skyline artwork** — drawn by this repository's own script ([art/rooftop/](art/rooftop/)), MIT like the rest of the plugin. Palette: [Endesga 32](https://lospec.com/palette-list/endesga-32) by Endesga.
+- **Pixel City artwork** — drawn by this repository's own script ([art/pixel-city/](art/pixel-city/)), MIT like the rest of the plugin. Palette: [Endesga 32](https://lospec.com/palette-list/endesga-32) by Endesga.
 
 ## AI disclaimer
 

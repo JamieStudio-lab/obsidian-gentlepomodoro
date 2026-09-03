@@ -1,6 +1,6 @@
-# Rooftop Skyline — the artwork
+# Pixel City — the artwork
 
-The plates behind the **Rooftop Skyline** timer theme, and the script that
+The plates behind the **Pixel City** timer theme, and the script that
 draws them.
 
 | Path         | What it is                                                                                                              |
@@ -26,14 +26,14 @@ In stacking order, bottom first. All 128×128, every pixel an Endesga 32 index.
 | `windows-1..6`  | lit panes, transparent | wave _j_ eases on at 40% + (*j*−1)·8%, over 1% of the arc     |
 
 The same numbers live in `pixlib.py` (which previews them) and in the
-Rooftop Skyline block of `styles.css` (which runs them). Change both.
+Pixel City block of `styles.css` (which runs them). Change both.
 
 ## Redrawing
 
 Needs Python 3.9+ and Pillow (`pip install pillow`).
 
 ```bash
-cd art/rooftop && python3 skyline.py
+cd art/pixel-city && python3 skyline.py
 ```
 
 That rewrites `plates/` and prints the checks. `validate: []` is the only
@@ -57,7 +57,7 @@ After a redraw, run the plugin's tests and build from the repo root:
 npm test && npm run build
 ```
 
-`tests/rooftopArt.test.ts` holds every plate to 128×128, to **indexed** colour
+`tests/pixelCityArt.test.ts` holds every plate to 128×128, to **indexed** colour
 (IHDR colour type 3 — an RGB or RGBA export is a different file type, and only
 the type check can catch it) and the set under a byte budget (1 KB a plate,
 10 KB together; the set is about 6.7 KB). Do not pad the palette to 256

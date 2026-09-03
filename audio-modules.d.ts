@@ -5,7 +5,7 @@ declare module "*.mp3" {
   export default url;
 }
 
-// The Rooftop Skyline plates (rooftopArt.ts) take the same route.
+// The Pixel City plates (pixelCityArt.ts) take the same route.
 declare module "*.png" {
   const url: string;
   export default url;

@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { ROOFTOP_LAYERS } from "../rooftopArt";
+import { PIXEL_CITY_LAYERS } from "../pixelCityArt";
 
 /**
- * The Rooftop Skyline plates: the list in rooftopArt.ts, the files on disk,
+ * The Pixel City plates: the list in pixelCityArt.ts, the files on disk,
  * the classes styles.css animates, and the build config that puts them in
  * main.js. Four things that must agree and that nothing else checks — a plate
  * missing from the list simply never appears, a class the CSS animates but
@@ -14,9 +14,9 @@ import { ROOFTOP_LAYERS } from "../rooftopArt";
  */
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const platesDir = resolve(root, "art/rooftop/plates");
+const platesDir = resolve(root, "art/pixel-city/plates");
 const css = readFileSync(resolve(root, "styles.css"), "utf8");
-const source = readFileSync(resolve(root, "rooftopArt.ts"), "utf8");
+const source = readFileSync(resolve(root, "pixelCityArt.ts"), "utf8");
 
 const EXPECTED_ORDER = [
   "sky-1",
@@ -62,14 +62,16 @@ const INDEXED = 3;
 
 describe("the plate list", () => {
   it("names the sixteen plates, bottom to top, in the order the CSS stacks them", () => {
-    expect(ROOFTOP_LAYERS.map((l) => l.cls)).toEqual(EXPECTED_ORDER.map((n) => `gp-rooftop-${n}`));
+    expect(PIXEL_CITY_LAYERS.map((l) => l.cls)).toEqual(
+      EXPECTED_ORDER.map((n) => `gp-pixel-city-${n}`)
+    );
   });
 
   it("imports every plate file on disk exactly once, and nothing else", () => {
     const onDisk = readdirSync(platesDir)
       .filter((f) => f.endsWith(".png") && f !== "preview.png")
       .sort();
-    const imported = [...source.matchAll(/from "\.\/art\/rooftop\/plates\/([a-z0-9-]+\.png)"/g)]
+    const imported = [...source.matchAll(/from "\.\/art\/pixel-city\/plates\/([a-z0-9-]+\.png)"/g)]
       .map((m) => m[1])
       .sort();
     expect(imported).toEqual(onDisk);
@@ -77,7 +79,7 @@ describe("the plate list", () => {
   });
 
   it("resolves every plate to a non-empty source", () => {
-    for (const layer of ROOFTOP_LAYERS) {
+    for (const layer of PIXEL_CITY_LAYERS) {
       expect(typeof layer.src, layer.cls).toBe("string");
       expect(layer.src.length, layer.cls).toBeGreaterThan(0);
     }
@@ -127,8 +129,8 @@ describe("the plate files", () => {
 
 describe("agreement with the stylesheet and the build", () => {
   /** The rule body for one plate class inside the theme block, or null. */
-  function rooftopRule(cls: string): string | null {
-    const m = new RegExp(`\\.gp-theme-rooftop-skyline \\.${cls}\\s*\\{([^}]*)\\}`).exec(css);
+  function pixelCityRule(cls: string): string | null {
+    const m = new RegExp(`\\.gp-theme-pixel-city \\.${cls}\\s*\\{([^}]*)\\}`).exec(css);
     return m ? m[1] : null;
   }
 
@@ -137,35 +139,39 @@ describe("agreement with the stylesheet and the build", () => {
   // opacity rule leaves the plate at opacity 1 for the whole session — sky-3
   // covering the day sky from the first second — and nothing else notices.
   it("gives every moving plate an opacity rule on --gp-progress", () => {
-    const STATIC = new Set(["gp-rooftop-sky-1", "gp-rooftop-buildings"]);
-    for (const { cls } of ROOFTOP_LAYERS) {
-      const body = rooftopRule(cls);
+    const STATIC = new Set(["gp-pixel-city-sky-1", "gp-pixel-city-buildings"]);
+    for (const { cls } of PIXEL_CITY_LAYERS) {
+      const body = pixelCityRule(cls);
       if (STATIC.has(cls)) {
         expect(body, `${cls} is static and must not carry a rule`).toBeNull();
         continue;
       }
-      expect(body, `no .gp-theme-rooftop-skyline .${cls} rule`).not.toBeNull();
+      expect(body, `no .gp-theme-pixel-city .${cls} rule`).not.toBeNull();
       expect(body, cls).toMatch(/opacity:\s*clamp\(/);
       expect(body, cls).toContain("var(--gp-progress)");
     }
   });
 
-  // The thresholds are the timeline art/rooftop/pixlib.py previews with:
+  // The thresholds are the timeline art/pixel-city/pixlib.py previews with:
   // sky plate k rises over the (k-1)th seventh, wave j at 40% + (j-1) x 8%.
   it("keeps the sky and window thresholds on the previewed timeline", () => {
     for (let k = 2; k <= 8; k++) {
-      expect(rooftopRule(`gp-rooftop-sky-${k}`)).toContain(`var(--gp-progress) * 7 - ${k - 2}`);
+      expect(pixelCityRule(`gp-pixel-city-sky-${k}`)).toContain(
+        `var(--gp-progress) * 7 - ${k - 2}`
+      );
     }
     for (let j = 1; j <= 6; j++) {
       const t = String(Number((0.4 + (j - 1) * 0.08).toFixed(2))); // 0.4, not 0.40: prettier's form
-      expect(rooftopRule(`gp-rooftop-windows-${j}`)).toContain(`(var(--gp-progress) - ${t}) * 100`);
+      expect(pixelCityRule(`gp-pixel-city-windows-${j}`)).toContain(
+        `(var(--gp-progress) - ${t}) * 100`
+      );
     }
-    expect(rooftopRule("gp-rooftop-stars")).toContain("(var(--gp-progress) - 0.65) / 0.35");
+    expect(pixelCityRule("gp-pixel-city-stars")).toContain("(var(--gp-progress) - 0.65) / 0.35");
   });
 
   it("shows the plates only inside the theme", () => {
-    const shared = rooftopRule("gp-rooftop");
-    expect(shared, "no .gp-theme-rooftop-skyline .gp-rooftop rule").not.toBeNull();
+    const shared = pixelCityRule("gp-pixel-city");
+    expect(shared, "no .gp-theme-pixel-city .gp-pixel-city rule").not.toBeNull();
     expect(shared).toMatch(/display:\s*block/);
     expect(shared).toMatch(/image-rendering:\s*pixelated/);
     expect(css).toMatch(/\.gp-art\s*\{[^}]*display:\s*none/);
@@ -173,19 +179,19 @@ describe("agreement with the stylesheet and the build", () => {
 
   // The view is the third party to the agreement: it must build one <img>
   // per entry with `gp-art` (so the default-hidden rule applies) and
-  // `gp-rooftop` plus the entry's class (so the theme block finds it).
+  // `gp-pixel-city` plus the entry's class (so the theme block finds it).
   it("is what the view builds", () => {
     const view = readFileSync(resolve(root, "GentlePomoView.ts"), "utf8");
-    expect(view).toContain("for (const layer of ROOFTOP_LAYERS)");
+    expect(view).toContain("for (const layer of PIXEL_CITY_LAYERS)");
     expect(view).toContain('createEl("img", {');
-    expect(view).toContain("cls: `gp-art gp-rooftop ${layer.cls}`");
+    expect(view).toContain("cls: `gp-art gp-pixel-city ${layer.cls}`");
     expect(view).toContain("src: layer.src");
   });
 
   it("only animates classes the view actually builds", () => {
-    const built = new Set(ROOFTOP_LAYERS.map((l) => l.cls));
-    const animated = new Set([...css.matchAll(/\.(gp-rooftop-[a-z0-9-]+)/g)].map((m) => m[1]));
-    expect(animated.size, "the Rooftop Skyline block animates nothing").toBeGreaterThan(0);
+    const built = new Set(PIXEL_CITY_LAYERS.map((l) => l.cls));
+    const animated = new Set([...css.matchAll(/\.(gp-pixel-city-[a-z0-9-]+)/g)].map((m) => m[1]));
+    expect(animated.size, "the Pixel City block animates nothing").toBeGreaterThan(0);
     for (const cls of animated) {
       expect(built.has(cls), `styles.css addresses .${cls}, which the view never builds`).toBe(
         true

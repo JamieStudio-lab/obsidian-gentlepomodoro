@@ -6,21 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.2] — 2026-09-03
 
-A third timer theme, **Rooftop Skyline**, in pixel art: a city along the bottom
+A third timer theme, **Pixel City** (planned under the working name Rooftop Skyline), in pixel art: a city along the bottom
 of the square, a dithered sky above it, and windows that light up as the
 session runs toward night. The first theme built from pictures rather than
 CSS, and the first to use the scrim 0.6.1 put in place for exactly that.
 
 ### Added
 
-- **Rooftop Skyline theme.** Pick it under Settings → Gentle Pomodoro → Theme.
+- **Pixel City theme.** Pick it under Settings → Gentle Pomodoro → Theme.
   Eight sky plates cross-fade from day through golden hour and dusk to night
   over a focus session; the city's windows come on in six waves between 40%
   and 80% of it; stars come out over the last third. A break runs the whole
   arc backwards, the windows going dark as dawn comes up. Two planes of
   buildings — a slate city in the distance behind the ink one in front — the
   plugin's shared rounded corners, and a cat on a roof right of centre.
-- The artwork is drawn by a script in `art/rooftop/` on the Endesga 32
+- The artwork is drawn by a script in `art/pixel-city/` on the Endesga 32
   palette and shipped as sixteen 128×128 indexed PNGs, under 7 KB in all, bundled
   into `main.js`. The files open in Aseprite with their palette intact and can
   be hand-edited; the script's `--layout` flag tries alternative arrangements.

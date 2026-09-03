@@ -1,6 +1,6 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import { THEME_IDS, resolveTheme, themeClass } from "./themes";
-import { ROOFTOP_LAYERS } from "./rooftopArt";
+import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import {
@@ -187,13 +187,13 @@ export class GentlePomoView extends ItemView {
     this.timerShape.createDiv("gp-art gp-glass-pane");
     this.timerShape.createDiv("gp-art gp-glass-highlight");
 
-    // Rooftop Skyline: the bitmap plates (rooftopArt.ts), bundled as data
+    // Pixel City: the bitmap plates (pixelCityArt.ts), bundled as data
     // URLs. Real <img> elements rather than background-images, so no style is
     // written from TypeScript and styles.css carries no base64. Hidden with
     // the rest of the artwork until the theme block shows them.
-    for (const layer of ROOFTOP_LAYERS) {
+    for (const layer of PIXEL_CITY_LAYERS) {
       this.timerShape.createEl("img", {
-        cls: `gp-art gp-rooftop ${layer.cls}`,
+        cls: `gp-art gp-pixel-city ${layer.cls}`,
         attr: { src: layer.src, alt: "", "aria-hidden": "true", draggable: "false" },
       });
     }

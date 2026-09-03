@@ -65,7 +65,7 @@ a default, they independently chose the same one, which is what independence cos
 `--gp-scrim-alpha` drives `.gp-timer-shape::after`, a veil between artwork and text; it is the only
 lever that makes an arbitrary supplied picture safe for white text, and it is a pseudo-element so
 it needs no DOM node and no place in the artwork switch. Classic and Frosted Glass set it to 0;
-Rooftop Skyline (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per Obsidian theme
+Pixel City (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per Obsidian theme
 the way a gradient can, so the plates keep every pale band out of the clock zone and the veil
 carries the rest.
 
@@ -199,16 +199,16 @@ non-literal value passes.
 ### 8. Five values are duplicated across the CSS/TS boundary.
 
 Three of the five are test-held (the fade and the leaf selector by `designTokens`, the plate
-selectors by `rooftopArt`); the status-dot gradients and the mode classes are held by comments
+selectors by `pixelCityArt`); the status-dot gradients and the mode classes are held by comments
 only. Change them together:
 
-| CSS                                           | TypeScript                                                             |
-| --------------------------------------------- | ---------------------------------------------------------------------- |
-| `--gp-name-fade: 0.28s`                       | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                            |
-| `[data-type="gentle-pomo-view"]`              | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                                 |
-| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot`                                       |
-| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar           |
-| `.gp-rooftop-*` selectors                     | `ROOFTOP_LAYERS` in rooftopArt.ts (held by `tests/rooftopArt.test.ts`) |
+| CSS                                           | TypeScript                                                                    |
+| --------------------------------------------- | ----------------------------------------------------------------------------- |
+| `--gp-name-fade: 0.28s`                       | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                                   |
+| `[data-type="gentle-pomo-view"]`              | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                                        |
+| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot`                                              |
+| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar                  |
+| `.gp-pixel-city-*` selectors                  | `PIXEL_CITY_LAYERS` in pixelCityArt.ts (held by `tests/pixelCityArt.test.ts`) |
 
 The mode-class row is why the mode gradients must reach `:root`: the status bar is created by
 `addStatusBarItem()` and can never be reached by a `.gp-root`- or `.gp-theme-*`-scoped rule.
@@ -231,7 +231,7 @@ The mode-class row is why the mode gradients must reach `:root`: the status bar 
 ### 10. No test can see any of this render.
 
 Two suites read `styles.css` as text — `designTokens` (tokens, theme independence, focus rings,
-the CSS/TS pairs) and `rooftopArt` (the plates, their selectors, the build config) — and they can
+the CSS/TS pairs) and `pixelCityArt` (the plates, their selectors, the build config) — and they can
 tell you a name is wrong, a token is dead, or a rule is missing. None can tell you a colour is
 unreadable or a layout is broken. That verification is a computed-style diff plus a human opening
 Obsidian — and about half the rules here engage on only one platform or in one theme, so a desktop
@@ -240,7 +240,7 @@ hand-formatted token block fails the build on whitespace alone.
 
 ### 11. Bitmap plates move on `--gp-progress` alone, and the pulse opt-out excludes overtime.
 
-Rooftop Skyline's sixteen plates are `<img>` nodes whose opacity is a `clamp()` of
+Pixel City's sixteen plates are `<img>` nodes whose opacity is a `clamp()` of
 `--gp-progress` and **nothing else**: no `transition` on any plate, because the scalar is already
 eased 0.8s on `.gp-timer-visual` and a second ease doubles every skip and reset. A window "switch"
 is a ramp steep enough to be one (`* 100`, i.e. over 1% of the session), since a computed value has
@@ -251,7 +251,7 @@ Both guards are for bugs that shipped in-branch: overtime is still "running", an
 selector out-ranks both the shared overtime glow and the reduced-motion `animation: none`. The
 plates themselves reach users only because they are **inside `main.js`** — Obsidian installs
 three files, and a loose image is missing for everyone but the machine that put it there.
-`tests/designTokens.test.ts` holds the first three; `tests/rooftopArt.test.ts` the delivery.
+`tests/designTokens.test.ts` holds the first three; `tests/pixelCityArt.test.ts` the delivery.
 
 ## Build
 
@@ -260,7 +260,7 @@ and `npm run build` does not. Before 0.6.0 both shared one config and the releas
 it: 1,217,205 of 1,938,425 bytes, 63% of every download.
 
 `@rollup/plugin-url` inlines `**/*.mp3` and, since 0.6.2, `**/*.png` as data URLs with no size
-limit: the audio cues and the Rooftop Skyline plates ship inside `main.js` because nothing else
+limit: the audio cues and the Pixel City plates ship inside `main.js` because nothing else
 does. Keep raster art indexed and at source resolution; the plate test budgets it.
 
 `main.js` is gitignored but Obsidian loads it directly — `npm run build` before reloading the

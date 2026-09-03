@@ -27,9 +27,9 @@ export default (commandLineArgs) => ({
   external: ["obsidian"],
   plugins: [
     url({
-      // The audio cues and, since 0.6.2, the Rooftop Skyline plates. Obsidian
+      // The audio cues and, since 0.6.2, the Pixel City plates. Obsidian
       // installs three files, so an image that is not inside main.js does not
-      // reach users at all — see rooftopArt.ts.
+      // reach users at all — see pixelCityArt.ts.
       include: ["**/*.mp3", "**/*.png"],
       limit: Infinity, // always inline as a base64 data URL; never emit a separate file
     }),

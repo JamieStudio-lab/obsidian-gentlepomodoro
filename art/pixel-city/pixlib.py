@@ -1,5 +1,5 @@
 """
-pixlib — the small, strict toolkit the Rooftop Skyline plates are generated with.
+pixlib — the small, strict toolkit the Pixel City plates are generated with.
 
 Every pixel is a palette index. Nothing in here can produce an off-palette
 colour or an anti-aliased edge, which is the whole reason it exists: a general

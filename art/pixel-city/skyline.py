@@ -1,10 +1,10 @@
 """
-skyline.py — generates the Rooftop Skyline theme's plates.
+skyline.py — generates the Pixel City theme's plates.
 
 This is the artwork's source. The sixteen PNGs in plates/ are its output and are
 what the plugin bundles; edit this file (or the PNGs in Aseprite) and re-run:
 
-    cd art/rooftop && python3 skyline.py
+    cd art/pixel-city && python3 skyline.py
 
 The design is a merge the user chose from six generated candidates:
   buildings and cat   from "soft-dusk"  — eleven blocks with a 1px slate left
