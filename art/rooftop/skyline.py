@@ -8,7 +8,10 @@ what the plugin bundles; edit this file (or the PNGs in Aseprite) and re-run:
 
 The design is a merge the user chose from six generated candidates:
   buildings and cat   from "soft-dusk"  — eleven blocks with a 1px slate left
-                                          edge, stepped towers, a sitting cat
+                                          edge, stepped towers, a sitting cat;
+                                          then, per the user, "two-plane"'s
+                                          navy far row behind them, and all
+                                          of it a few rows shorter
   window grid         from "lofi-cozy"  — 2x2 panes on a 3px / 4px pitch, a
                                           yellow / amber mix, ~55% lit
   sky colours         from "lofi-cozy"  — flat mid blue behind the clock, a
@@ -39,7 +42,7 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plates")
 # ---------------------------------------------------------------------------
 BAND_TOP, BAND_BOTTOM = 24, 70  # clock rows: sky only (a few stars allowed)
 SAFE_X0, SAFE_X1 = 4, 123  # detail stays inside these columns
-MID_X0, MID_X1, MID_MIN_ROOF = 40, 88, 94  # the centre dip: roofs no higher than this
+MID_X0, MID_X1, MID_MIN_ROOF = 40, 88, 96  # the centre dip: roofs (both planes) no higher than this
 STAR_MAX_Y = 60
 STAR_MIN_DIST = 4
 
@@ -112,26 +115,54 @@ def sky_plates() -> list[Canvas]:
 
 
 # ---------------------------------------------------------------------------
-# Buildings: eleven blocks edge to edge, every one reaching the bottom edge.
-# The two towers stand near the far edges; the middle third stays low so the
-# sky opens up under the clock. Each block:
-#   x0, x1   inclusive columns
-#   roof     row of the roof line (the block fills roof..127)
-#   caps     optional (x0, x1, top) boxes stacked on the roof: a stepped
-#            tower crown or a stair head
+# Buildings: TWO PLANES.
+#   FAR   a lower, wider row in navy, drawn first. It shows in the gaps and
+#         above the near row's shorter blocks, and reads as distance with
+#         nothing more than a second shade.
+#   NEAR  the ink row with a 1px slate left edge, drawn over it.
+# Each plane is a list of blocks: x0/x1 inclusive columns, roof row, optional
+# caps (x0, x1, top) stacked on the roof. Every block reaches the bottom edge.
+# The shipped arrangement is "downtown behind", chosen by the user from four
+# generated layouts: a modest near row (roofs 99..112 apart from the two
+# towers) so the far plane shows almost everywhere — nine slate blocks, four
+# of them at or near the 84 ceiling on the flanks, four low ones under the
+# clock where the centre dip holds both planes at row 96 or below. One-pixel
+# slits of sky separate the far blocks so they read as separate distant
+# buildings rather than one stepped slab; the far row breaks around the cat
+# so nothing but sky stands behind its sprite. Everything is lower than the
+# first (single-plane) cut; MAX_ROOF below is the ceiling.
+#
+# A layout module can replace FAR, NEAR, CAT_X and CAT_ROOF (see --layout)
+# for trying alternatives; the shipped layout is the one inline here.
 # ---------------------------------------------------------------------------
-BLOCKS = [
-    dict(x0=0, x1=5, roof=98),  # low sliver at the clipped corner
-    dict(x0=6, x1=17, roof=75, caps=[(8, 15, 73), (11, 12, 71)]),  # LEFT TOWER
-    dict(x0=18, x1=29, roof=86, caps=[(24, 27, 84)]),
-    dict(x0=30, x1=39, roof=92),
-    dict(x0=40, x1=55, roof=98, caps=[(42, 46, 96)]),  # ---- centre dip ----
-    dict(x0=56, x1=73, roof=104),  # the lowest, widest block
-    dict(x0=74, x1=88, roof=97, caps=[(82, 85, 95)]),  # ---- end dip ----
-    dict(x0=89, x1=103, roof=90),  # the cat's roof
-    dict(x0=104, x1=111, roof=94),
-    dict(x0=112, x1=123, roof=79, caps=[(114, 121, 77), (117, 118, 75)]),  # RIGHT TOWER
-    dict(x0=124, x1=127, roof=100),  # low sliver at the clipped corner
+FAR_SHADE = C["slate"]  # the far plane: lighter than ink, as distance is, and still darker than every sky band it meets
+MAX_ROOF = 78  # no building pixel above this row (towers' caps included)
+FAR_MAX_ROOF = 84  # the far plane stays lower than the towers
+
+FAR = [
+    dict(x0=0, x1=10, roof=90),  # rises out of the clipped corner, left of the tower
+    dict(x0=16, x1=27, roof=86, caps=[(20, 24, 84)]),  # distant tower peeking past the near one
+    dict(x0=29, x1=38, roof=88),
+    dict(x0=41, x1=50, roof=97),  # ---- centre dip: far roofs at 96 or below ----
+    dict(x0=52, x1=66, roof=100),
+    dict(x0=68, x1=76, roof=96),
+    dict(x0=78, x1=84, roof=100),  # ---- end dip; a row under the cat's roof, so no lip shows over it ----
+    dict(x0=100, x1=106, roof=86, caps=[(102, 105, 84)]),  # tall again, right of the cat, a sky slit each side
+    dict(x0=117, x1=127, roof=93),  # rises out of the clipped corner, right of the tower
+]
+
+NEAR = [
+    dict(x0=0, x1=6, roof=105),  # low sliver at the clipped corner
+    dict(x0=7, x1=18, roof=82, caps=[(9, 16, 80), (12, 13, 78)]),  # LEFT TOWER
+    dict(x0=19, x1=29, roof=101),
+    dict(x0=30, x1=39, roof=107),
+    dict(x0=40, x1=52, roof=110, caps=[(43, 47, 108)]),  # ---- centre dip ----
+    dict(x0=53, x1=68, roof=112),  # the lowest, widest block
+    dict(x0=69, x1=84, roof=108, caps=[(78, 81, 106)]),  # ---- end dip ----
+    dict(x0=85, x1=98, roof=99),  # the cat's roof
+    dict(x0=99, x1=107, roof=104),
+    dict(x0=108, x1=121, roof=84, caps=[(110, 119, 82), (113, 115, 79)]),  # RIGHT TOWER
+    dict(x0=122, x1=127, roof=108),  # low sliver at the clipped corner
 ]
 
 # A sitting cat, side on, facing left, tail hooked up behind it. 8 x 8.
@@ -148,24 +179,29 @@ CAT = [
     "..####.#",
     "..######",
 ]
-CAT_X = 92  # left column of the sprite
-CAT_ROOF = 90  # the sprite's bottom row sits directly on this roof
+CAT_X = 89  # left column of the sprite
+CAT_ROOF = 99  # the sprite's bottom row sits directly on this NEAR roof
 
 
-def draw_block(c: Canvas, x0: int, x1: int, top: int, bottom: int) -> None:
-    """One solid ink rect, top..bottom inclusive, with a slate left edge.
-    The canvas's own left edge (x0 == 0) gets no highlight: it is clipped."""
-    c.rect(x0, top, x1 - x0 + 1, bottom - top + 1, INK)
-    if x0 > 0:
+def draw_block(c: Canvas, x0: int, x1: int, top: int, bottom: int, shade: int, edge: bool) -> None:
+    """One solid rect, top..bottom inclusive, with an optional slate left edge.
+    The canvas's own left edge (x0 == 0) never gets one: it is clipped."""
+    c.rect(x0, top, x1 - x0 + 1, bottom - top + 1, shade)
+    if edge and x0 > 0:
         c.vline(x0, top, bottom, EDGE)
+
+
+def draw_plane(c: Canvas, blocks: list[dict], shade: int, edge: bool) -> None:
+    for blk in blocks:
+        draw_block(c, blk["x0"], blk["x1"], blk["roof"], H - 1, shade, edge)
+        for cx0, cx1, ctop in blk.get("caps", []):
+            draw_block(c, cx0, cx1, ctop, blk["roof"] - 1, shade, edge)
 
 
 def buildings_layer() -> Canvas:
     c = Canvas(W, H)
-    for b in BLOCKS:
-        draw_block(c, b["x0"], b["x1"], b["roof"], H - 1)
-        for cx0, cx1, ctop in b.get("caps", []):
-            draw_block(c, cx0, cx1, ctop, b["roof"] - 1)
+    draw_plane(c, FAR, FAR_SHADE, edge=False)
+    draw_plane(c, NEAR, INK, edge=True)
     oy = CAT_ROOF - len(CAT)
     for dy, row in enumerate(CAT):
         for dx, ch in enumerate(row):
@@ -176,18 +212,24 @@ def buildings_layer() -> Canvas:
 
 # ---------------------------------------------------------------------------
 # Windows: 2x2 panes, 1px between columns, 2px between floors, the grid
-# centred on each block. A pane is placed only where all four pixels are plain
-# ink, so it keeps clear of the slate edge and the roof; caps carry none.
-# About 55% of cells light; of those ~62% yellow, the rest the dimmer amber,
-# so the lit city glows unevenly. Lit panes are shuffled and dealt round-robin
-# into WINDOW_WAVES waves, so each wave is spread across the whole skyline.
+# centred on each block. A pane is placed only where all four pixels are that
+# plane's plain shade, so it keeps clear of the slate edge, the roof, and —
+# on the far plane — anything the near plane covers; caps carry none.
+# Near: ~55% of cells light, ~62% of those yellow, the rest the dimmer amber.
+# Far: fewer lit and mostly amber, so distance reads in the light as well as
+# in the shade. Same panes, same grid — the window STYLE is unchanged.
+# Lit panes are shuffled and dealt round-robin into WINDOW_WAVES waves, so
+# each wave is spread across the whole skyline.
 # ---------------------------------------------------------------------------
 PANE = 2
 PITCH_X, PITCH_Y = 3, 4
-LIT_FRACTION = 0.55
-YELLOW_FRACTION = 0.62
 WINDOW_BOTTOM = 124  # last row a pane may occupy
 WINDOW_WAVES = 6
+# (blocks, shade the pane must sit on, lit fraction, yellow fraction of lit)
+PLANES = [
+    ("near", NEAR, INK, 0.55, 0.62),
+    ("far", FAR, FAR_SHADE, 0.45, 0.25),
+]
 
 
 def window_grid(x0: int, x1: int, roof: int) -> tuple[list[int], list[int]]:
@@ -200,10 +242,10 @@ def window_grid(x0: int, x1: int, roof: int) -> tuple[list[int], list[int]]:
     return cols, floors
 
 
-def pane_fits(bld: Canvas, x: int, y: int) -> bool:
+def pane_fits(bld: Canvas, x: int, y: int, shade: int) -> bool:
     for dy in range(PANE):
         for dx in range(PANE):
-            if bld.get(x + dx, y + dy) != INK:
+            if bld.get(x + dx, y + dy) != shade:
                 return False
             if not inside_clip(x + dx, y + dy):
                 return False
@@ -214,14 +256,15 @@ def pane_fits(bld: Canvas, x: int, y: int) -> bool:
 
 def windows_layers(bld: Canvas, rng: random.Random) -> list[Canvas]:
     lit: list[tuple[int, int, int]] = []
-    for b in BLOCKS:
-        cols, floors = window_grid(b["x0"], b["x1"], b["roof"])
-        for fy in floors:
-            for cx in cols:
-                if not pane_fits(bld, cx, fy):
-                    continue
-                if rng.random() < LIT_FRACTION:
-                    lit.append((cx, fy, YELLOW if rng.random() < YELLOW_FRACTION else AMBER))
+    for _name, blocks, shade, lit_fraction, yellow_fraction in PLANES:
+        for b in blocks:
+            cols, floors = window_grid(b["x0"], b["x1"], b["roof"])
+            for fy in floors:
+                for cx in cols:
+                    if not pane_fits(bld, cx, fy, shade):
+                        continue
+                    if rng.random() < lit_fraction:
+                        lit.append((cx, fy, YELLOW if rng.random() < yellow_fraction else AMBER))
     rng.shuffle(lit)
     waves = [Canvas(W, H) for _ in range(WINDOW_WAVES)]
     for i, (cx, fy, colour) in enumerate(lit):
@@ -278,10 +321,25 @@ def brief_checks(t: ThemeLayers) -> list[str]:
                 out.append(f"centre dip broken at ({x},{y})")
                 break
     for x in list(range(0, SAFE_X0)) + list(range(SAFE_X1 + 1, W)):
+        roofs = [b["roof"] for b in NEAR + FAR if b["x0"] <= x <= b["x1"]]
         for y in range(H):
-            v = t.buildings.get(x, y)
-            if v != T and y < min(b["roof"] for b in BLOCKS if b["x0"] <= x <= b["x1"]):
+            if t.buildings.get(x, y) != T and roofs and y < min(roofs):
                 out.append(f"detail inside the edge margin at ({x},{y})")
+                break
+    for y in range(0, MAX_ROOF):
+        if any(t.buildings.get(x, y) != T for x in range(W)):
+            out.append(f"a building reaches row {y}, above MAX_ROOF {MAX_ROOF}")
+            break
+    for b in FAR:
+        top = min([b["roof"]] + [cap[2] for cap in b.get("caps", [])])
+        if top < FAR_MAX_ROOF:
+            out.append(f"far block at x{b['x0']} reaches row {top}, above FAR_MAX_ROOF {FAR_MAX_ROOF}")
+    # the cat needs sky behind it, not the far plane
+    oy = CAT_ROOF - len(CAT)
+    for dy, row in enumerate(CAT):
+        for dx, ch in enumerate(row):
+            if ch == "." and t.buildings.get(CAT_X + dx, oy + dy) != T:
+                out.append(f"something behind the cat at ({CAT_X + dx},{oy + dy})")
                 break
     stars = [(x, y) for y in range(H) for x in range(W) if t.stars.get(x, y) != T]
     if not 12 <= len(stars) <= 30:
@@ -303,13 +361,34 @@ def brief_checks(t: ThemeLayers) -> list[str]:
     return out
 
 
+def load_layout(path: str) -> None:
+    """Replace the planes and the cat's seat from a module that defines FAR, NEAR, CAT_X, CAT_ROOF."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("layout", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    globals().update({k: getattr(mod, k) for k in ("FAR", "NEAR", "CAT_X", "CAT_ROOF")})
+    PLANES[0] = ("near", NEAR, INK, PLANES[0][3], PLANES[0][4])
+    PLANES[1] = ("far", FAR, FAR_SHADE, PLANES[1][3], PLANES[1][4])
+
+
 def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--layout", help="a .py defining FAR, NEAR, CAT_X, CAT_ROOF (default: the inline layout)")
+    ap.add_argument("--out", default=OUT, help="output directory (default: plates/)")
+    args = ap.parse_args()
+    if args.layout:
+        load_layout(args.layout)
     rng = random.Random(SEED)
     bld = buildings_layer()
     t = ThemeLayers(sky_plates(), stars_layer(rng), bld, windows_layers(bld, rng))
     problems = t.validate() + brief_checks(t)
-    t.save(OUT)
-    preview = t.preview(OUT)
+    t.save(args.out)
+    preview = t.preview(args.out)
     print("validate:", problems)
     print("panes per wave:", [(w.w * w.h - w.count(T)) // 4 for w in t.windows])
     print("stars:", t.stars.w * t.stars.h - t.stars.count(T))
