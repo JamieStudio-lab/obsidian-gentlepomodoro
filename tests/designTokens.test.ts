@@ -144,8 +144,17 @@ describe("theme independence", () => {
   // `animation: none`, so an ungated one re-enables motion for exactly the
   // people who turned it off. This shipped once already (the mobile frosted
   // pulse); the gate is the fix, and this keeps it on the rooftop's opt-out.
+  // Overtime is still running. The opt-out out-specifies the shared overtime
+  // rule, so unless it excludes that state it replaces the blue / orange
+  // breathing glow with the plain breath — which is what the first cut did.
+  it("leaves the overtime glow alone on the Rooftop Skyline", () => {
+    expect(rooftop).toContain(".gp-state-running:not(.gp-state-overtime) .gp-timer-shape");
+    expect(rooftop).not.toMatch(/\.gp-state-running \.gp-timer-shape/);
+  });
+
   it("gates the Rooftop Skyline pulse opt-out on prefers-reduced-motion", () => {
-    const sel = ".gp-theme-rooftop-skyline .gp-state-running .gp-timer-shape";
+    const sel =
+      ".gp-theme-rooftop-skyline .gp-state-running:not(.gp-state-overtime) .gp-timer-shape";
     const at = rooftop.indexOf(sel);
     expect(at, "the pulse opt-out is gone").toBeGreaterThan(-1);
     const gate = rooftop.lastIndexOf("@media (prefers-reduced-motion: no-preference)", at);

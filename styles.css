@@ -1823,13 +1823,20 @@
    which shimmers on a pixel grid. The shadow-only breath (declared in the
    Mobile & touch section for the frosted iOS case) moves nothing inside the
    clip, so this theme takes it on every platform. Only the name changes; the
-   8s tempo and easing come from the shared rule. Gated to no-preference
-   because this selector (0,3,0) out-specifies the reduced-motion
-   `animation: none` and would otherwise re-enable motion for exactly the
-   people who turned it off — THEMES.md, "two rules that are easy to get
-   wrong". */
+   8s tempo and easing come from the shared rule.
+
+   Two guards, each for a bug that shipped or nearly did:
+   - :not(.gp-state-overtime). Overtime is still "running", and this rule
+     out-specifies the shared `.gp-state-overtime .gp-timer-shape` (0,2,0)
+     that swaps the breath for the blue / orange breathing glow — so without
+     the exclusion the overtime glow simply vanished on this theme, and on
+     this theme alone. The user noticed before the branch did.
+   - The no-preference gate. This selector also out-specifies the
+     reduced-motion `animation: none`, and ungated it would re-enable motion
+     for exactly the people who turned it off — THEMES.md, "two rules that
+     are easy to get wrong". */
 @media (prefers-reduced-motion: no-preference) {
-  .gp-theme-rooftop-skyline .gp-state-running .gp-timer-shape {
+  .gp-theme-rooftop-skyline .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
     animation-name: gp-gentle-pulse-glow;
   }
 }
