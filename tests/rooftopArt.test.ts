@@ -110,7 +110,7 @@ describe("the plate files", () => {
   });
 
   // Every byte here is base64-expanded by a third and shipped inside main.js
-  // to every device. Sixteen indexed plates come to about 6.7 KB, 360–490 B
+  // to every device. Sixteen indexed plates come to about 6.7 KB, under 500 B
   // each; the budget leaves room for a busier redraw and catches the two
   // things that actually inflate a plate: a padded 256-entry palette (which
   // the first cut shipped — 60% of every file was zeros) and a plate saved

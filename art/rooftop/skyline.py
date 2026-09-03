@@ -10,8 +10,9 @@ The design is a merge the user chose from six generated candidates:
   buildings and cat   from "soft-dusk"  — eleven blocks with a 1px slate left
                                           edge, stepped towers, a sitting cat;
                                           then, per the user, "two-plane"'s
-                                          navy far row behind them, and all
-                                          of it a few rows shorter
+                                          far row behind them (navy in that
+                                          candidate, slate here — FAR_SHADE),
+                                          and all of it a few rows shorter
   window grid         from "lofi-cozy"  — 2x2 panes on a 3px / 4px pitch, a
                                           yellow / amber mix, ~55% lit
   sky colours         from "lofi-cozy"  — flat mid blue behind the clock, a
@@ -367,8 +368,24 @@ def brief_checks(t: ThemeLayers) -> list[str]:
         for x2, y2 in stars[i + 1 :]:
             if (x - x2) ** 2 + (y - y2) ** 2 < STAR_MIN_DIST**2:
                 out.append(f"stars too close: ({x},{y}) and ({x2},{y2})")
-    near_only = Canvas(W, H)
+    # Every lit pixel belongs to exactly one plane — "near": on the near plane's
+    # ink; "far": on the far plane's slate with the near plane clear beneath —
+    # and a pane's pixels all belong to the SAME plane. Checked per pane, not
+    # per pixel: a pane straddling a near roof (two pixels far, two near) or a
+    # near edge would pass a per-pixel test and still be wrong. Panes are 2x2
+    # with a gap around them, so a lit pixel's lit right and lower neighbours
+    # are its own pane.
+    near_only, far_only = Canvas(W, H), Canvas(W, H)
     draw_plane(near_only, NEAR, INK, edge=True)
+    draw_plane(far_only, FAR, FAR_SHADE, edge=False)
+
+    def plane_of(x: int, y: int) -> str:
+        if near_only.get(x, y) == INK:
+            return "near"
+        if near_only.get(x, y) == T and far_only.get(x, y) == FAR_SHADE:
+            return "far"
+        return "none"
+
     for i, w in enumerate(t.windows, 1):
         for y in range(H):
             for x in range(W):
@@ -376,11 +393,12 @@ def brief_checks(t: ThemeLayers) -> list[str]:
                     continue
                 if not inside_clip(x, y):
                     out.append(f"windows-{i} pixel under the corner clip at ({x},{y})")
-                # a lit pixel on the composite's slate could be a far pane sitting on
-                # the near plane's slate EDGE; only a pane with the near plane clear
-                # beneath it, or fully on ink, is legitimate
-                if t.buildings.get(x, y) == FAR_SHADE and near_only.get(x, y) != T:
-                    out.append(f"windows-{i} pane on the near plane's edge at ({x},{y})")
+                me = plane_of(x, y)
+                if me == "none":
+                    out.append(f"windows-{i} pixel on neither plane's face at ({x},{y})")
+                for nx, ny in ((x + 1, y), (x, y + 1)):
+                    if w.get(nx, ny) != T and plane_of(nx, ny) != me:
+                        out.append(f"windows-{i} pane straddles two planes at ({x},{y})")
     counts = [w.w * w.h - w.count(T) for w in t.windows]
     if max(counts) - min(counts) > 8:
         out.append(f"window waves uneven: {counts}")

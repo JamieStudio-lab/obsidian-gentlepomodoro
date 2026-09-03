@@ -24,8 +24,8 @@ the file today and they are all correct; do not re-mint them as `--gp-*`. Conver
 
 The proof that the boundary is real: `.gp-total-time` is the one
 on-artwork element coloured with a chrome token, and it pays for it with three colour overrides
-(the `.theme-dark` / `.theme-light` Frosted Glass rules on `.gp-total-time` and `.gp-overtime`) plus
-two orb desaturations (`.gp-state-overtime.gp-mode-break .gp-orb`, one per Obsidian theme) — and still leaves
+(`.gp-theme-classic .gp-state-overtime.gp-mode-break .gp-total-time` and the `.theme-dark` /
+`.theme-light` Frosted Glass rules on `.gp-total-time`) plus two orb desaturations (`.gp-state-overtime.gp-mode-break .gp-orb`, one per Obsidian theme) — and still leaves
 classic + light Obsidian + focus overtime uncovered, where the grey lands on the night gradient at
 about 2.34:1.
 
@@ -42,7 +42,7 @@ anyone would look to check, is fine:
 - `.gp-status*` — built from `addStatusBarItem()` in [main.ts](main.ts)
 - `.gp-confirm-modal` — [confirmModal.ts](confirmModal.ts)
 - `.gp-setting-with-error` / `.gp-setting-error` — [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
-- `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor at styles.css:4
+- `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor, the first rule in styles.css
 
 **Layer 0 — Obsidian's own variables.** Not ours. Listed above.
 
@@ -121,7 +121,7 @@ station you are listening to disappears**, which is the only indicator of which 
 No test can see it.
 
 `.gp-root .gp-hidden` is a descendant selector, not a compound one — do not "simplify" it
-to `.gp-root.gp-hidden`, which would never match. It must out-specify `.gp-station-current`
+to `.gp-root.gp-hidden`, which would never match. It must out-specify `.gp-station-current`,
 `.gp-station-list` and `.gp-task-item`, all `display: flex` at 0,1,0.
 
 ### 3. Anything hidden by animation must also be `inert`, seeded at construction.
@@ -196,7 +196,7 @@ because their values are `.toString()` results. This is also why the iPad SVG fl
 Custom properties are the sanctioned bridge: the rule exempts keys starting with `--`, and a
 non-literal value passes.
 
-### 8. Four values are duplicated across the CSS/TS boundary.
+### 8. Five values are duplicated across the CSS/TS boundary.
 
 Three of the five are test-held (the fade and the leaf selector by `designTokens`, the plate
 selectors by `rooftopArt`); the status-dot gradients and the mode classes are held by comments
@@ -210,7 +210,7 @@ only. Change them together:
 | `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar           |
 | `.gp-rooftop-*` selectors                     | `ROOFTOP_LAYERS` in rooftopArt.ts (held by `tests/rooftopArt.test.ts`) |
 
-The last is why the mode gradients must reach `:root`: the status bar is created by
+The mode-class row is why the mode gradients must reach `:root`: the status bar is created by
 `addStatusBarItem()` and can never be reached by a `.gp-root`- or `.gp-theme-*`-scoped rule.
 
 ### 9. Product decisions that look like accessibility defects and are not.

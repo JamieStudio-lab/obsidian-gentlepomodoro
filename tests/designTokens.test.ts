@@ -123,7 +123,7 @@ describe("theme independence", () => {
   /**
    * The text between the Rooftop Skyline banner and the section's own end
    * banner. Empty when either is missing — the first test below says which,
-   * so a renamed banner fails three tests rather than aborting the file.
+   * so a renamed banner fails four tests rather than aborting the file.
    */
   const rooftop = (() => {
     const title = rules.indexOf("Theme 3: Rooftop Skyline");
@@ -141,8 +141,19 @@ describe("theme independence", () => {
     expect(rules.indexOf("Theme 3: Rooftop Skyline"), "the section banner is gone").toBeGreaterThan(
       -1
     );
-    expect(rules.indexOf("end of Theme 3"), "the section's end banner is gone").toBeGreaterThan(-1);
+    const end = rules.indexOf("end of Theme 3");
+    expect(end, "the section's end banner is gone").toBeGreaterThan(-1);
     expect(rooftop.length).toBeGreaterThan(0);
+    // The banner must sit between the theme's last rule and the first chrome
+    // rule after it — or the slice above polices chrome again, or misses a
+    // theme rule that drifted below the banner.
+    expect(end, "the end banner sits after the goal-progress chrome").toBeLessThan(
+      rules.indexOf(".gp-goal-progress {")
+    );
+    const after = rules.slice(end).replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(after, "a Rooftop Skyline rule sits below the end banner").not.toContain(
+      ".gp-theme-rooftop-skyline"
+    );
   });
 
   // THEMES.md, "pick exactly one smoothing route": --gp-progress is already
