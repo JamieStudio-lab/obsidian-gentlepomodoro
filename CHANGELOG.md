@@ -4,6 +4,16 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-09-03
+
+<!-- PLACEHOLDER: written from the diff when the feature work lands. -->
+
+A third timer theme, **Rooftop Skyline**, in pixel art.
+
+### Added
+
+- _(placeholder)_
+
 ## [0.6.1] — 2026-09-02
 
 The visible half of the design-system work 0.6.0 laid the groundwork for. The
