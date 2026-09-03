@@ -61,9 +61,12 @@ caps.
 **Ink is a theme's business.** The four pieces of text on the artwork read `--gp-ink*` slots that each
 theme declares for itself. Both shipped themes declare identical values — they are not sharing a
 default, they independently chose the same one, which is what independence costs and is the point.
-`--gp-scrim-alpha` (0 for both) drives `.gp-timer-shape::after`, a veil between artwork and text; it
-is the only lever that makes an arbitrary supplied picture safe for white text, and it is a
-pseudo-element so it needs no DOM node and no place in the artwork switch.
+`--gp-scrim-alpha` drives `.gp-timer-shape::after`, a veil between artwork and text; it is the only
+lever that makes an arbitrary supplied picture safe for white text, and it is a pseudo-element so
+it needs no DOM node and no place in the artwork switch. Classic and Frosted Glass set it to 0;
+Rooftop Skyline (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per Obsidian theme
+the way a gradient can, so the plates keep every pale band out of the clock zone and the veil
+carries the rest.
 
 **Frosted Glass is the one theme whose legibility is not fully token-driven.** Its two
 orb-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
@@ -196,12 +199,13 @@ non-literal value passes.
 
 Only comments hold them in sync. Change them together:
 
-| CSS                                           | TypeScript                                                   |
-| --------------------------------------------- | ------------------------------------------------------------ |
-| `--gp-name-fade: 0.28s` (`:1501`)             | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                  |
-| `[data-type="gentle-pomo-view"]` (`:4`)       | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                       |
-| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot` (`:750`, `:754`)            |
-| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar |
+| CSS                                           | TypeScript                                                    |
+| --------------------------------------------- | ------------------------------------------------------------- |
+| `--gp-name-fade: 0.28s` (`:1501`)             | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                   |
+| `[data-type="gentle-pomo-view"]` (`:4`)       | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                        |
+| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot` (`:750`, `:754`)             |
+| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar  |
+| `.gp-rooftop-*` selectors                     | `ROOFTOP_LAYERS` in rooftopArt.ts — the one pair a test holds |
 
 The last is why the mode gradients must reach `:root`: the status bar is created by
 `addStatusBarItem()` and can never be reached by a `.gp-root`- or `.gp-theme-*`-scoped rule.
@@ -221,18 +225,40 @@ The last is why the mode gradients must reach `:root`: the status bar is created
   pins the countdown open and defeats the auto-hide. It is deliberately not applied to the six
   ordinary hover-feedback rules.
 
-### 10. No test can see any of this.
+### 10. No test can see any of this render.
 
-`grep -rn "gp-" tests/*.ts` returns zero across all suites. Verification is a computed-style diff
-plus a human opening Obsidian — and about half the rules here engage on only one platform or in one
-theme, so a desktop check proves very little. `styles.css` is not in `.prettierignore` and CI runs
-`format:check`, so a hand-formatted token block fails the build on whitespace alone.
+Two suites read `styles.css` as text — `designTokens` (tokens, theme independence, focus rings,
+the CSS/TS pairs) and `rooftopArt` (the plates, their selectors, the build config) — and they can
+tell you a name is wrong, a token is dead, or a rule is missing. None can tell you a colour is
+unreadable or a layout is broken. That verification is a computed-style diff plus a human opening
+Obsidian — and about half the rules here engage on only one platform or in one theme, so a desktop
+check proves very little. `styles.css` is not in `.prettierignore` and CI runs `format:check`, so a
+hand-formatted token block fails the build on whitespace alone.
+
+### 11. Bitmap plates move on `--gp-progress` alone, and the pulse opt-out excludes overtime.
+
+Rooftop Skyline's sixteen plates are `<img>` nodes whose opacity is a `clamp()` of
+`--gp-progress` and **nothing else**: no `transition` on any plate, because the scalar is already
+eased 0.8s on `.gp-timer-visual` and a second ease doubles every skip and reset. A window "switch"
+is a ramp steep enough to be one (`* 100`, i.e. over 1% of the session), since a computed value has
+no step function. The theme replaces the 1.03× size pulse — which resamples a bitmap every frame
+and shimmers on a pixel grid — with the shadow-only breath by `animation-name` alone, scoped
+`.gp-state-running:not(.gp-state-overtime)` inside `prefers-reduced-motion: no-preference`.
+Both guards are for bugs that shipped in-branch: overtime is still "running", and a theme-scoped
+selector out-ranks both the shared overtime glow and the reduced-motion `animation: none`. The
+plates themselves reach users only because they are **inside `main.js`** — Obsidian installs
+three files, and a loose image is missing for everyone but the machine that put it there.
+`tests/designTokens.test.ts` holds the first three; `tests/rooftopArt.test.ts` the delivery.
 
 ## Build
 
 `rollup.config.mjs` is a function of the CLI args so `npm run dev` (`-w`) keeps an inline sourcemap
 and `npm run build` does not. Before 0.6.0 both shared one config and the released `main.js` carried
 it: 1,217,205 of 1,938,425 bytes, 63% of every download.
+
+`@rollup/plugin-url` inlines `**/*.mp3` and, since 0.6.2, `**/*.png` as data URLs with no size
+limit: the audio cues and the Rooftop Skyline plates ship inside `main.js` because nothing else
+does. Keep raster art indexed and at source resolution; the plate test budgets it.
 
 `main.js` is gitignored but Obsidian loads it directly — `npm run build` before reloading the
 plugin. Verifying a mixed CSS/TS change without rebuilding produces new-CSS/old-TS state that looks

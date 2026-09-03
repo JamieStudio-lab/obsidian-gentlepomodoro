@@ -6,13 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.2] — 2026-09-03
 
-<!-- PLACEHOLDER: written from the diff when the feature work lands. -->
-
-A third timer theme, **Rooftop Skyline**, in pixel art.
+A third timer theme, **Rooftop Skyline**, in pixel art: a city along the bottom
+of the square, a dithered sky above it, and windows that light up as the
+session runs toward night. The first theme built from pictures rather than
+CSS, and the first to use the scrim 0.6.1 put in place for exactly that.
 
 ### Added
 
-- _(placeholder)_
+- **Rooftop Skyline theme.** Pick it under Settings → Gentle Pomodoro → Theme.
+  Eight sky plates cross-fade from day through golden hour and dusk to night
+  over a focus session; the city's windows come on in six waves between 40%
+  and 80% of it; stars come out over the last third. A break runs the whole
+  arc backwards, the windows going dark as dawn comes up. Two planes of
+  buildings — a slate city in the distance behind the ink one in front — the
+  plugin's shared rounded corners, and a cat on a roof right of centre.
+- The artwork is drawn by a script in `art/rooftop/` on the Endesga 32
+  palette and shipped as sixteen 128×128 indexed PNGs, 17 KB in all, bundled
+  into `main.js`. The files open in Aseprite with their palette intact and can
+  be hand-edited; the script's `--layout` flag tries alternative arrangements.
+
+### Internal
+
+- Bitmap plates ride the same bundling route as the audio cues. Obsidian
+  installs three files, so a loose image beside them works on the machine that
+  put it there and is silently missing for everyone else.
+- Every plate moves on the eased `--gp-progress` alone — sky plates and stars
+  by `clamp()`, window waves by a ramp steep enough to be a switch — with no
+  second transition anywhere, so a skip or reset eases once, not twice.
+- The theme swaps the running-state size pulse for the shadow-only breath
+  (scaling a bitmap 1.03× shimmers on a pixel grid). That swap has to exclude
+  overtime: it out-ranked the shared overtime rule and the breathing glow
+  vanished on this theme alone, until the user noticed.
+- 488 → 498 tests. The plate list, the files on disk, the stylesheet and the
+  build config must agree; every plate is 128×128 and inside a size budget; the
+  theme's block reads `--gp-progress` and declares no transition; the pulse
+  opt-out stays gated on reduced motion and stays out of overtime.
 
 ## [0.6.1] — 2026-09-02
 
