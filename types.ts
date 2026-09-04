@@ -32,6 +32,14 @@ export interface GentlePomoSettings {
   // Audio
   soundEnabled: boolean;
   soundVolume: number;
+  // Opt-in end-of-session chimes for the overtime path (the matching auto-start
+  // toggle off). Both default to false in DEFAULT_SETTINGS because that object
+  // is also the merge base for an UPGRADING user, who must stay exactly as
+  // quiet as they were; loadSettings() turns breakEndSoundEnabled on for a
+  // fresh install only. Focus→break stays off even for new users — that is the
+  // edge where a chime would interrupt a session someone wants to keep going.
+  focusEndSoundEnabled: boolean;
+  breakEndSoundEnabled: boolean;
 
   // Paths
   tasksPath: string;

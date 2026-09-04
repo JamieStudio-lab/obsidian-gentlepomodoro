@@ -3,6 +3,7 @@ import {
   SettingsStore,
   classifyPluginData,
   coerceToDefaults,
+  deriveBreakEndChime,
   type SettingsIo,
 } from "../settingsStore";
 import { SETTINGS_SAVE_RENOTIFY_MS } from "../constants";
@@ -192,5 +193,50 @@ describe("writing", () => {
     await store.save({});
     // A failure following a recovery is news, whatever the clock says.
     expect(io.notices).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.3 — the break-end chime's first-run value.
+//
+// The whole point is that an UPGRADING user keeps today's silence: the zero
+// crossing is deliberately quiet to protect flow, and an upgrade must not start
+// making a sound the plugin has never made. Only a brand-new install, which has
+// no history to preserve, gets the chime on by default.
+// ---------------------------------------------------------------------------
+describe("deriveBreakEndChime", () => {
+  it("a brand-new install (no data.json) gets the chime ON", () => {
+    expect(deriveBreakEndChime({ kind: "fresh" }, null)).toBe(true);
+  });
+
+  it("an upgrading user with no stored value gets the chime OFF", () => {
+    // The field simply is not in their data.json — this is every 0.6.2 user.
+    expect(deriveBreakEndChime({ kind: "ok", data: {} }, {})).toBe(false);
+    // Still false when they have plenty of OTHER settings stored.
+    const upgrading = { theme: "classic", focusMinutes: 50 } as Record<string, unknown>;
+    expect(deriveBreakEndChime({ kind: "ok", data: upgrading }, upgrading)).toBe(false);
+  });
+
+  it("a damaged data.json is treated as an existing user, not a fresh one", () => {
+    // We failed to read their file; that is no reason to start making noise.
+    expect(deriveBreakEndChime({ kind: "damaged" }, null)).toBe(false);
+  });
+
+  it("returns null once the user has a stored choice, so it is never overwritten", () => {
+    expect(deriveBreakEndChime({ kind: "ok", data: {} }, { breakEndSoundEnabled: true })).toBe(
+      null
+    );
+    expect(deriveBreakEndChime({ kind: "ok", data: {} }, { breakEndSoundEnabled: false })).toBe(
+      null
+    );
+    // Even on a "fresh" read — a stored choice always wins over the derivation.
+    expect(deriveBreakEndChime({ kind: "fresh" }, { breakEndSoundEnabled: false })).toBe(null);
+  });
+
+  it("DEFAULT_SETTINGS keeps BOTH chimes off, because it is the upgrade merge base", () => {
+    // If either of these were true, Object.assign in loadSettings() would hand
+    // it to every upgrading user before any derivation runs.
+    expect(DEFAULT_SETTINGS.breakEndSoundEnabled).toBe(false);
+    expect(DEFAULT_SETTINGS.focusEndSoundEnabled).toBe(false);
   });
 });

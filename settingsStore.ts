@@ -48,6 +48,30 @@ export function classifyPluginData(raw: unknown): DataRead {
 }
 
 /**
+ * The break-end chime's first-run value: ON for a brand-new install, OFF for
+ * everyone upgrading. Returns `null` when the user already has a stored choice
+ * and nothing should be derived at all.
+ *
+ * This exists as a function rather than a `DEFAULT_SETTINGS` entry because
+ * DEFAULT_SETTINGS is the `Object.assign` merge base in `loadSettings()`, so a
+ * `true` there would silently switch the chime on for every UPGRADING user too
+ * — and an upgrade must never start making a sound the plugin has never made.
+ * The silence at the zero crossing is a deliberate flow-protection choice (see
+ * CLAUDE.md), so inheriting it is the correct answer for an existing user; only
+ * someone with no history to preserve gets the chime by default.
+ *
+ * `"damaged"` counts as NOT fresh on purpose: that is an existing user whose
+ * data.json we merely failed to read, and staying quiet is the safe answer.
+ */
+export function deriveBreakEndChime(
+  read: DataRead,
+  loaded: { breakEndSoundEnabled?: unknown } | null
+): boolean | null {
+  if (loaded && loaded.breakEndSoundEnabled !== undefined) return null;
+  return read.kind === "fresh";
+}
+
+/**
  * Drop loaded values whose type disagrees with the default's, so that one
  * hand-edited or sync-mangled field cannot take the plugin down on startup.
  *

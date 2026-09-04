@@ -39,6 +39,13 @@ export class TimerEngine {
   // Track the target end time (timestamp)
   private targetTime: number | null = null;
 
+  // True once the opt-in overtime chime has AUDIBLY rung for the current
+  // session, so Stop/Skip don't ring the same cue again seconds later. Cleared
+  // wherever a session gets positive time back — switchMode, reset, addMinutes
+  // — because after that the clock can cross zero a second time and a stale
+  // flag would silence the cue for that second crossing's Stop.
+  private endCueSounded = false;
+
   // Track current task name for logging
   public currentTaskName: string = NO_TASK_LABEL;
   public currentTaskPath: string | undefined;
@@ -162,6 +169,12 @@ export class TimerEngine {
           void this.completeNaturally();
           return;
         }
+        // Auto-start is off, so the session deliberately slides into overtime
+        // to protect flow (see CLAUDE.md — this silence is a product value,
+        // not a defect). The optional chime ANNOUNCES the end and changes
+        // nothing else: no logging, no mode switch, no clearLoop. Everything
+        // below this line must stay identical to the pre-0.6.3 fall-through.
+        this.maybeChimeAtCrossing();
       }
 
       this.emit();
@@ -169,17 +182,63 @@ export class TimerEngine {
   }
 
   /**
+   * The end-of-session cue for the mode that is ENDING: singing bell after a
+   * focus session, ding after a break. The choice was written out three times
+   * before 0.6.3; it lives here now so the crossing, Stop and Skip cannot drift.
+   */
+  private playEndCue() {
+    void this.playSound(this.state.mode === "focus" ? "singing_bell_short.mp3" : "ding-sound.mp3");
+  }
+
+  /**
+   * The opt-in chime on the overtime path (auto-start off). Off by default on
+   * the focus→break edge, on for fresh installs on the break→focus edge.
+   *
+   * `endCueSounded` stops Stop/Skip ringing the SAME cue again moments later.
+   * It is stamped only when the cue could actually be HEARD: `soundEnabled` is
+   * the master gate inside playSound(), and the user can flip it between this
+   * crossing and the Stop — at which point "it already rang" is a lie that
+   * silences a Stop which has rung since 0.2.1. Stamping an intent rather than
+   * an audible event is the bug this ordering exists to prevent.
+   */
+  private maybeChimeAtCrossing() {
+    const chimeEnabled =
+      this.state.mode === "focus"
+        ? this.plugin.settings.focusEndSoundEnabled
+        : this.plugin.settings.breakEndSoundEnabled;
+    if (!chimeEnabled) return;
+    if (this.plugin.settings.soundEnabled) this.endCueSounded = true;
+    this.playEndCue();
+  }
+
+  /**
+   * Whether a manual Stop/Skip should ring the end cue. False only in overtime
+   * where the opt-in chime already rang for this same session.
+   *
+   * `endCueSounded` alone carries the logic — a mutation run confirmed that
+   * swapping `> 0` for `>= 0` kills no test, because the flag is only ever set
+   * on a crossing (where remainingMs has gone negative) and is cleared wherever
+   * time goes positive again. The `remainingMs > 0` arm is therefore deliberate
+   * insurance, not a second condition: it keeps the ordinary case (Stop before
+   * the clock runs out) correct even if a future edit adds a way to put time
+   * back without clearing the flag. Keep it, but do not mistake it for the rule.
+   */
+  private shouldPlayManualEndCue(): boolean {
+    return this.state.remainingMs > 0 || !this.endCueSounded;
+  }
+
+  /**
    * Natural end-of-session handler (timer reached zero with auto-start on).
    * Plays the end cue, then reuses handleFinished() to log the session, advance
    * the long-break counter, and auto-start the next session. handleFinished()
    * itself plays no sound (finish() plays it first) — we mirror that here.
+   *
+   * No `endCueSounded` stamp is needed: handleFinished() runs switchMode(),
+   * which clears the flag and starts a fresh session with positive time, so a
+   * later Stop is stopping something else entirely.
    */
   private async completeNaturally() {
-    if (this.state.mode === "focus") {
-      void this.playSound("singing_bell_short.mp3");
-    } else {
-      void this.playSound("ding-sound.mp3");
-    }
+    this.playEndCue();
     // Natural completion only fires when the toggle is on → auto-start the next.
     await this.handleFinished(true);
   }
@@ -416,6 +475,9 @@ export class TimerEngine {
 
     const total = minutes * ONE_MINUTE_MS;
 
+    // A new session has its own end to announce.
+    this.endCueSounded = false;
+
     this.state = {
       mode,
       isRunning: autoStart,
@@ -497,11 +559,10 @@ export class TimerEngine {
    * the auto-start toggle is on — that's what Skip / natural completion are for.
    */
   async finish() {
-    // Play specific sounds based on mode when manually finishing
-    if (this.state.mode === "focus") {
-      void this.playSound("singing_bell_short.mp3");
-    } else {
-      void this.playSound("ding-sound.mp3");
+    // Play specific sounds based on mode when manually finishing — unless the
+    // opt-in chime already rang for this session in overtime.
+    if (this.shouldPlayManualEndCue()) {
+      this.playEndCue();
     }
     await this.handleFinished(false);
   }
@@ -511,13 +572,10 @@ export class TimerEngine {
     // Check if we are in a "stopped" state (fresh start, not running, not paused)
     const isStopped = !this.state.isRunning && this.state.remainingMs === this.state.totalMs;
 
-    // Play specific sounds based on mode when skipping, unless stopped
-    if (!isStopped) {
-      if (this.state.mode === "focus") {
-        void this.playSound("singing_bell_short.mp3");
-      } else {
-        void this.playSound("ding-sound.mp3");
-      }
+    // Play specific sounds based on mode when skipping, unless stopped — or
+    // unless the opt-in chime already rang for this session in overtime.
+    if (!isStopped && this.shouldPlayManualEndCue()) {
+      this.playEndCue();
     }
 
     const status = this.state.mode === "focus" ? "cancelled" : "finished";
@@ -551,6 +609,9 @@ export class TimerEngine {
 
     this.state.remainingMs = total;
     this.state.totalMs = total;
+    // Time is back on the clock, so it can cross zero again — a stale "already
+    // chimed" flag would silence the cue for that second crossing's Stop.
+    this.endCueSounded = false;
 
     if (this.state.isRunning) {
       this.targetTime = Date.now() + total;
@@ -579,6 +640,12 @@ export class TimerEngine {
 
     this.state.totalMs = newTotal;
     this.state.remainingMs = newRemaining;
+
+    // Same rule as reset(): once the clock is positive again it can cross zero
+    // a second time, and a stale flag would silence that crossing's Stop. The
+    // +5 button is reachable in overtime, so this is a real path, not a guard
+    // against a hypothetical.
+    if (newRemaining > 0) this.endCueSounded = false;
 
     // 3. Shift the Wall-Clock Target
     if (this.state.isRunning && this.targetTime !== null) {

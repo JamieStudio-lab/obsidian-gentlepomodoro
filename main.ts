@@ -12,7 +12,7 @@ import {
   type FocusTotalHost,
 } from "./focusTotals";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
-import { SettingsStore, coerceToDefaults } from "./settingsStore";
+import { SettingsStore, coerceToDefaults, deriveBreakEndChime } from "./settingsStore";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -440,9 +440,18 @@ export default class GentlePomoPlugin extends Plugin {
     // the tasks path (hidden when no path is set, shown when a path exists), then
     // persist so the user's explicit choice sticks on later loads.
     const deriveTaskSelector = !loaded || loaded.showTaskSelector === undefined;
+    // First-run value for the break-end chime: on for a brand-new install, off
+    // for anyone upgrading (who must stay exactly as quiet as they are today).
+    // The rule itself lives in settingsStore so it can be tested; null means
+    // the user already has a choice and nothing should be derived.
+    const breakChime = deriveBreakEndChime(read, loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
     if (deriveTaskSelector) {
       this.settings.showTaskSelector = this.settings.tasksPath.trim() !== "";
+      migrated = true;
+    }
+    if (breakChime !== null) {
+      this.settings.breakEndSoundEnabled = breakChime;
       migrated = true;
     }
     // Music stations. musicUrl keeps its pre-0.5.7 meaning as slot 1, so the

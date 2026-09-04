@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { TFile } from "obsidian";
 import { TimerEngine } from "../TimerEngine";
 import { DEFAULT_SETTINGS, NO_TASK_LABEL } from "../constants";
@@ -495,5 +495,253 @@ describe("TimerEngine — updateDuration", () => {
     timer.updateDuration("break", 10);
     const after = timer.getState();
     expect(after.totalMs).toBe(before.totalMs); // still focus mode
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.3 — the opt-in end-of-session chime (GitHub issue #5)
+//
+// The silence at the zero crossing is DELIBERATE (flow protection), so every
+// test here is really about one of two things: the chime only speaks when it
+// was asked to, and it never costs us a cue that rang before 0.6.3.
+// ---------------------------------------------------------------------------
+describe("TimerEngine — opt-in end-of-session chime", () => {
+  // Record what the engine DECIDED to play, honouring the same master gate the
+  // real playSound() applies at its first statement. Mirroring that gate is the
+  // point: a cue `soundEnabled` blocks is not audible, and a test that counted
+  // it would be blind to the stamp-an-intent bug the flag exists to avoid.
+  const recordCues = (timer: TimerEngine, settings: { soundEnabled: boolean }) => {
+    const played: string[] = [];
+    (timer as unknown as { playSound: (f: string) => Promise<void> }).playSound = async (
+      file: string
+    ) => {
+      if (settings.soundEnabled) played.push(file);
+    };
+    return played;
+  };
+
+  const BELL = "singing_bell_short.mp3";
+  const DING = "ding-sound.mp3";
+  // start() plays this on every fresh FOCUS start, so it heads the expected
+  // sequence of any focus test. Asserting the whole audible sequence rather
+  // than filtering it out means a cue landing in the wrong place is visible.
+  const DRUM = "war-drum_short.mp3";
+
+  beforeEach(() => {
+    // Fakes setInterval AND Date.now, which the 50ms tick reads to find the
+    // crossing — both have to move together or the loop never sees zero.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("chimes when a break runs out with the chime on — and changes nothing else", () => {
+    const stub = makePluginStub({ breakMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.breakEndSoundEnabled = true;
+    stub.settings.autoStartFocus = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.switchMode("break");
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toEqual([DING]);
+    // The flow guarantee: the chime ANNOUNCES the end, it does not end
+    // anything. Overtime must be byte-identical to the pre-0.6.3 fall-through.
+    const state = timer.getState();
+    expect(state.mode).toBe("break");
+    expect(state.isRunning).toBe(true);
+    expect(state.remainingMs).toBeLessThan(0);
+    expect(stub.calls.filter((c) => c.name === "endSession")).toHaveLength(0);
+    timer.pause();
+  });
+
+  it("stays silent when focus runs out with the chime off — the shipped default", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    expect(stub.settings.focusEndSoundEnabled).toBe(false); // locks the default
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toEqual([DRUM]); // the start cue only — nothing at the end
+    expect(timer.getState().remainingMs).toBeLessThan(0);
+    timer.pause();
+  });
+
+  it("plays the bell (not the ding) when focus is the session that ended", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toEqual([DRUM, BELL]);
+    timer.pause();
+  });
+
+  it("chimes exactly ONCE, not on every tick of overtime", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    vi.advanceTimersByTime(30_000); // a further 600 ticks, all with prev <= 0
+
+    expect(played).toEqual([DRUM, BELL]);
+    timer.pause();
+  });
+
+  it("Stop in overtime does NOT ring a second time after the chime", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([DRUM, BELL]);
+
+    await timer.finish();
+    expect(played).toEqual([DRUM, BELL]); // still one bell — no double cue
+  });
+
+  it("Stop BEFORE the clock runs out still rings, as it always has", async () => {
+    const stub = makePluginStub({ focusMinutes: 25 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(5_000);
+    await timer.finish();
+
+    expect(played).toEqual([DRUM, BELL]);
+  });
+
+  it("Skip in overtime does not double up, but Skip before zero still rings", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    await timer.skip(); // in overtime → the chime already rang
+    expect(played).toEqual([DRUM, BELL]);
+
+    timer.switchMode("focus");
+    timer.start();
+    vi.advanceTimersByTime(5_000);
+    await timer.skip(); // before zero → rings normally
+    expect(played).toEqual([DRUM, BELL, DRUM, BELL]);
+    timer.pause();
+  });
+
+  // -- The three ways an "already chimed" flag silences a Stop that used to ring.
+  //    Each of these went red before the fix and is the reason it exists.
+
+  it("HOLE C: a chime the master switch muted must not silence a later Stop", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = false; // master off: the crossing is inaudible
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([]); // nothing was heard
+
+    stub.settings.soundEnabled = true; // user turns sound back on
+    await timer.finish();
+
+    // Stop has rung since 0.2.1; a flag recording INTENT rather than an audible
+    // event would leave this empty.
+    expect(played).toEqual([BELL]);
+  });
+
+  it("HOLE A: Reset puts time back, so a second crossing's Stop still rings", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([DRUM, BELL]);
+
+    timer.reset(); // visible in overtime, and clears the flag
+    stub.settings.focusEndSoundEnabled = false; // second crossing is silent
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([DRUM, BELL]);
+
+    await timer.finish();
+    expect(played).toEqual([DRUM, BELL, BELL]); // silent without the reset() clear
+  });
+
+  it("HOLE B: +5 puts time back, so a second crossing's Stop still rings", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([DRUM, BELL]);
+
+    timer.addMinutes(1); // the +N button is reachable in overtime
+    stub.settings.focusEndSoundEnabled = false;
+    vi.advanceTimersByTime(61_000);
+    expect(played).toEqual([DRUM, BELL]);
+
+    await timer.finish();
+    expect(played).toEqual([DRUM, BELL, BELL]); // silent without the addMinutes() clear
+  });
+
+  it("auto-start still chimes exactly once and advances — unchanged from 0.6.2", async () => {
+    const stub = makePluginStub({ focusMinutes: 1, sessionCounterDate: "2025-05-18" });
+    stub.settings.soundEnabled = true;
+    stub.settings.autoStartBreak = true;
+    stub.settings.focusEndSoundEnabled = false; // irrelevant on the auto-start path
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    // One cue, and the mode really advanced. This is the path that must NOT
+    // consult the new settings at all: the chime toggles are hidden while
+    // auto-start is on precisely because starting the next session always
+    // announces itself, so focusEndSoundEnabled being false above is ignored.
+    expect(played).toEqual([DRUM, BELL]);
+    expect(timer.getState().mode).toBe("break");
+    timer.pause();
   });
 });
