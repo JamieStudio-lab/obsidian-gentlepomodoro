@@ -23,6 +23,12 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Rollup reports a type error as a WARNING and still emits main.js with
+      # exit 0, so without this step CI is green with type errors in the tree.
+      # Verified by planting one: `npm run build` exits 0, `tsc --noEmit` exits 2.
+      - name: Typecheck
+        run: npm run typecheck
+
       - name: Format check
         run: npm run format:check
 
