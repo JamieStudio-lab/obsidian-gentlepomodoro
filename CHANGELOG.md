@@ -4,6 +4,50 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-09-04
+
+You can now ask the timer to chime when a session runs out, without giving up
+the quiet. Gentle Pomodoro has always stayed silent at the end of a session
+unless the next one starts on its own — that is deliberate, so a chime never
+interrupts focus you want to keep. This release makes the chime available on
+each edge separately, off by default where it would break your flow.
+
+### Added
+
+- **Two chimes you can turn on separately** ([#5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5)).
+  "Chime when break ends" tells you break time is up, so a five-minute break
+  does not quietly become twenty. "Chime when focus ends" is there if you want
+  it, and stays **off** by default — that is the one that would interrupt a
+  session you are still in the middle of. Both live in the timer panel (under
+  the gear) and in Settings → Gentle Pomodoro → **Audio**. Each one is hidden
+  while the next session starts on its own, because that transition always
+  chimes anyway.
+- **New installs get "Chime when break ends" on.** If you are upgrading,
+  nothing changes: your timer stays exactly as quiet as it is today, and the
+  chime is yours to turn on when you want it.
+
+### Changed
+
+- **The auto-start toggles now also appear in the plugin settings**, in the new
+  Audio group, paired with the chime each one makes moot. They used to be in the
+  timer panel only.
+- **The timer panel follows settings changed elsewhere.** Flip a shared setting
+  in the plugin settings and an open panel updates instead of waiting to be
+  closed and reopened.
+- The timer panel's Auto-start section is now two sections, **When focus ends**
+  and **When a break ends**, each holding the start toggle and the chime for
+  that moment.
+
+### Fixed
+
+- Stop and Skip no longer play the end sound a second time when the chime has
+  already rung for that session.
+
+### Internal
+
+- CI now runs `tsc --noEmit`. Rollup reports a type error as a warning and still
+  emits `main.js`, so the build alone was passing with type errors in the tree.
+
 ## [0.6.2] — 2026-09-04
 
 A third timer theme, **Pixel City** (planned under the working name Rooftop Skyline), in pixel art: a city along the bottom
