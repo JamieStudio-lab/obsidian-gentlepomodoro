@@ -21,6 +21,7 @@
 export const THEMES = {
   classic: "Classic",
   "frosted-glass": "Frosted glass",
+  "pixel-city": "Pixel city",
 } as const;
 
 export type PomoTheme = keyof typeof THEMES;

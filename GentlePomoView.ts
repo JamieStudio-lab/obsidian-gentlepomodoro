@@ -1,5 +1,6 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import { THEME_IDS, resolveTheme, themeClass } from "./themes";
+import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
 import {
@@ -171,7 +172,7 @@ export class GentlePomoView extends ItemView {
     // Create Shape
     this.timerShape = visual.createDiv("gp-timer-shape");
 
-    // Artwork nodes for BOTH themes are built once, here, and carry `gp-art`:
+    // Artwork nodes for EVERY theme are built once, here, and carry `gp-art`:
     // hidden by default in CSS, and each theme's own block shows only its own.
     // Create Layers in Order: Day -> Dusk -> Night
     this.timerShape.createDiv("gp-art gp-layer-day");
@@ -185,6 +186,17 @@ export class GentlePomoView extends ItemView {
     orbs.createDiv("gp-orb gp-orb-3");
     this.timerShape.createDiv("gp-art gp-glass-pane");
     this.timerShape.createDiv("gp-art gp-glass-highlight");
+
+    // Pixel City: the bitmap plates (pixelCityArt.ts), bundled as data
+    // URLs. Real <img> elements rather than background-images, so no style is
+    // written from TypeScript and styles.css carries no base64. Hidden with
+    // the rest of the artwork until the theme block shows them.
+    for (const layer of PIXEL_CITY_LAYERS) {
+      this.timerShape.createEl("img", {
+        cls: `gp-art gp-pixel-city ${layer.cls}`,
+        attr: { src: layer.src, alt: "", "aria-hidden": "true", draggable: "false" },
+      });
+    }
 
     const content = visual.createDiv("gp-timer-content");
     this.dayNightIndicator = content.createDiv("gp-daynight-indicator");

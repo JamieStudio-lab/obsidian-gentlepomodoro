@@ -434,7 +434,7 @@
   /* --- Ink: text that sits ON the artwork -------------------------------
      Hardcoded before 0.6.1, on the assumption every theme paints a dark,
      saturated square. A photograph or a pixel plate breaks that assumption,
-     so each theme now owns its own. Both shipped themes declare the same
+     so each theme now owns its own. Every shipped theme declares the same
      values independently rather than sharing a default — that is what
      "independent" costs, and it is the point.
 
@@ -1296,7 +1296,7 @@
   /* --- Ink: text that sits ON the artwork -------------------------------
      Hardcoded before 0.6.1, on the assumption every theme paints a dark,
      saturated square. A photograph or a pixel plate breaks that assumption,
-     so each theme now owns its own. Both shipped themes declare the same
+     so each theme now owns its own. Every shipped theme declares the same
      values independently rather than sharing a default — that is what
      "independent" costs, and it is the point.
 
@@ -1690,6 +1690,159 @@
     animation: none;
   }
 }
+
+/* =========================================================================
+   Theme 3: Pixel City (pixel art)
+   -------------------------------------------------------------------------
+   The first raster theme. Sixteen 128x128 plates from art/pixel-city/plates, bundled
+   into main.js as data URLs (Obsidian installs three files, so a loose image
+   is missing for every user — pixelCityArt.ts), built as
+   <img class="gp-art gp-pixel-city …"> in GentlePomoView.onOpen and shown only
+   here. The whole set is under 7 KB.
+
+   Everything moves on --gp-progress alone, read straight off the eased value
+   the view publishes — no second transition on any plate (THEMES.md: "pick
+   exactly one smoothing route"). Eight sky plates cross-fade across the
+   session; six window waves ease on between 40 % and 80 %; the stars fade in
+   over the last third. skyPhase() already runs the arc backwards on a break,
+   so a break plays the same plates in reverse and the windows go out one
+   wave at a time. These thresholds are the ones art/pixel-city/pixlib.py
+   previews with; change them together.
+   ========================================================================= */
+.gp-theme-pixel-city {
+  --gp-font-display: var(--gp-font-rounded);
+  /* Ink: the same values the other two themes declare, declared again. */
+  --gp-ink: #ffffff;
+  --gp-ink-dim: rgba(255, 255, 255, 0.9);
+  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
+  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  --gp-ink-overtime: #ff6b6b;
+  --gp-ink-overtime-glow: 0 0 15px rgba(255, 107, 107, 0.5);
+
+  /* The first theme to use the scrim: a tenth of black between the plates
+     and the text. The day plate is a flat mid blue behind the clock and every
+     pale band is keyed below the text (art/pixel-city/skyline.py, SKY_KEYS), but
+     a bitmap cannot be retuned per Obsidian theme the way a gradient can, so
+     the veil carries the rest. The user chose 0.10 on the lineup page. */
+  --gp-scrim-alpha: 0.1;
+  /* Endesga "ink", the silhouette colour, so a sliver at the clipped edge
+     matches the buildings instead of showing a foreign grey. */
+  --gp-shape-base: #181425;
+  /* The shared 35px squircle, by the user's choice over a pixel-friendly 8px.
+     The plates keep windows and stars clear of the corner arc for it. */
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
+}
+
+.gp-theme-pixel-city .gp-pixel-city {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 128px shown at ~220px: nearest-neighbour, or the skyline blurs to a
+     smear. At that ratio pixels come out 1 or 2 CSS px wide (3 or 4 on a
+     retina screen); the unevenness is accepted as the cost of a square that
+     is not an integer multiple of the plate. */
+  image-rendering: pixelated;
+  z-index: 1; /* above the shape's base colour, below the scrim (4) */
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Sky: plate 1 is the base and never fades; each later plate rises over one
+   seventh of the session on top of the one before (eight plates, seven
+   spans: progress x 7 minus the plate's rank). Plates share one dither
+   pattern, so a half-faded pair is a colour blend, not two patterns. */
+.gp-theme-pixel-city .gp-pixel-city-sky-2 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 0, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-3 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 1, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-4 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 2, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-5 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 3, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-6 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 4, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-7 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 5, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-sky-8 {
+  opacity: clamp(0, var(--gp-progress) * 7 - 6, 1);
+}
+
+/* Stars: nothing until two-thirds through, then in over the last third. */
+.gp-theme-pixel-city .gp-pixel-city-stars {
+  opacity: clamp(0, (var(--gp-progress) - 0.65) / 0.35, 1);
+}
+
+/* Windows: six waves at thresholds spaced evenly from 40% to 80% of the
+   session, each easing on over 1% of it — fifteen seconds of a 25-minute
+   focus, a glow-up rather than a pop. A real step is not available to a
+   computed value; a ramp this steep is the same thing with a soft edge. */
+.gp-theme-pixel-city .gp-pixel-city-windows-1 {
+  opacity: clamp(0, (var(--gp-progress) - 0.4) * 100, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-windows-2 {
+  opacity: clamp(0, (var(--gp-progress) - 0.48) * 100, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-windows-3 {
+  opacity: clamp(0, (var(--gp-progress) - 0.56) * 100, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-windows-4 {
+  opacity: clamp(0, (var(--gp-progress) - 0.64) * 100, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-windows-5 {
+  opacity: clamp(0, (var(--gp-progress) - 0.72) * 100, 1);
+}
+
+.gp-theme-pixel-city .gp-pixel-city-windows-6 {
+  opacity: clamp(0, (var(--gp-progress) - 0.8) * 100, 1);
+}
+
+/* The running-state size pulse resamples a bitmap at 1.03x every frame,
+   which shimmers on a pixel grid. The shadow-only breath (declared in the
+   Mobile & touch section for the frosted iOS case) moves nothing inside the
+   clip, so this theme takes it on every platform. Only the name changes; the
+   8s tempo and easing come from the shared rule.
+
+   Two guards, each for a bug that shipped or nearly did:
+   - :not(.gp-state-overtime). Overtime is still "running", and this rule
+     out-specifies the shared `.gp-state-overtime .gp-timer-shape` (0,2,0)
+     that swaps the breath for the blue / orange breathing glow — so without
+     the exclusion the overtime glow simply vanished on this theme, and on
+     this theme alone. The user noticed before the branch did.
+   - The no-preference gate. This selector also out-specifies the
+     reduced-motion `animation: none`, and ungated it would re-enable motion
+     for exactly the people who turned it off — THEMES.md, "two rules that
+     are easy to get wrong". */
+@media (prefers-reduced-motion: no-preference) {
+  .gp-theme-pixel-city .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
+    animation-name: gp-gentle-pulse-glow;
+  }
+}
+
+/* ===== end of Theme 3: Pixel City. The rules below are shared chrome,
+   not the theme's; tests/designTokens.test.ts polices the theme up to here. ===== */
 
 /* In-view daily-goal progress line. Hidden on desktop (the status bar carries
    it there); revealed on mobile, where Obsidian hides the status bar entirely.

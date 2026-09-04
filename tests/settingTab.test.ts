@@ -281,11 +281,12 @@ describe("controls are wired through setControlValue", () => {
     ]);
   });
 
-  it("offers both themes", () => {
+  it("offers every registered theme", () => {
     ctx.tab.display();
     expect(componentOf(ctx.el, "Theme").options).toEqual([
       { value: "classic", label: "Classic" },
       { value: "frosted-glass", label: "Frosted glass" },
+      { value: "pixel-city", label: "Pixel city" },
     ]);
   });
 });
