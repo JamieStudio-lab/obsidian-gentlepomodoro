@@ -452,22 +452,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         rows: [
           {
             name: "Chime when focus ends",
-            desc: "Off by default, so a session you want to keep going with is never interrupted.",
+            desc: "Rings when focus time is up, whether or not the break then starts on its own. Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
             name: "Start the break automatically",
-            desc: "When focus time is up, begin the break without waiting.",
+            desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           {
             name: "Chime when break ends",
-            desc: "Rings once when break time is up, so you know when to start again.",
+            desc: "Rings when break time is up, whether or not focus then starts on its own, so you know when to start again.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
             name: "Start focusing automatically",
-            desc: "When break time is up, begin the next focus session without waiting.",
+            desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
         ],

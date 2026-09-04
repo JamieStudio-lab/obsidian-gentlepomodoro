@@ -34,8 +34,11 @@ next session **without** a sound.
   in the plugin settings and an open panel updates instead of waiting to be
   closed and reopened.
 - The timer panel's Auto-start section is now two sections, **When focus ends**
-  and **When a break ends**, each holding the start toggle and the chime for
-  that moment.
+  and **When a break ends**, each holding the chime and the start toggle for
+  that moment — and a line underneath saying, in words, what will actually
+  happen with the settings you have. "Play a chime" cannot say for itself
+  whether it still applies when the next session starts on its own; the summary
+  answers that on screen instead of leaving you to test it.
 - **Nothing you hear changes when you upgrade.** Each chime starts out matching
   your current auto-start setting, which is exactly what your timer does today —
   so the sounds stay the same and the switch is simply yours now. New installs

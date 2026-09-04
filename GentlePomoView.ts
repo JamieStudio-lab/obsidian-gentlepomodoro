@@ -3,6 +3,7 @@ import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
+import { sessionEndSummary, type SessionEndEdge } from "./sessionEndSummary";
 
 /**
  * The settings that live on BOTH the gear panel and the Obsidian settings tab.
@@ -72,6 +73,14 @@ export class GentlePomoView extends ItemView {
     row: HTMLElement;
     input: HTMLInputElement;
   }[] = [];
+
+  /**
+   * The plain-English outcome line under each pair of toggles. Re-worded by
+   * syncSettingsPanel() whenever either of its two settings moves, from either
+   * surface — which is the whole point of it: it has to be true right now, not
+   * true when the panel was last opened.
+   */
+  private endSummaryLines: { edge: SessionEndEdge; el: HTMLElement }[] = [];
   settingsVisible = false;
 
   // Wrappers for animation
@@ -1543,13 +1552,34 @@ export class GentlePomoView extends ItemView {
     // on its own — so neither row is ever moot and neither is hidden. An
     // earlier cut hid each chime while its auto-start was on, which read
     // backwards: turning something on should reveal choices, not remove them.
+    //
+    // The chime sits ABOVE its start toggle so reading order presents it as a
+    // property of the whole event rather than a fallback for when nothing else
+    // happens, and each pair closes with a line saying what will actually
+    // happen — because "Play a chime" cannot carry its own scope, and the
+    // question it leaves ("does it still chime if the break auto-starts?")
+    // deserves an answer on screen rather than by experiment.
+    this.endSummaryLines = [];
+    const summaryFor = (edge: SessionEndEdge) => {
+      const el = this.settingsPanel.createDiv({ cls: "gp-settings-hint" });
+      this.endSummaryLines.push({ edge, el });
+    };
+
     section("When focus ends");
-    sharedToggle("autoStartBreak", "Start the break");
     sharedToggle("focusEndSoundEnabled", "Play a chime");
+    sharedToggle("autoStartBreak", "Start the break");
+    summaryFor("focus");
 
     section("When a break ends");
-    sharedToggle("autoStartFocus", "Start focusing");
     sharedToggle("breakEndSoundEnabled", "Play a chime");
+    sharedToggle("autoStartFocus", "Start focusing");
+    summaryFor("break");
+
+    // Seed the summaries now rather than waiting for the next engine emit: the
+    // rows above are built empty, and the tick that would fill them does not
+    // run while the timer is idle — which is exactly when someone opens the
+    // gear panel to read what these toggles do.
+    this.syncSettingsPanel();
 
     const resetWrap = this.settingsPanel.createDiv("gp-settings-reset");
     const resetBtn = resetWrap.createEl("button", {
@@ -1599,6 +1629,11 @@ export class GentlePomoView extends ItemView {
     const settings = this.plugin.settings;
     for (const entry of this.sharedPanelRows) {
       entry.input.checked = Boolean(settings[entry.key]);
+    }
+    for (const line of this.endSummaryLines) {
+      // The whole mapping lives in the pure function, so the view holds no
+      // branch a test cannot reach.
+      line.el.setText(sessionEndSummary(line.edge, settings));
     }
   }
 }
