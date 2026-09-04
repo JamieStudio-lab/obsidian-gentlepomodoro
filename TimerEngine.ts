@@ -191,8 +191,23 @@ export class TimerEngine {
   }
 
   /**
-   * The opt-in chime on the overtime path (auto-start off). Off by default on
-   * the focus→break edge, on for fresh installs on the break→focus edge.
+   * Whether the user asked to be told that the session now ENDING has ended.
+   *
+   * This is deliberately independent of the auto-start toggles. Until 0.6.3 the
+   * auto-start path chimed unconditionally, which meant the two settings encoded
+   * only THREE states — there was no way to say "start the next session, but
+   * quietly" — and the chime setting was silently overruled rather than merely
+   * irrelevant. Reading it on both paths makes all four states real and removes
+   * the dependency, which is what let the settings UI stop hiding rows.
+   */
+  private endChimeWanted(): boolean {
+    return this.state.mode === "focus"
+      ? this.plugin.settings.focusEndSoundEnabled
+      : this.plugin.settings.breakEndSoundEnabled;
+  }
+
+  /**
+   * The opt-in chime when the clock runs out and nothing starts on its own.
    *
    * `endCueSounded` stops Stop/Skip ringing the SAME cue again moments later.
    * It is stamped only when the cue could actually be HEARD: `soundEnabled` is
@@ -202,11 +217,7 @@ export class TimerEngine {
    * an audible event is the bug this ordering exists to prevent.
    */
   private maybeChimeAtCrossing() {
-    const chimeEnabled =
-      this.state.mode === "focus"
-        ? this.plugin.settings.focusEndSoundEnabled
-        : this.plugin.settings.breakEndSoundEnabled;
-    if (!chimeEnabled) return;
+    if (!this.endChimeWanted()) return;
     if (this.plugin.settings.soundEnabled) this.endCueSounded = true;
     this.playEndCue();
   }
@@ -229,16 +240,21 @@ export class TimerEngine {
 
   /**
    * Natural end-of-session handler (timer reached zero with auto-start on).
-   * Plays the end cue, then reuses handleFinished() to log the session, advance
+   * Chimes if asked to, then reuses handleFinished() to log the session, advance
    * the long-break counter, and auto-start the next session. handleFinished()
    * itself plays no sound (finish() plays it first) — we mirror that here.
+   *
+   * The cue is gated on the SAME setting as the overtime path (see
+   * endChimeWanted). Before 0.6.3 it rang unconditionally, so auto-advancing
+   * always made a noise whatever the user wanted; the upgrade derivation seeds
+   * each chime from the matching auto-start value so nobody's sounds change.
    *
    * No `endCueSounded` stamp is needed: handleFinished() runs switchMode(),
    * which clears the flag and starts a fresh session with positive time, so a
    * later Stop is stopping something else entirely.
    */
   private async completeNaturally() {
-    this.playEndCue();
+    if (this.endChimeWanted()) this.playEndCue();
     // Natural completion only fires when the toggle is on → auto-start the next.
     await this.handleFinished(true);
   }

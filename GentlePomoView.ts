@@ -71,7 +71,6 @@ export class GentlePomoView extends ItemView {
     key: SharedPanelKey;
     row: HTMLElement;
     input: HTMLInputElement;
-    visible?: () => boolean;
   }[] = [];
   settingsVisible = false;
 
@@ -1527,39 +1526,30 @@ export class GentlePomoView extends ItemView {
     // Each shared row registers itself for syncSettingsPanel(), which re-seeds
     // it when the same setting is changed from the settings tab.
     this.sharedPanelRows = [];
-    const sharedToggle = (
-      key: SharedPanelKey,
-      label: string,
-      onSaved?: () => void,
-      visible?: () => boolean
-    ) => {
+    const sharedToggle = (key: SharedPanelKey, label: string) => {
       const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
         settings[key] = v;
         await this.plugin.saveSettings();
-        onSaved?.();
         // Fan out: the engine is silent while the timer is idle, so without
         // this a second open panel (and the settings tab) never converges.
         this.plugin.applySettingsToOpenViews();
       });
-      this.sharedPanelRows.push({ key, row, input, visible });
+      this.sharedPanelRows.push({ key, row, input });
       return { row, input };
     };
 
+    // Four independent rows, nothing conditional. "Play a chime" governs BOTH
+    // paths — the clock running out into overtime and the next session starting
+    // on its own — so neither row is ever moot and neither is hidden. An
+    // earlier cut hid each chime while its auto-start was on, which read
+    // backwards: turning something on should reveal choices, not remove them.
     section("When focus ends");
-    sharedToggle("autoStartBreak", "Start the break", () => this.syncSettingsPanel());
-    sharedToggle(
-      "focusEndSoundEnabled",
-      "Play a chime",
-      undefined,
-      // Hidden while the break starts on its own: that transition always
-      // chimes, so there is nothing here to decide.
-      () => !settings.autoStartBreak
-    );
+    sharedToggle("autoStartBreak", "Start the break");
+    sharedToggle("focusEndSoundEnabled", "Play a chime");
 
     section("When a break ends");
-    sharedToggle("autoStartFocus", "Start focusing", () => this.syncSettingsPanel());
-    sharedToggle("breakEndSoundEnabled", "Play a chime", undefined, () => !settings.autoStartFocus);
-    this.syncSettingsPanel();
+    sharedToggle("autoStartFocus", "Start focusing");
+    sharedToggle("breakEndSoundEnabled", "Play a chime");
 
     const resetWrap = this.settingsPanel.createDiv("gp-settings-reset");
     const resetBtn = resetWrap.createEl("button", {
@@ -1592,9 +1582,8 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
-   * Re-seed the panel controls that can also be changed from the settings tab,
-   * and apply their visibility rules. Called on every engine emit via
-   * applySettings(), and directly when a paired toggle is flipped in the panel.
+   * Re-seed the panel controls that can also be changed from the settings tab.
+   * Called on every engine emit via applySettings().
    *
    * This re-SEEDS; it must never call renderSettingsPanel(), which empties the
    * container and re-registers every listener. `registerDomEvent` releases on
@@ -1610,7 +1599,6 @@ export class GentlePomoView extends ItemView {
     const settings = this.plugin.settings;
     for (const entry of this.sharedPanelRows) {
       entry.input.checked = Boolean(settings[entry.key]);
-      if (entry.visible) entry.row.toggleClass("gp-hidden", !entry.visible());
     }
   }
 }

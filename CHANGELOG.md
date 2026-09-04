@@ -9,8 +9,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 You can now ask the timer to chime when a session runs out, without giving up
 the quiet. Gentle Pomodoro has always stayed silent at the end of a session
 unless the next one starts on its own — that is deliberate, so a chime never
-interrupts focus you want to keep. This release makes the chime available on
-each edge separately, off by default where it would break your flow.
+interrupts focus you want to keep. This release turns that into a choice you
+make per edge, and adds a state that was never possible before: starting the
+next session **without** a sound.
 
 ### Added
 
@@ -19,24 +20,26 @@ each edge separately, off by default where it would break your flow.
   does not quietly become twenty. "Chime when focus ends" is there if you want
   it, and stays **off** by default — that is the one that would interrupt a
   session you are still in the middle of. Both live in the timer panel (under
-  the gear) and in Settings → Gentle Pomodoro → **Audio**. Each one is hidden
-  while the next session starts on its own, because that transition always
-  chimes anyway.
-- **New installs get "Chime when break ends" on.** If you are upgrading,
-  nothing changes: your timer stays exactly as quiet as it is today, and the
-  chime is yours to turn on when you want it.
+  the gear) and in Settings → Gentle Pomodoro → **Audio**.
+- **A quiet hand-over.** Each chime now applies whether the timer runs into
+  overtime _or_ starts the next session automatically, so you can auto-advance
+  with no sound at all. Previously auto-start always chimed and there was no way
+  to turn that off.
 
 ### Changed
 
 - **The auto-start toggles now also appear in the plugin settings**, in the new
-  Audio group, paired with the chime each one makes moot. They used to be in the
-  timer panel only.
+  Audio group alongside the chimes.
 - **The timer panel follows settings changed elsewhere.** Flip a shared setting
   in the plugin settings and an open panel updates instead of waiting to be
   closed and reopened.
 - The timer panel's Auto-start section is now two sections, **When focus ends**
   and **When a break ends**, each holding the start toggle and the chime for
   that moment.
+- **Nothing you hear changes when you upgrade.** Each chime starts out matching
+  your current auto-start setting, which is exactly what your timer does today —
+  so the sounds stay the same and the switch is simply yours now. New installs
+  start with "Chime when break ends" on.
 
 ### Fixed
 

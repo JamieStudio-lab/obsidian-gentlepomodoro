@@ -12,7 +12,7 @@ import {
   type FocusTotalHost,
 } from "./focusTotals";
 import { LogManager, shouldFireGoalNotice } from "./logManager";
-import { SettingsStore, coerceToDefaults, deriveBreakEndChime } from "./settingsStore";
+import { SettingsStore, coerceToDefaults, deriveEndChimes } from "./settingsStore";
 import { logger } from "./logger";
 import {
   removeAllPomodoroMarkersInVault,
@@ -440,18 +440,23 @@ export default class GentlePomoPlugin extends Plugin {
     // the tasks path (hidden when no path is set, shown when a path exists), then
     // persist so the user's explicit choice sticks on later loads.
     const deriveTaskSelector = !loaded || loaded.showTaskSelector === undefined;
-    // First-run value for the break-end chime: on for a brand-new install, off
-    // for anyone upgrading (who must stay exactly as quiet as they are today).
-    // The rule itself lives in settingsStore so it can be tested; null means
-    // the user already has a choice and nothing should be derived.
-    const breakChime = deriveBreakEndChime(read, loaded);
+    // First-run values for the two end-of-session chimes. A fresh install gets
+    // break-end on and focus-end off; an upgrading user inherits each chime
+    // from the matching auto-start toggle, which is exactly what they hear
+    // today. The rule lives in settingsStore so it can be tested, and returns
+    // only the keys the user has no stored choice for.
+    const chimes = deriveEndChimes(read, loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
     if (deriveTaskSelector) {
       this.settings.showTaskSelector = this.settings.tasksPath.trim() !== "";
       migrated = true;
     }
-    if (breakChime !== null) {
-      this.settings.breakEndSoundEnabled = breakChime;
+    if (chimes.focusEndSoundEnabled !== undefined) {
+      this.settings.focusEndSoundEnabled = chimes.focusEndSoundEnabled;
+      migrated = true;
+    }
+    if (chimes.breakEndSoundEnabled !== undefined) {
+      this.settings.breakEndSoundEnabled = chimes.breakEndSoundEnabled;
       migrated = true;
     }
     // Music stations. musicUrl keeps its pre-0.5.7 meaning as slot 1, so the

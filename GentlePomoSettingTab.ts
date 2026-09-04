@@ -103,34 +103,16 @@ function controlText(value: unknown): string {
  * our own type means the imperative path is a projection rather than a
  * re-statement.
  */
-type SettingRowSpec = SettingRowBase &
-  (
-    | { control: SettingControl<SettingsKey> }
-    | { render: (setting: Setting) => void | (() => void) }
-    | {
-        action: (el: HTMLElement, index: number) => void;
-        buttonText: string;
-        destructive?: boolean;
-      }
-  );
-
-interface SettingRowBase {
-  name: string;
-  desc: string;
-  /**
-   * Whether the row is rendered at all. Evaluated on each render, never
-   * captured — `getSettingDefinitions()` runs once per plugin load, so a
-   * predicate closing over a settings OBJECT would read the pre-load one for
-   * the whole session; these read `this.plugin.settings` at call time.
-   *
-   * On 1.13 this is forwarded to the definition's own `visible` and the row
-   * hides live, because Obsidian re-renders after awaiting setControlValue.
-   * On the pre-1.13 path display() filters on it, which is correct every time
-   * the tab is opened but not live within one opening — there is no re-render
-   * hook below 1.13 that is not deprecated or out of minAppVersion range.
-   */
-  visible?: () => boolean;
-}
+type SettingRowSpec =
+  | { name: string; desc: string; control: SettingControl<SettingsKey> }
+  | { name: string; desc: string; render: (setting: Setting) => void | (() => void) }
+  | {
+      name: string;
+      desc: string;
+      action: (el: HTMLElement, index: number) => void;
+      buttonText: string;
+      destructive?: boolean;
+    };
 
 /** A `.setHeading()` row and the settings under it. */
 interface SettingGroupSpec {
@@ -462,34 +444,30 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       },
       {
         // New in 0.6.3, and it carries the auto-start toggles as well as the
-        // chimes. That pairing is the point: each chime is hidden while its
-        // session starts the next one on its own, and before 0.6.3 the
-        // auto-start toggles lived ONLY in the gear panel — so a row here would
-        // have appeared and vanished because of a setting this screen does not
-        // show. Cause and effect now sit together, and on 1.13 the user watches
-        // one move the other.
+        // chimes — they were gear-panel-only before, and reading them together
+        // is why the first cut of this release needed a hiding rule at all.
+        // The four rows are now fully INDEPENDENT: the chime governs the
+        // auto-start path too, so no row is ever moot and none is hidden.
         heading: "Audio",
         rows: [
           {
             name: "Chime when focus ends",
-            desc: "Off by default, so a session you want to keep going with is never interrupted. The timer keeps counting either way.",
+            desc: "Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
-            visible: () => !this.plugin.settings.autoStartBreak,
           },
           {
             name: "Start the break automatically",
-            desc: "When focus time is up, begin the break without waiting. Always chimes.",
+            desc: "When focus time is up, begin the break without waiting.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           {
             name: "Chime when break ends",
             desc: "Rings once when break time is up, so you know when to start again.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
-            visible: () => !this.plugin.settings.autoStartFocus,
           },
           {
             name: "Start focusing automatically",
-            desc: "When break time is up, begin the next focus session without waiting. Always chimes.",
+            desc: "When break time is up, begin the next focus session without waiting.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
         ],
@@ -639,10 +617,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       type: "group" as const,
       heading: group.heading,
       items: group.rows.map((row): SettingGroupItem<SettingsKey> => {
-        const base = { name: row.name, desc: row.desc, visible: row.visible };
-        if ("control" in row) return { ...base, control: row.control };
-        if ("render" in row) return { ...base, render: row.render };
-        return { ...base, action: row.action };
+        if ("control" in row) return { name: row.name, desc: row.desc, control: row.control };
+        if ("render" in row) return { name: row.name, desc: row.desc, render: row.render };
+        return { name: row.name, desc: row.desc, action: row.action };
       }),
     }));
   }
@@ -797,13 +774,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     for (const group of this.settingGroups()) {
-      // Filter BEFORE the heading: a group whose every row is hidden must not
-      // leave a bare heading behind. 1.13 does this for us, so skipping it here
-      // is the one place the two paths could visibly disagree.
-      const rows = group.rows.filter((row) => row.visible?.() !== false);
-      if (rows.length === 0) continue;
       new Setting(containerEl).setName(group.heading).setHeading();
-      for (const row of rows) this.renderSettingRow(containerEl, row);
+      for (const row of group.rows) this.renderSettingRow(containerEl, row);
     }
   }
 

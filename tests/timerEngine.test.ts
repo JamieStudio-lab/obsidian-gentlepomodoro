@@ -724,11 +724,11 @@ describe("TimerEngine — opt-in end-of-session chime", () => {
     expect(played).toEqual([DRUM, BELL, BELL]); // silent without the addMinutes() clear
   });
 
-  it("auto-start still chimes exactly once and advances — unchanged from 0.6.2", async () => {
+  it("auto-start chimes when asked to, and still advances", async () => {
     const stub = makePluginStub({ focusMinutes: 1, sessionCounterDate: "2025-05-18" });
     stub.settings.soundEnabled = true;
     stub.settings.autoStartBreak = true;
-    stub.settings.focusEndSoundEnabled = false; // irrelevant on the auto-start path
+    stub.settings.focusEndSoundEnabled = true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
     const played = recordCues(timer, stub.settings);
@@ -736,12 +736,48 @@ describe("TimerEngine — opt-in end-of-session chime", () => {
     timer.start();
     await vi.advanceTimersByTimeAsync(61_000);
 
-    // One cue, and the mode really advanced. This is the path that must NOT
-    // consult the new settings at all: the chime toggles are hidden while
-    // auto-start is on precisely because starting the next session always
-    // announces itself, so focusEndSoundEnabled being false above is ignored.
     expect(played).toEqual([DRUM, BELL]);
     expect(timer.getState().mode).toBe("break");
+    timer.pause();
+  });
+
+  it("auto-start can advance SILENTLY — the state 0.6.2 could not express", async () => {
+    // Before 0.6.3 the auto-start path chimed unconditionally, so the two
+    // settings encoded only three states and "start the next session quietly"
+    // was unreachable. Making the chime govern both paths is what removed the
+    // dependency between the toggles — and this is the state it bought.
+    const stub = makePluginStub({ focusMinutes: 1, sessionCounterDate: "2025-05-18" });
+    stub.settings.soundEnabled = true;
+    stub.settings.autoStartBreak = true;
+    stub.settings.focusEndSoundEnabled = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(played).toEqual([DRUM]); // the start cue only — the handover is quiet
+    expect(timer.getState().mode).toBe("break"); // but it DID advance
+    timer.pause();
+  });
+
+  it("each edge reads its own chime setting, not the other's", async () => {
+    // A break ending must consult breakEndSoundEnabled even while the FOCUS
+    // chime is off, or the two edges collapse into one control.
+    const stub = makePluginStub({ breakMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = false;
+    stub.settings.breakEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.switchMode("break");
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toEqual([DING]);
     timer.pause();
   });
 });

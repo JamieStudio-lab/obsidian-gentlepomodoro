@@ -3,7 +3,7 @@ import {
   SettingsStore,
   classifyPluginData,
   coerceToDefaults,
-  deriveBreakEndChime,
+  deriveEndChimes,
   type SettingsIo,
 } from "../settingsStore";
 import { SETTINGS_SAVE_RENOTIFY_MS } from "../constants";
@@ -197,45 +197,74 @@ describe("writing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 0.6.3 — the break-end chime's first-run value.
+// 0.6.3 — the two chimes' first-run values.
 //
-// The whole point is that an UPGRADING user keeps today's silence: the zero
-// crossing is deliberately quiet to protect flow, and an upgrade must not start
-// making a sound the plugin has never made. Only a brand-new install, which has
-// no history to preserve, gets the chime on by default.
+// The rule that matters: NOBODY'S SOUNDS CHANGE ON UPGRADE. Before 0.6.3 the
+// auto-start path chimed unconditionally and the overtime path never did, so
+// each auto-start toggle exactly describes what that user hears today — which
+// is why the chime inherits from it. Only a brand-new install, with no history
+// to preserve, gets the designed defaults.
 // ---------------------------------------------------------------------------
-describe("deriveBreakEndChime", () => {
-  it("a brand-new install (no data.json) gets the chime ON", () => {
-    expect(deriveBreakEndChime({ kind: "fresh" }, null)).toBe(true);
+describe("deriveEndChimes", () => {
+  it("a brand-new install gets break-end ON and focus-end OFF", () => {
+    // focus->break stays quiet even for new users: that is the edge where a
+    // chime would interrupt a session someone may want to keep going with.
+    expect(deriveEndChimes({ kind: "fresh" }, null)).toEqual({
+      focusEndSoundEnabled: false,
+      breakEndSoundEnabled: true,
+    });
   });
 
-  it("an upgrading user with no stored value gets the chime OFF", () => {
-    // The field simply is not in their data.json — this is every 0.6.2 user.
-    expect(deriveBreakEndChime({ kind: "ok", data: {} }, {})).toBe(false);
-    // Still false when they have plenty of OTHER settings stored.
-    const upgrading = { theme: "classic", focusMinutes: 50 } as Record<string, unknown>;
-    expect(deriveBreakEndChime({ kind: "ok", data: upgrading }, upgrading)).toBe(false);
+  it("an upgrading user inherits each chime from the matching auto-start", () => {
+    // Auto-start ON today == they hear a cue today, so the chime comes on and
+    // they notice no difference. Auto-start OFF == silence today, so it stays
+    // off. Either way the switch now works, which it did not before.
+    expect(
+      deriveEndChimes({ kind: "ok", data: {} }, { autoStartBreak: true, autoStartFocus: false })
+    ).toEqual({ focusEndSoundEnabled: true, breakEndSoundEnabled: false });
+
+    expect(
+      deriveEndChimes({ kind: "ok", data: {} }, { autoStartBreak: false, autoStartFocus: true })
+    ).toEqual({ focusEndSoundEnabled: false, breakEndSoundEnabled: true });
   });
 
-  it("a damaged data.json is treated as an existing user, not a fresh one", () => {
-    // We failed to read their file; that is no reason to start making noise.
-    expect(deriveBreakEndChime({ kind: "damaged" }, null)).toBe(false);
+  it("an upgrading user with neither auto-start stays completely silent", () => {
+    // The shipped default, and the majority case: exactly as quiet as 0.6.2.
+    expect(deriveEndChimes({ kind: "ok", data: {} }, {})).toEqual({
+      focusEndSoundEnabled: false,
+      breakEndSoundEnabled: false,
+    });
   });
 
-  it("returns null once the user has a stored choice, so it is never overwritten", () => {
-    expect(deriveBreakEndChime({ kind: "ok", data: {} }, { breakEndSoundEnabled: true })).toBe(
-      null
-    );
-    expect(deriveBreakEndChime({ kind: "ok", data: {} }, { breakEndSoundEnabled: false })).toBe(
-      null
-    );
-    // Even on a "fresh" read — a stored choice always wins over the derivation.
-    expect(deriveBreakEndChime({ kind: "fresh" }, { breakEndSoundEnabled: false })).toBe(null);
+  it("a damaged data.json stays silent rather than guessing", () => {
+    // An existing user whose file we merely failed to read.
+    expect(deriveEndChimes({ kind: "damaged" }, null)).toEqual({
+      focusEndSoundEnabled: false,
+      breakEndSoundEnabled: false,
+    });
+  });
+
+  it("never overwrites a choice the user has already made", () => {
+    // Each key is derived independently, so a half-written data.json still
+    // gets the other half filled in.
+    expect(
+      deriveEndChimes(
+        { kind: "ok", data: {} },
+        { focusEndSoundEnabled: true, breakEndSoundEnabled: false, autoStartBreak: false }
+      )
+    ).toEqual({});
+
+    expect(
+      deriveEndChimes(
+        { kind: "ok", data: {} },
+        { breakEndSoundEnabled: true, autoStartBreak: true }
+      )
+    ).toEqual({ focusEndSoundEnabled: true });
   });
 
   it("DEFAULT_SETTINGS keeps BOTH chimes off, because it is the upgrade merge base", () => {
-    // If either of these were true, Object.assign in loadSettings() would hand
-    // it to every upgrading user before any derivation runs.
+    // If either were true, Object.assign in loadSettings() would hand it to
+    // every upgrading user before any derivation runs.
     expect(DEFAULT_SETTINGS.breakEndSoundEnabled).toBe(false);
     expect(DEFAULT_SETTINGS.focusEndSoundEnabled).toBe(false);
   });

@@ -84,6 +84,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
+- **Audio**: **chime when focus ends** (off by default) and **chime when break ends** (on for new installs) — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session; plus **start the break automatically** and **start focusing automatically**, which also live in the timer panel.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -95,7 +96,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Timing**: focus / short break / long break durations (press Enter to apply).
 - **Audio**: sound toggle, **Low / Mid / High** volume, and **Low / Mid / High** music volume.
 - **Auto-start**: auto-start break, auto-start focus. When on, a session that runs out automatically plays the end cue and starts the next one. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
-- **End-of-session chimes**: with auto-start off, a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Chime when break ends** (on for new installs) or **Chime when focus ends** (off by default) to be told anyway. Each is hidden while the matching auto-start is on, since that transition always chimes. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
+- **End-of-session chimes**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Chime when break ends** (on for new installs) or **Chime when focus ends** (off by default) to be told anyway. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.
 
 Layout adapts to narrow sidebars: the timer visual stays sticky at the top, controls keep a comfortable minimum width and the panel scrolls horizontally if needed.

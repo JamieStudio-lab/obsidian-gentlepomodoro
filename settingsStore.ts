@@ -47,28 +47,54 @@ export function classifyPluginData(raw: unknown): DataRead {
   return { kind: "ok", data: raw as Record<string, unknown> };
 }
 
+/** The chimes' first-run values. Only keys that need deriving are present. */
+export interface DerivedEndChimes {
+  focusEndSoundEnabled?: boolean;
+  breakEndSoundEnabled?: boolean;
+}
+
 /**
- * The break-end chime's first-run value: ON for a brand-new install, OFF for
- * everyone upgrading. Returns `null` when the user already has a stored choice
- * and nothing should be derived at all.
+ * First-run values for the two end-of-session chimes. Only ever returns a key
+ * the user has no stored choice for, so an explicit setting is never overwritten.
  *
- * This exists as a function rather than a `DEFAULT_SETTINGS` entry because
+ * These exist as a derivation rather than `DEFAULT_SETTINGS` entries because
  * DEFAULT_SETTINGS is the `Object.assign` merge base in `loadSettings()`, so a
- * `true` there would silently switch the chime on for every UPGRADING user too
- * — and an upgrade must never start making a sound the plugin has never made.
- * The silence at the zero crossing is a deliberate flow-protection choice (see
- * CLAUDE.md), so inheriting it is the correct answer for an existing user; only
- * someone with no history to preserve gets the chime by default.
+ * `true` there would apply to every UPGRADING user as well — and an upgrade must
+ * never change what someone already hears.
  *
- * `"damaged"` counts as NOT fresh on purpose: that is an existing user whose
- * data.json we merely failed to read, and staying quiet is the safe answer.
+ * FRESH INSTALL: break-end on, focus-end off. The silence at the zero crossing
+ * is a deliberate flow protection (see CLAUDE.md), and focus→break is the edge
+ * where a chime would interrupt a session someone may want to continue.
+ *
+ * UPGRADE: each chime inherits the matching AUTO-START value, because that is
+ * exactly what the user hears today. Before 0.6.3 the auto-start path chimed
+ * unconditionally and the overtime path never did, so `autoStartBreak: true`
+ * means they currently hear a bell when focus ends, and `false` means silence.
+ * Seeding from it therefore preserves every existing user's sounds exactly while
+ * handing them a switch that now works on both paths.
+ *
+ * `"damaged"` counts as an upgrade with nothing readable, which lands on the
+ * DEFAULT_SETTINGS auto-start values (both false) and so stays silent — the safe
+ * answer for a user whose file we merely failed to read.
  */
-export function deriveBreakEndChime(
+export function deriveEndChimes(
   read: DataRead,
-  loaded: { breakEndSoundEnabled?: unknown } | null
-): boolean | null {
-  if (loaded && loaded.breakEndSoundEnabled !== undefined) return null;
-  return read.kind === "fresh";
+  loaded: {
+    focusEndSoundEnabled?: unknown;
+    breakEndSoundEnabled?: unknown;
+    autoStartBreak?: unknown;
+    autoStartFocus?: unknown;
+  } | null
+): DerivedEndChimes {
+  const fresh = read.kind === "fresh";
+  const out: DerivedEndChimes = {};
+  if (!loaded || loaded.focusEndSoundEnabled === undefined) {
+    out.focusEndSoundEnabled = fresh ? false : loaded?.autoStartBreak === true;
+  }
+  if (!loaded || loaded.breakEndSoundEnabled === undefined) {
+    out.breakEndSoundEnabled = fresh ? true : loaded?.autoStartFocus === true;
+  }
+  return out;
 }
 
 /**

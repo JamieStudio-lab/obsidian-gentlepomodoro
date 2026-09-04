@@ -85,15 +85,8 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
 function declarativeRows(tab: GentlePomoSettingTab) {
   const out: { heading: string; name: string; desc: string }[] = [];
   for (const group of tab.getSettingDefinitions()) {
-    const g = group as {
-      heading: string;
-      items: { name: string; desc?: unknown; visible?: () => boolean }[];
-    };
+    const g = group as { heading: string; items: { name: string; desc?: unknown }[] };
     for (const item of g.items) {
-      // 1.13 evaluates `visible` on every render and skips the row, so the
-      // comparison against the imperative path has to do the same or the two
-      // lists diverge the moment a conditional row is hidden.
-      if (item.visible?.() === false) continue;
       out.push({ heading: g.heading, name: item.name, desc: String(item.desc ?? "") });
     }
   }
@@ -350,73 +343,53 @@ describe("music link rows", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 0.6.3 — the Audio group: two opt-in chimes, each paired with the auto-start
-// toggle that makes it moot. The auto-start toggles moved into this tab in the
-// same release, precisely so a row never disappears because of a setting this
-// screen does not show.
+// 0.6.3 — the Audio group. Four INDEPENDENT rows: two chimes and the two
+// auto-start toggles that moved here from the timer panel. Nothing is
+// conditional, which is the point — an earlier cut hid each chime while its
+// auto-start was on, and a control vanishing because you turned something ON
+// reads backwards.
 // ---------------------------------------------------------------------------
-describe("Audio group — the chimes and their visibility rule", () => {
+describe("Audio group", () => {
   const names = (el: { settings: Setting[] }) =>
     el.settings.filter((s) => !s.heading).map((s) => s.name);
 
-  it("shows both chimes and both auto-starts while auto-start is off", () => {
-    const c = makeTab({ autoStartBreak: false, autoStartFocus: false });
-    c.tab.display();
-    expect(names(c.el)).toContain("Chime when focus ends");
-    expect(names(c.el)).toContain("Chime when break ends");
-    expect(names(c.el)).toContain("Start the break automatically");
-    expect(names(c.el)).toContain("Start focusing automatically");
-  });
+  const AUDIO_ROWS = [
+    "Chime when focus ends",
+    "Start the break automatically",
+    "Chime when break ends",
+    "Start focusing automatically",
+  ];
 
-  it("hides the focus chime when the break starts on its own", () => {
-    // That transition always chimes, so there is nothing left to decide.
-    const c = makeTab({ autoStartBreak: true });
-    c.tab.display();
-    expect(names(c.el)).not.toContain("Chime when focus ends");
-    expect(names(c.el)).toContain("Chime when break ends"); // the other pair is untouched
-    expect(names(c.el)).toContain("Start the break automatically"); // the CAUSE stays visible
-  });
-
-  it("hides the break chime when focus starts on its own", () => {
-    const c = makeTab({ autoStartFocus: true });
-    c.tab.display();
-    expect(names(c.el)).not.toContain("Chime when break ends");
-    expect(names(c.el)).toContain("Chime when focus ends");
-    expect(names(c.el)).toContain("Start focusing automatically");
-  });
-
-  it("keeps the two paths identical even when rows are hidden", () => {
-    // The drift guarantee has to survive conditional rows: 1.13 evaluates
-    // `visible` at render time and the pre-1.13 path filters on it, so a
-    // predicate honoured by only one of them would show different settings on
-    // different Obsidian versions.
+  it("shows all four rows whatever the auto-start toggles are set to", () => {
     for (const overrides of [
+      { autoStartBreak: false, autoStartFocus: false },
       { autoStartBreak: true, autoStartFocus: false },
       { autoStartBreak: false, autoStartFocus: true },
       { autoStartBreak: true, autoStartFocus: true },
     ]) {
       const c = makeTab(overrides);
-      expect(imperativeRows(c.tab, c.el), JSON.stringify(overrides)).toEqual(
-        declarativeRows(c.tab)
-      );
+      c.tab.display();
+      for (const row of AUDIO_ROWS) {
+        expect(names(c.el), `${row} with ${JSON.stringify(overrides)}`).toContain(row);
+      }
     }
   });
 
-  it("the Audio heading survives even with both chimes hidden", () => {
-    // Its auto-start rows are unconditional, so the group is never empty — but
-    // display() skips a heading whose every row is filtered out, and that path
-    // needs to be exercised rather than assumed.
-    const c = makeTab({ autoStartBreak: true, autoStartFocus: true });
+  it("no row description promises the auto-start path always chimes", () => {
+    // It no longer does — the chime toggle governs both paths. A stale
+    // "Always chimes" here would be the one place the UI lies about behaviour.
+    const c = makeTab();
     c.tab.display();
-    const headings = c.el.settings.filter((s) => s.heading).map((s) => s.name);
-    expect(headings).toContain("Audio");
+    for (const setting of c.el.settings) {
+      expect(setting.desc.toLowerCase(), setting.name).not.toContain("always chimes");
+    }
   });
 
-  it("writes each chime through and fans out to open panels", async () => {
+  it("writes each row through and fans out to open panels", async () => {
     // setControlValue ends in a silent `default: return;` and `key` is a
-    // string, so a missing case is a no-op no compiler can see. These four are
-    // also dual-surface, so the fan-out is what stops an open gear panel
-    // showing a stale toggle — the engine is idle and will not reconcile it.
+    // string, so a missing case is a no-op no compiler can see. All four are
+    // dual-surface, so the fan-out is what stops an open gear panel showing a
+    // stale toggle — the engine is idle and will not reconcile it.
     for (const key of [
       "focusEndSoundEnabled",
       "breakEndSoundEnabled",
