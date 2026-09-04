@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.2] — 2026-09-03
+## [0.6.2] — 2026-09-04
 
 A third timer theme, **Pixel City** (planned under the working name Rooftop Skyline), in pixel art: a city along the bottom
 of the square, a dithered sky above it, and windows that light up as the
