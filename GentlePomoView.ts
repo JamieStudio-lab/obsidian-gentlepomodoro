@@ -3,6 +3,18 @@ import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
+
+/**
+ * The settings that live on BOTH the gear panel and the Obsidian settings tab.
+ * Naming them as a union rather than plain strings is what stops the two
+ * surfaces drifting: a key that exists on one and not the other is a compile
+ * error, and `settings[key]` below stays type-checked.
+ */
+type SharedPanelKey =
+  | "autoStartBreak"
+  | "autoStartFocus"
+  | "focusEndSoundEnabled"
+  | "breakEndSoundEnabled";
 import {
   DEFAULT_SETTINGS,
   VIEW_TYPE_GENTLE_POMO,
@@ -48,6 +60,19 @@ export class GentlePomoView extends ItemView {
   endTimeLabel!: HTMLDivElement;
   goalProgressEl!: HTMLDivElement;
   settingsPanel!: HTMLDivElement;
+
+  /**
+   * Panel toggles that are ALSO reachable from the Obsidian settings tab, so
+   * they have to follow a change made over there. Rebuilt by
+   * renderSettingsPanel(); empty until the gear panel has been opened once,
+   * which is why syncSettingsPanel() is a no-op loop rather than a guard.
+   */
+  private sharedPanelRows: {
+    key: SharedPanelKey;
+    row: HTMLElement;
+    input: HTMLInputElement;
+    visible?: () => boolean;
+  }[] = [];
   settingsVisible = false;
 
   // Wrappers for animation
@@ -749,6 +774,11 @@ export class GentlePomoView extends ItemView {
 
     const state = this.lastState ?? this.timer.getState();
 
+    // Follow settings changed on the OTHER surface. Cheap: a handful of
+    // property writes over rows that already exist, no allocation, no listener
+    // churn. See syncSettingsPanel for why this must not re-render.
+    this.syncSettingsPanel();
+
     // Task-selector visibility. Idempotent, so safe to run on every tick. The
     // unlink-on-hide side effect lives in the settings toggle's onChange (calling
     // setTask here would fire every tick); on load no task is ever pre-linked.
@@ -1396,6 +1426,7 @@ export class GentlePomoView extends ItemView {
       input.checked = initial;
       wrap.createSpan({ cls: "gp-toggle-slider" });
       this.registerDomEvent(input, "change", () => void onChange(input.checked));
+      return { row, input };
     };
 
     const segmentedRow = <T>(
@@ -1486,15 +1517,49 @@ export class GentlePomoView extends ItemView {
       }
     );
 
-    section("Auto-start");
-    toggleRow("Auto-start break", settings.autoStartBreak, async (v) => {
-      settings.autoStartBreak = v;
-      await this.plugin.saveSettings();
-    });
-    toggleRow("Auto-start focus", settings.autoStartFocus, async (v) => {
-      settings.autoStartFocus = v;
-      await this.plugin.saveSettings();
-    });
+    // Two sections keyed by EVENT, replacing the flat "Auto-start" pair. The
+    // heading names the moment once, so both rows under it answer the same
+    // question and the duplicate "Play a chime" labels are unambiguous. Flat
+    // rows put opposite mode words side by side ("Auto-start break" above
+    // "Chime when focus ends"), where adjacency fought comprehension — and the
+    // pairing is also what makes a disappearing chime row self-explanatory.
+    //
+    // Each shared row registers itself for syncSettingsPanel(), which re-seeds
+    // it when the same setting is changed from the settings tab.
+    this.sharedPanelRows = [];
+    const sharedToggle = (
+      key: SharedPanelKey,
+      label: string,
+      onSaved?: () => void,
+      visible?: () => boolean
+    ) => {
+      const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
+        settings[key] = v;
+        await this.plugin.saveSettings();
+        onSaved?.();
+        // Fan out: the engine is silent while the timer is idle, so without
+        // this a second open panel (and the settings tab) never converges.
+        this.plugin.applySettingsToOpenViews();
+      });
+      this.sharedPanelRows.push({ key, row, input, visible });
+      return { row, input };
+    };
+
+    section("When focus ends");
+    sharedToggle("autoStartBreak", "Start the break", () => this.syncSettingsPanel());
+    sharedToggle(
+      "focusEndSoundEnabled",
+      "Play a chime",
+      undefined,
+      // Hidden while the break starts on its own: that transition always
+      // chimes, so there is nothing here to decide.
+      () => !settings.autoStartBreak
+    );
+
+    section("When a break ends");
+    sharedToggle("autoStartFocus", "Start focusing", () => this.syncSettingsPanel());
+    sharedToggle("breakEndSoundEnabled", "Play a chime", undefined, () => !settings.autoStartFocus);
+    this.syncSettingsPanel();
 
     const resetWrap = this.settingsPanel.createDiv("gp-settings-reset");
     const resetBtn = resetWrap.createEl("button", {
@@ -1510,11 +1575,42 @@ export class GentlePomoView extends ItemView {
       settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
+      settings.focusEndSoundEnabled = DEFAULT_SETTINGS.focusEndSoundEnabled;
+      // NOT DEFAULT_SETTINGS.breakEndSoundEnabled: that is false because it is
+      // the upgrade merge base (see settingsStore.deriveBreakEndChime). What a
+      // reset should restore is the value a NEW install gets, which is on.
+      settings.breakEndSoundEnabled = true;
       await this.plugin.saveSettings();
       this.timer.updateDuration("focus", settings.focusMinutes);
       this.timer.updateDuration("break", settings.breakMinutes);
       this.music.applyVolume();
       this.renderSettingsPanel();
+      // Reset writes shared settings, so other open panels and the settings tab
+      // have to hear about it too.
+      this.plugin.applySettingsToOpenViews();
     });
+  }
+
+  /**
+   * Re-seed the panel controls that can also be changed from the settings tab,
+   * and apply their visibility rules. Called on every engine emit via
+   * applySettings(), and directly when a paired toggle is flipped in the panel.
+   *
+   * This re-SEEDS; it must never call renderSettingsPanel(), which empties the
+   * container and re-registers every listener. `registerDomEvent` releases on
+   * unload rather than on removal, and applySettings() runs on a 50ms tick — so
+   * a rebuild here would leak twenty detached rows a second. Same rule as the
+   * station rows, which are built once and only re-labelled.
+   *
+   * Only SHARED controls are re-seeded. The number inputs are deliberately left
+   * alone: writing `input.value` while the user is mid-edit rewrites the field
+   * under their caret, and nothing else can change them anyway.
+   */
+  private syncSettingsPanel() {
+    const settings = this.plugin.settings;
+    for (const entry of this.sharedPanelRows) {
+      entry.input.checked = Boolean(settings[entry.key]);
+      if (entry.visible) entry.row.toggleClass("gp-hidden", !entry.visible());
+    }
   }
 }
