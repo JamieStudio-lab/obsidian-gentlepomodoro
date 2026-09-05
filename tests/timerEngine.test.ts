@@ -762,6 +762,86 @@ describe("TimerEngine — opt-in end-of-session chime", () => {
     timer.pause();
   });
 
+  it("Stop just before zero does not cue twice — the tick outlives its awaits", async () => {
+    // finish() awaits four vault round trips before switchMode() replaces the
+    // state, and the 50ms loop used to keep running through all of them: the
+    // Stop cued, the clock then crossed zero mid-await, and the crossing cued
+    // AGAIN. Harmless before 0.6.3 when the crossing was silent; a real double
+    // cue once the chime exists. clearLoop() as finish()'s first statement.
+    const stub = makePluginStub({ focusMinutes: 1, sessionCounterDate: "2025-05-18" });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // Annotated rather than inferred: TypeScript cannot see that the executor
+    // runs synchronously, so it narrows the binding back to `null`.
+    const gate: { release: () => void } = { release: () => {} };
+    stub.plugin.logManager.endSession = () =>
+      new Promise<void>((resolve) => {
+        gate.release = resolve;
+      });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(59_500); // 500ms left
+    const finished = timer.finish(); // cues, then blocks on the log write
+    vi.advanceTimersByTime(2_000); // the clock sails past zero while it waits
+    gate.release();
+    await finished;
+
+    expect(played).toEqual([DRUM, BELL]); // not [DRUM, BELL, BELL]
+    timer.pause();
+  });
+
+  it("a backward clock jump re-arms the chime instead of silencing the next Stop", async () => {
+    // The tick writes remainingMs like reset() and addMinutes() do, so it needs
+    // their clear: an NTP correction or a laptop resume that steps the clock
+    // BACK is arithmetically the same as adding time. Without it the flag stays
+    // set across the jump, and a Stop after the next crossing goes silent —
+    // where 0.6.2 always rang.
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordCues(timer, stub.settings);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000); // crossing: chimes, flag set, overtime
+    expect(played).toEqual([DRUM, BELL]);
+
+    // Step the clock backward by pushing the target out, then tick once.
+    const withTarget = timer as unknown as { targetTime: number };
+    withTarget.targetTime += 10 * 60_000;
+    vi.advanceTimersByTime(100);
+
+    expect(timer.getState().remainingMs).toBeGreaterThan(0);
+    stub.settings.focusEndSoundEnabled = false; // second crossing is silent
+    withTarget.targetTime = Date.now() - 1_000;
+    vi.advanceTimersByTime(100);
+
+    await timer.finish();
+    expect(played).toEqual([DRUM, BELL, BELL]); // the Stop still rings
+  });
+
+  it("an inaudible cue (volume 0) neither rings nor claims to have rung", () => {
+    // Only reachable from a hand-edited data.json, but a stamped flag for a
+    // cue nobody heard would silence the following Stop, and playSound would
+    // still dip the lofi music for the length of the clip.
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.soundVolume = 0;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect((timer as unknown as { endCueSounded: boolean }).endCueSounded).toBe(false);
+    timer.pause();
+  });
+
   it("each edge reads its own chime setting, not the other's", async () => {
     // A break ending must consult breakEndSoundEnabled even while the FOCUS
     // chime is off, or the two edges collapse into one control.

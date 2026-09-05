@@ -152,6 +152,13 @@ export class TimerEngine {
       const prev = this.state.remainingMs;
       this.state.remainingMs = this.targetTime - now;
 
+      // The tick is a writer of remainingMs like reset() and addMinutes(), so it
+      // needs their clear too. `targetTime - now` rises whenever the system clock
+      // steps BACKWARD (an NTP correction, a manual change, a VM or laptop resume
+      // that re-syncs), which is arithmetically identical to adding time — and a
+      // stale flag would then silence the next crossing's Stop.
+      if (this.state.remainingMs > 0) this.endCueSounded = false;
+
       // Natural completion: fire once on the tick that crosses zero. The
       // `prev > 0` guard guarantees this fires a single time (later ticks have
       // prev <= 0; a new session restores a positive remainingMs). Only act
@@ -218,21 +225,38 @@ export class TimerEngine {
    */
   private maybeChimeAtCrossing() {
     if (!this.endChimeWanted()) return;
-    if (this.plugin.settings.soundEnabled) this.endCueSounded = true;
+    if (this.cueIsAudible()) this.endCueSounded = true;
     this.playEndCue();
+  }
+
+  /**
+   * The settings-level conditions playSound() checks before it does anything.
+   * Kept in step with its two early returns ON PURPOSE — this is what makes
+   * `endCueSounded` record an audible EVENT rather than an intent, and both can
+   * be flipped between a crossing and the Stop that follows it.
+   *
+   * It does not, and cannot cheaply, cover the failures further inside
+   * playSound (no AudioContext, a resume that never lands, a decode that
+   * throws). Those would need the stamp to wait on the decode, which opens a
+   * window where a fast Stop double-cues — a worse trade for a rarer fault. The
+   * realistic one of them, an iOS context parked in "interrupted", is fixed at
+   * the resume instead.
+   */
+  private cueIsAudible(): boolean {
+    return this.plugin.settings.soundEnabled && this.plugin.settings.soundVolume > 0;
   }
 
   /**
    * Whether a manual Stop/Skip should ring the end cue. False only in overtime
    * where the opt-in chime already rang for this same session.
    *
-   * `endCueSounded` alone carries the logic — a mutation run confirmed that
-   * swapping `> 0` for `>= 0` kills no test, because the flag is only ever set
-   * on a crossing (where remainingMs has gone negative) and is cleared wherever
-   * time goes positive again. The `remainingMs > 0` arm is therefore deliberate
-   * insurance, not a second condition: it keeps the ordinary case (Stop before
-   * the clock runs out) correct even if a future edit adds a way to put time
-   * back without clearing the flag. Keep it, but do not mistake it for the rule.
+   * BOTH arms are load-bearing; an earlier version of this comment called the
+   * first one decoration and was wrong. `remainingMs > 0` is what keeps the
+   * ordinary case (Stop before the clock runs out) correct, and it is the only
+   * guard on the tick path if the clock ever steps backward far enough to
+   * outrun the clear added there. Swapping `> 0` for `>= 0` still kills no test
+   * — the flag is only set once remainingMs has gone negative — but that is a
+   * statement about the boundary, not a licence to drop the arm.
    */
   private shouldPlayManualEndCue(): boolean {
     return this.state.remainingMs > 0 || !this.endCueSounded;
@@ -421,6 +445,12 @@ export class TimerEngine {
 
   private async playSound(filename: string) {
     if (!this.plugin.settings.soundEnabled) return;
+    // Volume 0 is not reachable from the segmented control (0.3 / 0.7 / 1.0) but
+    // is from a hand-edited data.json. Returning here rather than playing silence
+    // keeps two things honest: the cue does not dip the lofi music for four
+    // seconds for nothing, and `endCueSounded` is not stamped for a cue nobody
+    // heard — which would silence the following Stop.
+    if (this.plugin.settings.soundVolume <= 0) return;
 
     const dataUrl = AUDIO_URLS[filename];
     if (!dataUrl) {
@@ -433,8 +463,13 @@ export class TimerEngine {
       if (!ctx) return;
 
       // A context created off a user gesture starts suspended; resume so a
-      // timer-triggered completion sound is actually audible.
-      if (ctx.state === "suspended") await ctx.resume();
+      // timer-triggered completion sound is actually audible. "interrupted" is
+      // WebKit's own state — iOS parks the context there on a phone call, Siri,
+      // or a screen lock, which is precisely the walked-away case the chime
+      // exists for. It IS in lib.dom.d.ts's AudioContextState. Listing both
+      // rather than `!== "running"` keeps a closed context on the clean skip
+      // path instead of a rejected resume.
+      if (ctx.state === "suspended" || ctx.state === "interrupted") await ctx.resume();
 
       // Decode each bundled asset once, then reuse its AudioBuffer.
       let audioBuffer = this.audioBuffers.get(filename);
@@ -575,6 +610,13 @@ export class TimerEngine {
    * the auto-start toggle is on — that's what Skip / natural completion are for.
    */
   async finish() {
+    // Stop the tick FIRST. handleFinished() below awaits four vault round trips
+    // before switchMode() replaces the state, and the 50ms loop keeps running
+    // through all of them — so a Stop pressed a few hundred ms before zero used
+    // to cue here, cross zero mid-await, and cue AGAIN from the crossing.
+    // Harmless before 0.6.3, when the crossing made no sound; a measured double
+    // cue now. switchMode() restarts the loop when it auto-starts.
+    this.clearLoop();
     // Play specific sounds based on mode when manually finishing — unless the
     // opt-in chime already rang for this session in overtime.
     if (this.shouldPlayManualEndCue()) {
@@ -585,6 +627,9 @@ export class TimerEngine {
 
   /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
   async skip() {
+    // Stop the tick first — same reason as finish(): the awaits below outlast
+    // the crossing, and a second cue would fire from the tick mid-skip.
+    this.clearLoop();
     // Check if we are in a "stopped" state (fresh start, not running, not paused)
     const isStopped = !this.state.isRunning && this.state.remainingMs === this.state.totalMs;
 

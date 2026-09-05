@@ -44,6 +44,14 @@ export type SessionEndEdge = "focus" | "break";
  * edge's chime there killed nothing.
  */
 export interface SessionEndSettings {
+  /**
+   * The master mute. It is in here because the line's whole job is to say
+   * whether a sound will happen, and `playSound()` returns at its first
+   * statement when this is false — so a summary that ignored it would promise a
+   * chime that cannot ring, which is the confusion issue #5 reported, handed
+   * back to the users who muted.
+   */
+  soundEnabled: boolean;
   focusEndSoundEnabled: boolean;
   breakEndSoundEnabled: boolean;
   autoStartBreak: boolean;
@@ -58,17 +66,25 @@ export interface SessionEndSettings {
  */
 export function sessionEndSummary(edge: SessionEndEdge, settings: SessionEndSettings): string {
   const focus = edge === "focus";
-  const chime = focus ? settings.focusEndSoundEnabled : settings.breakEndSoundEnabled;
+  // A chime is only real if the master switch is on as well. Reported as
+  // "sound is off" rather than silently downgrading to the no-chime wording,
+  // because the user asked for a chime and deserves to know why they will not
+  // get one — the settings tab has no master control on it at all.
+  const wantsChime = focus ? settings.focusEndSoundEnabled : settings.breakEndSoundEnabled;
+  const chime = wantsChime && settings.soundEnabled;
+  const muted = wantsChime && !settings.soundEnabled;
   // Note the deliberate crossing: the FOCUS edge is governed by autoStartBreak,
   // because what starts when focus ends is the break.
   const autoStart = focus ? settings.autoStartBreak : settings.autoStartFocus;
   const next = focus ? "the break starts" : "focus starts again";
 
   if (autoStart) {
+    if (muted) return `Sound is off — ${next}.`;
     // The state 0.6.2 could not express is the one most worth spelling out: a
     // hand-over that makes no sound at all.
     return chime ? `A chime, then ${next}.` : `${capitalize(next)}, with no sound.`;
   }
+  if (muted) return "Sound is off — the timer counts up.";
   // No auto-start: the timer slides into overtime and counts up, which is the
   // plugin's deliberate flow-protecting default.
   return chime ? "A chime, then the timer counts up." : "Nothing — the timer counts up.";

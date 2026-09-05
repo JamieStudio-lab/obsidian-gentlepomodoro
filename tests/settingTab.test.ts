@@ -74,10 +74,18 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
     },
     app_workspace: null,
   };
-  // The tab only reaches app.workspace through applySettingsToOpenViews, which
-  // needs a real workspace; give it one that owns no leaves.
+  // The tab reaches app.workspace only through applySettingsToOpenViews. Give
+  // it ONE leaf whose view records the call: with an empty leaf list the fan-out
+  // is a no-op nobody can observe, so a deleted applySettingsToOpenViews() would
+  // be invisible to every assertion below — and that call is the only thing
+  // keeping an open gear panel from showing a stale toggle. applySettingsToOpenViews
+  // duck-types on `"applySettings" in view`, so this stub is enough.
   (plugin as unknown as { app: unknown }).app = {
-    workspace: { getLeavesOfType: () => [] },
+    workspace: {
+      getLeavesOfType: () => [
+        { view: { applySettings: () => calls.push({ method: "applySettings", args: [] }) } },
+      ],
+    },
   };
   const tab = new GentlePomoSettingTab(
     plugin.app as never,
@@ -364,6 +372,7 @@ describe("Audio group", () => {
     el.settings.filter((s) => !s.heading).map((s) => s.name);
 
   const AUDIO_ROWS = [
+    "Sound",
     "Chime when focus ends",
     AUTO_START_BREAK_LABEL,
     "Chime when break ends",
@@ -463,14 +472,21 @@ describe("Audio group", () => {
       "breakEndSoundEnabled",
       "autoStartBreak",
       "autoStartFocus",
+      "soundEnabled",
     ] as const) {
       const c = makeTab();
-      expect(c.settings[key]).toBe(false);
+      c.settings[key] = false;
       await c.tab.setControlValue(key, true);
       expect(c.settings[key], key).toBe(true);
       expect(
         c.calls.some((call) => call.method === "saveSettings"),
         key
+      ).toBe(true);
+      // The fan-out itself, now observable. Without it an open gear panel keeps
+      // showing the old toggle: the engine is idle, so nothing reconciles it.
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} must fan out to open views`
       ).toBe(true);
       expect(c.tab.getControlValue(key), key).toBe(true);
     }

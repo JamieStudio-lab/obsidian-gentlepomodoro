@@ -503,13 +503,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         heading: "Audio",
         rows: [
           {
+            // The master gate for everything else in this group, and until
+            // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
+            // read "Rings when focus time is up" here with no way to see why
+            // it did not, and no control on this screen to change it.
+            name: "Sound",
+            desc: "Play the plugin's audio cues at all. With this off, nothing below makes a sound.",
+            control: { type: "toggle", key: "soundEnabled" },
+          },
+          {
             name: "Chime when focus ends",
             desc: "Rings when focus time is up, whether or not the break then starts on its own. Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
             name: AUTO_START_BREAK_LABEL,
-            desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on.",
+            desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on too.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           this.endSummaryRow("focus"),
@@ -520,7 +529,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           {
             name: AUTO_START_FOCUS_LABEL,
-            desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on.",
+            desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on too.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
           this.endSummaryRow("break"),
@@ -734,6 +743,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         return;
       case "autoStartFocus":
         settings.autoStartFocus = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "soundEnabled":
+        // The master gate: it changes what every summary line in this group
+        // says, so it refreshes them exactly like the two chimes do.
+        settings.soundEnabled = Boolean(value);
         await this.plugin.saveSettings();
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();

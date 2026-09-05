@@ -4,6 +4,7 @@ import type { SessionEndSettings } from "../sessionEndSummary";
 
 /** Only the four fields the summary reads. */
 const settings = (o: Partial<SessionEndSettings> = {}): SessionEndSettings => ({
+  soundEnabled: true,
   focusEndSoundEnabled: false,
   breakEndSoundEnabled: false,
   autoStartBreak: false,
@@ -108,13 +109,54 @@ describe("sessionEndSummary", () => {
     );
   });
 
+  it("says so when the master mute would silence a chime the user asked for", () => {
+    // The line's whole job is to answer "will this make a sound?". Ignoring the
+    // master gate would promise a chime that playSound() drops at its first
+    // statement — reintroducing issue #5's confusion for muted users, inside
+    // the very mechanism added to stop people guessing. The settings tab has
+    // its own Sound row now, but the panel's is five rows above this line.
+    expect(
+      sessionEndSummary("focus", settings({ soundEnabled: false, focusEndSoundEnabled: true }))
+    ).toBe("Sound is off — the timer counts up.");
+
+    expect(
+      sessionEndSummary(
+        "focus",
+        settings({ soundEnabled: false, focusEndSoundEnabled: true, autoStartBreak: true })
+      )
+    ).toBe("Sound is off — the break starts.");
+
+    expect(
+      sessionEndSummary(
+        "break",
+        settings({ soundEnabled: false, breakEndSoundEnabled: true, autoStartFocus: true })
+      )
+    ).toBe("Sound is off — focus starts again.");
+  });
+
+  it("does not blame the mute when no chime was asked for", () => {
+    // Muted with the chime OFF is not a thwarted intention — nothing was going
+    // to play anyway, so the ordinary wording is the honest one.
+    expect(sessionEndSummary("focus", settings({ soundEnabled: false }))).toBe(
+      "Nothing — the timer counts up."
+    );
+    expect(
+      sessionEndSummary("focus", settings({ soundEnabled: false, autoStartBreak: true }))
+    ).toBe("The break starts, with no sound.");
+  });
+
   it("stays short enough for a 260px column", () => {
     for (const edge of ["focus", "break"] as const) {
-      for (const chime of [false, true]) {
-        for (const autoStart of [false, true]) {
-          const text = sessionEndSummary(edge, forEdge(edge, chime, autoStart));
-          expect(text.length, text).toBeLessThanOrEqual(40);
-          expect(text.endsWith("."), text).toBe(true);
+      for (const soundEnabled of [false, true]) {
+        for (const chime of [false, true]) {
+          for (const autoStart of [false, true]) {
+            const text = sessionEndSummary(edge, {
+              ...forEdge(edge, chime, autoStart),
+              soundEnabled,
+            });
+            expect(text.length, text).toBeLessThanOrEqual(40);
+            expect(text.endsWith("."), text).toBe(true);
+          }
         }
       }
     }

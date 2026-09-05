@@ -17,6 +17,7 @@ import {
  * error, and `settings[key]` below stays type-checked.
  */
 type SharedPanelKey =
+  | "soundEnabled"
   | "autoStartBreak"
   | "autoStartFocus"
   | "focusEndSoundEnabled"
@@ -1495,11 +1496,23 @@ export class GentlePomoView extends ItemView {
       this.timer.updateDuration("break", v);
     });
 
+    const sharedToggle = (key: SharedPanelKey, label: string) => {
+      const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
+        settings[key] = v;
+        await this.plugin.saveSettings();
+        // Fan out: the engine is silent while the timer is idle, so without
+        // this a second open panel (and the settings tab) never converges.
+        this.plugin.applySettingsToOpenViews();
+      });
+      this.sharedPanelRows.push({ key, row, input });
+      return { row, input };
+    };
+
     section("Audio");
-    toggleRow("Sound", settings.soundEnabled, async (v) => {
-      settings.soundEnabled = v;
-      await this.plugin.saveSettings();
-    });
+    // Dual-surface since 0.6.3 (it gained a row in the settings tab, where it
+    // is the master gate for the two chimes), so it fans out and re-seeds like
+    // the other shared rows rather than being written and forgotten.
+    sharedToggle("soundEnabled", "Sound");
     segmentedRow(
       "Volume",
       [
@@ -1540,18 +1553,6 @@ export class GentlePomoView extends ItemView {
     // Each shared row registers itself for syncSettingsPanel(), which re-seeds
     // it when the same setting is changed from the settings tab.
     this.sharedPanelRows = [];
-    const sharedToggle = (key: SharedPanelKey, label: string) => {
-      const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
-        settings[key] = v;
-        await this.plugin.saveSettings();
-        // Fan out: the engine is silent while the timer is idle, so without
-        // this a second open panel (and the settings tab) never converges.
-        this.plugin.applySettingsToOpenViews();
-      });
-      this.sharedPanelRows.push({ key, row, input });
-      return { row, input };
-    };
-
     // Four independent rows, nothing conditional. "Play a chime" governs BOTH
     // paths — the clock running out into overtime and the next session starting
     // on its own — so neither row is ever moot and neither is hidden. An

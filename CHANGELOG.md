@@ -46,12 +46,26 @@ next session **without** a sound.
 - **Nothing you hear changes when you upgrade.** Each chime starts out matching
   your current auto-start setting, which is exactly what your timer does today —
   so the sounds stay the same and the switch is simply yours now. New installs
-  start with "Chime when break ends" on.
+  start with "Chime when break ends" on. One thing to know afterwards: because
+  the chime is now a setting of its own, turning an auto-start _on_ no longer
+  brings a sound with it, and turning one _off_ no longer takes the sound away.
+  Whatever the chime says is what you get.
+- **The plugin settings now carry the master Sound switch too**, at the top of
+  the Audio group. It was previously only in the timer panel, so the settings
+  page could promise a chime with no way to see — or change — what was
+  silencing it.
 
 ### Fixed
 
 - Stop and Skip no longer play the end sound a second time when the chime has
-  already rung for that session.
+  already rung for that session, or when pressed in the last moments before the
+  timer runs out.
+- With Sound off, the line under the toggles now says so instead of promising a
+  chime that cannot play.
+- The chime is no longer lost on iPhone and iPad after a phone call, Siri, or a
+  locked screen — the situation it is most needed in.
+- A backward jump in the system clock (an automatic time correction, or waking a
+  sleeping laptop) no longer swallows the next Stop sound.
 
 ### Internal
 
