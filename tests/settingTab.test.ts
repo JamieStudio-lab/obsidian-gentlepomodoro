@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 // Imported from the mock by path, not through the "obsidian" alias: the alias
 // is a vitest resolution rule, so `tsc` would type these against the real
 // package (which has no recording stubs). Vitest points the alias at this very
@@ -6,7 +8,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Setting, type RecordedComponent } from "../__mocks__/obsidian";
 import { GentlePomoSettingTab } from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
-import { sessionEndSummary } from "../sessionEndSummary";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  sessionEndSummary,
+} from "../sessionEndSummary";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -359,9 +365,9 @@ describe("Audio group", () => {
 
   const AUDIO_ROWS = [
     "Chime when focus ends",
-    "Start the next break automatically",
+    AUTO_START_BREAK_LABEL,
     "Chime when break ends",
-    "Start the next focus automatically",
+    AUTO_START_FOCUS_LABEL,
   ];
 
   it("shows all four rows whatever the auto-start toggles are set to", () => {
@@ -426,6 +432,25 @@ describe("Audio group", () => {
 
     // And the other edge is untouched by either write.
     expect(summaryOf("break")).toBe("Nothing — the timer counts up.");
+  });
+
+  it("uses the same auto-start labels as the timer panel", () => {
+    // These two strings are identical on both surfaces by design, so they are
+    // shared rather than typed twice. The panel cannot be imported by a test
+    // (it pulls in the whole Obsidian view), so it is read as text — the same
+    // route tests/pixelCityArt.test.ts takes for view assertions.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    expect(view).toContain("AUTO_START_BREAK_LABEL");
+    expect(view).toContain("AUTO_START_FOCUS_LABEL");
+    // ...and not a hand-typed copy that could drift from the tab's.
+    expect(view).not.toContain('"Auto-start the break"');
+    expect(view).not.toContain('"Auto-start the focus"');
+
+    const c = makeTab();
+    c.tab.display();
+    const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
+    expect(names).toContain(AUTO_START_BREAK_LABEL);
+    expect(names).toContain(AUTO_START_FOCUS_LABEL);
   });
 
   it("writes each row through and fans out to open panels", async () => {

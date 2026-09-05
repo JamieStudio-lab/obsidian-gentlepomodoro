@@ -16,6 +16,23 @@
  * stay true to the behaviour are exactly the kind of thing that rots quietly.
  */
 
+/**
+ * The auto-start toggle labels, shared verbatim by the timer panel and the
+ * settings tab.
+ *
+ * Shared because they are identical, and identical because they can be: each
+ * says what it does without needing context from around it. The two CHIME
+ * labels are deliberately NOT shared — the panel says "Play a chime" under a
+ * section heading that already names the moment, while the tab has no heading
+ * doing that work and must spell out "Chime when focus ends". Sharing a string
+ * that has to differ per surface would be worse than duplicating one.
+ *
+ * "Auto-start" rather than "Start": the earlier "Start the break" read as
+ * though pressing it might begin one immediately.
+ */
+export const AUTO_START_BREAK_LABEL = "Auto-start the break";
+export const AUTO_START_FOCUS_LABEL = "Auto-start the focus";
+
 /** Which end-of-session boundary the summary describes. */
 export type SessionEndEdge = "focus" | "break";
 

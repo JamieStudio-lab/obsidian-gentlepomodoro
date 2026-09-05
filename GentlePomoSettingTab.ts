@@ -10,7 +10,12 @@ import {
   type TextComponent,
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
-import { sessionEndSummary, type SessionEndEdge } from "./sessionEndSummary";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  sessionEndSummary,
+  type SessionEndEdge,
+} from "./sessionEndSummary";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -503,7 +508,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
-            name: "Start the next break automatically",
+            name: AUTO_START_BREAK_LABEL,
             desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
@@ -514,7 +519,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
-            name: "Start the next focus automatically",
+            name: AUTO_START_FOCUS_LABEL,
             desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartFocus" },
           },

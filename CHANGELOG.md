@@ -40,10 +40,9 @@ next session **without** a sound.
   whether it still applies when the next session starts on its own; the summary
   answers that on screen instead of leaving you to test it. The same line
   appears under each pair in the plugin settings.
-- The auto-start toggles are now called **Auto-start the next break** and
-  **Auto-start the next focus** in the timer panel, and **Start the next break
-  automatically** / **Start the next focus automatically** in the plugin
-  settings — "Start the break" read as though it might begin one right now.
+- The auto-start toggles are now called **Auto-start the break** and
+  **Auto-start the focus**, in both the timer panel and the plugin settings —
+  "Start the break" read as though it might begin one right now.
 - **Nothing you hear changes when you upgrade.** Each chime starts out matching
   your current auto-start setting, which is exactly what your timer does today —
   so the sounds stay the same and the switch is simply yours now. New installs

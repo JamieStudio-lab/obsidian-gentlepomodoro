@@ -3,7 +3,12 @@ import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
-import { sessionEndSummary, type SessionEndEdge } from "./sessionEndSummary";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  sessionEndSummary,
+  type SessionEndEdge,
+} from "./sessionEndSummary";
 
 /**
  * The settings that live on BOTH the gear panel and the Obsidian settings tab.
@@ -1567,12 +1572,12 @@ export class GentlePomoView extends ItemView {
 
     section("When focus ends");
     sharedToggle("focusEndSoundEnabled", "Play a chime");
-    sharedToggle("autoStartBreak", "Auto-start the next break");
+    sharedToggle("autoStartBreak", AUTO_START_BREAK_LABEL);
     summaryFor("focus");
 
     section("When a break ends");
     sharedToggle("breakEndSoundEnabled", "Play a chime");
-    sharedToggle("autoStartFocus", "Auto-start the next focus");
+    sharedToggle("autoStartFocus", AUTO_START_FOCUS_LABEL);
     summaryFor("break");
 
     // Seed the summaries now rather than waiting for the next engine emit: the
