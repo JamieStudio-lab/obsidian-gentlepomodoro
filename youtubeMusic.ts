@@ -939,6 +939,23 @@ export function describeMusicError(code: number, iosApp = false): string {
 /**
  * Map the stored 0–1 music volume onto the embed's 0–100 setVolume scale.
  */
+/**
+ * The volume the player should actually be at, given the user's level and the
+ * mute. Muted resolves to EXACTLY 0, which is load-bearing in three places:
+ * `musicVolumeTo100` clamps there, `fadeOut` early-returns on `from <= 0`, and
+ * a duck computed from it collapses to a harmless 0→0 ramp. A future "quiet
+ * mode" at, say, 0.05 would silently change all three, so the constant is
+ * pinned by a test rather than left as an obvious-looking ternary.
+ *
+ * Applying the mute HERE — at the single accessor every reader shares — is what
+ * lets MusicController stay byte-identical: its eight reads of the user volume
+ * (the convergence check, the duck base, both fade endpoints and three stamps)
+ * cannot disagree, for the same reason two calls to one pure function cannot.
+ */
+export function effectiveMusicVolume(volume01: number, soundEnabled: boolean): number {
+  return soundEnabled ? volume01 : 0;
+}
+
 export function musicVolumeTo100(volume01: number): number {
   return Math.round(Math.min(1, Math.max(0, volume01)) * 100);
 }

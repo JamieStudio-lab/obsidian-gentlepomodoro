@@ -22,7 +22,8 @@ type SharedPanelKey =
   | "autoStartBreak"
   | "autoStartFocus"
   | "focusEndSoundEnabled"
-  | "breakEndSoundEnabled";
+  | "breakEndSoundEnabled"
+  | "musicSoundEnabled";
 import {
   DEFAULT_SETTINGS,
   VIEW_TYPE_GENTLE_POMO,
@@ -51,6 +52,7 @@ import {
   resolveStationIndex,
   buildStationList,
   nextStationIndex,
+  effectiveMusicVolume,
 } from "./youtubeMusic";
 
 declare const moment: MomentFactory;
@@ -1283,7 +1285,15 @@ export class GentlePomoView extends ItemView {
           this.musicIframe?.contentWindow?.postMessage(payload, origin);
         }
       },
-      musicVolume: () => this.plugin.settings.musicVolume,
+      // The mute is applied HERE, at the single accessor, which is why
+      // MusicController needed no change at all: its eight reads of the user
+      // volume (convergence check, duck base, both fade endpoints, three
+      // stamps) all come through this lambda and so cannot disagree.
+      musicVolume: () =>
+        effectiveMusicVolume(
+          this.plugin.settings.musicVolume,
+          this.plugin.settings.musicSoundEnabled
+        ),
       recordPosition: (position) => {
         this.plugin.recordMusicPosition(position);
       },
@@ -1497,6 +1507,15 @@ export class GentlePomoView extends ItemView {
       this.timer.updateDuration("break", v);
     });
 
+    // Both registries are re-armed HERE, before any row can register itself.
+    // renderSettingsPanel() runs again on every gear-open, and it empties the
+    // container first — so a reset placed lower down silently drops every row
+    // built above it. That shipped for one commit: `sharedPanelRows = []` sat
+    // below the Audio section, so "Timer sounds" registered and was then wiped,
+    // and changing it in the settings tab left the panel's toggle stale.
+    this.sharedPanelRows = [];
+    this.endSummaryLines = [];
+
     const sharedToggle = (key: SharedPanelKey, label: string) => {
       const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
         settings[key] = v;
@@ -1530,7 +1549,7 @@ export class GentlePomoView extends ItemView {
     // which sits two rows below and which this switch has never gated.
     hint("Also the drum when focus starts and the sound when you stop. Music is separate.");
     segmentedRow(
-      "Volume",
+      "Timer volume",
       [
         { label: "Low", value: 0.3 },
         { label: "Mid", value: 0.7 },
@@ -1542,6 +1561,18 @@ export class GentlePomoView extends ItemView {
         await this.plugin.saveSettings();
       }
     );
+    // The music's own mute, so the Audio section reads as two matched pairs
+    // (toggle / hint / volume, twice) rather than one control with a mute and
+    // one without. It is a sharedToggle for the fan-out and re-seed, not
+    // because it has a settings-tab row — deliberately it has none: both
+    // volumes are panel-only, and a tab-only mute would split one mixer
+    // channel across two screens, which is the defect this release fixed in
+    // the other direction. The Music group is also the worst possible home for
+    // it, directly above "Show music player", which STOPS playback.
+    sharedToggle("musicSoundEnabled", "Music sound");
+    // State-independent on purpose: "keeps playing, you just won't hear it" is
+    // false whenever the toggle is on, which is the default.
+    hint("Off silences the music without stopping it.");
     segmentedRow(
       "Music volume",
       [
@@ -1566,9 +1597,6 @@ export class GentlePomoView extends ItemView {
     // "Play a sound when focus ends"), where adjacency fought comprehension —
     // pairing is also what makes a disappearing chime row self-explanatory.
     //
-    // Each shared row registers itself for syncSettingsPanel(), which re-seeds
-    // it when the same setting is changed from the settings tab.
-    this.sharedPanelRows = [];
     // Four independent rows, nothing conditional. "Play a sound" governs BOTH
     // paths — the clock running out into overtime and the next session starting
     // on its own — so neither row is ever moot and neither is hidden. An
@@ -1581,7 +1609,6 @@ export class GentlePomoView extends ItemView {
     // happen — because "Play a sound" cannot carry its own scope, and the
     // question it leaves ("does it still play if the break auto-starts?")
     // deserves an answer on screen rather than by experiment.
-    this.endSummaryLines = [];
     const summaryFor = (edge: SessionEndEdge) => {
       const el = this.settingsPanel.createDiv({ cls: "gp-settings-hint" });
       this.endSummaryLines.push({ edge, el });
@@ -1614,6 +1641,7 @@ export class GentlePomoView extends ItemView {
       settings.breakMinutes = DEFAULT_SETTINGS.breakMinutes;
       settings.soundEnabled = DEFAULT_SETTINGS.soundEnabled;
       settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
+      settings.musicSoundEnabled = DEFAULT_SETTINGS.musicSoundEnabled;
       settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;

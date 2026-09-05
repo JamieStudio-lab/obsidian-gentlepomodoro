@@ -26,8 +26,16 @@ next session **without** a sound.
   with no sound at all. Previously auto-start always chimed and there was no way
   to turn that off.
 
+- **A mute for the music**, next to its volume in the timer panel. Unlike pause
+  or stop it silences without stopping, so a 24/7 lofi stream stays live instead
+  of dropping off the edge with nothing to come back to. The timer panel's Audio
+  section now reads as two matched pairs — **Timer sounds** with **Timer volume**,
+  **Music sound** with **Music volume**.
+
 ### Changed
 
+- The panel's volume row is now **Timer volume**, so it pairs with the switch
+  above it instead of sitting unlabelled next to **Music volume**.
 - **The auto-start toggles now also appear in the plugin settings**, in the new
   Audio group alongside the chimes.
 - **The timer panel follows settings changed elsewhere.** Flip a shared setting
@@ -68,6 +76,9 @@ next session **without** a sound.
   locked screen — the situation it is most needed in.
 - A backward jump in the system clock (an automatic time correction, or waking a
   sleeping laptop) no longer swallows the next Stop sound.
+- Changing **Timer sounds** in the plugin settings now moves the matching switch
+  in an open timer panel, instead of leaving it stale until the panel is
+  reopened.
 
 ### Internal
 

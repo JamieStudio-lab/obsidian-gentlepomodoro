@@ -159,6 +159,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   musicName3: "",
   musicStationIndex: 0,
   showMusicPlayer: true,
+  musicSoundEnabled: true,
   musicVolume: 0.7,
   musicLoop: true,
   musicResume: true,

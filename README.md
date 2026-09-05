@@ -50,7 +50,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - **Links check and name themselves**: paste one and a bad link says so, while the name box fills in from the title. Type over it any time.
 - **Fades in and out** on every control — ▶️, ⏸, ⏹ and track skips all ease rather than cut. Change your mind mid-fade and it carries on.
 - **Gentle ducking**: session cues briefly dip the music and ease it back up, so they stay audible without jolting the mix.
-- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume in the in-view settings.
+- **Loops by default** (turn off **Loop music** to play once), with a **Music sound** mute and a **Low / Mid / High** music volume in the in-view settings. The mute silences without stopping, so a live stream stays live.
 - **Resumes where you left off, per link.** ⏹ **Stop** — or changing that link — makes it start from the top instead. Live streams always start live.
 - Fully manual — independent of your sessions; stops when you close the panel. A notice tells you if playback stalls.
 - **Desktop only.** YouTube won't load its player inside Obsidian on iOS at all (error 153) — no link works there, and nothing the plugin can set changes it. Every other feature works on mobile.

@@ -82,6 +82,13 @@ export interface GentlePomoSettings {
   // maps it to a slot that actually holds a URL.
   musicStationIndex: number;
   showMusicPlayer: boolean; // feature switch: off hides the controls and stops playback
+  /**
+   * The music's mute, kept separate from `musicVolume` so the level survives it.
+   * Storing a mute as `musicVolume: 0` cannot work: the panel's segmented row
+   * picks the NEAREST option, so 0 paints "Low" as active while the player is
+   * silent, and the next click on any segment destroys the mute.
+   */
+  musicSoundEnabled: boolean;
   musicVolume: number; // 0-1, mapped ×100 for the embed's setVolume
   musicLoop: boolean; // replay the video/playlist when it ends (no effect on live streams)
   musicResume: boolean; // reopen the music where it was paused/left off

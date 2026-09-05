@@ -453,10 +453,13 @@ describe("Audio group", () => {
     expect(view).toContain("AUTO_START_BREAK_LABEL");
     expect(view).toContain("AUTO_START_FOCUS_LABEL");
     expect(view).toContain("MASTER_SOUND_LABEL");
-    // ...and not a hand-typed copy that could drift from the tab's.
-    expect(view).not.toContain('"Auto-start the break"');
-    expect(view).not.toContain('"Auto-start the focus"');
-    expect(view).not.toContain('"Timer sounds"');
+    // ...and not a hand-typed copy that could drift from the tab's. Matched as
+    // an ARGUMENT (`, "label")`) rather than as a bare substring: the label also
+    // appears in prose comments, and a guard that cannot tell code from a
+    // comment fails on the next person who explains why the const exists.
+    for (const label of [AUTO_START_BREAK_LABEL, AUTO_START_FOCUS_LABEL, MASTER_SOUND_LABEL]) {
+      expect(view, `${label} must come from the shared const`).not.toContain(`, "${label}")`);
+    }
 
     const c = makeTab();
     c.tab.display();
@@ -464,6 +467,31 @@ describe("Audio group", () => {
     expect(names).toContain(AUTO_START_BREAK_LABEL);
     expect(names).toContain(AUTO_START_FOCUS_LABEL);
     expect(names).toContain(MASTER_SOUND_LABEL);
+  });
+
+  it("re-arms the panel's row registries BEFORE any row registers", () => {
+    // renderSettingsPanel() runs again on every gear-open and empties the
+    // container first, so both registries must be cleared at the TOP. A reset
+    // placed lower silently drops every row built above it — which shipped for
+    // one commit: `sharedPanelRows = []` sat below the Audio section, so
+    // "Timer sounds" registered and was immediately wiped, and changing it in
+    // this tab left the panel's toggle stale. Read as text; nothing can import
+    // the view.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const armed = view.indexOf("this.sharedPanelRows = [];");
+    const summariesArmed = view.indexOf("this.endSummaryLines = [];");
+    const firstRegistration = view.indexOf('sharedToggle("');
+    const firstSummary = view.indexOf('summaryFor("');
+
+    expect(armed).toBeGreaterThan(-1);
+    expect(firstRegistration).toBeGreaterThan(-1);
+    expect(armed, "sharedPanelRows must be re-armed before the first sharedToggle").toBeLessThan(
+      firstRegistration
+    );
+    expect(
+      summariesArmed,
+      "endSummaryLines must be re-armed before the first summaryFor"
+    ).toBeLessThan(firstSummary);
   });
 
   it("writes each row through and fans out to open panels", async () => {
