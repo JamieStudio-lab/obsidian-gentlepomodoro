@@ -10,6 +10,7 @@ import {
   type TextComponent,
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
+import { sessionEndSummary, type SessionEndEdge } from "./sessionEndSummary";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -167,6 +168,14 @@ interface MusicSlotUi {
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
+
+  /**
+   * The Audio group's outcome lines, kept so they can be rewritten in place when
+   * one of the four settings they describe is written. Repopulated by each
+   * render; entries from a previous render are simply overwritten, and a stale
+   * detached node would only be written to, never shown.
+   */
+  private readonly endSummaryEls = new Map<SessionEndEdge, HTMLElement>();
 
   constructor(app: App, plugin: GentlePomoPlugin) {
     super(app, plugin);
@@ -373,6 +382,44 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     void this.commitMusicName(slot, name);
   }
 
+  /**
+   * The live outcome line under each pair of Audio rows — the same sentence the
+   * timer panel shows, for the same reason: "Chime when focus ends" does not say
+   * whether it still applies when the break starts on its own, and that question
+   * should not need an experiment.
+   *
+   * It is a `render` row rather than a `desc` string because a description is
+   * baked in at definition time. `getSettingDefinitions()` runs on every
+   * `display()`, so a static string would be right whenever the tab is OPENED —
+   * but `refreshDomState()`, which is all Obsidian runs after `setControlValue`,
+   * only re-evaluates `visible`/`disabled` predicates and explicitly does not
+   * re-render. The text would then sit there contradicting the toggle the user
+   * just flipped. Instead the node is kept and rewritten by
+   * `refreshEndSummaries()` from the one place all four settings are written.
+   *
+   * `name`/`desc` are deliberately empty so the two render paths still describe
+   * the row identically; everything visible is built in the callback.
+   */
+  private endSummaryRow(edge: SessionEndEdge): SettingRowSpec {
+    return {
+      name: "",
+      desc: "",
+      render: (setting: Setting) => {
+        setting.settingEl.addClass("gp-setting-summary");
+        const el = setting.settingEl.createDiv("gp-setting-summary-text");
+        el.setText(sessionEndSummary(edge, this.plugin.settings));
+        this.endSummaryEls.set(edge, el);
+      },
+    };
+  }
+
+  /** Rewrite both outcome lines in place. Cheap, and safe before either renders. */
+  private refreshEndSummaries(): void {
+    for (const [edge, el] of this.endSummaryEls) {
+      el.setText(sessionEndSummary(edge, this.plugin.settings));
+    }
+  }
+
   private applySettingsToOpenViews(): void {
     const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
       if (!view || typeof view !== "object") return false;
@@ -456,20 +503,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
-            name: "Start the break automatically",
+            name: "Start the next break automatically",
             desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
+          this.endSummaryRow("focus"),
           {
             name: "Chime when break ends",
             desc: "Rings when break time is up, whether or not focus then starts on its own, so you know when to start again.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
-            name: "Start focusing automatically",
+            name: "Start the next focus automatically",
             desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
+          this.endSummaryRow("break"),
         ],
       },
       {
@@ -675,21 +724,25 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       case "autoStartBreak":
         settings.autoStartBreak = Boolean(value);
         await this.plugin.saveSettings();
+        this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
       case "autoStartFocus":
         settings.autoStartFocus = Boolean(value);
         await this.plugin.saveSettings();
+        this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
       case "focusEndSoundEnabled":
         settings.focusEndSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();
+        this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
       case "breakEndSoundEnabled":
         settings.breakEndSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();
+        this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
       case "showEndTime":

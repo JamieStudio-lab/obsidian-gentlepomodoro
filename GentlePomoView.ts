@@ -1567,12 +1567,12 @@ export class GentlePomoView extends ItemView {
 
     section("When focus ends");
     sharedToggle("focusEndSoundEnabled", "Play a chime");
-    sharedToggle("autoStartBreak", "Start the break");
+    sharedToggle("autoStartBreak", "Auto-start the next break");
     summaryFor("focus");
 
     section("When a break ends");
     sharedToggle("breakEndSoundEnabled", "Play a chime");
-    sharedToggle("autoStartFocus", "Start focusing");
+    sharedToggle("autoStartFocus", "Auto-start the next focus");
     summaryFor("break");
 
     // Seed the summaries now rather than waiting for the next engine emit: the

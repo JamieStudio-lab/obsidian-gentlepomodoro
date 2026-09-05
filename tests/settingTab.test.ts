@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Setting, type RecordedComponent } from "../__mocks__/obsidian";
 import { GentlePomoSettingTab } from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
+import { sessionEndSummary } from "../sessionEndSummary";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -177,6 +178,9 @@ describe("the two settings paths cannot drift", () => {
     ctx.tab.display();
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
+      // The Audio group's outcome lines are text, not controls — they carry no
+      // component by design and identify themselves with their own class.
+      if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
     }
   });
@@ -355,9 +359,9 @@ describe("Audio group", () => {
 
   const AUDIO_ROWS = [
     "Chime when focus ends",
-    "Start the break automatically",
+    "Start the next break automatically",
     "Chime when break ends",
-    "Start focusing automatically",
+    "Start the next focus automatically",
   ];
 
   it("shows all four rows whatever the auto-start toggles are set to", () => {
@@ -383,6 +387,45 @@ describe("Audio group", () => {
     for (const setting of c.el.settings) {
       expect(setting.desc.toLowerCase(), setting.name).not.toContain("always chimes");
     }
+  });
+
+  it("shows an outcome line under each pair, matching what the panel says", () => {
+    const c = makeTab({ autoStartBreak: true, focusEndSoundEnabled: false });
+    c.tab.display();
+    const summaries = c.el.settings
+      .filter((s) => s.settingEl.classes.includes("gp-setting-summary"))
+      .map((s) => s.settingEl.children.map((child) => child.text).join(""));
+
+    expect(summaries).toHaveLength(2);
+    // The exact question this line exists to answer: auto-start on, chime off.
+    expect(summaries[0]).toBe(sessionEndSummary("focus", c.settings));
+    expect(summaries[0]).toBe("The break starts, with no sound.");
+    expect(summaries[1]).toBe(sessionEndSummary("break", c.settings));
+  });
+
+  it("rewrites the outcome line when a setting is written, not just on reopen", async () => {
+    // getSettingDefinitions() runs on every display(), but refreshDomState() —
+    // all Obsidian runs after setControlValue — only re-evaluates predicates and
+    // does NOT re-render. A description baked in at definition time would sit
+    // there contradicting the toggle the user just flipped.
+    const c = makeTab();
+    c.tab.display();
+    const summaryOf = (edge: "focus" | "break") =>
+      c.el.settings
+        .filter((s) => s.settingEl.classes.includes("gp-setting-summary"))
+        [edge === "focus" ? 0 : 1].settingEl.children.map((child) => child.text)
+        .join("");
+
+    expect(summaryOf("focus")).toBe("Nothing — the timer counts up.");
+
+    await c.tab.setControlValue("autoStartBreak", true);
+    expect(summaryOf("focus")).toBe("The break starts, with no sound.");
+
+    await c.tab.setControlValue("focusEndSoundEnabled", true);
+    expect(summaryOf("focus")).toBe("A chime, then the break starts.");
+
+    // And the other edge is untouched by either write.
+    expect(summaryOf("break")).toBe("Nothing — the timer counts up.");
   });
 
   it("writes each row through and fans out to open panels", async () => {
