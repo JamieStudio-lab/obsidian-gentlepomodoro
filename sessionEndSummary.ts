@@ -14,6 +14,12 @@
  * Kept pure and in its own module so the copy is testable: the panel that
  * renders it cannot be imported by a test, and eight strings that must each
  * stay true to the behaviour are exactly the kind of thing that rots quietly.
+ *
+ * It has also become the home of the Audio group's shared LABELS, for the same
+ * reason — they are copy that both surfaces must spell identically, and this is
+ * the one audio module a test can import. The name is now narrower than the
+ * contents; renaming it to `audioCopy.ts` is a mechanical follow-up worth doing
+ * once nothing else in this release is moving.
  */
 
 /**
@@ -46,6 +52,27 @@ export const MASTER_SOUND_LABEL = "Timer sounds";
 
 export const AUTO_START_BREAK_LABEL = "Auto-start the break";
 export const AUTO_START_FOCUS_LABEL = "Auto-start the focus";
+
+/**
+ * The three mixer labels, shared for the same reason and by the same test.
+ *
+ * Each names its channel first, so it stands alone: the tab has no "Audio"
+ * heading doing that work for it in settings search, where a bare "Volume"
+ * would be one of two rows with the same name. They are also the pairing that
+ * makes the group readable — "Timer sounds" with "Timer volume", "Music sound"
+ * with "Music volume" — which only holds while both surfaces spell them the
+ * same way.
+ *
+ * Note the deliberate singular/plural: "Timer sounds" is a CLASS of sounds
+ * (drum, bell, ding), while "Music sound" is one channel being audible or not.
+ *
+ * These three are shared even though the per-edge "Play a sound" labels are
+ * not, and the difference is the test from the block above: these say what they
+ * do with no heading above them, and "Play a sound" does not.
+ */
+export const TIMER_VOLUME_LABEL = "Timer volume";
+export const MUSIC_SOUND_LABEL = "Music sound";
+export const MUSIC_VOLUME_LABEL = "Music volume";
 
 /** Which end-of-session boundary the summary describes. */
 export type SessionEndEdge = "focus" | "break";

@@ -14,9 +14,13 @@ import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
   MASTER_SOUND_LABEL,
+  MUSIC_SOUND_LABEL,
+  MUSIC_VOLUME_LABEL,
+  TIMER_VOLUME_LABEL,
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
+import { VOLUME_DROPDOWN_OPTIONS, parseVolumeOptionKey, volumeOptionKey } from "./segmentedChoice";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -496,11 +500,15 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        // New in 0.6.3, and it carries the auto-start toggles as well as the
-        // chimes — they were gear-panel-only before, and reading them together
-        // is why the first cut of this release needed a hiding rule at all.
-        // The four rows are now fully INDEPENDENT: the chime governs the
-        // auto-start path too, so no row is ever moot and none is hidden.
+        // New in 0.6.3, and it now holds EVERY audio setting the timer panel's
+        // gear holds: the mixer (two switches and two levels) and the
+        // end-of-session rows (the two sounds and the two auto-starts, which
+        // were gear-panel-only before). Neither surface is a subset of the
+        // other any more, which is the point — a setting reachable from only
+        // one of two screens is a setting people cannot find.
+        //
+        // The four end-of-session rows are fully INDEPENDENT: the sound governs
+        // the auto-start path too, so no row is ever moot and none is hidden.
         heading: "Audio",
         rows: [
           {
@@ -517,6 +525,36 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             // only by TimerEngine.playSound and never reaches the player.
             desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate.",
             control: { type: "toggle", key: "soundEnabled" },
+          },
+          // The mixer: two channels, each a switch and a level, in the order
+          // the timer panel shows them. It reads as two matched pairs on both
+          // surfaces, which is the argument for keeping the music's switch and
+          // level HERE rather than in the Music group — that group is about
+          // which link plays, and its neighbour "Show music player" stops
+          // playback, the opposite of what a mute does. Low/Mid/High are the
+          // panel's own three stops, imported rather than re-typed.
+          {
+            name: TIMER_VOLUME_LABEL,
+            desc: "How loud the timer's own sounds are. The music has its own level.",
+            control: {
+              type: "dropdown",
+              key: "soundVolume",
+              options: { ...VOLUME_DROPDOWN_OPTIONS },
+            },
+          },
+          {
+            name: MUSIC_SOUND_LABEL,
+            desc: "Off silences the music without stopping it, so a live stream stays live.",
+            control: { type: "toggle", key: "musicSoundEnabled" },
+          },
+          {
+            name: MUSIC_VOLUME_LABEL,
+            desc: "How loud the music plays. The timer's own sounds are separate.",
+            control: {
+              type: "dropdown",
+              key: "musicVolume",
+              options: { ...VOLUME_DROPDOWN_OPTIONS },
+            },
           },
           {
             name: "Play a sound when focus ends",
@@ -697,6 +735,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   override getControlValue(key: string): unknown {
     // The lookahead dropdown persists a number but renders string option keys.
     if (key === "taskSelectorDays") return this.plugin.settings.taskSelectorDays.toString();
+    // Same for the two volumes — but they must SNAP to a stop first, not just
+    // stringify. 0.1.0 shipped a volume slider and coerceToDefaults only checks
+    // the field's type, so a real data.json can hold 0.42; unsnapped, this
+    // dropdown would be handed "0.42", match no option and render arbitrarily,
+    // while the timer panel showed "Mid" for the same number. volumeOptionKey
+    // uses the panel's own nearest-stop rule, so the two agree by construction.
+    if (key === "soundVolume") return volumeOptionKey(this.plugin.settings.soundVolume);
+    if (key === "musicVolume") return volumeOptionKey(this.plugin.settings.musicVolume);
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -774,6 +820,38 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
+      // The mixer rows, dual-surface since 0.6.3 and the first NON-toggle rows
+      // to be. Note what these must not copy from `taskSelectorDays` below:
+      // `Math.floor` turns 0.3 and 0.7 into 0 and silences the channel while
+      // reporting nothing. parseVolumeOptionKey returns null for anything that
+      // is not one of our three stops, and null writes nothing at all.
+      case "soundVolume": {
+        const volume = parseVolumeOptionKey(value);
+        if (volume === null) return;
+        settings.soundVolume = volume;
+        await this.plugin.saveSettings();
+        // TimerEngine reads soundVolume when it plays a cue, so nothing needs
+        // applying here — the fan-out is for the panel's segmented row, whose
+        // only other chance to re-seed is being closed and reopened.
+        this.applySettingsToOpenViews();
+        return;
+      }
+      case "musicSoundEnabled":
+        settings.musicSoundEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        // The mute is applied at the view's musicVolume() accessor, which
+        // MusicController's convergence check reads — so the fan-out is what
+        // actually silences the player, not just what repaints the toggle.
+        this.applySettingsToOpenViews();
+        return;
+      case "musicVolume": {
+        const volume = parseVolumeOptionKey(value);
+        if (volume === null) return;
+        settings.musicVolume = volume;
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      }
       case "showEndTime":
         settings.showEndTime = Boolean(value);
         await this.plugin.saveSettings();

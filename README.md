@@ -84,7 +84,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
-- **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music), **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session; plus **auto-start the break** and **auto-start the focus**, which also live in the timer panel. Each pair carries a line saying what will actually happen with the settings you have.
+- **Audio**: the mixer — **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) with a **Low / Mid / High** **timer volume**, and a **music sound** mute with a **Low / Mid / High** **music volume**; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. Every one of these also lives in the timer panel, and the two surfaces follow each other.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -94,8 +94,8 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
 - **Timing**: focus / short break / long break durations (press Enter to apply).
-- **Audio**: sound toggle, **Low / Mid / High** volume, and **Low / Mid / High** music volume.
-- **Auto-start**: auto-start break, auto-start focus. When on, a session that runs out automatically plays the end cue and starts the next one. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
+- **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs, the same four settings the settings tab's **Audio** group shows.
+- **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
 - **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.
 

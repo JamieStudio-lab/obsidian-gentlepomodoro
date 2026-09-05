@@ -12,8 +12,12 @@ import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
   MASTER_SOUND_LABEL,
+  MUSIC_SOUND_LABEL,
+  MUSIC_VOLUME_LABEL,
+  TIMER_VOLUME_LABEL,
   sessionEndSummary,
 } from "../sessionEndSummary";
+import { VOLUME_OPTIONS } from "../segmentedChoice";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -492,6 +496,44 @@ describe("Audio group", () => {
       summariesArmed,
       "endSummaryLines must be re-armed before the first summaryFor"
     ).toBeLessThan(firstSummary);
+
+    // Every registry, not just the two that already shipped wrong.
+    for (const field of ["segmentedPanelRows", "numberPanelRows"]) {
+      const at = view.indexOf(`this.${field} = [];`);
+      expect(at, `${field} must be re-armed`).toBeGreaterThan(-1);
+      expect(at, `${field} must be re-armed before the first sharedToggle`).toBeLessThan(
+        firstRegistration
+      );
+    }
+  });
+
+  it("re-seeds every panel row type, and guards the number inputs on focus", () => {
+    // Reset to defaults in a SECOND panel fans out, so the number inputs are
+    // genuinely reachable from elsewhere — the old "nothing else can change
+    // them" reasoning was wrong. What that note was really protecting is the
+    // caret: writing input.value mid-edit rewrites the field under the cursor.
+    // Both properties are read off the shipped source; nothing can import the
+    // view to exercise it directly.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const sync = view.slice(view.indexOf("private syncSettingsPanel()"));
+    const body = sync.slice(0, sync.indexOf("\n  }"));
+
+    for (const registry of [
+      "sharedPanelRows",
+      "segmentedPanelRows",
+      "numberPanelRows",
+      "endSummaryLines",
+    ]) {
+      expect(body, `${registry} must be re-seeded`).toContain(registry);
+    }
+    // It must never rebuild: renderSettingsPanel empties the container and
+    // re-registers every listener, and registerDomEvent releases on unload
+    // rather than removal — on a 50ms tick that leaks rows by the second.
+    expect(body).not.toContain("renderSettingsPanel(");
+
+    // The caret guard, on the number seed specifically.
+    const numberRow = view.slice(view.indexOf("const numberRow = ("));
+    expect(numberRow.slice(0, 1600)).toContain("activeDocument.activeElement === input");
   });
 
   it("writes each row through and fans out to open panels", async () => {
@@ -522,5 +564,228 @@ describe("Audio group", () => {
       ).toBe(true);
       expect(c.tab.getControlValue(key), key).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.3 — the mixer on both surfaces. Timer volume, Music sound and Music
+// volume were gear-panel-only; the two volumes are also the plugin's first
+// dual-surface NON-toggle settings, which is why the panel needed a re-seed
+// for segmented rows before these rows could be added at all.
+// ---------------------------------------------------------------------------
+describe("the audio mixer is reachable from both surfaces", () => {
+  const audioGroup = (tab: GentlePomoSettingTab) => {
+    const group = tab
+      .getSettingDefinitions()
+      .find((g) => (g as { heading?: string }).heading === "Audio");
+    if (!group) throw new Error("no Audio group");
+    return group as unknown as { heading: string; items: { name: string }[] };
+  };
+
+  it("holds the whole mixer, in the timer panel's own order", () => {
+    // Order is the assertion, not just membership: the panel reads as two
+    // matched pairs (switch, then level, twice) and the tab has to say the same
+    // thing. The two empty names are the outcome lines, which are text rows.
+    expect(audioGroup(ctx.tab).items.map((i) => i.name)).toEqual([
+      MASTER_SOUND_LABEL,
+      TIMER_VOLUME_LABEL,
+      MUSIC_SOUND_LABEL,
+      MUSIC_VOLUME_LABEL,
+      "Play a sound when focus ends",
+      AUTO_START_BREAK_LABEL,
+      "",
+      "Play a sound when a break ends",
+      AUTO_START_FOCUS_LABEL,
+      "",
+    ]);
+  });
+
+  it("keeps the mixer out of the Music group", () => {
+    // Music is the group you open to change WHICH link plays, and its rows sit
+    // next to "Show music player", which STOPS playback — the opposite of what
+    // a mute does. A level belongs with the other level.
+    const music = ctx.tab
+      .getSettingDefinitions()
+      .find((g) => (g as { heading?: string }).heading === "Music") as unknown as {
+      items: { name: string }[];
+    };
+    const names = music.items.map((i) => i.name);
+    expect(names).not.toContain(MUSIC_VOLUME_LABEL);
+    expect(names).not.toContain(MUSIC_SOUND_LABEL);
+  });
+
+  it("offers the panel's three stops, in the panel's order, on both volume rows", () => {
+    ctx.tab.display();
+    const stops = VOLUME_OPTIONS.map((o) => ({ value: o.key, label: o.label }));
+    expect(componentOf(ctx.el, TIMER_VOLUME_LABEL).options).toEqual(stops);
+    expect(componentOf(ctx.el, MUSIC_VOLUME_LABEL).options).toEqual(stops);
+  });
+
+  it("seeds each volume dropdown from the stored value, SNAPPED to a stop", () => {
+    // 0.1.0 shipped a volume slider, and coerceToDefaults only checks a field's
+    // type — so 0.6 is a value a real data.json can hold. The panel paints it
+    // as Mid (nearest stop); a dropdown seeded by exact lookup would show
+    // whatever the browser picked for an unknown key, and the two surfaces
+    // would disagree about a value neither of them had changed.
+    const seeded = makeTab({ soundVolume: 0.6, musicVolume: 0.3 });
+    seeded.tab.display();
+    expect(componentOf(seeded.el, TIMER_VOLUME_LABEL).value).toBe("mid");
+    expect(componentOf(seeded.el, MUSIC_VOLUME_LABEL).value).toBe("low");
+    // ...and the stored value is untouched by merely rendering it.
+    expect(seeded.settings.soundVolume).toBe(0.6);
+  });
+
+  it("writes a volume through as its exact float, and fans out", async () => {
+    for (const [key, name] of [
+      ["soundVolume", TIMER_VOLUME_LABEL],
+      ["musicVolume", MUSIC_VOLUME_LABEL],
+    ] as const) {
+      const c = makeTab();
+      c.tab.display();
+      componentOf(c.el, name).change?.("low" as never);
+      await Promise.resolve();
+      // NOT 0 — Math.floor is the pattern the taskSelectorDays case next door
+      // uses, and copy-pasting it here silences the channel with no error.
+      expect(c.settings[key], key).toBe(0.3);
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} must fan out to open views`
+      ).toBe(true);
+      expect(c.tab.getControlValue(key), key).toBe("low");
+    }
+  });
+
+  it("refuses a value that is not one of the stops instead of storing it", async () => {
+    const c = makeTab({ soundVolume: 0.7 });
+    for (const bogus of ["0.6", "", "loud", 0.3]) {
+      await c.tab.setControlValue("soundVolume", bogus);
+      expect(c.settings.soundVolume, String(bogus)).toBe(0.7);
+    }
+  });
+
+  it("writes the music mute through and fans out, so the player actually goes quiet", async () => {
+    // The mute is applied at the view's musicVolume() accessor, which
+    // MusicController's convergence check reads — so the fan-out is not a
+    // repaint here, it is the thing that silences the player.
+    const c = makeTab({ musicSoundEnabled: true });
+    await c.tab.setControlValue("musicSoundEnabled", false);
+    expect(c.settings.musicSoundEnabled).toBe(false);
+    expect(c.calls.map((call) => call.method)).toContain("saveSettings");
+    expect(c.calls.map((call) => call.method)).toContain("applySettings");
+  });
+
+  it("gives every dual-surface panel toggle a working case here", async () => {
+    // A ratchet, derived from the view's own union rather than a list typed
+    // here: adding a member to SharedPanelKey without a case in
+    // setControlValue is a silent no-op (`default: return;`, and `key` is a
+    // string), and the panel row it names would then be one no settings-tab
+    // row can move.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const union = /type SharedPanelKey =([\s\S]*?);/.exec(view);
+    expect(union, "SharedPanelKey union not found").not.toBeNull();
+    const keys = [...(union?.[1] ?? "").matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
+    expect(keys.length).toBeGreaterThanOrEqual(6);
+    for (const key of keys) {
+      const c = makeTab();
+      (c.settings as unknown as Record<string, boolean>)[key] = false;
+      await c.tab.setControlValue(key, true);
+      expect((c.settings as unknown as Record<string, boolean>)[key], key).toBe(true);
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} must fan out to open views`
+      ).toBe(true);
+    }
+  });
+});
+
+describe("the timer panel's segmented rows re-seed", () => {
+  // Nothing can import GentlePomoView, so these read it as text — the same
+  // route tests/pixelCityArt.test.ts takes for view assertions.
+  const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+
+  /** The bodies of the two `segmentedRow(...)` CALLS, not its definition. */
+  const segmentedCalls = (src: string) =>
+    src
+      .split("\n    segmentedRow(")
+      .slice(1)
+      .map((rest) => rest.slice(0, rest.indexOf("\n    );")));
+
+  it("builds both volume rows from the shared stop list, not a re-typed one", () => {
+    const calls = segmentedCalls(view());
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call).toContain("VOLUME_OPTIONS");
+      // A second hand-typed list is the drift: the panel's nearest-stop rule
+      // would still light "Mid" for a tab that stored 0.6, so the surfaces
+      // would look consistent while holding different numbers.
+      expect(call).not.toContain('label: "Low"');
+    }
+  });
+
+  it("re-reads through the live settings object, not the captured one", () => {
+    // loadSettings() replaces the settings object wholesale, and this closure
+    // now runs on a tick rather than once — the same rule the extracted modules
+    // follow (MusicHost, FocusTotalHost: calls, never captured references).
+    for (const call of segmentedCalls(view())) {
+      expect(call).toContain("() => this.plugin.settings.");
+    }
+  });
+
+  it("fans a volume change out to the other open panels", () => {
+    // Both volumes are dual-surface now, so a change made here has to reach
+    // every other open panel's segmented row. Nothing else can: the engine
+    // emits nothing at all while the timer is idle, so there is no tick to
+    // converge on. Timer volume shipped without this and two open panels
+    // genuinely disagreed.
+    for (const call of segmentedCalls(view())) {
+      expect(call).toContain("applySettingsToOpenViews()");
+    }
+  });
+
+  it("re-arms the segmented registry BEFORE the first segmented row", () => {
+    // Same rule as sharedPanelRows above, and the same shipped bug: a reset
+    // placed lower silently drops every row built above it.
+    const src = view();
+    const armed = src.indexOf("this.segmentedPanelRows = [];");
+    const firstRow = src.indexOf("\n    segmentedRow(");
+    expect(armed).toBeGreaterThan(-1);
+    expect(firstRow).toBeGreaterThan(-1);
+    expect(armed, "segmentedPanelRows must be re-armed before the first segmentedRow").toBeLessThan(
+      firstRow
+    );
+  });
+
+  it("re-seeds the segmented rows from syncSettingsPanel, without rebuilding", () => {
+    // The crux. syncSettingsPanel() walking only the toggles is exactly the
+    // defect this release already shipped once for toggles: the tab moves the
+    // value, the panel keeps the old highlight — and because the highlight IS
+    // the control, tapping the button that looks active silently writes the
+    // old value back over the change just made.
+    //
+    // And it must re-SEED, never re-render: renderSettingsPanel() empties the
+    // container and re-registers every listener, and registerDomEvent releases
+    // on unload rather than on removal, so a rebuild on the 50ms tick leaks
+    // twenty detached rows a second.
+    const src = view();
+    const start = src.indexOf("private syncSettingsPanel()");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start);
+    expect(body).toContain("this.segmentedPanelRows");
+    expect(body).toContain("seed()");
+    expect(body).not.toContain("renderSettingsPanel()");
+  });
+
+  it("uses the shared mixer labels rather than re-typing them", () => {
+    // Read with comments stripped: a label may legitimately be quoted in prose
+    // above the row that uses it, and a guard that cannot tell code from a
+    // comment fails on the next person who explains why the const exists.
+    const code = view().replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
+    for (const label of [TIMER_VOLUME_LABEL, MUSIC_SOUND_LABEL, MUSIC_VOLUME_LABEL]) {
+      expect(code, `${label} must come from the shared const`).not.toContain(`"${label}"`);
+    }
+    const src = view();
+    expect(src).toContain("TIMER_VOLUME_LABEL");
+    expect(src).toContain("MUSIC_SOUND_LABEL");
+    expect(src).toContain("MUSIC_VOLUME_LABEL");
   });
 });

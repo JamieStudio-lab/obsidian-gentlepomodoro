@@ -31,6 +31,11 @@ next session **without** a sound.
   of dropping off the edge with nothing to come back to. The timer panel's Audio
   section now reads as two matched pairs — **Timer sounds** with **Timer volume**,
   **Music sound** with **Music volume**.
+- **The whole mixer is in the plugin settings too.** **Timer volume**, **Music
+  sound** and **Music volume** were reachable only from the timer panel's gear;
+  all three now sit in Settings → Gentle Pomodoro → **Audio**, in the same order
+  and under the same names. Every audio setting is now on both screens, and
+  neither is a subset of the other.
 
 ### Changed
 
@@ -40,7 +45,8 @@ next session **without** a sound.
   Audio group alongside the chimes.
 - **The timer panel follows settings changed elsewhere.** Flip a shared setting
   in the plugin settings and an open panel updates instead of waiting to be
-  closed and reopened.
+  closed and reopened — the Low / Mid / High rows included, which previously
+  kept their old highlight until the panel was closed and reopened.
 - The timer panel's Auto-start section is now two sections, **When focus ends**
   and **When a break ends**, each holding the chime and the start toggle for
   that moment — and a line underneath saying, in words, what will actually
@@ -67,6 +73,10 @@ next session **without** a sound.
 
 ### Fixed
 
+- **Changing the timer volume in one panel now reaches the others.** With two
+  timer panels open, setting the volume in one left the other showing the old
+  Low / Mid / High choice — and because the highlight is also the button, tapping
+  the one that looked selected wrote the old value back over the change.
 - Stop and Skip no longer play the end sound a second time when it has already
   played for that session, or when pressed in the last moments before the timer
   runs out.
@@ -76,9 +86,10 @@ next session **without** a sound.
   locked screen — the situation it is most needed in.
 - A backward jump in the system clock (an automatic time correction, or waking a
   sleeping laptop) no longer swallows the next Stop sound.
-- Changing **Timer sounds** in the plugin settings now moves the matching switch
-  in an open timer panel, instead of leaving it stale until the panel is
-  reopened.
+- Changing any audio setting in the plugin settings now moves the matching
+  control in an open timer panel, instead of leaving it stale until the panel is
+  reopened. That includes the volumes, and **Reset to defaults** in one panel
+  now reaches a second one — a number you are actively typing in is left alone.
 
 ### Internal
 
