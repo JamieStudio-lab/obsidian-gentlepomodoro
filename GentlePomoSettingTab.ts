@@ -13,6 +13,7 @@ import { THEMES, resolveTheme } from "./themes";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
@@ -389,7 +390,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
   /**
    * The live outcome line under each pair of Audio rows — the same sentence the
-   * timer panel shows, for the same reason: "Chime when focus ends" does not say
+   * timer panel shows, for the same reason: "Play a sound when focus ends" does not say
    * whether it still applies when the break starts on its own, and that question
    * should not need an experiment.
    *
@@ -507,29 +508,35 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
             // read "Rings when focus time is up" here with no way to see why
             // it did not, and no control on this screen to change it.
-            name: "Sound",
-            desc: "Play the plugin's audio cues at all. With this off, nothing below makes a sound.",
+            name: MASTER_SOUND_LABEL,
+            // Enumerates the two cues that have NO row of their own, positively.
+            // The old "nothing below makes a sound" was true but taught the
+            // wrong model — it implied the rows below were the whole set, so a
+            // user could turn both off, expect silence, and meet a drum at
+            // 00:00. It also has to disclaim the music: soundEnabled is read
+            // only by TimerEngine.playSound and never reaches the player.
+            desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate.",
             control: { type: "toggle", key: "soundEnabled" },
           },
           {
-            name: "Chime when focus ends",
-            desc: "Rings when focus time is up, whether or not the break then starts on its own. Off by default, so a session you want to keep going with is never interrupted.",
+            name: "Play a sound when focus ends",
+            desc: "Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
             name: AUTO_START_BREAK_LABEL,
-            desc: "When focus time is up, begin the break without waiting. Silent unless the chime above is on too.",
+            desc: "When focus time is up, begin the break without waiting. Silent unless the sound above is on too.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           this.endSummaryRow("focus"),
           {
-            name: "Chime when break ends",
-            desc: "Rings when break time is up, whether or not focus then starts on its own, so you know when to start again.",
+            name: "Play a sound when a break ends",
+            desc: "So a five-minute break doesn't quietly become twenty.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
             name: AUTO_START_FOCUS_LABEL,
-            desc: "When break time is up, begin focusing without waiting. Silent unless the chime above is on too.",
+            desc: "When break time is up, begin focusing without waiting. Silent unless the sound above is on too.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
           this.endSummaryRow("break"),

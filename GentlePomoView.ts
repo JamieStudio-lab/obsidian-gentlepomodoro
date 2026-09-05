@@ -6,6 +6,7 @@ import type { TimerListener, TimerState } from "./types";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
@@ -1508,11 +1509,26 @@ export class GentlePomoView extends ItemView {
       return { row, input };
     };
 
+    // Static explanatory text, sharing a class with the live summary lines:
+    // both are quiet prose hanging off the row above (margin-top 4px against
+    // margin-bottom 8px, so a mid-section hint binds upward, not downward).
+    const hint = (text: string) => {
+      this.settingsPanel.createDiv({ cls: "gp-settings-hint", text });
+    };
+
     section("Audio");
     // Dual-surface since 0.6.3 (it gained a row in the settings tab, where it
-    // is the master gate for the two chimes), so it fans out and re-seeds like
-    // the other shared rows rather than being written and forgotten.
-    sharedToggle("soundEnabled", "Sound");
+    // is the master gate for the two per-edge sounds), so it fans out and
+    // re-seeds like the other shared rows rather than being written and
+    // forgotten.
+    sharedToggle("soundEnabled", MASTER_SOUND_LABEL);
+    // The panel has no row descriptions, so without this the scope argument
+    // reaches only settings-tab readers. It is said POSITIVELY — naming the two
+    // cues that have no row of their own — because the failure it prevents is a
+    // user turning both "Play a sound" toggles off, expecting silence, and
+    // being answered by a drum at 00:00. It also has to exclude the music,
+    // which sits two rows below and which this switch has never gated.
+    hint("Also the drum when focus starts and the sound when you stop. Music is separate.");
     segmentedRow(
       "Volume",
       [
@@ -1545,15 +1561,15 @@ export class GentlePomoView extends ItemView {
 
     // Two sections keyed by EVENT, replacing the flat "Auto-start" pair. The
     // heading names the moment once, so both rows under it answer the same
-    // question and the duplicate "Play a chime" labels are unambiguous. Flat
+    // question and the duplicate "Play a sound" labels are unambiguous. Flat
     // rows put opposite mode words side by side ("Auto-start break" above
-    // "Chime when focus ends"), where adjacency fought comprehension — and the
+    // "Play a sound when focus ends"), where adjacency fought comprehension —
     // pairing is also what makes a disappearing chime row self-explanatory.
     //
     // Each shared row registers itself for syncSettingsPanel(), which re-seeds
     // it when the same setting is changed from the settings tab.
     this.sharedPanelRows = [];
-    // Four independent rows, nothing conditional. "Play a chime" governs BOTH
+    // Four independent rows, nothing conditional. "Play a sound" governs BOTH
     // paths — the clock running out into overtime and the next session starting
     // on its own — so neither row is ever moot and neither is hidden. An
     // earlier cut hid each chime while its auto-start was on, which read
@@ -1562,8 +1578,8 @@ export class GentlePomoView extends ItemView {
     // The chime sits ABOVE its start toggle so reading order presents it as a
     // property of the whole event rather than a fallback for when nothing else
     // happens, and each pair closes with a line saying what will actually
-    // happen — because "Play a chime" cannot carry its own scope, and the
-    // question it leaves ("does it still chime if the break auto-starts?")
+    // happen — because "Play a sound" cannot carry its own scope, and the
+    // question it leaves ("does it still play if the break auto-starts?")
     // deserves an answer on screen rather than by experiment.
     this.endSummaryLines = [];
     const summaryFor = (edge: SessionEndEdge) => {
@@ -1572,12 +1588,12 @@ export class GentlePomoView extends ItemView {
     };
 
     section("When focus ends");
-    sharedToggle("focusEndSoundEnabled", "Play a chime");
+    sharedToggle("focusEndSoundEnabled", "Play a sound");
     sharedToggle("autoStartBreak", AUTO_START_BREAK_LABEL);
     summaryFor("focus");
 
     section("When a break ends");
-    sharedToggle("breakEndSoundEnabled", "Play a chime");
+    sharedToggle("breakEndSoundEnabled", "Play a sound");
     sharedToggle("autoStartFocus", AUTO_START_FOCUS_LABEL);
     summaryFor("break");
 

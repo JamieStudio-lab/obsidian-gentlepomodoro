@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { sessionEndSummary } from "../sessionEndSummary";
+import { sessionEndSummary, MASTER_SOUND_LABEL } from "../sessionEndSummary";
 import type { SessionEndSettings } from "../sessionEndSummary";
 
 /** Only the four fields the summary reads. */
@@ -27,6 +27,33 @@ const forEdge = (edge: "focus" | "break", chime: boolean, autoStart: boolean) =>
 // four combinations per edge says something DIFFERENT and TRUE — a summary that
 // quietly stopped tracking the behaviour would be worse than no summary at all.
 // ---------------------------------------------------------------------------
+// The master switch's label had two tempting wrong answers, each rejected for a
+// concrete reason. Pinned as properties rather than as the literal string, so
+// the rule survives a future rewording that keeps the meaning.
+describe("MASTER_SOUND_LABEL", () => {
+  it("is not the bare word that made it ambiguous", () => {
+    // "Sound" sat one word away from the per-edge "Play a sound" — two labels
+    // for two different things, distinguishable only by a verb.
+    expect(MASTER_SOUND_LABEL.toLowerCase()).not.toBe("sound");
+    expect(MASTER_SOUND_LABEL.toLowerCase()).not.toBe("play a sound");
+  });
+
+  it("does not claim to cover every sound, because it does not", () => {
+    // soundEnabled is read only by TimerEngine.playSound and never reaches the
+    // YouTube player, so "All sounds" would sit on screen claiming silence
+    // while the lofi music kept playing.
+    expect(MASTER_SOUND_LABEL.toLowerCase().startsWith("all ")).toBe(false);
+    expect(MASTER_SOUND_LABEL.toLowerCase()).not.toContain("every");
+  });
+
+  it("names a class of sounds, so it cannot read as a sibling of the per-edge rows", () => {
+    // The per-edge rows are imperatives ("Play a sound"); the master is a noun
+    // phrase. A label starting with a verb would put them back on one level.
+    expect(MASTER_SOUND_LABEL.toLowerCase().startsWith("play")).toBe(false);
+    expect(MASTER_SOUND_LABEL.toLowerCase()).toContain("sound");
+  });
+});
+
 describe("sessionEndSummary", () => {
   it("says a silent hand-over is silent — the question that prompted this line", () => {
     // Auto-start on, chime off. The state 0.6.2 could not express, and the one
@@ -41,10 +68,10 @@ describe("sessionEndSummary", () => {
 
   it("says a chimed hand-over chimes", () => {
     expect(sessionEndSummary("focus", forEdge("focus", true, true))).toBe(
-      "A chime, then the break starts."
+      "A sound, then the break starts."
     );
     expect(sessionEndSummary("break", forEdge("break", true, true))).toBe(
-      "A chime, then focus starts again."
+      "A sound, then focus starts again."
     );
   });
 
@@ -59,7 +86,7 @@ describe("sessionEndSummary", () => {
   it("describes a chime with no hand-over", () => {
     for (const edge of ["focus", "break"] as const) {
       expect(sessionEndSummary(edge, forEdge(edge, true, false))).toBe(
-        "A chime, then the timer counts up."
+        "A sound, then the timer counts up."
       );
     }
   });
@@ -117,21 +144,21 @@ describe("sessionEndSummary", () => {
     // its own Sound row now, but the panel's is five rows above this line.
     expect(
       sessionEndSummary("focus", settings({ soundEnabled: false, focusEndSoundEnabled: true }))
-    ).toBe("Sound is off — the timer counts up.");
+    ).toBe("Sounds are off — the timer counts up.");
 
     expect(
       sessionEndSummary(
         "focus",
         settings({ soundEnabled: false, focusEndSoundEnabled: true, autoStartBreak: true })
       )
-    ).toBe("Sound is off — the break starts.");
+    ).toBe("Sounds are off — the break starts.");
 
     expect(
       sessionEndSummary(
         "break",
         settings({ soundEnabled: false, breakEndSoundEnabled: true, autoStartFocus: true })
       )
-    ).toBe("Sound is off — focus starts again.");
+    ).toBe("Sounds are off — focus starts again.");
   });
 
   it("does not blame the mute when no chime was asked for", () => {

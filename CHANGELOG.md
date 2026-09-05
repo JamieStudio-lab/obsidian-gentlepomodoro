@@ -15,13 +15,13 @@ next session **without** a sound.
 
 ### Added
 
-- **Two chimes you can turn on separately** ([#5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5)).
-  "Chime when break ends" tells you break time is up, so a five-minute break
-  does not quietly become twenty. "Chime when focus ends" is there if you want
-  it, and stays **off** by default — that is the one that would interrupt a
+- **Two sounds you can turn on separately** ([#5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5)).
+  "Play a sound when a break ends" tells you break time is up, so a five-minute
+  break does not quietly become twenty. "Play a sound when focus ends" is there
+  if you want it, and stays **off** by default — that is the one that would interrupt a
   session you are still in the middle of. Both live in the timer panel (under
   the gear) and in Settings → Gentle Pomodoro → **Audio**.
-- **A quiet hand-over.** Each chime now applies whether the timer runs into
+- **A quiet hand-over.** Each sound setting now applies whether the timer runs into
   overtime _or_ starts the next session automatically, so you can auto-advance
   with no sound at all. Previously auto-start always chimed and there was no way
   to turn that off.
@@ -46,23 +46,25 @@ next session **without** a sound.
 - **Nothing you hear changes when you upgrade.** Each chime starts out matching
   your current auto-start setting, which is exactly what your timer does today —
   so the sounds stay the same and the switch is simply yours now. New installs
-  start with "Chime when break ends" on. One thing to know afterwards: because
+  start with the break-end sound on. One thing to know afterwards: because
   the chime is now a setting of its own, turning an auto-start _on_ no longer
   brings a sound with it, and turning one _off_ no longer takes the sound away.
   Whatever the chime says is what you get.
-- **The plugin settings now carry the master Sound switch too**, at the top of
+- **The plugin settings now carry the master sound switch too**, at the top of
   the Audio group. It was previously only in the timer panel, so the settings
-  page could promise a chime with no way to see — or change — what was
-  silencing it.
+  page could promise a sound with no way to see — or change — what was silencing
+  it. It is called **Timer sounds**, and it now says what it covers: the drum
+  when focus starts and the sound when you stop, neither of which has a switch
+  of its own. Your music is separate and always was.
 
 ### Fixed
 
-- Stop and Skip no longer play the end sound a second time when the chime has
-  already rung for that session, or when pressed in the last moments before the
-  timer runs out.
-- With Sound off, the line under the toggles now says so instead of promising a
-  chime that cannot play.
-- The chime is no longer lost on iPhone and iPad after a phone call, Siri, or a
+- Stop and Skip no longer play the end sound a second time when it has already
+  played for that session, or when pressed in the last moments before the timer
+  runs out.
+- With Timer sounds off, the line under the toggles now says so instead of
+  promising a sound that cannot play.
+- The end-of-session sound is no longer lost on iPhone and iPad after a phone call, Siri, or a
   locked screen — the situation it is most needed in.
 - A backward jump in the system clock (an automatic time correction, or waking a
   sleeping laptop) no longer swallows the next Stop sound.

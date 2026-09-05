@@ -3,12 +3,12 @@
  * settings, saying what will actually happen when a session's time is up.
  *
  * It exists because the two toggles became independent in 0.6.3, and "Play a
- * chime" does not carry its own scope: under a heading naming an event, a
+ * sound" does not carry its own scope: under a heading naming an event, a
  * reader can fairly take it to mean "…if the timer just sits there" rather than
  * "on this transition, however it happens". The honest fix is not a cleverer
  * label — it is to stop making the reader infer, and say the outcome outright.
  * Every one of the four combinations per edge gets a sentence, so the question
- * "does it chime when the break starts on its own?" is answered on screen
+ * "does it still play when the break starts on its own?" is answered on screen
  * instead of by experiment.
  *
  * Kept pure and in its own module so the copy is testable: the panel that
@@ -22,14 +22,28 @@
  *
  * Shared because they are identical, and identical because they can be: each
  * says what it does without needing context from around it. The two CHIME
- * labels are deliberately NOT shared — the panel says "Play a chime" under a
- * section heading that already names the moment, while the tab has no heading
- * doing that work and must spell out "Chime when focus ends". Sharing a string
+ * per-edge labels are deliberately NOT shared — the panel says "Play a sound"
+ * under a section heading that already names the moment, while the tab has no
+ * heading doing that and must spell out "Play a sound when focus ends". Sharing
  * that has to differ per surface would be worse than duplicating one.
  *
  * "Auto-start" rather than "Start": the earlier "Start the break" read as
  * though pressing it might begin one immediately.
  */
+/**
+ * The master sound switch, shared verbatim by both surfaces for the same reason
+ * as the auto-start labels below.
+ *
+ * "Timer sounds" rather than "All sounds" or a bare "Sound": it names the
+ * sounds by SOURCE, which is the only accurate scope. `soundEnabled` is read
+ * exclusively by TimerEngine.playSound() and never reaches the YouTube player,
+ * so "All sounds" would sit on screen claiming silence while the lofi music
+ * kept playing. Naming a CLASS also stops it reading as a sibling of the
+ * per-edge rows, which name an ACTION ("Play a sound") — where a bare "Sound"
+ * beside "Play a sound" is two different things one word apart.
+ */
+export const MASTER_SOUND_LABEL = "Timer sounds";
+
 export const AUTO_START_BREAK_LABEL = "Auto-start the break";
 export const AUTO_START_FOCUS_LABEL = "Auto-start the focus";
 
@@ -66,9 +80,9 @@ export interface SessionEndSettings {
  */
 export function sessionEndSummary(edge: SessionEndEdge, settings: SessionEndSettings): string {
   const focus = edge === "focus";
-  // A chime is only real if the master switch is on as well. Reported as
-  // "sound is off" rather than silently downgrading to the no-chime wording,
-  // because the user asked for a chime and deserves to know why they will not
+  // A sound is only real if the master switch is on as well. Reported as
+  // "Sounds are off" rather than silently downgrading to the no-sound wording,
+  // because the user asked for one and deserves to know why they will not
   // get one — the settings tab has no master control on it at all.
   const wantsChime = focus ? settings.focusEndSoundEnabled : settings.breakEndSoundEnabled;
   const chime = wantsChime && settings.soundEnabled;
@@ -79,15 +93,15 @@ export function sessionEndSummary(edge: SessionEndEdge, settings: SessionEndSett
   const next = focus ? "the break starts" : "focus starts again";
 
   if (autoStart) {
-    if (muted) return `Sound is off — ${next}.`;
+    if (muted) return `Sounds are off — ${next}.`;
     // The state 0.6.2 could not express is the one most worth spelling out: a
     // hand-over that makes no sound at all.
-    return chime ? `A chime, then ${next}.` : `${capitalize(next)}, with no sound.`;
+    return chime ? `A sound, then ${next}.` : `${capitalize(next)}, with no sound.`;
   }
-  if (muted) return "Sound is off — the timer counts up.";
+  if (muted) return "Sounds are off — the timer counts up.";
   // No auto-start: the timer slides into overtime and counts up, which is the
   // plugin's deliberate flow-protecting default.
-  return chime ? "A chime, then the timer counts up." : "Nothing — the timer counts up.";
+  return chime ? "A sound, then the timer counts up." : "Nothing — the timer counts up.";
 }
 
 function capitalize(text: string): string {

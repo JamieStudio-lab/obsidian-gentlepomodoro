@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS } from "../constants";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
   sessionEndSummary,
 } from "../sessionEndSummary";
 import type { GentlePomoSettings } from "../types";
@@ -372,10 +373,10 @@ describe("Audio group", () => {
     el.settings.filter((s) => !s.heading).map((s) => s.name);
 
   const AUDIO_ROWS = [
-    "Sound",
-    "Chime when focus ends",
+    MASTER_SOUND_LABEL,
+    "Play a sound when focus ends",
     AUTO_START_BREAK_LABEL,
-    "Chime when break ends",
+    "Play a sound when a break ends",
     AUTO_START_FOCUS_LABEL,
   ];
 
@@ -437,7 +438,7 @@ describe("Audio group", () => {
     expect(summaryOf("focus")).toBe("The break starts, with no sound.");
 
     await c.tab.setControlValue("focusEndSoundEnabled", true);
-    expect(summaryOf("focus")).toBe("A chime, then the break starts.");
+    expect(summaryOf("focus")).toBe("A sound, then the break starts.");
 
     // And the other edge is untouched by either write.
     expect(summaryOf("break")).toBe("Nothing — the timer counts up.");
@@ -451,15 +452,18 @@ describe("Audio group", () => {
     const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
     expect(view).toContain("AUTO_START_BREAK_LABEL");
     expect(view).toContain("AUTO_START_FOCUS_LABEL");
+    expect(view).toContain("MASTER_SOUND_LABEL");
     // ...and not a hand-typed copy that could drift from the tab's.
     expect(view).not.toContain('"Auto-start the break"');
     expect(view).not.toContain('"Auto-start the focus"');
+    expect(view).not.toContain('"Timer sounds"');
 
     const c = makeTab();
     c.tab.display();
     const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
     expect(names).toContain(AUTO_START_BREAK_LABEL);
     expect(names).toContain(AUTO_START_FOCUS_LABEL);
+    expect(names).toContain(MASTER_SOUND_LABEL);
   });
 
   it("writes each row through and fans out to open panels", async () => {
