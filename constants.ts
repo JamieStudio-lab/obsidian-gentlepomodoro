@@ -137,6 +137,13 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   theme: DEFAULT_THEME,
   soundEnabled: true,
   soundVolume: 0.7,
+  // Both false here on purpose: DEFAULT_SETTINGS is the Object.assign merge
+  // base in loadSettings(), so whatever sits here is what an UPGRADING user
+  // silently inherits — and an upgrade must not start making a sound the
+  // plugin has never made. loadSettings() flips breakEndSoundEnabled on for a
+  // fresh install only (read.kind === "fresh") and persists it once.
+  focusEndSoundEnabled: false,
+  breakEndSoundEnabled: false,
   tasksPath: "",
   logFolderPath: "",
   showTaskSelector: true,
@@ -152,6 +159,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   musicName3: "",
   musicStationIndex: 0,
   showMusicPlayer: true,
+  musicSoundEnabled: true,
   musicVolume: 0.7,
   musicLoop: true,
   musicResume: true,

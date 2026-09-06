@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (drifting color orbs behind a frosted pane) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.2 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.3 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -50,7 +50,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - **Links check and name themselves**: paste one and a bad link says so, while the name box fills in from the title. Type over it any time.
 - **Fades in and out** on every control — ▶️, ⏸, ⏹ and track skips all ease rather than cut. Change your mind mid-fade and it carries on.
 - **Gentle ducking**: session cues briefly dip the music and ease it back up, so they stay audible without jolting the mix.
-- **Loops by default** (turn off **Loop music** to play once), with a **Low / Mid / High** music volume in the in-view settings.
+- **Loops by default** (turn off **Loop music** to play once), with a **Music sound** mute and a **Low / Mid / High** music volume in the in-view settings. The mute silences without stopping, so a live stream stays live.
 - **Resumes where you left off, per link.** ⏹ **Stop** — or changing that link — makes it start from the top instead. Live streams always start live.
 - Fully manual — independent of your sessions; stops when you close the panel. A notice tells you if playback stalls.
 - **Desktop only.** YouTube won't load its player inside Obsidian on iOS at all (error 153) — no link works there, and nothing the plugin can set changes it. Every other feature works on mobile.
@@ -84,6 +84,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
+- **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. All of these also live in the timer panel and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -93,8 +94,9 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
 - **Timing**: focus / short break / long break durations (press Enter to apply).
-- **Audio**: sound toggle, **Low / Mid / High** volume, and **Low / Mid / High** music volume.
-- **Auto-start**: auto-start break, auto-start focus. When on, a session that runs out automatically plays the end cue and starts the next one. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
+- **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only.
+- **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
+- **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.
 
 Layout adapts to narrow sidebars: the timer visual stays sticky at the top, controls keep a comfortable minimum width and the panel scrolls horizontally if needed.

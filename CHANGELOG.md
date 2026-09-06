@@ -4,6 +4,97 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-09-05
+
+You can now ask the timer to chime when a session runs out, without giving up
+the quiet. Gentle Pomodoro has always stayed silent at the end of a session
+unless the next one starts on its own — that is deliberate, so a chime never
+interrupts focus you want to keep. This release turns that into a choice you
+make per edge, and adds a state that was never possible before: starting the
+next session **without** a sound.
+
+### Added
+
+- **Two sounds you can turn on separately** ([#5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5)).
+  "Play a sound when a break ends" tells you break time is up, so a five-minute
+  break does not quietly become twenty. "Play a sound when focus ends" is there
+  if you want it, and stays **off** by default — that is the one that would interrupt a
+  session you are still in the middle of. Both live in the timer panel (under
+  the gear) and in Settings → Gentle Pomodoro → **Audio**.
+- **A quiet hand-over.** Each sound setting now applies whether the timer runs into
+  overtime _or_ starts the next session automatically, so you can auto-advance
+  with no sound at all. Previously auto-start always chimed and there was no way
+  to turn that off.
+
+- **A mute for the music**, next to its volume in the timer panel. Unlike pause
+  or stop it silences without stopping, so a 24/7 lofi stream stays live instead
+  of dropping off the edge with nothing to come back to. The timer panel's Audio
+  section now reads as two matched pairs — **Timer sounds** with **Timer volume**,
+  **Music sound** with **Music volume**.
+- **The music's mute is in the plugin settings too**, next to the timer's, so
+  every on/off switch for sound is on both screens. The two **volumes** stay in
+  the timer panel, where you can move them while you listen — both switches now
+  say so, so you know where to look.
+
+### Changed
+
+- The panel's volume row is now **Timer volume**, so it pairs with the switch
+  above it instead of sitting unlabelled next to **Music volume**.
+- **The auto-start toggles now also appear in the plugin settings**, in the new
+  Audio group alongside the chimes.
+- **The timer panel follows settings changed elsewhere.** Flip a shared setting
+  in the plugin settings and an open panel updates instead of waiting to be
+  closed and reopened — the Low / Mid / High rows included, which previously
+  kept their old highlight until the panel was closed and reopened.
+- The timer panel's Auto-start section is now two sections, **When focus ends**
+  and **When a break ends**, each holding the chime and the start toggle for
+  that moment — and a line underneath saying, in words, what will actually
+  happen with the settings you have. "Play a chime" cannot say for itself
+  whether it still applies when the next session starts on its own; the summary
+  answers that on screen instead of leaving you to test it. The same line
+  appears under each pair in the plugin settings.
+- The auto-start toggles are now called **Auto-start the break** and
+  **Auto-start the focus**, in both the timer panel and the plugin settings —
+  "Start the break" read as though it might begin one right now.
+- **Nothing you hear changes when you upgrade.** Each chime starts out matching
+  your current auto-start setting, which is exactly what your timer does today —
+  so the sounds stay the same and the switch is simply yours now. New installs
+  start with the break-end sound on. One thing to know afterwards: because
+  the chime is now a setting of its own, turning an auto-start _on_ no longer
+  brings a sound with it, and turning one _off_ no longer takes the sound away.
+  Whatever the chime says is what you get.
+- **The plugin settings now carry the master sound switch too**, at the top of
+  the Audio group. It was previously only in the timer panel, so the settings
+  page could promise a sound with no way to see — or change — what was silencing
+  it. It is called **Timer sounds**, and it now says what it covers: the drum
+  when focus starts and the sound when you stop, neither of which has a switch
+  of its own. Your music is separate and always was.
+
+### Fixed
+
+- **Changing the timer volume in one panel now reaches the others.** With two
+  timer panels open, setting the volume in one left the other showing the old
+  Low / Mid / High choice — and because the highlight is also the button, tapping
+  the one that looked selected wrote the old value back over the change.
+- Stop and Skip no longer play the end sound a second time when it has already
+  played for that session, or when pressed in the last moments before the timer
+  runs out.
+- With Timer sounds off, the line under the toggles now says so instead of
+  promising a sound that cannot play.
+- The end-of-session sound is no longer lost on iPhone and iPad after a phone call, Siri, or a
+  locked screen — the situation it is most needed in.
+- A backward jump in the system clock (an automatic time correction, or waking a
+  sleeping laptop) no longer swallows the next Stop sound.
+- Changing any audio setting in the plugin settings now moves the matching
+  control in an open timer panel, instead of leaving it stale until the panel is
+  reopened. That includes the volumes, and **Reset to defaults** in one panel
+  now reaches a second one — a number you are actively typing in is left alone.
+
+### Internal
+
+- CI now runs `tsc --noEmit`. Rollup reports a type error as a warning and still
+  emits `main.js`, so the build alone was passing with type errors in the tree.
+
 ## [0.6.2] — 2026-09-04
 
 A third timer theme, **Pixel City** (planned under the working name Rooftop Skyline), in pixel art: a city along the bottom

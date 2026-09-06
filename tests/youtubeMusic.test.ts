@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { DEFAULT_SETTINGS } from "../constants";
 import {
   YT_EMBED_ORIGIN,
   YT_ALLOWED_MESSAGE_ORIGINS,
@@ -11,6 +14,7 @@ import {
   buildListeningMessage,
   parsePlayerMessage,
   musicVolumeTo100,
+  effectiveMusicVolume,
   describeMusicError,
   buildVolumeRamp,
   buildFadeRamp,
@@ -1253,5 +1257,55 @@ describe("describeLinkCheck", () => {
       const msg = describeLinkCheck(status, video) ?? "";
       expect(msg).not.toMatch(/will play|playable|verified|confirmed/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The music mute. Applied at the ONE host accessor every MusicController volume
+// read shares, which is why the controller needed no change at all: its eight
+// reads (the convergence check, the duck base, both fade endpoints and three
+// stamps) all come through it, so they cannot disagree.
+// ---------------------------------------------------------------------------
+describe("effectiveMusicVolume", () => {
+  it("passes the level through when the music is not muted", () => {
+    for (const v of [0.3, 0.7, 1]) {
+      expect(effectiveMusicVolume(v, true)).toBe(v);
+    }
+  });
+
+  it("resolves to EXACTLY zero when muted, not merely to something quiet", () => {
+    // Three code paths key on the exact value: musicVolumeTo100 clamps at 0,
+    // fadeOut early-returns on `from <= 0`, and a duck computed from it
+    // collapses to a harmless 0 -> 0 ramp. A "quiet mode" at 0.05 would change
+    // all three silently, so the constant is pinned rather than assumed.
+    for (const v of [0.3, 0.7, 1]) {
+      expect(effectiveMusicVolume(v, false)).toBe(0);
+    }
+    expect(musicVolumeTo100(effectiveMusicVolume(0.7, false))).toBe(0);
+  });
+
+  it("keeps the level across a mute round trip", () => {
+    // The whole reason the mute is its own boolean: storing it as
+    // musicVolume = 0 would lose the level, and the panel's segmented row picks
+    // the NEAREST option, so 0 would paint "Low" as active while silent.
+    const level = 0.7;
+    expect(effectiveMusicVolume(level, false)).toBe(0);
+    expect(effectiveMusicVolume(level, true)).toBe(level);
+  });
+
+  it("is the value MusicController actually receives", () => {
+    // A pure helper nothing calls is decoration. The mute works only because
+    // the ONE host accessor returns the effective volume — every read inside
+    // MusicController comes through it, which is why that file needed no
+    // change. Read as text; nothing can import the view.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const accessor = view.slice(view.indexOf("musicVolume: () =>"));
+    expect(accessor.slice(0, 200)).toContain("effectiveMusicVolume");
+  });
+
+  it("defaults to unmuted, because DEFAULT_SETTINGS is the upgrade merge base", () => {
+    // loadSettings does Object.assign({}, DEFAULT_SETTINGS, loaded), so a
+    // `false` here would silence the music of every existing user on upgrade.
+    expect(DEFAULT_SETTINGS.musicSoundEnabled).toBe(true);
   });
 });

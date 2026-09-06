@@ -1,8 +1,39 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
+import { activeSegmentIndex, VOLUME_OPTIONS } from "./segmentedChoice";
 import type GentlePomoPlugin from "./main";
 import type { TimerListener, TimerState } from "./types";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
+  MUSIC_SOUND_LABEL,
+  MUSIC_VOLUME_LABEL,
+  TIMER_VOLUME_LABEL,
+  sessionEndSummary,
+  type SessionEndEdge,
+} from "./sessionEndSummary";
+
+/**
+ * The dual-surface TOGGLES — the boolean settings that live on both the gear
+ * panel and the Obsidian settings tab. Naming them as a union rather than plain
+ * strings is what stops the two surfaces drifting: a key that exists on one and
+ * not the other is a compile error, and `settings[key]` below stays
+ * type-checked.
+ *
+ * Toggles only, because the re-seed for these writes `input.checked`. The two
+ * VOLUMES are dual-surface as well since 0.6.3, and they re-seed through
+ * `segmentedPanelRows` instead — a separate registry because a segmented row is
+ * re-seeded by re-painting three buttons, not by writing one property.
+ */
+type SharedPanelKey =
+  | "soundEnabled"
+  | "autoStartBreak"
+  | "autoStartFocus"
+  | "focusEndSoundEnabled"
+  | "breakEndSoundEnabled"
+  | "musicSoundEnabled";
 import {
   DEFAULT_SETTINGS,
   VIEW_TYPE_GENTLE_POMO,
@@ -31,6 +62,7 @@ import {
   resolveStationIndex,
   buildStationList,
   nextStationIndex,
+  effectiveMusicVolume,
 } from "./youtubeMusic";
 
 declare const moment: MomentFactory;
@@ -48,6 +80,44 @@ export class GentlePomoView extends ItemView {
   endTimeLabel!: HTMLDivElement;
   goalProgressEl!: HTMLDivElement;
   settingsPanel!: HTMLDivElement;
+
+  /**
+   * Panel toggles that are ALSO reachable from the Obsidian settings tab, so
+   * they have to follow a change made over there. Rebuilt by
+   * renderSettingsPanel(); empty until the gear panel has been opened once,
+   * which is why syncSettingsPanel() is a no-op loop rather than a guard.
+   */
+  private sharedPanelRows: {
+    key: SharedPanelKey;
+    row: HTMLElement;
+    input: HTMLInputElement;
+  }[] = [];
+
+  /**
+   * The panel's segmented rows (the two volumes, both dual-surface since
+   * 0.6.3), each reduced to the one thing a re-seed needs: a closure that
+   * re-reads its setting and re-paints. Holding a closure rather than
+   * {buttons, options, key} keeps the generic parameter inside segmentedRow,
+   * where the option values are already typed — a registry of mixed-T rows
+   * would have to widen to unknown and cast on the way out.
+   */
+  private segmentedPanelRows: { seed: () => void }[] = [];
+
+  /**
+   * The panel's number inputs. They re-seed like everything else, but each seed
+   * refuses while the input has focus — writing `input.value` mid-edit rewrites
+   * the field under the caret. Reset to defaults in a SECOND panel is the real
+   * writer that makes this necessary.
+   */
+  private numberPanelRows: { seed: () => void }[] = [];
+
+  /**
+   * The plain-English outcome line under each pair of toggles. Re-worded by
+   * syncSettingsPanel() whenever either of its two settings moves, from either
+   * surface — which is the whole point of it: it has to be true right now, not
+   * true when the panel was last opened.
+   */
+  private endSummaryLines: { edge: SessionEndEdge; el: HTMLElement }[] = [];
   settingsVisible = false;
 
   // Wrappers for animation
@@ -749,6 +819,11 @@ export class GentlePomoView extends ItemView {
 
     const state = this.lastState ?? this.timer.getState();
 
+    // Follow settings changed on the OTHER surface. Cheap: a handful of
+    // property writes over rows that already exist, no allocation, no listener
+    // churn. See syncSettingsPanel for why this must not re-render.
+    this.syncSettingsPanel();
+
     // Task-selector visibility. Idempotent, so safe to run on every tick. The
     // unlink-on-hide side effect lives in the settings toggle's onChange (calling
     // setTask here would fire every tick); on load no task is ever pre-linked.
@@ -1238,7 +1313,15 @@ export class GentlePomoView extends ItemView {
           this.musicIframe?.contentWindow?.postMessage(payload, origin);
         }
       },
-      musicVolume: () => this.plugin.settings.musicVolume,
+      // The mute is applied HERE, at the single accessor, which is why
+      // MusicController needed no change at all: its eight reads of the user
+      // volume (convergence check, duck base, both fade endpoints, three
+      // stamps) all come through this lambda and so cannot disagree.
+      musicVolume: () =>
+        effectiveMusicVolume(
+          this.plugin.settings.musicVolume,
+          this.plugin.settings.musicSoundEnabled
+        ),
       recordPosition: (position) => {
         this.plugin.recordMusicPosition(position);
       },
@@ -1368,19 +1451,33 @@ export class GentlePomoView extends ItemView {
 
     const numberRow = (
       label: string,
-      initial: number,
+      read: () => number,
       onChange: (next: number) => Promise<void>
     ) => {
       const row = this.settingsPanel.createDiv("gp-settings-row");
       row.createSpan({ text: label });
       const input = row.createEl("input", { type: "number" });
-      input.value = initial.toString();
+      input.value = read().toString();
       this.registerDomEvent(input, "change", () => {
         const val = parseInt(input.value);
         if (val > 0) void onChange(val);
       });
       this.registerDomEvent(input, "keydown", (e: KeyboardEvent) => {
         if (e.key === "Enter") input.blur();
+      });
+      // These ARE reachable from elsewhere — "Reset to defaults" in a second
+      // panel fans out — so they re-seed like every other row. The caret guard
+      // is what the earlier "number inputs are deliberately not re-seeded" note
+      // was really protecting: writing input.value mid-edit rewrites the field
+      // under the user's cursor. Guarding on focus keeps that safe AND lets the
+      // value converge the rest of the time. Same shape as the settings tab's
+      // own guard on its text inputs.
+      this.numberPanelRows.push({
+        seed: () => {
+          if (activeDocument.activeElement === input) return;
+          const next = read().toString();
+          if (input.value !== next) input.value = next;
+        },
       });
     };
 
@@ -1396,105 +1493,200 @@ export class GentlePomoView extends ItemView {
       input.checked = initial;
       wrap.createSpan({ cls: "gp-toggle-slider" });
       this.registerDomEvent(input, "change", () => void onChange(input.checked));
+      return { row, input };
     };
 
+    /**
+     * Takes a READ, not an initial value. That is the whole re-seed: the same
+     * closure fills the row at construction and again from syncSettingsPanel(),
+     * so the two can never seed from different places — and neither can pick a
+     * different button, because both go through activeSegmentIndex().
+     */
     const segmentedRow = <T>(
       label: string,
-      options: { label: string; value: T }[],
-      initial: T,
+      options: readonly { label: string; value: T }[],
+      read: () => T,
       onChange: (next: T) => Promise<void>
     ) => {
       const row = this.settingsPanel.createDiv("gp-settings-row");
       row.createSpan({ text: label });
       const seg = row.createDiv({ cls: "gp-segmented", attr: { role: "radiogroup" } });
-      // For numeric values we pick the option closest to `initial` (e.g. volume:
-      // tolerate any past saved float). For other types, strict equality.
-      const initialOpt: { label: string; value: T } =
-        typeof initial === "number"
-          ? options.reduce((best, opt) =>
-              Math.abs((opt.value as number) - (initial as number)) <
-              Math.abs((best.value as number) - (initial as number))
-                ? opt
-                : best
-            )
-          : (options.find((o) => o.value === initial) ?? options[0]);
       const buttons: HTMLButtonElement[] = [];
-      for (const opt of options) {
+      const paint = (activeIndex: number) => {
+        buttons.forEach((btn, i) => {
+          const isActive = i === activeIndex;
+          btn.toggleClass("is-active", isActive);
+          btn.setAttribute("aria-checked", String(isActive));
+        });
+      };
+      options.forEach((opt, index) => {
         const btn = seg.createEl("button", { cls: "gp-segmented-btn", text: opt.label });
         btn.type = "button";
         btn.setAttribute("role", "radio");
-        const isActive = opt === initialOpt;
-        btn.setAttribute("aria-checked", String(isActive));
-        if (isActive) btn.addClass("is-active");
         buttons.push(btn);
         this.registerDomEvent(btn, "click", () => {
-          for (const b of buttons) {
-            b.removeClass("is-active");
-            b.setAttribute("aria-checked", "false");
-          }
-          btn.addClass("is-active");
-          btn.setAttribute("aria-checked", "true");
+          // Paint from the index pressed, not from a re-read: onChange writes
+          // the setting synchronously before its first await, so a re-read would
+          // agree — but only by accident, and only for values that are options.
+          paint(index);
           void onChange(opt.value);
         });
-      }
+      });
+      const seed = () => {
+        paint(activeSegmentIndex(options, read()));
+      };
+      seed();
+      this.segmentedPanelRows.push({ seed });
     };
 
     section("Timing");
-    numberRow("Focus (m)", settings.focusMinutes, async (v) => {
-      settings.focusMinutes = v;
-      await this.plugin.saveSettings();
-      this.timer.updateDuration("focus", v);
-    });
-    numberRow("Break (m)", settings.breakMinutes, async (v) => {
-      settings.breakMinutes = v;
-      await this.plugin.saveSettings();
-      this.timer.updateDuration("break", v);
-    });
+    numberRow(
+      "Focus (m)",
+      () => settings.focusMinutes,
+      async (v) => {
+        settings.focusMinutes = v;
+        await this.plugin.saveSettings();
+        this.timer.updateDuration("focus", v);
+      }
+    );
+    numberRow(
+      "Break (m)",
+      () => settings.breakMinutes,
+      async (v) => {
+        settings.breakMinutes = v;
+        await this.plugin.saveSettings();
+        this.timer.updateDuration("break", v);
+      }
+    );
+
+    // Both registries are re-armed HERE, before any row can register itself.
+    // renderSettingsPanel() runs again on every gear-open, and it empties the
+    // container first — so a reset placed lower down silently drops every row
+    // built above it. That shipped for one commit: `sharedPanelRows = []` sat
+    // below the Audio section, so "Timer sounds" registered and was then wiped,
+    // and changing it in the settings tab left the panel's toggle stale.
+    this.sharedPanelRows = [];
+    this.numberPanelRows = [];
+    this.segmentedPanelRows = [];
+    this.endSummaryLines = [];
+
+    const sharedToggle = (key: SharedPanelKey, label: string) => {
+      const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
+        settings[key] = v;
+        await this.plugin.saveSettings();
+        // Fan out: the engine is silent while the timer is idle, so without
+        // this a second open panel (and the settings tab) never converges.
+        this.plugin.applySettingsToOpenViews();
+      });
+      this.sharedPanelRows.push({ key, row, input });
+      return { row, input };
+    };
+
+    // Static explanatory text, sharing a class with the live summary lines:
+    // both are quiet prose hanging off the row above (margin-top 4px against
+    // margin-bottom 8px, so a mid-section hint binds upward, not downward).
+    const hint = (text: string) => {
+      this.settingsPanel.createDiv({ cls: "gp-settings-hint", text });
+    };
 
     section("Audio");
-    toggleRow("Sound", settings.soundEnabled, async (v) => {
-      settings.soundEnabled = v;
-      await this.plugin.saveSettings();
-    });
+    // Dual-surface since 0.6.3 (it gained a row in the settings tab, where it
+    // is the master gate for the two per-edge sounds), so it fans out and
+    // re-seeds like the other shared rows rather than being written and
+    // forgotten.
+    sharedToggle("soundEnabled", MASTER_SOUND_LABEL);
+    // The panel has no row descriptions, so without this the scope argument
+    // reaches only settings-tab readers. It is said POSITIVELY — naming the two
+    // cues that have no row of their own — because the failure it prevents is a
+    // user turning both "Play a sound" toggles off, expecting silence, and
+    // being answered by a drum at 00:00. It also has to exclude the music,
+    // which sits two rows below and which this switch has never gated.
+    hint("Also the drum when focus starts and the sound when you stop. Music is separate.");
     segmentedRow(
-      "Volume",
-      [
-        { label: "Low", value: 0.3 },
-        { label: "Mid", value: 0.7 },
-        { label: "High", value: 1.0 },
-      ],
-      settings.soundVolume,
+      TIMER_VOLUME_LABEL,
+      VOLUME_OPTIONS,
+      () => this.plugin.settings.soundVolume,
       async (v) => {
         settings.soundVolume = v;
         await this.plugin.saveSettings();
+        // Dual-surface since 0.6.3. The fan-out is not about the sound — the
+        // engine reads soundVolume at cue time, so nothing needs applying —
+        // it is about the OTHER open panels' segmented rows, which have no
+        // other way to hear about this. It was missing before this release,
+        // so two open panels genuinely disagreed about timer volume.
+        this.plugin.applySettingsToOpenViews();
       }
     );
+    // The music's own mute, so the Audio section reads as two matched pairs
+    // (toggle / hint / volume, twice) rather than one control with a mute and
+    // one without. Dual-surface since 0.6.3: the whole mixer moved into the
+    // tab's Audio group TOGETHER, which is what the earlier "panel-only" note
+    // here was actually protecting — a tab-only mute would have split one
+    // channel across two screens. The Music group stayed the wrong home for
+    // it, directly above "Show music player", which STOPS playback; Audio, one
+    // row under "Music volume", says the opposite thing in the right place.
+    sharedToggle("musicSoundEnabled", MUSIC_SOUND_LABEL);
+    // State-independent on purpose: "keeps playing, you just won't hear it" is
+    // false whenever the toggle is on, which is the default.
+    hint("Off silences the music without stopping it.");
     segmentedRow(
-      "Music volume",
-      [
-        { label: "Low", value: 0.3 },
-        { label: "Mid", value: 0.7 },
-        { label: "High", value: 1.0 },
-      ],
-      settings.musicVolume,
+      MUSIC_VOLUME_LABEL,
+      VOLUME_OPTIONS,
+      () => this.plugin.settings.musicVolume,
       async (v) => {
         settings.musicVolume = v;
         await this.plugin.saveSettings();
-        // Live-apply to this view's playing iframe; other open views converge
-        // through their own syncVolume() on the next reconcile.
+        // Live-apply to THIS view's playing iframe: applyVolume posts
+        // unconditionally, so it also wins over an in-flight duck or fade,
+        // which the convergence check below deliberately does not.
         this.music.applyVolume();
+        // Then the other surfaces: every open panel's segmented row re-seeds
+        // and its own syncVolume() converges its player. Without this the
+        // "next reconcile" the old comment relied on never comes while the
+        // timer is idle — the engine emits nothing at all.
+        this.plugin.applySettingsToOpenViews();
       }
     );
 
-    section("Auto-start");
-    toggleRow("Auto-start break", settings.autoStartBreak, async (v) => {
-      settings.autoStartBreak = v;
-      await this.plugin.saveSettings();
-    });
-    toggleRow("Auto-start focus", settings.autoStartFocus, async (v) => {
-      settings.autoStartFocus = v;
-      await this.plugin.saveSettings();
-    });
+    // Two sections keyed by EVENT, replacing the flat "Auto-start" pair. The
+    // heading names the moment once, so both rows under it answer the same
+    // question and the duplicate "Play a sound" labels are unambiguous. Flat
+    // rows put opposite mode words side by side ("Auto-start break" above
+    // "Play a sound when focus ends"), where adjacency fought comprehension —
+    // pairing is also what makes a disappearing chime row self-explanatory.
+    //
+    // Four independent rows, nothing conditional. "Play a sound" governs BOTH
+    // paths — the clock running out into overtime and the next session starting
+    // on its own — so neither row is ever moot and neither is hidden. An
+    // earlier cut hid each chime while its auto-start was on, which read
+    // backwards: turning something on should reveal choices, not remove them.
+    //
+    // The chime sits ABOVE its start toggle so reading order presents it as a
+    // property of the whole event rather than a fallback for when nothing else
+    // happens, and each pair closes with a line saying what will actually
+    // happen — because "Play a sound" cannot carry its own scope, and the
+    // question it leaves ("does it still play if the break auto-starts?")
+    // deserves an answer on screen rather than by experiment.
+    const summaryFor = (edge: SessionEndEdge) => {
+      const el = this.settingsPanel.createDiv({ cls: "gp-settings-hint" });
+      this.endSummaryLines.push({ edge, el });
+    };
+
+    section("When focus ends");
+    sharedToggle("focusEndSoundEnabled", "Play a sound");
+    sharedToggle("autoStartBreak", AUTO_START_BREAK_LABEL);
+    summaryFor("focus");
+
+    section("When a break ends");
+    sharedToggle("breakEndSoundEnabled", "Play a sound");
+    sharedToggle("autoStartFocus", AUTO_START_FOCUS_LABEL);
+    summaryFor("break");
+
+    // Seed the summaries now rather than waiting for the next engine emit: the
+    // rows above are built empty, and the tick that would fill them does not
+    // run while the timer is idle — which is exactly when someone opens the
+    // gear panel to read what these toggles do.
+    this.syncSettingsPanel();
 
     const resetWrap = this.settingsPanel.createDiv("gp-settings-reset");
     const resetBtn = resetWrap.createEl("button", {
@@ -1507,14 +1699,59 @@ export class GentlePomoView extends ItemView {
       settings.breakMinutes = DEFAULT_SETTINGS.breakMinutes;
       settings.soundEnabled = DEFAULT_SETTINGS.soundEnabled;
       settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
+      settings.musicSoundEnabled = DEFAULT_SETTINGS.musicSoundEnabled;
       settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
+      settings.focusEndSoundEnabled = DEFAULT_SETTINGS.focusEndSoundEnabled;
+      // NOT DEFAULT_SETTINGS.breakEndSoundEnabled: that is false because it is
+      // the upgrade merge base (see settingsStore.deriveBreakEndChime). What a
+      // reset should restore is the value a NEW install gets, which is on.
+      settings.breakEndSoundEnabled = true;
       await this.plugin.saveSettings();
       this.timer.updateDuration("focus", settings.focusMinutes);
       this.timer.updateDuration("break", settings.breakMinutes);
       this.music.applyVolume();
       this.renderSettingsPanel();
+      // Reset writes shared settings, so other open panels and the settings tab
+      // have to hear about it too.
+      this.plugin.applySettingsToOpenViews();
     });
+  }
+
+  /**
+   * Re-seed the panel controls that can also be changed from the settings tab.
+   * Called on every engine emit via applySettings().
+   *
+   * This re-SEEDS; it must never call renderSettingsPanel(), which empties the
+   * container and re-registers every listener. `registerDomEvent` releases on
+   * unload rather than on removal, and applySettings() runs on a 50ms tick — so
+   * a rebuild here would leak twenty detached rows a second. Same rule as the
+   * station rows, which are built once and only re-labelled.
+   *
+   * Only SHARED controls are re-seeded — the toggles and, since 0.6.3, the two
+   * volume rows. The number inputs are still deliberately left alone, and the
+   * volumes joining does not weaken that: a segmented control has no caret to
+   * write over, whereas assigning `input.value` mid-keystroke rewrites the
+   * field under the user's cursor. (The number inputs also have no settings-tab
+   * row at all, so nothing else can change them — if they ever gain one, the
+   * answer is a focus guard like the tab's name prefill uses, not this loop.)
+   */
+  private syncSettingsPanel() {
+    const settings = this.plugin.settings;
+    for (const entry of this.sharedPanelRows) {
+      entry.input.checked = Boolean(settings[entry.key]);
+    }
+    for (const entry of this.segmentedPanelRows) {
+      entry.seed();
+    }
+    for (const entry of this.numberPanelRows) {
+      entry.seed();
+    }
+    for (const line of this.endSummaryLines) {
+      // The whole mapping lives in the pure function, so the view holds no
+      // branch a test cannot reach.
+      line.el.setText(sessionEndSummary(line.edge, settings));
+    }
   }
 }

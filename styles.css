@@ -946,6 +946,34 @@
   margin-top: 0;
 }
 
+/* The plain-English outcome under each pair of end-of-session toggles. Quiet
+   enough to read as a caption rather than a control, and allowed to wrap: the
+   panel column is a hard 260px and the sentence matters more than the line
+   count. Not a `.gp-settings-row`, which is a flex row built for a label and a
+   control. */
+.gp-settings-hint {
+  font-size: var(--gp-text-micro);
+  color: var(--text-faint);
+  line-height: 1.35;
+  margin-top: var(--gp-space-2);
+  margin-bottom: var(--gp-space-4);
+}
+
+/* The Audio group's outcome line in the SETTINGS TAB (the panel's equivalent is
+   .gp-settings-hint). Obsidian's own row chrome expects a name and a control;
+   this row has neither, so the border it would otherwise draw between rows is
+   dropped and the text is pulled up under the pair it describes. */
+.gp-setting-summary {
+  border-top: none;
+  padding-top: 0;
+}
+
+.gp-setting-summary-text {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* --- Toggle switch (replaces native checkboxes in the settings panel) --- */
 .gp-toggle {
   position: relative;

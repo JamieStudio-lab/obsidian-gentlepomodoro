@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 // Imported from the mock by path, not through the "obsidian" alias: the alias
 // is a vitest resolution rule, so `tsc` would type these against the real
 // package (which has no recording stubs). Vitest points the alias at this very
@@ -6,6 +8,16 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { Setting, type RecordedComponent } from "../__mocks__/obsidian";
 import { GentlePomoSettingTab } from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
+  MUSIC_SOUND_LABEL,
+  MUSIC_VOLUME_LABEL,
+  TIMER_VOLUME_LABEL,
+  sessionEndSummary,
+} from "../sessionEndSummary";
+import { VOLUME_OPTIONS } from "../segmentedChoice";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -67,10 +79,18 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
     },
     app_workspace: null,
   };
-  // The tab only reaches app.workspace through applySettingsToOpenViews, which
-  // needs a real workspace; give it one that owns no leaves.
+  // The tab reaches app.workspace only through applySettingsToOpenViews. Give
+  // it ONE leaf whose view records the call: with an empty leaf list the fan-out
+  // is a no-op nobody can observe, so a deleted applySettingsToOpenViews() would
+  // be invisible to every assertion below — and that call is the only thing
+  // keeping an open gear panel from showing a stale toggle. applySettingsToOpenViews
+  // duck-types on `"applySettings" in view`, so this stub is enough.
   (plugin as unknown as { app: unknown }).app = {
-    workspace: { getLeavesOfType: () => [] },
+    workspace: {
+      getLeavesOfType: () => [
+        { view: { applySettings: () => calls.push({ method: "applySettings", args: [] }) } },
+      ],
+    },
   };
   const tab = new GentlePomoSettingTab(
     plugin.app as never,
@@ -164,6 +184,7 @@ describe("the two settings paths cannot drift", () => {
     expect(headings).toEqual([
       "Display & behavior",
       "Timer appearance",
+      "Audio",
       "Music",
       "Long break",
       "Daily focus goal",
@@ -176,6 +197,9 @@ describe("the two settings paths cannot drift", () => {
     ctx.tab.display();
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
+      // The Audio group's outcome lines are text, not controls — they carry no
+      // component by design and identify themselves with their own class.
+      if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
     }
   });
@@ -338,5 +362,366 @@ describe("music link rows", () => {
     ctx.tab.display();
     expect(rowFor(ctx.el, "Music link 1").desc).not.toEqual(rowFor(ctx.el, "Music link 2").desc);
     expect(rowFor(ctx.el, "Music link 2").desc).toEqual(rowFor(ctx.el, "Music link 3").desc);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.3 — the Audio group. Four INDEPENDENT rows: two chimes and the two
+// auto-start toggles that moved here from the timer panel. Nothing is
+// conditional, which is the point — an earlier cut hid each chime while its
+// auto-start was on, and a control vanishing because you turned something ON
+// reads backwards.
+// ---------------------------------------------------------------------------
+describe("Audio group", () => {
+  const names = (el: { settings: Setting[] }) =>
+    el.settings.filter((s) => !s.heading).map((s) => s.name);
+
+  const AUDIO_ROWS = [
+    MASTER_SOUND_LABEL,
+    "Play a sound when focus ends",
+    AUTO_START_BREAK_LABEL,
+    "Play a sound when a break ends",
+    AUTO_START_FOCUS_LABEL,
+  ];
+
+  it("shows all four rows whatever the auto-start toggles are set to", () => {
+    for (const overrides of [
+      { autoStartBreak: false, autoStartFocus: false },
+      { autoStartBreak: true, autoStartFocus: false },
+      { autoStartBreak: false, autoStartFocus: true },
+      { autoStartBreak: true, autoStartFocus: true },
+    ]) {
+      const c = makeTab(overrides);
+      c.tab.display();
+      for (const row of AUDIO_ROWS) {
+        expect(names(c.el), `${row} with ${JSON.stringify(overrides)}`).toContain(row);
+      }
+    }
+  });
+
+  it("no row description promises the auto-start path always chimes", () => {
+    // It no longer does — the chime toggle governs both paths. A stale
+    // "Always chimes" here would be the one place the UI lies about behaviour.
+    const c = makeTab();
+    c.tab.display();
+    for (const setting of c.el.settings) {
+      expect(setting.desc.toLowerCase(), setting.name).not.toContain("always chimes");
+    }
+  });
+
+  it("shows an outcome line under each pair, matching what the panel says", () => {
+    const c = makeTab({ autoStartBreak: true, focusEndSoundEnabled: false });
+    c.tab.display();
+    const summaries = c.el.settings
+      .filter((s) => s.settingEl.classes.includes("gp-setting-summary"))
+      .map((s) => s.settingEl.children.map((child) => child.text).join(""));
+
+    expect(summaries).toHaveLength(2);
+    // The exact question this line exists to answer: auto-start on, chime off.
+    expect(summaries[0]).toBe(sessionEndSummary("focus", c.settings));
+    expect(summaries[0]).toBe("The break starts, with no sound.");
+    expect(summaries[1]).toBe(sessionEndSummary("break", c.settings));
+  });
+
+  it("rewrites the outcome line when a setting is written, not just on reopen", async () => {
+    // getSettingDefinitions() runs on every display(), but refreshDomState() —
+    // all Obsidian runs after setControlValue — only re-evaluates predicates and
+    // does NOT re-render. A description baked in at definition time would sit
+    // there contradicting the toggle the user just flipped.
+    const c = makeTab();
+    c.tab.display();
+    const summaryOf = (edge: "focus" | "break") =>
+      c.el.settings
+        .filter((s) => s.settingEl.classes.includes("gp-setting-summary"))
+        [edge === "focus" ? 0 : 1].settingEl.children.map((child) => child.text)
+        .join("");
+
+    expect(summaryOf("focus")).toBe("Nothing — the timer counts up.");
+
+    await c.tab.setControlValue("autoStartBreak", true);
+    expect(summaryOf("focus")).toBe("The break starts, with no sound.");
+
+    await c.tab.setControlValue("focusEndSoundEnabled", true);
+    expect(summaryOf("focus")).toBe("A sound, then the break starts.");
+
+    // And the other edge is untouched by either write.
+    expect(summaryOf("break")).toBe("Nothing — the timer counts up.");
+  });
+
+  it("uses the same auto-start labels as the timer panel", () => {
+    // These two strings are identical on both surfaces by design, so they are
+    // shared rather than typed twice. The panel cannot be imported by a test
+    // (it pulls in the whole Obsidian view), so it is read as text — the same
+    // route tests/pixelCityArt.test.ts takes for view assertions.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    expect(view).toContain("AUTO_START_BREAK_LABEL");
+    expect(view).toContain("AUTO_START_FOCUS_LABEL");
+    expect(view).toContain("MASTER_SOUND_LABEL");
+    // ...and not a hand-typed copy that could drift from the tab's. Matched as
+    // an ARGUMENT (`, "label")`) rather than as a bare substring: the label also
+    // appears in prose comments, and a guard that cannot tell code from a
+    // comment fails on the next person who explains why the const exists.
+    for (const label of [AUTO_START_BREAK_LABEL, AUTO_START_FOCUS_LABEL, MASTER_SOUND_LABEL]) {
+      expect(view, `${label} must come from the shared const`).not.toContain(`, "${label}")`);
+    }
+
+    const c = makeTab();
+    c.tab.display();
+    const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
+    expect(names).toContain(AUTO_START_BREAK_LABEL);
+    expect(names).toContain(AUTO_START_FOCUS_LABEL);
+    expect(names).toContain(MASTER_SOUND_LABEL);
+  });
+
+  it("re-arms the panel's row registries BEFORE any row registers", () => {
+    // renderSettingsPanel() runs again on every gear-open and empties the
+    // container first, so both registries must be cleared at the TOP. A reset
+    // placed lower silently drops every row built above it — which shipped for
+    // one commit: `sharedPanelRows = []` sat below the Audio section, so
+    // "Timer sounds" registered and was immediately wiped, and changing it in
+    // this tab left the panel's toggle stale. Read as text; nothing can import
+    // the view.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const armed = view.indexOf("this.sharedPanelRows = [];");
+    const summariesArmed = view.indexOf("this.endSummaryLines = [];");
+    const firstRegistration = view.indexOf('sharedToggle("');
+    const firstSummary = view.indexOf('summaryFor("');
+
+    expect(armed).toBeGreaterThan(-1);
+    expect(firstRegistration).toBeGreaterThan(-1);
+    expect(armed, "sharedPanelRows must be re-armed before the first sharedToggle").toBeLessThan(
+      firstRegistration
+    );
+    expect(
+      summariesArmed,
+      "endSummaryLines must be re-armed before the first summaryFor"
+    ).toBeLessThan(firstSummary);
+
+    // Every registry, not just the two that already shipped wrong.
+    for (const field of ["segmentedPanelRows", "numberPanelRows"]) {
+      const at = view.indexOf(`this.${field} = [];`);
+      expect(at, `${field} must be re-armed`).toBeGreaterThan(-1);
+      expect(at, `${field} must be re-armed before the first sharedToggle`).toBeLessThan(
+        firstRegistration
+      );
+    }
+  });
+
+  it("re-seeds every panel row type, and guards the number inputs on focus", () => {
+    // Reset to defaults in a SECOND panel fans out, so the number inputs are
+    // genuinely reachable from elsewhere — the old "nothing else can change
+    // them" reasoning was wrong. What that note was really protecting is the
+    // caret: writing input.value mid-edit rewrites the field under the cursor.
+    // Both properties are read off the shipped source; nothing can import the
+    // view to exercise it directly.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const sync = view.slice(view.indexOf("private syncSettingsPanel()"));
+    const body = sync.slice(0, sync.indexOf("\n  }"));
+
+    for (const registry of [
+      "sharedPanelRows",
+      "segmentedPanelRows",
+      "numberPanelRows",
+      "endSummaryLines",
+    ]) {
+      expect(body, `${registry} must be re-seeded`).toContain(registry);
+    }
+    // It must never rebuild: renderSettingsPanel empties the container and
+    // re-registers every listener, and registerDomEvent releases on unload
+    // rather than removal — on a 50ms tick that leaks rows by the second.
+    expect(body).not.toContain("renderSettingsPanel(");
+
+    // The caret guard, on the number seed specifically.
+    const numberRow = view.slice(view.indexOf("const numberRow = ("));
+    expect(numberRow.slice(0, 1600)).toContain("activeDocument.activeElement === input");
+  });
+
+  it("writes each row through and fans out to open panels", async () => {
+    // setControlValue ends in a silent `default: return;` and `key` is a
+    // string, so a missing case is a no-op no compiler can see. All four are
+    // dual-surface, so the fan-out is what stops an open gear panel showing a
+    // stale toggle — the engine is idle and will not reconcile it.
+    for (const key of [
+      "focusEndSoundEnabled",
+      "breakEndSoundEnabled",
+      "autoStartBreak",
+      "autoStartFocus",
+      "soundEnabled",
+    ] as const) {
+      const c = makeTab();
+      c.settings[key] = false;
+      await c.tab.setControlValue(key, true);
+      expect(c.settings[key], key).toBe(true);
+      expect(
+        c.calls.some((call) => call.method === "saveSettings"),
+        key
+      ).toBe(true);
+      // The fan-out itself, now observable. Without it an open gear panel keeps
+      // showing the old toggle: the engine is idle, so nothing reconciles it.
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} must fan out to open views`
+      ).toBe(true);
+      expect(c.tab.getControlValue(key), key).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.3 — the mixer on both surfaces. Timer volume, Music sound and Music
+// volume were gear-panel-only; the two volumes are also the plugin's first
+// dual-surface NON-toggle settings, which is why the panel needed a re-seed
+// for segmented rows before these rows could be added at all.
+// ---------------------------------------------------------------------------
+describe("the audio mixer across the two surfaces", () => {
+  const audioGroup = (tab: GentlePomoSettingTab) => {
+    const group = tab
+      .getSettingDefinitions()
+      .find((g) => (g as { heading?: string }).heading === "Audio");
+    if (!group) throw new Error("no Audio group");
+    return group as unknown as {
+      heading: string;
+      items: { name: string; desc?: string; control?: { key?: string } }[];
+    };
+  };
+
+  it("carries both mutes and neither volume", () => {
+    // The split is a decision, not an oversight: a level is something you move
+    // WHILE LISTENING, which is a timer-panel gesture, and both volumes have
+    // been panel-only since 0.1.2. The mutes are policy and belong here. Order
+    // is asserted too — the two empty names are the outcome lines, text rows.
+    expect(audioGroup(ctx.tab).items.map((i) => i.name)).toEqual([
+      MASTER_SOUND_LABEL,
+      MUSIC_SOUND_LABEL,
+      "Play a sound when focus ends",
+      AUTO_START_BREAK_LABEL,
+      "",
+      "Play a sound when a break ends",
+      AUTO_START_FOCUS_LABEL,
+      "",
+    ]);
+  });
+
+  it("says where the volumes live, so their absence reads as a decision", () => {
+    // Without this the tab is simply missing a control the panel has, which is
+    // the complaint that started this work. Both switches point at the panel.
+    const items = audioGroup(ctx.tab).items;
+    const byKey = (key: string) => items.find((i) => i.control?.key === key);
+    expect(byKey("soundEnabled")?.desc).toContain("timer panel");
+    expect(byKey("musicSoundEnabled")?.desc).toContain("timer panel");
+  });
+
+  it("keeps no volume plumbing behind, on either read or write path", async () => {
+    // A getControlValue branch or a setControlValue case for a row that no
+    // longer exists is dead code that reads as an intention. Both volumes must
+    // fall through to the generic passthrough and be unwritable from here.
+    const c = makeTab();
+    expect(c.settings.soundVolume).toBe(0.7);
+    await c.tab.setControlValue("soundVolume", "low");
+    await c.tab.setControlValue("musicVolume", "low");
+    expect(c.settings.soundVolume, "the tab must not write soundVolume").toBe(0.7);
+    expect(c.settings.musicVolume, "the tab must not write musicVolume").toBe(0.7);
+  });
+
+  it("still fans the music mute out to open panels", async () => {
+    // It is the one mixer control that IS dual-surface, and the mute only
+    // reaches the player through the view's musicVolume() accessor — so the
+    // fan-out is what actually silences it, not just what repaints a toggle.
+    const c = makeTab();
+    await c.tab.setControlValue("musicSoundEnabled", false);
+    expect(c.settings.musicSoundEnabled).toBe(false);
+    expect(c.calls.some((call) => call.method === "applySettings")).toBe(true);
+  });
+});
+
+describe("the timer panel's segmented rows re-seed", () => {
+  // Nothing can import GentlePomoView, so these read it as text — the same
+  // route tests/pixelCityArt.test.ts takes for view assertions.
+  const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+
+  /** The bodies of the two `segmentedRow(...)` CALLS, not its definition. */
+  const segmentedCalls = (src: string) =>
+    src
+      .split("\n    segmentedRow(")
+      .slice(1)
+      .map((rest) => rest.slice(0, rest.indexOf("\n    );")));
+
+  it("builds both volume rows from the shared stop list, not a re-typed one", () => {
+    const calls = segmentedCalls(view());
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call).toContain("VOLUME_OPTIONS");
+      // A second hand-typed list is the drift: the panel's nearest-stop rule
+      // would still light "Mid" for a tab that stored 0.6, so the surfaces
+      // would look consistent while holding different numbers.
+      expect(call).not.toContain('label: "Low"');
+    }
+  });
+
+  it("re-reads through the live settings object, not the captured one", () => {
+    // loadSettings() replaces the settings object wholesale, and this closure
+    // now runs on a tick rather than once — the same rule the extracted modules
+    // follow (MusicHost, FocusTotalHost: calls, never captured references).
+    for (const call of segmentedCalls(view())) {
+      expect(call).toContain("() => this.plugin.settings.");
+    }
+  });
+
+  it("fans a volume change out to the other open panels", () => {
+    // Both volumes are dual-surface now, so a change made here has to reach
+    // every other open panel's segmented row. Nothing else can: the engine
+    // emits nothing at all while the timer is idle, so there is no tick to
+    // converge on. Timer volume shipped without this and two open panels
+    // genuinely disagreed.
+    for (const call of segmentedCalls(view())) {
+      expect(call).toContain("applySettingsToOpenViews()");
+    }
+  });
+
+  it("re-arms the segmented registry BEFORE the first segmented row", () => {
+    // Same rule as sharedPanelRows above, and the same shipped bug: a reset
+    // placed lower silently drops every row built above it.
+    const src = view();
+    const armed = src.indexOf("this.segmentedPanelRows = [];");
+    const firstRow = src.indexOf("\n    segmentedRow(");
+    expect(armed).toBeGreaterThan(-1);
+    expect(firstRow).toBeGreaterThan(-1);
+    expect(armed, "segmentedPanelRows must be re-armed before the first segmentedRow").toBeLessThan(
+      firstRow
+    );
+  });
+
+  it("re-seeds the segmented rows from syncSettingsPanel, without rebuilding", () => {
+    // The crux. syncSettingsPanel() walking only the toggles is exactly the
+    // defect this release already shipped once for toggles: the tab moves the
+    // value, the panel keeps the old highlight — and because the highlight IS
+    // the control, tapping the button that looks active silently writes the
+    // old value back over the change just made.
+    //
+    // And it must re-SEED, never re-render: renderSettingsPanel() empties the
+    // container and re-registers every listener, and registerDomEvent releases
+    // on unload rather than on removal, so a rebuild on the 50ms tick leaks
+    // twenty detached rows a second.
+    const src = view();
+    const start = src.indexOf("private syncSettingsPanel()");
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start);
+    expect(body).toContain("this.segmentedPanelRows");
+    expect(body).toContain("seed()");
+    expect(body).not.toContain("renderSettingsPanel()");
+  });
+
+  it("uses the shared mixer labels rather than re-typing them", () => {
+    // Read with comments stripped: a label may legitimately be quoted in prose
+    // above the row that uses it, and a guard that cannot tell code from a
+    // comment fails on the next person who explains why the const exists.
+    const code = view().replace(/^\s*(?:\/\/|\*|\/\*).*$/gm, "");
+    for (const label of [TIMER_VOLUME_LABEL, MUSIC_SOUND_LABEL, MUSIC_VOLUME_LABEL]) {
+      expect(code, `${label} must come from the shared const`).not.toContain(`"${label}"`);
+    }
+    const src = view();
+    expect(src).toContain("TIMER_VOLUME_LABEL");
+    expect(src).toContain("MUSIC_SOUND_LABEL");
+    expect(src).toContain("MUSIC_VOLUME_LABEL");
   });
 });

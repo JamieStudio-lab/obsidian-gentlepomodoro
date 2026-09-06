@@ -32,6 +32,14 @@ export interface GentlePomoSettings {
   // Audio
   soundEnabled: boolean;
   soundVolume: number;
+  // Opt-in end-of-session chimes for the overtime path (the matching auto-start
+  // toggle off). Both default to false in DEFAULT_SETTINGS because that object
+  // is also the merge base for an UPGRADING user, who must stay exactly as
+  // quiet as they were; loadSettings() turns breakEndSoundEnabled on for a
+  // fresh install only. Focus→break stays off even for new users — that is the
+  // edge where a chime would interrupt a session someone wants to keep going.
+  focusEndSoundEnabled: boolean;
+  breakEndSoundEnabled: boolean;
 
   // Paths
   tasksPath: string;
@@ -74,6 +82,13 @@ export interface GentlePomoSettings {
   // maps it to a slot that actually holds a URL.
   musicStationIndex: number;
   showMusicPlayer: boolean; // feature switch: off hides the controls and stops playback
+  /**
+   * The music's mute, kept separate from `musicVolume` so the level survives it.
+   * Storing a mute as `musicVolume: 0` cannot work: the panel's segmented row
+   * picks the NEAREST option, so 0 paints "Low" as active while the player is
+   * silent, and the next click on any segment destroys the mute.
+   */
+  musicSoundEnabled: boolean;
   musicVolume: number; // 0-1, mapped ×100 for the embed's setVolume
   musicLoop: boolean; // replay the video/playlist when it ends (no effect on live streams)
   musicResume: boolean; // reopen the music where it was paused/left off

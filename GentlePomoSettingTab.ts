@@ -10,6 +10,14 @@ import {
   type TextComponent,
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
+import {
+  AUTO_START_BREAK_LABEL,
+  AUTO_START_FOCUS_LABEL,
+  MASTER_SOUND_LABEL,
+  MUSIC_SOUND_LABEL,
+  sessionEndSummary,
+  type SessionEndEdge,
+} from "./sessionEndSummary";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -167,6 +175,14 @@ interface MusicSlotUi {
 
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
+
+  /**
+   * The Audio group's outcome lines, kept so they can be rewritten in place when
+   * one of the four settings they describe is written. Repopulated by each
+   * render; entries from a previous render are simply overwritten, and a stale
+   * detached node would only be written to, never shown.
+   */
+  private readonly endSummaryEls = new Map<SessionEndEdge, HTMLElement>();
 
   constructor(app: App, plugin: GentlePomoPlugin) {
     super(app, plugin);
@@ -373,6 +389,44 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     void this.commitMusicName(slot, name);
   }
 
+  /**
+   * The live outcome line under each pair of Audio rows — the same sentence the
+   * timer panel shows, for the same reason: "Play a sound when focus ends" does not say
+   * whether it still applies when the break starts on its own, and that question
+   * should not need an experiment.
+   *
+   * It is a `render` row rather than a `desc` string because a description is
+   * baked in at definition time. `getSettingDefinitions()` runs on every
+   * `display()`, so a static string would be right whenever the tab is OPENED —
+   * but `refreshDomState()`, which is all Obsidian runs after `setControlValue`,
+   * only re-evaluates `visible`/`disabled` predicates and explicitly does not
+   * re-render. The text would then sit there contradicting the toggle the user
+   * just flipped. Instead the node is kept and rewritten by
+   * `refreshEndSummaries()` from the one place all four settings are written.
+   *
+   * `name`/`desc` are deliberately empty so the two render paths still describe
+   * the row identically; everything visible is built in the callback.
+   */
+  private endSummaryRow(edge: SessionEndEdge): SettingRowSpec {
+    return {
+      name: "",
+      desc: "",
+      render: (setting: Setting) => {
+        setting.settingEl.addClass("gp-setting-summary");
+        const el = setting.settingEl.createDiv("gp-setting-summary-text");
+        el.setText(sessionEndSummary(edge, this.plugin.settings));
+        this.endSummaryEls.set(edge, el);
+      },
+    };
+  }
+
+  /** Rewrite both outcome lines in place. Cheap, and safe before either renders. */
+  private refreshEndSummaries(): void {
+    for (const [edge, el] of this.endSummaryEls) {
+      el.setText(sessionEndSummary(edge, this.plugin.settings));
+    }
+  }
+
   private applySettingsToOpenViews(): void {
     const hasApplySettings = (view: unknown): view is { applySettings: () => void } => {
       if (!view || typeof view !== "object") return false;
@@ -440,6 +494,70 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: "Show the projected finish time on the timer while a session is running.",
             control: { type: "toggle", key: "showEndTime" },
           },
+        ],
+      },
+      {
+        // New in 0.6.3, and it now holds EVERY audio setting the timer panel's
+        // gear holds: the mixer (two switches and two levels) and the
+        // end-of-session rows (the two sounds and the two auto-starts, which
+        // were gear-panel-only before). Neither surface is a subset of the
+        // other any more, which is the point — a setting reachable from only
+        // one of two screens is a setting people cannot find.
+        //
+        // The four end-of-session rows are fully INDEPENDENT: the sound governs
+        // the auto-start path too, so no row is ever moot and none is hidden.
+        heading: "Audio",
+        rows: [
+          {
+            // The master gate for everything else in this group, and until
+            // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
+            // read "Rings when focus time is up" here with no way to see why
+            // it did not, and no control on this screen to change it.
+            name: MASTER_SOUND_LABEL,
+            // Enumerates the two cues that have NO row of their own, positively.
+            // The old "nothing below makes a sound" was true but taught the
+            // wrong model — it implied the rows below were the whole set, so a
+            // user could turn both off, expect silence, and meet a drum at
+            // 00:00. It also has to disclaim the music: soundEnabled is read
+            // only by TimerEngine.playSound and never reaches the player.
+            desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate, and both volumes are in the timer panel.",
+            control: { type: "toggle", key: "soundEnabled" },
+          },
+          // The music's mute belongs beside the timer's, not in the Music
+          // group: that group is about which link plays, and its neighbour
+          // "Show music player" STOPS playback, the opposite of a mute.
+          //
+          // The two VOLUMES are deliberately NOT here. A level is something you
+          // move while listening, which is a timer-panel gesture; they have
+          // been panel-only since 0.1.2 and stay that way. Both switches say
+          // where to find them, so the omission reads as a decision, not a gap.
+          {
+            name: MUSIC_SOUND_LABEL,
+            desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
+            control: { type: "toggle", key: "musicSoundEnabled" },
+          },
+          {
+            name: "Play a sound when focus ends",
+            desc: "Off by default, so a session you want to keep going with is never interrupted.",
+            control: { type: "toggle", key: "focusEndSoundEnabled" },
+          },
+          {
+            name: AUTO_START_BREAK_LABEL,
+            desc: "When focus time is up, begin the break without waiting. Silent unless the sound above is on too.",
+            control: { type: "toggle", key: "autoStartBreak" },
+          },
+          this.endSummaryRow("focus"),
+          {
+            name: "Play a sound when a break ends",
+            desc: "So a five-minute break doesn't quietly become twenty.",
+            control: { type: "toggle", key: "breakEndSoundEnabled" },
+          },
+          {
+            name: AUTO_START_FOCUS_LABEL,
+            desc: "When break time is up, begin focusing without waiting. Silent unless the sound above is on too.",
+            control: { type: "toggle", key: "autoStartFocus" },
+          },
+          this.endSummaryRow("break"),
         ],
       },
       {
@@ -634,6 +752,52 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       case "showDayNightIndicator":
         settings.showDayNightIndicator = Boolean(value);
         await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
+      // The four dual-surface rows. Every one of them MUST fan out: they also
+      // live on the gear panel, and the engine is silent while the timer is
+      // idle, so without applySettingsToOpenViews an open panel would keep
+      // showing the old value until it was closed and reopened. A missing case
+      // here would be silent too — the switch ends in `default: return;`, and
+      // `key` is a string, so nothing would flag it.
+      case "autoStartBreak":
+        settings.autoStartBreak = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "autoStartFocus":
+        settings.autoStartFocus = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "soundEnabled":
+        // The master gate: it changes what every summary line in this group
+        // says, so it refreshes them exactly like the two chimes do.
+        settings.soundEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "focusEndSoundEnabled":
+        settings.focusEndSoundEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "breakEndSoundEnabled":
+        settings.breakEndSoundEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "musicSoundEnabled":
+        settings.musicSoundEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        // The mute is applied at the view's musicVolume() accessor, which
+        // MusicController's convergence check reads — so the fan-out is what
+        // actually silences the player, not just what repaints the toggle.
         this.applySettingsToOpenViews();
         return;
       case "showEndTime":

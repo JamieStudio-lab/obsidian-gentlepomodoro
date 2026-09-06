@@ -1,6 +1,6 @@
 {
   "name": "obsidian-gentle-pomodoro",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "A visually soothing, task-integrated Pomodoro timer. Focus on your work with gentle animations and Pomodoro logging.",
   "main": "main.js",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "rollup --config rollup.config.mjs",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
