@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import moment from "moment";
 import type { App } from "obsidian";
 import {
@@ -557,14 +559,31 @@ describe("marker maintenance reaches wherever the counter can write", () => {
     }
   });
 
-  it("takes no folder argument at all, so no caller can narrow it", () => {
-    // The scope is not a decision a call site gets to make — passing the tasks
-    // folder is exactly the bug, and a parameter is an invitation to re-add it.
-    expect(scanAllPomodoroMarkersInVault).toHaveLength(1);
-    expect(removeAllPomodoroMarkersInVault).toHaveLength(1);
-    expect(scanMisplacedPomodoroMarkersInVault).toHaveLength(1);
-    expect(repairPomodoroMarkersInVault).toHaveLength(1);
-    expect(removeMisplacedPomodoroMarkersInVault).toHaveLength(1);
+  it("sweeps the whole vault through EVERY wrapper, not just the two 'all' ones", async () => {
+    // Repair and Remove-misplaced are the write paths whose reach this widened,
+    // and they had no whole-vault assertion at all — the two tests above drive
+    // only scanAll/removeAll. A re-narrowing of the other three passed the
+    // entire suite.
+    const misplaced = {
+      "projects/inside.md": "- [ ] In the folder 📅 2026-09-05 🍅 2",
+      "inbox/outside.md": "- [ ] Linked from a note 📅 2026-09-05 🍅 7",
+      "deep/nested/also.md": "- [ ] Another 🆔 abc 🍅 1",
+    };
+
+    for (const sweep of [
+      scanMisplacedPomodoroMarkersInVault,
+      repairPomodoroMarkersInVault,
+      removeMisplacedPomodoroMarkersInVault,
+    ]) {
+      const { app } = vault(misplaced);
+      const result = await sweep(app);
+      expect(result.filesAffected, sweep.name).toBe(3);
+      expect(result.affected.map((f) => f.path).sort(), sweep.name).toEqual([
+        "deep/nested/also.md",
+        "inbox/outside.md",
+        "projects/inside.md",
+      ]);
+    }
   });
 
   it("still skips notes with no marker in them", async () => {
@@ -574,5 +593,59 @@ describe("marker maintenance reaches wherever the counter can write", () => {
 
     expect(result.filesScanned).toBe(4);
     expect(result.filesAffected).toBe(3);
+  });
+});
+
+describe("the marker sweep cannot be re-narrowed to a folder", () => {
+  /**
+   * This replaces an arity check that could not do its job. `Function.length`
+   * counts only the parameters BEFORE the first defaulted one, so
+   * `tasksPath = ""` — the exact shape someone would reach for, because it
+   * keeps every existing call site compiling — was invisible to it. The full
+   * pre-0.6.4 narrowing was restored as an experiment and the whole suite,
+   * typecheck and lint stayed green.
+   *
+   * Read as source text, the route tests/settingTab.test.ts already uses for
+   * things no unit test can observe.
+   */
+  const loader = readFileSync(resolve(__dirname, "..", "taskLoader.ts"), "utf8");
+  const main = readFileSync(resolve(__dirname, "..", "main.ts"), "utf8");
+
+  const bodyOf = (src: string, signature: string) => {
+    const at = src.indexOf(signature);
+    expect(at, `${signature} not found`).toBeGreaterThan(-1);
+    return src.slice(at, src.indexOf("\n}", at));
+  };
+
+  it("does not scope the walker by folder, in any parameter shape", () => {
+    const walker = bodyOf(loader, "async function processPomodoroMarkersInVault(");
+    expect(walker).not.toContain("tasksPath");
+    // The folder test itself must not reappear inside the sweep. It is still
+    // exported and still used — the folder TASK SCOPE needs it — so its mere
+    // presence in the file proves nothing.
+    expect(walker).not.toContain("isPathInFolder");
+  });
+
+  it("gives every exported wrapper a signature with no room for a folder", () => {
+    for (const name of [
+      "scanMisplacedPomodoroMarkersInVault",
+      "repairPomodoroMarkersInVault",
+      "removeMisplacedPomodoroMarkersInVault",
+      "scanAllPomodoroMarkersInVault",
+      "removeAllPomodoroMarkersInVault",
+    ]) {
+      const at = loader.indexOf(`export function ${name}(`);
+      expect(at, `${name} not found`).toBeGreaterThan(-1);
+      // Whitespace-normalised: prettier wraps the longest of these five across
+      // three lines, so matching the literal text passes or fails on formatting
+      // rather than on the parameter list.
+      const signature = loader.slice(at, loader.indexOf(")", at)).replace(/\s+/g, "");
+      expect(signature, `${name} must take only the app`).toBe(`exportfunction${name}(app:App`);
+    }
+  });
+
+  it("has no call site that hands one a path", () => {
+    // main.ts is where the narrowing lived, so this is where it would return.
+    expect(main).not.toMatch(/InVault\(\s*this\.app,/);
   });
 });

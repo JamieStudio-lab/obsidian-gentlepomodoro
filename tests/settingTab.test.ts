@@ -953,7 +953,12 @@ describe("the picker's live-reload guard has a trigger for every field it watche
     const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
     const fn = src.slice(src.indexOf("private taskSettingsKey()"));
     const body = fn.slice(0, fn.indexOf("\n  }"));
-    return [...body.matchAll(/\$\{s\.(\w+)\}/g)].map((m) => m[1]);
+    // Any read of a settings field, not just the fully-braced `${s.x}` form:
+    // the slice is already the function body, so there is nothing else in it
+    // for the looser pattern to catch — and a fourth field added as
+    // `${s.a}${s.b}` or via a local would otherwise slip past the guard
+    // whose whole job is to notice it.
+    return [...new Set([...body.matchAll(/\bs\.(\w+)/g)].map((m) => m[1]))];
   };
 
   it("names three fields, so a fourth cannot be added unnoticed", () => {

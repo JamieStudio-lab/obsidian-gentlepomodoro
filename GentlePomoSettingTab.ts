@@ -756,6 +756,18 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       // applySettings — and the engine emits nothing while the timer is idle,
       // which is exactly when someone is sitting in this tab. Without the
       // fan-out the guard covered one of the three fields it keys on.
+      //
+      // DELIBERATELY NOT DEBOUNCED, though both settings paths commit per
+      // keystroke and this therefore reloads an open picker per character.
+      // Measured before deciding, because it looks alarming: every
+      // intermediate path fails isPathInFolder's boundary check, so those
+      // reloads match zero files and read nothing at all. Only the EMPTY
+      // string scans the vault — one scan, in a state the plugin fully
+      // supports (nobody with a folder set stops there), served by
+      // cachedRead from memory. Adding the link check's debounce-and-token
+      // machinery here would buy nothing and is itself a source of staleness
+      // bugs. The reload was already per-keystroke whenever the timer was
+      // running; the fan-out widened WHEN it happens, not what it costs.
       case "tasksPath":
         settings.tasksPath = String(value);
         await this.plugin.saveSettings();
