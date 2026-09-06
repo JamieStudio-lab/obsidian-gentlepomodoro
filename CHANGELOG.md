@@ -4,6 +4,87 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-09-06
+
+The task picker can now read the note you are in, or every note you have open,
+instead of one folder. If you keep tasks scattered through your notes rather
+than filed in one place, this is for you — and in those two modes tasks with no
+date show up too, so an ordinary `- [ ] something` in today's note is pickable.
+
+### Added
+
+- **"Where to find tasks"** ([#4](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/4)),
+  a dropdown in the plugin settings **and** under the timer's gear icon, with
+  three choices:
+  - **Tasks folder** — the folder path below it, exactly as before. Still the
+    default, so nothing changes unless you change it.
+  - **Current note** — the note you are looking at.
+  - **Open notes** — every note open in a tab, including tabs you have not
+    clicked on this session.
+- **Undated tasks in the two note modes.** A task with no ⏳ scheduled or 📅 due
+  date appears under a **No date** heading at the bottom of the list. Inside one
+  note there is not much to filter, and requiring a date there would have shown
+  most people an empty picker. The folder mode still asks for a date, so a
+  whole-vault scan stays readable.
+
+### Changed
+
+- **The gear panel only shows settings for what is switched on.** With "Show
+  music player" off, the music mute and music volume rows go away; with "Show
+  task selector" off, the whole Tasks section does. Both switches are in the
+  plugin settings, so nothing hides its own way back. (Music volume is the one
+  control with no second home — it has always lived only in the panel — but
+  with the player off there is nothing playing to set a level for.)
+- **Fewer explanatory lines in the gear panel.** The captions under the timer
+  mute, the music mute and the task source are gone — the Audio section now
+  shows two obvious pairs (mute and level, twice), which says the same thing
+  without the prose. The plugin settings still describe each one in words, and
+  the two lines under "When focus ends" / "When a break ends" stay, because
+  those answer a question the labels genuinely cannot.
+- **Your linked task stays put when you change where tasks come from.** If the
+  new scope would not have shown it, it appears at the top of the picker under
+  **Linked task** instead of vanishing. It is only dropped when you tick it off,
+  which is unchanged.
+- The picker follows you: switch notes while it is open in "Current note" mode
+  and it reloads against the note you moved to.
+- The empty picker now says something useful in each situation — "no note open"
+  reads differently from "this note has no tasks" — and the first-run nudge
+  mentions reading from the current note, not just setting a folder.
+
+### Fixed
+
+- The four **pomodoro count marker** actions (Check / Repair / Remove / Remove
+  all) only ever looked inside your tasks folder. That was right while the
+  picker could only offer tasks from there — but you can now link a task in any
+  note, and the counter writes its marker into that note, where none of the
+  four could see it. They now cover every note, so "Remove all" means all
+  again. What they touch is unchanged: Check still writes nothing and the other
+  three still confirm with exact counts first; Repair and Remove only act on a
+  marker sitting _after_ a task's date fields, which is the placement that
+  breaks those fields; and Remove all leaves alone any 🍅 you typed inside a
+  task's own text.
+- Changing the **tasks folder path** or the **task lookahead window** in the
+  plugin settings did not refresh a task picker that was already open, unless
+  the timer happened to be running. Changing "Where to find tasks" did. All
+  three now behave the same.
+- With **Where to find tasks** set to "Current note", opening a PDF, canvas or
+  image made the picker say "All clear" — as though it had read the file and
+  found nothing — instead of telling you no note was open.
+- **Reset to defaults** in the timer panel restored every control except "Where
+  to find tasks".
+- The "Where to find tasks" dropdown in the gear panel had no arrow on it, and
+  kept a light grey band around it after you picked an option — Obsidian's own
+  focus highlight, which is unobtrusive on a small right-aligned dropdown but
+  spans the whole column on a full-width one. It now uses Obsidian's dropdown
+  styling and the plugin's own focus outline.
+- The two number boxes in the timer's gear panel (Focus and Break minutes) never
+  picked up a change made from a second timer panel — "Reset to defaults" over
+  there left them showing the old numbers until the panel was closed and
+  reopened.
+- Opening the task picker registered a fresh click handler for every row it
+  drew, and never released them until the panel was closed. Long sessions with a
+  lot of picker use accumulated them.
+
 ## [0.6.3] — 2026-09-05
 
 You can now ask the timer to chime when a session runs out, without giving up

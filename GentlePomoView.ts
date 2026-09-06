@@ -3,7 +3,7 @@ import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import { activeSegmentIndex, VOLUME_OPTIONS } from "./segmentedChoice";
 import type GentlePomoPlugin from "./main";
-import type { TimerListener, TimerState } from "./types";
+import type { TaskItem, TimerListener, TimerState } from "./types";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
@@ -44,6 +44,16 @@ import {
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
+import {
+  TASK_SOURCE_ORDER,
+  TASK_SOURCE_LABELS,
+  TASK_SOURCE_SETTING_NAME,
+  resolveTaskSource,
+  resolveTaskScope,
+  taskScopeKey,
+  taskPickerEmptyState,
+  type TaskSource,
+} from "./taskScope";
 import {
   buildDayNightIcon,
   dayNightIconFor,
@@ -112,6 +122,36 @@ export class GentlePomoView extends ItemView {
   private numberPanelRows: { seed: () => void }[] = [];
 
   /**
+   * The panel's dropdown rows (the task source). Same closure shape as the
+   * segmented rows and for the same reason — the option type stays inside
+   * selectRow, where it is already known. Each seed re-reads its setting and
+   * writes `select.value`, so a change made in the settings tab moves it.
+   *
+   * One row today. It is a registry rather than a field because that is the
+   * shape syncSettingsPanel() iterates, and because a second dropdown must not
+   * have to remember to add itself to a hand-written re-seed.
+   */
+  private selectPanelRows: { seed: () => void }[] = [];
+
+  /**
+   * Panel rows that belong to a feature switch, and the predicate that owns
+   * them. Toggled by CSS class in syncSettingsPanel(), never by re-rendering:
+   * renderSettingsPanel() empties the container and re-registers every
+   * listener, and the sync runs on a 50ms tick.
+   *
+   * This is NOT a return of the visibility machinery 0.6.3 deleted, and the
+   * difference is worth stating because the two look identical from outside.
+   * There, a chime row hid because its auto-start was ON — a sibling that
+   * merely *overruled* it, which turned out to be a three-state model wearing
+   * a four-state costume. Here the parent is a FEATURE SWITCH: with the music
+   * player off the iframe is destroyed, and with the task selector off the
+   * picker is gone and the task unlinked, so these rows govern nothing that
+   * exists. Both parents live in the settings tab, so nothing here can hide
+   * its own way back.
+   */
+  private conditionalPanelRows: { el: HTMLElement; visible: () => boolean }[] = [];
+
+  /**
    * The plain-English outcome line under each pair of toggles. Re-worded by
    * syncSettingsPanel() whenever either of its two settings moves, from either
    * surface — which is the whole point of it: it has to be true right now, not
@@ -129,6 +169,24 @@ export class GentlePomoView extends ItemView {
   taskListContainer!: HTMLDivElement;
   taskListVisible = false;
   taskBtn!: HTMLButtonElement;
+  /**
+   * The rows currently on screen, addressed by the `data-gp-task-index` each
+   * row carries. The delegated click handler reads through this rather than
+   * closing over a TaskItem per row, so loadTasks() can rebuild the list as
+   * often as it likes without registering a single new listener.
+   */
+  private loadedTasks: TaskItem[] = [];
+  /** The scope the visible list was built from — see the active-leaf handler. */
+  private lastTaskScopeKey: string | null = null;
+  /** The task SETTINGS the visible list was built from; compared on each tick. */
+  private lastTaskSettingsKey: string | null = null;
+  /**
+   * Monotonic token for loadTasks. Two loads can genuinely be in flight since
+   * 0.6.4 — switching notes with the picker open starts a second one — and
+   * whichever vault read finishes last would otherwise paint, which is not the
+   * same as whichever was asked for last.
+   */
+  private taskLoadGeneration = 0;
 
   // Music (audio-only lofi playback; the YouTube iframe is a hidden audio engine)
   musicSection!: HTMLDivElement;
@@ -437,6 +495,43 @@ export class GentlePomoView extends ItemView {
       evt.preventDefault();
       row.click();
     });
+
+    // Activation is delegated too, for exactly the reason the comment above
+    // gives — which the per-row `click` listeners this replaces did not honour.
+    // Every gear-open, every picker-open and (since 0.6.4) every note switch
+    // rebuilt the rows, and each rebuild registered N more listeners against
+    // nodes that were already detached.
+    this.registerDomEvent(this.taskListContainer, "click", (evt: MouseEvent) => {
+      const row = (evt.target as Element | null)?.closest<HTMLElement>(".gp-task-item");
+      if (!row || !this.taskListContainer.contains(row)) return;
+
+      if (row.hasClass("gp-task-item-clear")) {
+        this.timer.setTask(NO_TASK_LABEL);
+        this.closeTaskList();
+        return;
+      }
+
+      const task = this.loadedTasks[Number(row.dataset.gpTaskIndex)];
+      if (!task) return;
+      this.timer.setTask(task.cleanText, task.path, task.taskId);
+      this.closeTaskList();
+    });
+
+    // An open picker has to stay honest about which note it is reading. Only
+    // the note scopes care, and only when the resolved scope actually moved:
+    // active-leaf-change also fires when you click the timer panel itself, and
+    // getActiveFile() deliberately does not change for that.
+    this.registerEvent(
+      this.plugin.app.workspace.on("active-leaf-change", () => {
+        if (!this.taskListVisible) return;
+        const settings = this.plugin.settings;
+        const source = resolveTaskSource(settings.taskSource);
+        if (source === "folder") return;
+        const scope = resolveTaskScope(this.plugin.app.workspace, source, settings.tasksPath);
+        if (taskScopeKey(scope) === this.lastTaskScopeKey) return;
+        void this.loadTasks();
+      })
+    );
 
     // --- Music (audio-only lofi playback) ---
     // Hairline between the task selector and the music row. Reconciled in
@@ -834,6 +929,18 @@ export class GentlePomoView extends ItemView {
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
       this.taskListContainer.toggleAttribute("inert", true);
+    }
+
+    // A source / lookahead / path change has to reach a picker that is already
+    // open — including one changed from the settings tab or a second panel,
+    // which arrive here through applySettingsToOpenViews. Compared as a
+    // three-field string and NOT by resolving the scope: this runs on the 50ms
+    // tick, and resolving would walk every workspace leaf twenty times a second.
+    // A change of note is the other half, handled by the active-leaf listener.
+    const taskKey = this.taskSettingsKey();
+    if (taskKey !== this.lastTaskSettingsKey) {
+      this.lastTaskSettingsKey = taskKey;
+      if (this.taskListVisible) void this.loadTasks();
     }
 
     // Station picker reconciliation. Separate from the embed reconcile below and
@@ -1369,7 +1476,9 @@ export class GentlePomoView extends ItemView {
 
   /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */
   async loadTasks() {
+    const generation = ++this.taskLoadGeneration;
     this.taskListContainer.empty();
+    this.loadedTasks = [];
 
     const clearItem = this.taskListContainer.createDiv("gp-task-item");
     clearItem.setAttribute("role", "option");
@@ -1379,36 +1488,50 @@ export class GentlePomoView extends ItemView {
     setIcon(clearItem, "x-circle");
     clearItem.createSpan({ text: "Unlink Current Task" });
 
-    this.registerDomEvent(clearItem, "click", () => {
-      this.timer.setTask(NO_TASK_LABEL);
-      this.closeTaskList();
-    });
+    const settings = this.plugin.settings;
+    const source = resolveTaskSource(settings.taskSource);
+    const scope = resolveTaskScope(this.plugin.app.workspace, source, settings.tasksPath);
+    this.lastTaskScopeKey = taskScopeKey(scope);
+    this.lastTaskSettingsKey = this.taskSettingsKey();
+
+    // The linked task travels with the request so the loader can fetch it out
+    // of scope. Its identity is (path, cleanText) — the same pair the tick below
+    // matches on, and the same pair TimerEngine unlinks by when the line is
+    // completed, so the three cannot disagree about which line is "the" task.
+    const linkedPath = this.timer.currentTaskPath;
+    const pin =
+      this.timer.currentTaskName !== NO_TASK_LABEL && linkedPath
+        ? { path: linkedPath, cleanText: this.timer.currentTaskName }
+        : null;
 
     const tasks = await fetchTasks(this.plugin.app, {
-      tasksPath: this.plugin.settings.tasksPath,
-      limitDays: this.plugin.settings.taskSelectorDays,
+      scope,
+      limitDays: settings.taskSelectorDays,
+      // Only the note scopes. A folder scan is wide enough to need the date
+      // filter; one note is not, and requiring a date there would answer issue
+      // #4's "my tasks live in my notes" with an empty list.
+      includeUndated: scope.kind === "notes",
+      pin,
     });
+    // A newer load started while this one was reading the vault — it has
+    // already emptied the container and will paint its own rows. Returning
+    // before the render is what stops the slower answer to an older question
+    // from landing on top of the newer one.
+    if (generation !== this.taskLoadGeneration) return;
+
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {
-      // An empty tasksPath scans the whole vault, so "no path + no results"
-      // almost always means task linking was never set up — nudge instead.
-      const configured = this.plugin.settings.tasksPath.trim() !== "";
+      const copy = taskPickerEmptyState({
+        source,
+        tasksPath: settings.tasksPath,
+        limitDays: settings.taskSelectorDays,
+        scopeIsEmpty: scope.kind === "notes" && scope.paths.length === 0,
+      });
       const empty = this.taskListContainer.createDiv("gp-task-empty");
-      setIcon(
-        empty.createDiv("gp-task-empty-icon"),
-        configured ? "calendar-check" : "folder-search"
-      );
-      empty.createDiv({
-        cls: "gp-task-empty-title",
-        text: configured ? "All clear" : "Nothing here yet",
-      });
-      empty.createDiv({
-        cls: "gp-task-empty-hint",
-        text: configured
-          ? `No tasks scheduled or due in the next ${this.plugin.settings.taskSelectorDays} days.`
-          : "Set a Tasks folder path in the plugin settings to pick tasks here.",
-      });
+      setIcon(empty.createDiv("gp-task-empty-icon"), copy.icon);
+      empty.createDiv({ cls: "gp-task-empty-title", text: copy.title });
+      empty.createDiv({ cls: "gp-task-empty-hint", text: copy.hint });
       return;
     }
 
@@ -1416,7 +1539,9 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.createDiv("gp-task-group-header").setText(group.label);
 
       for (const task of group.items) {
+        const index = this.loadedTasks.push(task) - 1;
         const item = this.taskListContainer.createDiv("gp-task-item");
+        item.dataset.gpTaskIndex = String(index);
         item.setAttribute("role", "option");
         item.setAttribute("tabindex", "0");
         item.setAttribute("aria-selected", "false");
@@ -1431,17 +1556,40 @@ export class GentlePomoView extends ItemView {
           const iconContainer = item.createDiv("gp-task-check-icon");
           setIcon(iconContainer, "check");
         }
-
-        this.registerDomEvent(item, "click", () => {
-          this.timer.setTask(task.cleanText, task.path, task.taskId);
-          this.closeTaskList();
-        });
       }
     }
   }
 
+  /**
+   * The task settings the visible picker depends on, as one string.
+   *
+   * Compared on every tick, so it must stay a read of three fields — resolving
+   * the scope here would walk the workspace's leaves twenty times a second,
+   * which is the shape of the iPhone-flicker regressions. A change of NOTE is
+   * caught by the active-leaf-change handler instead.
+   */
+  private taskSettingsKey(): string {
+    const s = this.plugin.settings;
+    return `${s.taskSource}|${s.taskSelectorDays}|${s.tasksPath}`;
+  }
+
   renderSettingsPanel() {
     this.settingsPanel.empty();
+
+    // EVERY registry is re-armed here, above the first row of any kind.
+    // renderSettingsPanel() runs again on every gear-open and empties the
+    // container first, so a reset placed lower down silently drops the rows
+    // built above it — and this plugin has now shipped that exact bug three
+    // times. The third: this block used to sit BELOW the two Timing number
+    // rows, so `numberPanelRows` was cleared immediately after they registered
+    // and the caret-guarded re-seed those rows exist for never ran once.
+    // The rule is positional, so the test that guards it is positional too.
+    this.sharedPanelRows = [];
+    this.numberPanelRows = [];
+    this.segmentedPanelRows = [];
+    this.selectPanelRows = [];
+    this.conditionalPanelRows = [];
+    this.endSummaryLines = [];
 
     const settings = this.plugin.settings;
 
@@ -1559,16 +1707,47 @@ export class GentlePomoView extends ItemView {
       }
     );
 
-    // Both registries are re-armed HERE, before any row can register itself.
-    // renderSettingsPanel() runs again on every gear-open, and it empties the
-    // container first — so a reset placed lower down silently drops every row
-    // built above it. That shipped for one commit: `sharedPanelRows = []` sat
-    // below the Audio section, so "Timer sounds" registered and was then wiped,
-    // and changing it in the settings tab left the panel's toggle stale.
-    this.sharedPanelRows = [];
-    this.numberPanelRows = [];
-    this.segmentedPanelRows = [];
-    this.endSummaryLines = [];
+    /**
+     * A labelled dropdown, stacked rather than side-by-side: three multi-word
+     * options and their question do not both fit the panel's hard 260px column
+     * on one line. The <label> WRAPS the select, which associates the two
+     * without needing an id — the panel builds several of these and ids would
+     * have to be minted and kept unique.
+     */
+    const selectRow = <T extends string>(
+      label: string,
+      options: readonly T[],
+      optionLabel: (value: T) => string,
+      read: () => T,
+      onChange: (next: T) => Promise<void>
+    ) => {
+      const wrap = this.settingsPanel.createEl("label", { cls: "gp-settings-stack" });
+      wrap.createSpan({ text: label });
+      // `dropdown` is Obsidian's own class and it is load-bearing, not
+      // decoration: the app's BARE `select` rule already sets
+      // `appearance: none`, but only `.dropdown` carries the chevron
+      // background-image — so a select without it renders as a plain filled
+      // rectangle with no arrow at all.
+      const select = wrap.createEl("select", { cls: "gp-settings-select dropdown" });
+      for (const value of options) {
+        select.createEl("option", { value, text: optionLabel(value) });
+      }
+      select.value = read();
+
+      this.registerDomEvent(select, "change", () => {
+        void onChange(select.value as T);
+      });
+
+      // Re-seeded like every other shared control, so a change made in the
+      // settings tab moves it. A <select> has no caret to write over, so unlike
+      // the number inputs this needs no focus guard.
+      this.selectPanelRows.push({
+        seed: () => {
+          const next = read();
+          if (select.value !== next) select.value = next;
+        },
+      });
+    };
 
     const sharedToggle = (key: SharedPanelKey, label: string) => {
       const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
@@ -1582,12 +1761,46 @@ export class GentlePomoView extends ItemView {
       return { row, input };
     };
 
-    // Static explanatory text, sharing a class with the live summary lines:
-    // both are quiet prose hanging off the row above (margin-top 4px against
-    // margin-bottom 8px, so a mid-section hint binds upward, not downward).
-    const hint = (text: string) => {
-      this.settingsPanel.createDiv({ cls: "gp-settings-hint", text });
+    /**
+     * Build a run of rows that only exist while `visible()` holds.
+     *
+     * Captures whatever the block appended rather than asking each row helper
+     * to hand its element back — the helpers write straight into the panel, so
+     * the children after the block ARE the block, headings and captions
+     * included. An empty section heading left behind is the failure this
+     * shape rules out by construction.
+     */
+    const onlyWhen = (visible: () => boolean, build: () => void) => {
+      const before = this.settingsPanel.childElementCount;
+      build();
+      const built = Array.from(this.settingsPanel.children).slice(before) as HTMLElement[];
+      for (const el of built) this.conditionalPanelRows.push({ el, visible });
     };
+
+    // The picker's own switch lives in the settings tab, and turning it off
+    // hides the picker AND unlinks the task — so where that picker looks is
+    // then a setting for something that is not on screen.
+    onlyWhen(
+      () => settings.showTaskSelector,
+      () => {
+        section("Tasks");
+        selectRow<TaskSource>(
+          TASK_SOURCE_SETTING_NAME,
+          TASK_SOURCE_ORDER,
+          (value) => TASK_SOURCE_LABELS[value],
+          () => resolveTaskSource(settings.taskSource),
+          async (next) => {
+            settings.taskSource = next;
+            await this.plugin.saveSettings();
+            // Dual-surface, so it fans out like the audio rows. That also
+            // re-runs applySettings on THIS view, which is what reloads an open
+            // picker — the engine emits nothing while the timer is idle, and
+            // the gear panel is most often opened precisely then.
+            this.plugin.applySettingsToOpenViews();
+          }
+        );
+      }
+    );
 
     section("Audio");
     // Dual-surface since 0.6.3 (it gained a row in the settings tab, where it
@@ -1595,13 +1808,12 @@ export class GentlePomoView extends ItemView {
     // re-seeds like the other shared rows rather than being written and
     // forgotten.
     sharedToggle("soundEnabled", MASTER_SOUND_LABEL);
-    // The panel has no row descriptions, so without this the scope argument
-    // reaches only settings-tab readers. It is said POSITIVELY — naming the two
-    // cues that have no row of their own — because the failure it prevents is a
-    // user turning both "Play a sound" toggles off, expecting silence, and
-    // being answered by a drum at 00:00. It also has to exclude the music,
-    // which sits two rows below and which this switch has never gated.
-    hint("Also the drum when focus starts and the sound when you stop. Music is separate.");
+    // No caption under this row. 0.6.3 put one here to argue that "Timer
+    // sounds" does not reach the music, because the panel has no row
+    // descriptions — but the music then gained its own mute and volume two
+    // rows below, so the section now shows two matched pairs and the layout
+    // makes the same argument without prose. The settings tab still carries
+    // the wording for anyone who wants it in words.
     segmentedRow(
       TIMER_VOLUME_LABEL,
       VOLUME_OPTIONS,
@@ -1617,34 +1829,49 @@ export class GentlePomoView extends ItemView {
         this.plugin.applySettingsToOpenViews();
       }
     );
-    // The music's own mute, so the Audio section reads as two matched pairs
-    // (toggle / hint / volume, twice) rather than one control with a mute and
-    // one without. Dual-surface since 0.6.3: the whole mixer moved into the
-    // tab's Audio group TOGETHER, which is what the earlier "panel-only" note
-    // here was actually protecting — a tab-only mute would have split one
-    // channel across two screens. The Music group stayed the wrong home for
-    // it, directly above "Show music player", which STOPS playback; Audio, one
-    // row under "Music volume", says the opposite thing in the right place.
-    sharedToggle("musicSoundEnabled", MUSIC_SOUND_LABEL);
-    // State-independent on purpose: "keeps playing, you just won't hear it" is
-    // false whenever the toggle is on, which is the default.
-    hint("Off silences the music without stopping it.");
-    segmentedRow(
-      MUSIC_VOLUME_LABEL,
-      VOLUME_OPTIONS,
-      () => this.plugin.settings.musicVolume,
-      async (v) => {
-        settings.musicVolume = v;
-        await this.plugin.saveSettings();
-        // Live-apply to THIS view's playing iframe: applyVolume posts
-        // unconditionally, so it also wins over an in-flight duck or fade,
-        // which the convergence check below deliberately does not.
-        this.music.applyVolume();
-        // Then the other surfaces: every open panel's segmented row re-seeds
-        // and its own syncVolume() converges its player. Without this the
-        // "next reconcile" the old comment relied on never comes while the
-        // timer is idle — the engine emits nothing at all.
-        this.plugin.applySettingsToOpenViews();
+    // Both music rows belong to "Show music player": with that off the iframe
+    // is destroyed, so a mute and a level here would govern nothing. The switch
+    // itself is in the settings tab, so this cannot hide its own way back.
+    //
+    // Only the MUTE has a tab row, though — the two volumes were cut back out
+    // of the tab at the end of 0.6.3, on the rule that a level belongs on the
+    // surface you are looking at. So while the player is off, Music volume has
+    // no home anywhere. That is deliberate and not a trap: with the player off
+    // there is nothing playing to set a level for, and turning it back on
+    // brings the row with it.
+    onlyWhen(
+      () => settings.showMusicPlayer,
+      () => {
+        // The music's own mute, so the Audio section reads as two matched pairs
+        // (mute / volume, twice) rather than one control with a mute and one
+        // without — which is also what lets the captions go: the pairing makes
+        // the scope argument the prose used to. Note the pairing is conditional
+        // now; with the player off this row and its volume are hidden and the
+        // section shows the timer's pair alone. Dual-surface since 0.6.3: the whole mixer moved into the
+        // tab's Audio group TOGETHER, which is what the earlier "panel-only" note
+        // here was actually protecting — a tab-only mute would have split one
+        // channel across two screens. The Music group stayed the wrong home for
+        // it, directly above "Show music player", which STOPS playback; Audio, one
+        // row under "Music volume", says the opposite thing in the right place.
+        sharedToggle("musicSoundEnabled", MUSIC_SOUND_LABEL);
+        segmentedRow(
+          MUSIC_VOLUME_LABEL,
+          VOLUME_OPTIONS,
+          () => this.plugin.settings.musicVolume,
+          async (v) => {
+            settings.musicVolume = v;
+            await this.plugin.saveSettings();
+            // Live-apply to THIS view's playing iframe: applyVolume posts
+            // unconditionally, so it also wins over an in-flight duck or fade,
+            // which the convergence check below deliberately does not.
+            this.music.applyVolume();
+            // Then the other surfaces: every open panel's segmented row re-seeds
+            // and its own syncVolume() converges its player. Without this the
+            // "next reconcile" the old comment relied on never comes while the
+            // timer is idle — the engine emits nothing at all.
+            this.plugin.applySettingsToOpenViews();
+          }
+        );
       }
     );
 
@@ -1701,6 +1928,11 @@ export class GentlePomoView extends ItemView {
       settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
       settings.musicSoundEnabled = DEFAULT_SETTINGS.musicSoundEnabled;
       settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
+      // Every control the panel SHOWS is restored, and taskSource is one since
+      // 0.6.4 — an omission here is invisible except as one row that ignores
+      // the button. (tasksPath and taskSelectorDays are deliberately absent:
+      // they have no panel row, so a panel reset does not speak for them.)
+      settings.taskSource = DEFAULT_SETTINGS.taskSource;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
       settings.focusEndSoundEnabled = DEFAULT_SETTINGS.focusEndSoundEnabled;
@@ -1747,6 +1979,16 @@ export class GentlePomoView extends ItemView {
     }
     for (const entry of this.numberPanelRows) {
       entry.seed();
+    }
+    for (const entry of this.selectPanelRows) {
+      entry.seed();
+    }
+    // Feature-switch visibility. A CSS class, never a re-render — and cheap
+    // enough for the 50ms tick: a predicate read and an idempotent toggleClass
+    // per row. `gp-hidden` is display:none, so a hidden row leaves the tab
+    // order too and needs no `inert` of its own.
+    for (const entry of this.conditionalPanelRows) {
+      entry.el.toggleClass("gp-hidden", !entry.visible());
     }
     for (const line of this.endSummaryLines) {
       // The whole mapping lives in the pure function, so the view holds no

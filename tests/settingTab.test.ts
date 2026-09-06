@@ -18,6 +18,7 @@ import {
   sessionEndSummary,
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
+import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -126,6 +127,16 @@ function imperativeRows(tab: GentlePomoSettingTab, el: { settings: Setting[] }) 
     out.push({ heading, name: setting.name, desc: setting.desc });
   }
   return out;
+}
+
+/**
+ * A source file with its comments removed, for the drift guards.
+ *
+ * Full-line `//` comments only, deliberately: stripping every `//` would cut a
+ * line short at an https URL, and the tab is full of them.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
 function rowFor(el: { settings: Setting[] }, name: string): Setting {
@@ -481,28 +492,30 @@ describe("Audio group", () => {
     // "Timer sounds" registered and was immediately wiped, and changing it in
     // this tab left the panel's toggle stale. Read as text; nothing can import
     // the view.
+    // Each registry is checked against ITS OWN first registration, not against
+    // the first sharedToggle. Checking one common landmark is what let the
+    // third instance of this bug through: the re-arm block sat below the two
+    // Timing `numberRow` calls but above every `sharedToggle`, so the old
+    // assertion passed while `numberPanelRows` was cleared the instant after
+    // those two rows had pushed into it — the caret-guarded re-seed they exist
+    // for never ran once in 0.6.3.
     const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
-    const armed = view.indexOf("this.sharedPanelRows = [];");
-    const summariesArmed = view.indexOf("this.endSummaryLines = [];");
-    const firstRegistration = view.indexOf('sharedToggle("');
-    const firstSummary = view.indexOf('summaryFor("');
+    const registries: Record<string, string> = {
+      sharedPanelRows: 'sharedToggle("',
+      numberPanelRows: "numberRow(",
+      segmentedPanelRows: "segmentedRow(",
+      selectPanelRows: "selectRow<",
+      conditionalPanelRows: "onlyWhen(",
+      endSummaryLines: 'summaryFor("',
+    };
 
-    expect(armed).toBeGreaterThan(-1);
-    expect(firstRegistration).toBeGreaterThan(-1);
-    expect(armed, "sharedPanelRows must be re-armed before the first sharedToggle").toBeLessThan(
-      firstRegistration
-    );
-    expect(
-      summariesArmed,
-      "endSummaryLines must be re-armed before the first summaryFor"
-    ).toBeLessThan(firstSummary);
-
-    // Every registry, not just the two that already shipped wrong.
-    for (const field of ["segmentedPanelRows", "numberPanelRows"]) {
-      const at = view.indexOf(`this.${field} = [];`);
-      expect(at, `${field} must be re-armed`).toBeGreaterThan(-1);
-      expect(at, `${field} must be re-armed before the first sharedToggle`).toBeLessThan(
-        firstRegistration
+    for (const [field, firstCall] of Object.entries(registries)) {
+      const armed = view.indexOf(`this.${field} = [];`);
+      const registration = view.indexOf(firstCall);
+      expect(armed, `${field} must be re-armed`).toBeGreaterThan(-1);
+      expect(registration, `no call site found for ${field} (${firstCall})`).toBeGreaterThan(-1);
+      expect(armed, `${field} must be re-armed before the first ${firstCall}`).toBeLessThan(
+        registration
       );
     }
   });
@@ -522,6 +535,8 @@ describe("Audio group", () => {
       "sharedPanelRows",
       "segmentedPanelRows",
       "numberPanelRows",
+      "selectPanelRows",
+      "conditionalPanelRows",
       "endSummaryLines",
     ]) {
       expect(body, `${registry} must be re-seeded`).toContain(registry);
@@ -640,11 +655,19 @@ describe("the timer panel's segmented rows re-seed", () => {
   const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
 
   /** The bodies of the two `segmentedRow(...)` CALLS, not its definition. */
-  const segmentedCalls = (src: string) =>
-    src
-      .split("\n    segmentedRow(")
-      .slice(1)
-      .map((rest) => rest.slice(0, rest.indexOf("\n    );")));
+  // Indent-aware: the music volume row sits inside an `onlyWhen` block since
+  // 0.6.4, so a fixed four-space split silently found only one of the two and
+  // the assertions below passed over whichever row had moved.
+  const segmentedCalls = (src: string) => {
+    const out: string[] = [];
+    const opener = /\n([ \t]*)segmentedRow\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(src)) !== null) {
+      const rest = src.slice(opener.lastIndex);
+      out.push(rest.slice(0, rest.indexOf(`\n${match[1]});`)));
+    }
+    return out;
+  };
 
   it("builds both volume rows from the shared stop list, not a re-typed one", () => {
     const calls = segmentedCalls(view());
@@ -723,5 +746,274 @@ describe("the timer panel's segmented rows re-seed", () => {
     expect(src).toContain("TIMER_VOLUME_LABEL");
     expect(src).toContain("MUSIC_SOUND_LABEL");
     expect(src).toContain("MUSIC_VOLUME_LABEL");
+  });
+});
+
+describe("Task source (issue #4)", () => {
+  it("offers the three sources, in the shared wording, on both paths", () => {
+    const c = makeTab();
+    c.tab.display();
+    // The imperative path renders whatever the definitions declare, so reading
+    // it back is how the pre-1.13 dropdown gets checked at all — it is dead
+    // code on any Obsidian a contributor is actually running.
+    const component = componentOf(c.el, TASK_SOURCE_SETTING_NAME);
+    expect(component.kind).toBe("dropdown");
+    expect(component.options).toEqual(
+      TASK_SOURCE_ORDER.map((source) => ({ value: source, label: TASK_SOURCE_LABELS[source] }))
+    );
+    expect(component.value).toBe("folder");
+  });
+
+  it("sits ABOVE the folder path it governs", () => {
+    // Choosing "Current note" is what makes that path irrelevant, so the reader
+    // has to meet the decision before the field it decides about.
+    const c = makeTab();
+    const rows = declarativeRows(c.tab)
+      .filter((r) => r.heading === "Task selector")
+      .map((r) => r.name);
+    expect(rows.indexOf(TASK_SOURCE_SETTING_NAME)).toBeLessThan(rows.indexOf("Tasks folder path"));
+  });
+
+  it("keeps the folder path row visible in every source", () => {
+    // A control that vanished because you changed a dropdown reads as a fault.
+    // 0.6.3 learned this with the chimes and deleted the visibility machinery
+    // outright; nothing here may bring it back.
+    for (const source of TASK_SOURCE_ORDER) {
+      const c = makeTab({ taskSource: source });
+      const names = declarativeRows(c.tab).map((r) => r.name);
+      expect(names, source).toContain("Tasks folder path");
+      expect(names, source).toContain("Task lookahead window");
+    }
+  });
+
+  it("writes the source through, and fans out to open panels", async () => {
+    const c = makeTab();
+    await c.tab.setControlValue("taskSource", "current-note");
+
+    expect(c.settings.taskSource).toBe("current-note");
+    expect(c.calls.some((call) => call.method === "saveSettings")).toBe(true);
+    // Dual-surface: without the fan-out the gear panel's own dropdown stays on
+    // the old value, and an open picker never reloads against the new scope.
+    expect(c.calls.some((call) => call.method === "applySettings")).toBe(true);
+  });
+
+  it("NEVER unlinks the current task when the source changes", async () => {
+    // The maintainer's second requirement on issue #4. "Show task selector"
+    // right beside it DOES unlink on the way off, so this is a real
+    // neighbouring behaviour to be told apart, not a hypothetical.
+    for (const source of TASK_SOURCE_ORDER) {
+      const c = makeTab();
+      const timer = { currentTaskName: "Write docs", setTask: () => calls.push("setTask") };
+      const calls: string[] = [];
+      (c.tab as unknown as { plugin: { timer: unknown } }).plugin.timer = timer;
+
+      await c.tab.setControlValue("taskSource", source);
+
+      expect(calls, source).toEqual([]);
+      expect(timer.currentTaskName, source).toBe("Write docs");
+    }
+  });
+
+  it("refuses a stored value that is not one of the three", async () => {
+    const c = makeTab();
+    await c.tab.setControlValue("taskSource", "everything, everywhere");
+    expect(c.settings.taskSource).toBe("folder");
+  });
+
+  it("reads back a resolved value, so the dropdown always shows a selection", () => {
+    // coerceToDefaults only drops a value whose TYPE disagrees, so a
+    // hand-edited data.json can hold a string that is not one of the three.
+    const c = makeTab({ taskSource: "nonsense" as never });
+    expect(c.tab.getControlValue("taskSource")).toBe("folder");
+  });
+});
+
+describe("Task source — one wording, two surfaces", () => {
+  it("takes its name and its options from the shared consts in both places", () => {
+    // One control asking one question. The user is told the two screens stay in
+    // sync, so a re-typed literal in either is a promise quietly broken —
+    // the same guard the auto-start labels carry, for the same reason.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    expect(view).toContain("TASK_SOURCE_SETTING_NAME");
+    expect(view).toContain("TASK_SOURCE_LABELS");
+    expect(view).toContain("TASK_SOURCE_ORDER");
+
+    // Searched over CODE only. These labels are dropdown option values, so
+    // unlike the auto-start ones they have no single argument shape to match —
+    // and a bare substring search fails on the next person who explains in a
+    // comment why the const exists, which is exactly what it did here.
+    const literals = [TASK_SOURCE_SETTING_NAME, ...Object.values(TASK_SOURCE_LABELS)];
+    const tab = readFileSync(resolve(__dirname, "..", "GentlePomoSettingTab.ts"), "utf8");
+    for (const file of [view, tab]) {
+      for (const label of literals) {
+        expect(codeOnly(file), `${label} must come from the shared const`).not.toContain(
+          `"${label}"`
+        );
+      }
+    }
+  });
+});
+
+describe("the panel's feature-switch sections", () => {
+  const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+
+  /** The body of an `onlyWhen(predicate, …)` block, keyed by its predicate. */
+  const gatedBlocks = (src: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const opener = /\n([ \t]*)onlyWhen\(\n\s*\(\) => settings\.(\w+),/g;
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(src)) !== null) {
+      const rest = src.slice(opener.lastIndex);
+      out[match[2]] = rest.slice(0, rest.indexOf(`\n${match[1]});`));
+    }
+    return out;
+  };
+
+  it("gates the task-source row on the picker's own switch", () => {
+    // Turning "Show task selector" off hides the picker AND unlinks the task,
+    // so where that picker looks is then a setting for something absent.
+    const block = gatedBlocks(view()).showTaskSelector;
+    expect(block, "no onlyWhen block for showTaskSelector").toBeDefined();
+    expect(block).toContain('section("Tasks")');
+    expect(block).toContain("selectRow<");
+  });
+
+  it("gates both music rows on the music player's own switch", () => {
+    // With the player off the iframe is destroyed, so a mute and a level here
+    // would govern nothing that exists.
+    const block = gatedBlocks(view()).showMusicPlayer;
+    expect(block, "no onlyWhen block for showMusicPlayer").toBeDefined();
+    expect(block).toContain("MUSIC_SOUND_LABEL");
+    expect(block).toContain("MUSIC_VOLUME_LABEL");
+  });
+
+  it("leaves the timer's own audio rows ungated", () => {
+    // Only the two rows belonging to the music player move. "Timer sounds" and
+    // "Timer volume" answer to nothing above them and must never disappear.
+    const gated = Object.values(gatedBlocks(view())).join("\n");
+    expect(gated).not.toContain("MASTER_SOUND_LABEL");
+    expect(gated).not.toContain("TIMER_VOLUME_LABEL");
+    // Nor may the four end-of-session rows, which have no feature switch at
+    // all — 0.6.3 deleted the machinery that hid those and this is not it back.
+    expect(gated).not.toContain("AUTO_START_BREAK_LABEL");
+    expect(gated).not.toContain("AUTO_START_FOCUS_LABEL");
+    expect(gated).not.toContain('sharedToggle("focusEndSoundEnabled"');
+    expect(gated).not.toContain('sharedToggle("breakEndSoundEnabled"');
+  });
+
+  it("hides by CSS class on the tick, never by re-rendering", () => {
+    // renderSettingsPanel() empties the container and re-registers every
+    // listener, and registerDomEvent releases on unload rather than removal —
+    // rebuilding on a 50ms tick leaks rows by the second. The sync must reach
+    // for a class instead. (That it must not call renderSettingsPanel at all is
+    // asserted separately, on the whole method.)
+    const src = view();
+    const sync = src.slice(src.indexOf("private syncSettingsPanel()"));
+    const body = sync.slice(0, sync.indexOf("\n  }"));
+    expect(body).toContain("conditionalPanelRows");
+    expect(body).toContain('toggleClass("gp-hidden"');
+  });
+
+  it("keeps both parent switches on a surface the panel cannot hide", () => {
+    // A section that hides its own way back is a trap. Both switches live in
+    // the settings tab, and so do the rows this hides.
+    const c = makeTab();
+    c.tab.display();
+    const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
+    expect(names).toContain("Show task selector");
+    expect(names).toContain("Show music player");
+    expect(names).toContain(TASK_SOURCE_SETTING_NAME);
+    expect(names).toContain(MUSIC_SOUND_LABEL);
+  });
+});
+
+describe("the panel's captions", () => {
+  it("keeps only the two end-of-session outcome lines", () => {
+    // The master-sound and music-mute captions came out in 0.6.4: the Audio
+    // section now shows two matched pairs (mute + level, twice), so the layout
+    // makes the scope argument the prose used to. The two lines under the
+    // end-of-session pairs STAY — they answer a question the labels genuinely
+    // cannot ("does it still play if the break auto-starts?").
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const panel = src.slice(src.indexOf("renderSettingsPanel() {"));
+    const captions = panel.match(/gp-settings-hint/g) ?? [];
+    expect(captions).toHaveLength(1); // the one summaryFor() builds, used twice
+    expect(panel).toContain("sessionEndSummary");
+  });
+});
+
+describe("the picker's live-reload guard has a trigger for every field it watches", () => {
+  // GentlePomoView.applySettings reloads an OPEN task picker when
+  // taskSettingsKey() moves. That guard only runs from applySettings, and the
+  // engine emits nothing while the timer is idle — which is exactly when
+  // someone is sitting in the settings tab. So every field the key names must
+  // fan out, or the guard covers a subset of what it claims to. It shipped
+  // covering one field of three.
+  const watched = (): string[] => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const fn = src.slice(src.indexOf("private taskSettingsKey()"));
+    const body = fn.slice(0, fn.indexOf("\n  }"));
+    // Any read of a settings field, not just the fully-braced `${s.x}` form:
+    // the slice is already the function body, so there is nothing else in it
+    // for the looser pattern to catch — and a fourth field added as
+    // `${s.a}${s.b}` or via a local would otherwise slip past the guard
+    // whose whole job is to notice it.
+    return [...new Set([...body.matchAll(/\bs\.(\w+)/g)].map((m) => m[1]))];
+  };
+
+  it("names three fields, so a fourth cannot be added unnoticed", () => {
+    expect(watched().sort()).toEqual(["taskSelectorDays", "taskSource", "tasksPath"]);
+  });
+
+  it("fans every one of them out to open views", async () => {
+    const sample: Record<string, unknown> = {
+      taskSource: "open-notes",
+      tasksPath: "projects/active",
+      taskSelectorDays: "30",
+    };
+    for (const key of watched()) {
+      const c = makeTab();
+      await c.tab.setControlValue(key, sample[key]);
+      expect(
+        c.calls.some((call) => call.method === "saveSettings"),
+        key
+      ).toBe(true);
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} is in taskSettingsKey() but never reaches an open picker`
+      ).toBe(true);
+    }
+  });
+});
+
+describe("the panel's Reset to defaults", () => {
+  const panel = () => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const whole = src.slice(src.indexOf("renderSettingsPanel() {"));
+    const split = whole.indexOf(
+      'const resetWrap = this.settingsPanel.createDiv("gp-settings-reset")'
+    );
+    return {
+      rows: whole.slice(0, split),
+      reset: whole.slice(split, whole.indexOf("\n  }", split)),
+    };
+  };
+
+  it("restores every setting the panel's own controls write", () => {
+    // A one-off list per control is how taskSource came to be the single
+    // panel-visible row that ignored the button. Derived from the handlers
+    // instead, so the next control added is covered on the day it lands.
+    const { rows, reset } = panel();
+    // Two ways a panel row writes a setting: directly (`settings.focusMinutes =`)
+    // and through the shared-toggle helper, which writes `settings[key]` off a
+    // key it was handed. Reading only the first form finds five of eleven.
+    const written = new Set([
+      ...[...rows.matchAll(/\bsettings\.(\w+) =/g)].map((m) => m[1]),
+      ...[...rows.matchAll(/sharedToggle\("(\w+)"/g)].map((m) => m[1]),
+    ]);
+    expect(written.size, "no panel writers found — the slice is wrong").toBeGreaterThan(9);
+    for (const key of written) {
+      expect(reset, `Reset to defaults never restores ${key}`).toContain(`settings.${key} =`);
+    }
   });
 });

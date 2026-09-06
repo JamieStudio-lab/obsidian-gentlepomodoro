@@ -931,6 +931,43 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A labelled dropdown in the panel. Stacked rather than the flex label+control
+   of .gp-settings-row: the panel column is a hard 260px, and a question plus
+   three multi-word options do not share a line at that width. The element is a
+   <label> wrapping its own <select>, so the association needs no id. */
+.gp-settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gp-space-4);
+  font-size: var(--gp-text-body);
+  color: var(--text-muted);
+}
+
+/* Both classes are written into the selector deliberately. `.gp-settings-select`
+   alone ties Obsidian's `.dropdown` on specificity, so which one won would come
+   down to stylesheet order — the fragile shape DESIGN.md's register warns about.
+   Naming both wins outright, and the element genuinely carries both. */
+.gp-settings-select.dropdown {
+  width: 100%;
+  height: var(--gp-control-h);
+  border-radius: var(--gp-radius-sm);
+}
+
+/* Obsidian paints a focused select with a 3px `--background-modifier-border-focus`
+   halo and KEEPS it after a mouse choice. Narrowing it to keyboard focus does
+   not help: `:focus-visible` matches a clicked <select> in Chromium — measured,
+   not assumed. On a right-aligned settings-tab dropdown that halo reads as a
+   hint; on this full-width one it is a light grey band across the whole 260px
+   column, most visible under the control, which reads as a selection that got
+   stuck. Swapped for the plugin's own focus ring: the same one the other eight
+   controls have carried since 0.6.1, thin and accent-coloured, so it says
+   "focused" rather than "highlighted". */
+.gp-settings-select.dropdown:focus {
+  box-shadow: var(--input-shadow);
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+}
+
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
   font-size: var(--gp-text-micro);

@@ -1,5 +1,6 @@
 import type { MusicResumeState } from "./youtubeMusic";
 import type { PomoTheme } from "./themes";
+import type { TaskSource } from "./taskScope";
 
 // Two timer phases used throughout the plugin.
 export type PomoMode = "focus" | "break";
@@ -47,6 +48,12 @@ export interface GentlePomoSettings {
 
   // Show the task picker (button + dropdown) in the timer panel.
   showTaskSelector: boolean;
+
+  // Which notes the picker reads: the tasks folder above, the note you are in,
+  // or every note open in the main area. Defaults to "folder" in
+  // DEFAULT_SETTINGS because that object is the merge base for an UPGRADING
+  // user, whose picker must not change under them (GitHub issue #4).
+  taskSource: TaskSource;
 
   // How many days ahead the task selector shows scheduled/due tasks.
   // Overdue tasks always appear regardless of this window.
@@ -138,6 +145,18 @@ export interface TaskItem {
   path: string;
   scheduled: string | null;
   due: string | null;
-  effectiveDateStr: string; // Date string used for sorting/grouping (scheduled or due).
+  // Date used for sorting and grouping (scheduled, else due). NULL for a task
+  // carrying neither, which only the note scopes admit — with ONE exception:
+  // the pin bypasses the undated rule as well as the date window, so a linked
+  // undated task is null even under the folder scope. Never assume a scope
+  // makes this non-null.
+  // Every reader must branch on it BEFORE building a moment: `moment(null)` is
+  // invalid but `moment(undefined)` is *now*, so one careless read files every
+  // undated task under "Today".
+  effectiveDateStr: string | null;
   taskId?: string; // optional Tasks plugin ID
+  // True only for the linked task when the current scope would NOT have shown
+  // it — the picker lifts those into their own group so changing the scope can
+  // never look as though the link was dropped.
+  pinned?: boolean;
 }
