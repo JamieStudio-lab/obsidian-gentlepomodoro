@@ -19,7 +19,9 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 ### ✅ Task integration
 
 - Pick tasks straight from your vault. Compatible with the [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) format: `- [ ] Task ⏳ 2025-12-23 🆔 abc123` — on any list bullet (`-`, `*`, `+`, or numbered).
+- **Choose where tasks come from**: a **tasks folder**, the **note you are in**, or **every note you have open**. The two note options also show tasks with no date, under a _No date_ heading — handy if you keep todos inline in your notes rather than in one folder.
 - Smart filtering: Overdue, Today, Tomorrow, and upcoming tasks. Choose the lookahead window (3 / 5 / 7 / 14 / 30 days) in settings; overdue tasks always show.
+- **Your linked task stays linked** when you change where tasks come from — if the new scope would not show it, it appears at the top under _Linked task_. Only ticking it off unlinks it.
 - One-click **Unlink current task**.
 - **Opt-in (beta — edits your task files)**: adds a lifetime `🍅 N` count to the task line each time you finish a focus session for it, placed before the Tasks date fields so they keep parsing (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`).
 - **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts and never touch a `🍅 N` you typed yourself.
@@ -88,7 +90,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
-- **Task selector**: tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
+- **Task selector**: **where to find tasks** (tasks folder / current note / open notes); tasks folder path; **show task selector** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the selector reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
 - **Task integration**: increment task pomodoro count on finish (opt-in, beta — edits your task files), plus the marker recovery actions: check / repair / remove misplaced / remove all.
 
 **In-view panel** (gear icon on the timer) — grouped into sections:

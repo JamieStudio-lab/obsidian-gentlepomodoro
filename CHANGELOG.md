@@ -4,6 +4,53 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-09-05
+
+The task picker can now read the note you are in, or every note you have open,
+instead of one folder. If you keep tasks scattered through your notes rather
+than filed in one place, this is for you — and in those two modes tasks with no
+date show up too, so an ordinary `- [ ] something` in today's note is pickable.
+
+### Added
+
+- **"Where to find tasks"** ([#4](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/4)),
+  a dropdown in the plugin settings **and** under the timer's gear icon, with
+  three choices:
+  - **Tasks folder** — the folder path below it, exactly as before. Still the
+    default, so nothing changes unless you change it.
+  - **Current note** — the note you are looking at.
+  - **Open notes** — every note open in a tab, including tabs you have not
+    clicked on this session.
+- **Undated tasks in the two note modes.** A task with no ⏳ scheduled or 📅 due
+  date appears under a **No date** heading at the bottom of the list. Inside one
+  note there is not much to filter, and requiring a date there would have shown
+  most people an empty picker. The folder mode still asks for a date, so a
+  whole-vault scan stays readable.
+- **A line under the dropdown saying what it will read**, in both places, so you
+  do not have to open the picker to find out.
+
+### Changed
+
+- **Your linked task stays put when you change where tasks come from.** If the
+  new scope would not have shown it, it appears at the top of the picker under
+  **Linked task** instead of vanishing. It is only dropped when you tick it off,
+  which is unchanged.
+- The picker follows you: switch notes while it is open in "Current note" mode
+  and it reloads against the note you moved to.
+- The empty picker now says something useful in each situation — "no note open"
+  reads differently from "this note has no tasks" — and the first-run nudge
+  mentions reading from the current note, not just setting a folder.
+
+### Fixed
+
+- The two number boxes in the timer's gear panel (Focus and Break minutes) never
+  picked up a change made from a second timer panel — "Reset to defaults" over
+  there left them showing the old numbers until the panel was closed and
+  reopened.
+- Opening the task picker registered a fresh click handler for every row it
+  drew, and never released them until the panel was closed. Long sessions with a
+  lot of picker use accumulated them.
+
 ## [0.6.3] — 2026-09-05
 
 You can now ask the timer to chime when a session runs out, without giving up
