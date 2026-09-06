@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import moment from "moment";
 import type { App } from "obsidian";
-import { loadTasks, groupTasksByDate } from "../taskLoader";
+import {
+  loadTasks,
+  groupTasksByDate,
+  scanAllPomodoroMarkersInVault,
+  removeAllPomodoroMarkersInVault,
+  scanMisplacedPomodoroMarkersInVault,
+  repairPomodoroMarkersInVault,
+  removeMisplacedPomodoroMarkersInVault,
+} from "../taskLoader";
 import type { TaskScope } from "../taskScope";
 
 /**
@@ -492,5 +500,79 @@ describe("groupTasksByDate — undated and pinned (0.6.4)", () => {
     const groups = groupTasksByDate([item("Linked", null, true), item("Loose", null)]);
 
     expect(groups.map((g) => g.label)).toEqual(["Linked task", "No date"]);
+  });
+});
+
+describe("marker maintenance reaches wherever the counter can write", () => {
+  /**
+   * Until 0.6.4 the tasks folder was the right scope for the 🍅 cleanup
+   * actions, because the picker could only link a task inside it, so the
+   * counter could only write inside it. The note scopes broke that: a task
+   * linked from any note gets its marker written there. A folder-scoped sweep
+   * could not see it, which would have made "Remove all" — documented as the
+   * counter's full uninstall — silently partial.
+   */
+  const vault = (files: Record<string, string>) => {
+    const written: Record<string, string> = {};
+    const app = fakeApp(files);
+    const v = (app as unknown as { vault: Record<string, unknown> }).vault;
+    v.process = (file: { path: string }, fn: (data: string) => string) => {
+      written[file.path] = fn(files[file.path]);
+      return Promise.resolve(written[file.path]);
+    };
+    return { app, written };
+  };
+
+  const scattered = {
+    "projects/inside.md": "- [ ] In the folder 🍅 2 📅 2026-09-05",
+    "inbox/outside.md": "- [ ] Linked from a note 🍅 7 📅 2026-09-05",
+    "deep/nested/also.md": "- [ ] Another 🍅 1",
+  };
+
+  it("counts markers in every note, not just one folder", async () => {
+    const { app } = vault(scattered);
+
+    const result = await scanAllPomodoroMarkersInVault(app);
+
+    expect(result.filesAffected).toBe(3);
+    expect(result.affected.map((f) => f.path).sort()).toEqual([
+      "deep/nested/also.md",
+      "inbox/outside.md",
+      "projects/inside.md",
+    ]);
+  });
+
+  it("removes them everywhere, so 'all' means all", async () => {
+    const { app, written } = vault(scattered);
+
+    await removeAllPomodoroMarkersInVault(app);
+
+    expect(Object.keys(written).sort()).toEqual([
+      "deep/nested/also.md",
+      "inbox/outside.md",
+      "projects/inside.md",
+    ]);
+    for (const content of Object.values(written)) {
+      expect(content).not.toContain("🍅");
+    }
+  });
+
+  it("takes no folder argument at all, so no caller can narrow it", () => {
+    // The scope is not a decision a call site gets to make — passing the tasks
+    // folder is exactly the bug, and a parameter is an invitation to re-add it.
+    expect(scanAllPomodoroMarkersInVault).toHaveLength(1);
+    expect(removeAllPomodoroMarkersInVault).toHaveLength(1);
+    expect(scanMisplacedPomodoroMarkersInVault).toHaveLength(1);
+    expect(repairPomodoroMarkersInVault).toHaveLength(1);
+    expect(removeMisplacedPomodoroMarkersInVault).toHaveLength(1);
+  });
+
+  it("still skips notes with no marker in them", async () => {
+    const { app } = vault({ ...scattered, "notes/plain.md": "- [ ] Nothing here 📅 2026-09-05" });
+
+    const result = await scanAllPomodoroMarkersInVault(app);
+
+    expect(result.filesScanned).toBe(4);
+    expect(result.filesAffected).toBe(3);
   });
 });

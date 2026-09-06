@@ -277,20 +277,25 @@ export interface PomodoroMarkerVaultResult {
 }
 
 /**
- * Walk the tasks folder (whole vault when the path is empty — same scope the
- * task picker scans) applying a marker transform. With `write: false` this is
- * a pure dry run. With `write: true`, files that need no change are never
- * written; changed files are rewritten atomically via `Vault.process`.
+ * Walk EVERY markdown note applying a marker transform. With `write: false`
+ * this is a pure dry run. With `write: true`, files that need no change are
+ * never written; changed files are rewritten atomically via `Vault.process`.
+ *
+ * Deliberately not scoped to the tasks folder, and it takes no path at all so
+ * that no caller can narrow it by accident. Until 0.6.4 the folder WAS the
+ * right scope, because the picker could only link a task inside it, so the
+ * counter could only write inside it. The note scopes broke that: a task
+ * linked from any note gets its 🍅 marker written there, and a folder-scoped
+ * sweep could not see it — which would have made "Remove all", documented as
+ * the counter's full uninstall, silently partial. The `includes("🍅")`
+ * pre-filter below is what keeps a whole-vault sweep cheap.
  */
 async function processPomodoroMarkersInVault(
   app: App,
-  tasksPath: string,
   transform: (line: string) => string,
   write: boolean
 ): Promise<PomodoroMarkerVaultResult> {
-  const files = app.vault
-    .getFiles()
-    .filter((f) => isPathInFolder(f.path, tasksPath) && f.extension === "md");
+  const files = app.vault.getFiles().filter((f) => f.extension === "md");
 
   let filesAffected = 0;
   let linesAffected = 0;
@@ -314,43 +319,30 @@ async function processPomodoroMarkersInVault(
 }
 
 /** Dry run: count misplaced 🍅 markers without changing any file. */
-export function scanMisplacedPomodoroMarkersInVault(
-  app: App,
-  tasksPath: string
-): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, tasksPath, repairPomodoroMarkerPlacement, false);
+export function scanMisplacedPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, repairPomodoroMarkerPlacement, false);
 }
 
 /** Relocate misplaced 🍅 markers in front of the Tasks fields (counts kept). */
-export function repairPomodoroMarkersInVault(
-  app: App,
-  tasksPath: string
-): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, tasksPath, repairPomodoroMarkerPlacement, true);
+export function repairPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, repairPomodoroMarkerPlacement, true);
 }
 
 /** Delete misplaced 🍅 markers, restoring affected lines to their pre-bug form. */
 export function removeMisplacedPomodoroMarkersInVault(
-  app: App,
-  tasksPath: string
+  app: App
 ): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, tasksPath, removeMisplacedPomodoroMarker, true);
+  return processPomodoroMarkersInVault(app, removeMisplacedPomodoroMarker, true);
 }
 
 /** Dry run: count every plugin-written 🍅 marker without changing any file. */
-export function scanAllPomodoroMarkersInVault(
-  app: App,
-  tasksPath: string
-): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, tasksPath, removeAnyPomodoroMarker, false);
+export function scanAllPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, removeAnyPomodoroMarker, false);
 }
 
 /** Delete every plugin-written 🍅 marker, correctly placed or misplaced. */
-export function removeAllPomodoroMarkersInVault(
-  app: App,
-  tasksPath: string
-): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, tasksPath, removeAnyPomodoroMarker, true);
+export function removeAllPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
+  return processPomodoroMarkersInVault(app, removeAnyPomodoroMarker, true);
 }
 
 export function isPathInFolder(filePath: string, folderPath: string): boolean {

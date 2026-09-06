@@ -53,6 +53,14 @@ date show up too, so an ordinary `- [ ] something` in today's note is pickable.
 
 ### Fixed
 
+- The four **pomodoro count marker** actions (Check / Repair / Remove / Remove
+  all) only ever looked inside your tasks folder. That was right while the
+  picker could only offer tasks from there — but you can now link a task in any
+  note, and the counter writes its marker into that note, where none of the
+  four could see it. They now cover every note, so "Remove all" means all
+  again. Nothing else changes: Check still writes nothing, the other three
+  still confirm with exact counts first, and none of them touches a 🍅 you
+  typed yourself.
 - Changing the **tasks folder path** or the **task lookahead window** in the
   plugin settings did not refresh a task picker that was already open, unless
   the timer happened to be running. Changing "Where to find tasks" did. All

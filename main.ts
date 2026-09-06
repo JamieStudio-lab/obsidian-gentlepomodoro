@@ -271,7 +271,7 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async checkPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("check", async () => {
-      const result = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const result = await scanMisplacedPomodoroMarkersInVault(this.app);
       if (result.linesAffected === 0) {
         new Notice(
           `Gentle pomodoro: no misplaced 🍅 markers found (${result.filesScanned} file(s) scanned). Nothing to repair.`
@@ -295,7 +295,7 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async repairPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("repair", async () => {
-      const scan = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const scan = await scanMisplacedPomodoroMarkersInVault(this.app);
       if (scan.linesAffected === 0) {
         new Notice(
           `Gentle pomodoro: no misplaced 🍅 markers found (${scan.filesScanned} file(s) scanned).`
@@ -310,7 +310,7 @@ export default class GentlePomoPlugin extends Plugin {
       });
       if (!confirmed) return;
 
-      const result = await repairPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const result = await repairPomodoroMarkersInVault(this.app);
       new Notice(
         `Gentle pomodoro: repaired ${result.linesAffected} task line(s) in ${result.filesAffected} file(s).`
       );
@@ -324,7 +324,7 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async removeMisplacedPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("remove", async () => {
-      const scan = await scanMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const scan = await scanMisplacedPomodoroMarkersInVault(this.app);
       if (scan.linesAffected === 0) {
         new Notice(
           `Gentle pomodoro: no misplaced 🍅 markers found (${scan.filesScanned} file(s) scanned).`
@@ -340,7 +340,7 @@ export default class GentlePomoPlugin extends Plugin {
       });
       if (!confirmed) return;
 
-      const result = await removeMisplacedPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const result = await removeMisplacedPomodoroMarkersInVault(this.app);
       new Notice(
         `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
       );
@@ -354,7 +354,7 @@ export default class GentlePomoPlugin extends Plugin {
    */
   async removeAllPomodoroMarkers(): Promise<void> {
     await this.runMarkerMaintenance("remove", async () => {
-      const scan = await scanAllPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const scan = await scanAllPomodoroMarkersInVault(this.app);
       if (scan.linesAffected === 0) {
         new Notice(`Gentle pomodoro: no 🍅 markers found (${scan.filesScanned} file(s) scanned).`);
         return;
@@ -368,7 +368,7 @@ export default class GentlePomoPlugin extends Plugin {
       });
       if (!confirmed) return;
 
-      const result = await removeAllPomodoroMarkersInVault(this.app, this.settings.tasksPath);
+      const result = await removeAllPomodoroMarkersInVault(this.app);
       new Notice(
         `Gentle pomodoro: removed ${result.linesAffected} 🍅 marker(s) in ${result.filesAffected} file(s).`
       );
