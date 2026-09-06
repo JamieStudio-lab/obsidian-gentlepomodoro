@@ -96,7 +96,8 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
 - **Timing**: focus / short break / long break durations (press Enter to apply).
-- **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only.
+- **Tasks**: **Where to find tasks** — tasks folder / current note / open notes. Hidden while **Show task selector** is off.
+- **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only. The music pair is hidden while **Show music player** is off.
 - **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
 - **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.

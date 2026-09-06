@@ -19,7 +19,10 @@ function leaf(type: string, file?: string): ScopeLeaf {
 function workspace(options: { active?: string | null; leaves?: ScopeLeaf[] }): ScopeWorkspace {
   const { active = null, leaves = [] } = options;
   return {
-    getActiveFile: () => (active === null ? null : { path: active }),
+    getActiveFile: () =>
+      active === null
+        ? null
+        : { path: active, extension: active.slice(active.lastIndexOf(".") + 1) },
     iterateRootLeaves: (cb) => leaves.forEach(cb),
   };
 }
@@ -133,6 +136,20 @@ describe("resolveTaskScope", () => {
       "ignored"
     );
     expect(scope).toEqual({ kind: "notes", paths: ["a.md", "b.md"] });
+  });
+
+  it("drops a non-markdown active file, so 'no note open' is reached", () => {
+    // getActiveFile is documented as "the file for the current view if it's a
+    // FileView" — a PDF, image or canvas view IS one, so it genuinely hands
+    // back files that hold no tasks. Left in, `paths` would be non-empty for a
+    // note that was never read, and the picker decides "no note open" from
+    // exactly that emptiness — so it would answer a PDF with "All clear".
+    for (const file of ["notes/paper.pdf", "boards/plan.canvas", "img/shot.png"]) {
+      expect(resolveTaskScope(workspace({ active: file }), "current-note", "any"), file).toEqual({
+        kind: "notes",
+        paths: [],
+      });
+    }
   });
 
   it("ignores the tasks folder in both note scopes", () => {

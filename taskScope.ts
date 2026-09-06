@@ -55,7 +55,8 @@ export interface ScopeLeaf {
 
 /** The two workspace methods this needs, as calls rather than captured state. */
 export interface ScopeWorkspace {
-  getActiveFile(): { path: string } | null;
+  /** `extension` is read: getActiveFile() is not markdown-only. See resolveTaskScope. */
+  getActiveFile(): { path: string; extension: string } | null;
   iterateRootLeaves(callback: (leaf: ScopeLeaf) => void): void;
 }
 
@@ -63,13 +64,13 @@ export interface ScopeWorkspace {
  * The markdown files open in the main area, in tab order, without duplicates.
  *
  * Read through `getViewState()`, NOT `leaf.view`. Since Obsidian 1.7.2 a
- * background tab is *deferred*: its `view` is a placeholder `DeferredView`
- * that has loaded no file, so `leaf.view.file` is null and
- * `getLeavesOfType("markdown")` does not return it at all — a note you have
- * open in another tab is invisible until you click it. View state is exactly
- * what a deferred leaf does keep, so it is the only reading that sees every
- * tab. This is why "Open notes" would otherwise have quietly meant "the one
- * tab I am looking at" on a machine with more than a couple of tabs open.
+ * background tab is *deferred*: the LEAF is still there and still reports its
+ * type, but its `view` is a placeholder `DeferredView` that has loaded no file
+ * — so `leaf.view.file` is null and `view instanceof MarkdownView` is false
+ * for every tab you have not clicked this session. View state is exactly what
+ * a deferred leaf does keep, so it is the only reading that sees every tab.
+ * This is why "Open notes" would otherwise have quietly meant "the tab I am
+ * looking at" on any machine with more than a couple open.
  */
 export function openMarkdownPaths(workspace: ScopeWorkspace): string[] {
   const paths: string[] = [];
@@ -98,8 +99,18 @@ export function resolveTaskScope(
     // getActiveFile(), not the active leaf: clicking the timer panel makes IT
     // the active leaf, and the picker must keep meaning the note you were last
     // in rather than emptying itself the moment you reach for it.
+    //
+    // Markdown-only, and that is not belt-and-braces. getActiveFile is
+    // documented as "the file for the current view if it's a FileView", and a
+    // PDF, image or canvas view is a FileView — so it hands back files that
+    // hold no tasks and that loadTasks (which reads only .md) drops anyway.
+    // Keeping them would leave `paths` non-empty for a note that was never
+    // read, and the picker decides "no note open" from exactly that emptiness
+    // — so it would answer a PDF with a reassuring "All clear". Its sibling
+    // openMarkdownPaths has always filtered; this is the same rule here.
     const active = workspace.getActiveFile();
-    return { kind: "notes", paths: active ? [active.path] : [] };
+    const note = active?.extension === "md" ? active : null;
+    return { kind: "notes", paths: note ? [note.path] : [] };
   }
 
   if (source === "open-notes") {

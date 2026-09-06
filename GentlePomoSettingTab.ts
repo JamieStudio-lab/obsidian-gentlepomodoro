@@ -750,9 +750,17 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   override async setControlValue(key: string, value: unknown): Promise<void> {
     const settings = this.plugin.settings;
     switch (key as SettingsKey) {
+      // The other two thirds of the picker's scope. Like `taskSource` below
+      // they must fan out: the view's `taskSettingsKey()` guard reloads an OPEN
+      // picker when any of the three moves, but it only runs from
+      // applySettings — and the engine emits nothing while the timer is idle,
+      // which is exactly when someone is sitting in this tab. Without the
+      // fan-out the guard covered one of the three fields it keys on.
       case "tasksPath":
         settings.tasksPath = String(value);
-        break;
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
       // Dual-surface (the gear panel carries the same dropdown), so it fans
       // out. It deliberately does NOT touch the task link: changing where the
       // picker looks must never unlink the task you are timing — that is the
@@ -777,7 +785,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const n = numericSetting(value);
         if (n === null || n <= 0) return;
         settings.taskSelectorDays = Math.floor(n);
-        break;
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
       }
       case "logFolderPath":
         settings.logFolderPath = String(value);

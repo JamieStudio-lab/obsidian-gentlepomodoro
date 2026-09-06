@@ -146,8 +146,10 @@ export interface TaskItem {
   scheduled: string | null;
   due: string | null;
   // Date used for sorting and grouping (scheduled, else due). NULL for a task
-  // carrying neither, which only the note scopes admit — the folder scope
-  // still requires a date, so this is never null for an upgrading user's list.
+  // carrying neither, which only the note scopes admit — with ONE exception:
+  // the pin bypasses the undated rule as well as the date window, so a linked
+  // undated task is null even under the folder scope. Never assume a scope
+  // makes this non-null.
   // Every reader must branch on it BEFORE building a moment: `moment(null)` is
   // invalid but `moment(undefined)` is *now*, so one careless read files every
   // undated task under "Today".

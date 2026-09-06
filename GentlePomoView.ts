@@ -124,9 +124,12 @@ export class GentlePomoView extends ItemView {
   /**
    * The panel's dropdown rows (the task source). Same closure shape as the
    * segmented rows and for the same reason — the option type stays inside
-   * selectRow, where it is already known. Each seed also rewrites the row's own
-   * caption, so a change made in the settings tab moves the control and the
-   * sentence under it together.
+   * selectRow, where it is already known. Each seed re-reads its setting and
+   * writes `select.value`, so a change made in the settings tab moves it.
+   *
+   * One row today. It is a registry rather than a field because that is the
+   * shape syncSettingsPanel() iterates, and because a second dropdown must not
+   * have to remember to add itself to a hand-written re-seed.
    */
   private selectPanelRows: { seed: () => void }[] = [];
 
@@ -1828,14 +1831,23 @@ export class GentlePomoView extends ItemView {
     );
     // Both music rows belong to "Show music player": with that off the iframe
     // is destroyed, so a mute and a level here would govern nothing. The switch
-    // itself is in the settings tab, which is also where these two rows still
-    // live — so this hides no route back to them.
+    // itself is in the settings tab, so this cannot hide its own way back.
+    //
+    // Only the MUTE has a tab row, though — the two volumes were cut back out
+    // of the tab at the end of 0.6.3, on the rule that a level belongs on the
+    // surface you are looking at. So while the player is off, Music volume has
+    // no home anywhere. That is deliberate and not a trap: with the player off
+    // there is nothing playing to set a level for, and turning it back on
+    // brings the row with it.
     onlyWhen(
       () => settings.showMusicPlayer,
       () => {
         // The music's own mute, so the Audio section reads as two matched pairs
-        // (toggle / hint / volume, twice) rather than one control with a mute and
-        // one without. Dual-surface since 0.6.3: the whole mixer moved into the
+        // (mute / volume, twice) rather than one control with a mute and one
+        // without — which is also what lets the captions go: the pairing makes
+        // the scope argument the prose used to. Note the pairing is conditional
+        // now; with the player off this row and its volume are hidden and the
+        // section shows the timer's pair alone. Dual-surface since 0.6.3: the whole mixer moved into the
         // tab's Audio group TOGETHER, which is what the earlier "panel-only" note
         // here was actually protecting — a tab-only mute would have split one
         // channel across two screens. The Music group stayed the wrong home for
@@ -1916,6 +1928,11 @@ export class GentlePomoView extends ItemView {
       settings.soundVolume = DEFAULT_SETTINGS.soundVolume;
       settings.musicSoundEnabled = DEFAULT_SETTINGS.musicSoundEnabled;
       settings.musicVolume = DEFAULT_SETTINGS.musicVolume;
+      // Every control the panel SHOWS is restored, and taskSource is one since
+      // 0.6.4 — an omission here is invisible except as one row that ignores
+      // the button. (tasksPath and taskSelectorDays are deliberately absent:
+      // they have no panel row, so a panel reset does not speak for them.)
+      settings.taskSource = DEFAULT_SETTINGS.taskSource;
       settings.autoStartBreak = DEFAULT_SETTINGS.autoStartBreak;
       settings.autoStartFocus = DEFAULT_SETTINGS.autoStartFocus;
       settings.focusEndSoundEnabled = DEFAULT_SETTINGS.focusEndSoundEnabled;

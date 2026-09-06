@@ -31,8 +31,10 @@ date show up too, so an ordinary `- [ ] something` in today's note is pickable.
 
 - **The gear panel only shows settings for what is switched on.** With "Show
   music player" off, the music mute and music volume rows go away; with "Show
-  task selector" off, the whole Tasks section does. Both switches, and both sets
-  of rows, are still in the plugin settings, so nothing hides its own way back.
+  task selector" off, the whole Tasks section does. Both switches are in the
+  plugin settings, so nothing hides its own way back. (Music volume is the one
+  control with no second home — it has always lived only in the panel — but
+  with the player off there is nothing playing to set a level for.)
 - **Fewer explanatory lines in the gear panel.** The captions under the timer
   mute, the music mute and the task source are gone — the Audio section now
   shows two obvious pairs (mute and level, twice), which says the same thing
@@ -51,6 +53,15 @@ date show up too, so an ordinary `- [ ] something` in today's note is pickable.
 
 ### Fixed
 
+- Changing the **tasks folder path** or the **task lookahead window** in the
+  plugin settings did not refresh a task picker that was already open, unless
+  the timer happened to be running. Changing "Where to find tasks" did. All
+  three now behave the same.
+- With **Where to find tasks** set to "Current note", opening a PDF, canvas or
+  image made the picker say "All clear" — as though it had read the file and
+  found nothing — instead of telling you no note was open.
+- **Reset to defaults** in the timer panel restored every control except "Where
+  to find tasks".
 - The "Where to find tasks" dropdown in the gear panel had no arrow on it, and
   kept a light grey band around it after you picked an option — Obsidian's own
   focus highlight, which is unobtrusive on a small right-aligned dropdown but

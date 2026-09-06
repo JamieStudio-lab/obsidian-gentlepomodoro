@@ -941,3 +941,74 @@ describe("the panel's captions", () => {
     expect(panel).toContain("sessionEndSummary");
   });
 });
+
+describe("the picker's live-reload guard has a trigger for every field it watches", () => {
+  // GentlePomoView.applySettings reloads an OPEN task picker when
+  // taskSettingsKey() moves. That guard only runs from applySettings, and the
+  // engine emits nothing while the timer is idle — which is exactly when
+  // someone is sitting in the settings tab. So every field the key names must
+  // fan out, or the guard covers a subset of what it claims to. It shipped
+  // covering one field of three.
+  const watched = (): string[] => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const fn = src.slice(src.indexOf("private taskSettingsKey()"));
+    const body = fn.slice(0, fn.indexOf("\n  }"));
+    return [...body.matchAll(/\$\{s\.(\w+)\}/g)].map((m) => m[1]);
+  };
+
+  it("names three fields, so a fourth cannot be added unnoticed", () => {
+    expect(watched().sort()).toEqual(["taskSelectorDays", "taskSource", "tasksPath"]);
+  });
+
+  it("fans every one of them out to open views", async () => {
+    const sample: Record<string, unknown> = {
+      taskSource: "open-notes",
+      tasksPath: "projects/active",
+      taskSelectorDays: "30",
+    };
+    for (const key of watched()) {
+      const c = makeTab();
+      await c.tab.setControlValue(key, sample[key]);
+      expect(
+        c.calls.some((call) => call.method === "saveSettings"),
+        key
+      ).toBe(true);
+      expect(
+        c.calls.some((call) => call.method === "applySettings"),
+        `${key} is in taskSettingsKey() but never reaches an open picker`
+      ).toBe(true);
+    }
+  });
+});
+
+describe("the panel's Reset to defaults", () => {
+  const panel = () => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const whole = src.slice(src.indexOf("renderSettingsPanel() {"));
+    const split = whole.indexOf(
+      'const resetWrap = this.settingsPanel.createDiv("gp-settings-reset")'
+    );
+    return {
+      rows: whole.slice(0, split),
+      reset: whole.slice(split, whole.indexOf("\n  }", split)),
+    };
+  };
+
+  it("restores every setting the panel's own controls write", () => {
+    // A one-off list per control is how taskSource came to be the single
+    // panel-visible row that ignored the button. Derived from the handlers
+    // instead, so the next control added is covered on the day it lands.
+    const { rows, reset } = panel();
+    // Two ways a panel row writes a setting: directly (`settings.focusMinutes =`)
+    // and through the shared-toggle helper, which writes `settings[key]` off a
+    // key it was handed. Reading only the first form finds five of eleven.
+    const written = new Set([
+      ...[...rows.matchAll(/\bsettings\.(\w+) =/g)].map((m) => m[1]),
+      ...[...rows.matchAll(/sharedToggle\("(\w+)"/g)].map((m) => m[1]),
+    ]);
+    expect(written.size, "no panel writers found — the slice is wrong").toBeGreaterThan(9);
+    for (const key of written) {
+      expect(reset, `Reset to defaults never restores ${key}`).toContain(`settings.${key} =`);
+    }
+  });
+});
