@@ -438,10 +438,14 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
 
       if (pinOnly && !isPin) continue;
 
-      // What the scope alone would have done with this line.
-      const passesFilters = effectiveDateStr
-        ? moment(effectiveDateStr).isSameOrBefore(limitDate)
-        : includeUndated;
+      // What the scope alone would have done with this line. BOTH halves
+      // matter: the file may be out of scope entirely (pinOnly), and a file
+      // that is in scope may still filter the line out by date. Reading only
+      // the date half leaves a linked task from another note unflagged
+      // whenever it happens to fall inside the window — which is most of them.
+      const passesFilters =
+        !pinOnly &&
+        (effectiveDateStr ? moment(effectiveDateStr).isSameOrBefore(limitDate) : includeUndated);
       if (!passesFilters && !isPin) continue;
 
       const displayText = normalizeTaskTextForDisplay(originalText);

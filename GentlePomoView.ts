@@ -160,6 +160,13 @@ export class GentlePomoView extends ItemView {
   private lastTaskScopeKey: string | null = null;
   /** The task SETTINGS the visible list was built from; compared on each tick. */
   private lastTaskSettingsKey: string | null = null;
+  /**
+   * Monotonic token for loadTasks. Two loads can genuinely be in flight since
+   * 0.6.4 — switching notes with the picker open starts a second one — and
+   * whichever vault read finishes last would otherwise paint, which is not the
+   * same as whichever was asked for last.
+   */
+  private taskLoadGeneration = 0;
 
   // Music (audio-only lofi playback; the YouTube iframe is a hidden audio engine)
   musicSection!: HTMLDivElement;
@@ -1449,6 +1456,7 @@ export class GentlePomoView extends ItemView {
 
   /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */
   async loadTasks() {
+    const generation = ++this.taskLoadGeneration;
     this.taskListContainer.empty();
     this.loadedTasks = [];
 
@@ -1485,6 +1493,12 @@ export class GentlePomoView extends ItemView {
       includeUndated: scope.kind === "notes",
       pin,
     });
+    // A newer load started while this one was reading the vault — it has
+    // already emptied the container and will paint its own rows. Returning
+    // before the render is what stops the slower answer to an older question
+    // from landing on top of the newer one.
+    if (generation !== this.taskLoadGeneration) return;
+
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {

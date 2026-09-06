@@ -18,6 +18,7 @@ import {
   sessionEndSummary,
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
+import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -126,6 +127,16 @@ function imperativeRows(tab: GentlePomoSettingTab, el: { settings: Setting[] }) 
     out.push({ heading, name: setting.name, desc: setting.desc });
   }
   return out;
+}
+
+/**
+ * A source file with its comments removed, for the drift guards.
+ *
+ * Full-line `//` comments only, deliberately: stripping every `//` would cut a
+ * line short at an https URL, and the tab is full of them.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
 function rowFor(el: { settings: Setting[] }, name: string): Setting {
@@ -725,5 +736,110 @@ describe("the timer panel's segmented rows re-seed", () => {
     expect(src).toContain("TIMER_VOLUME_LABEL");
     expect(src).toContain("MUSIC_SOUND_LABEL");
     expect(src).toContain("MUSIC_VOLUME_LABEL");
+  });
+});
+
+describe("Task source (issue #4)", () => {
+  it("offers the three sources, in the shared wording, on both paths", () => {
+    const c = makeTab();
+    c.tab.display();
+    // The imperative path renders whatever the definitions declare, so reading
+    // it back is how the pre-1.13 dropdown gets checked at all — it is dead
+    // code on any Obsidian a contributor is actually running.
+    const component = componentOf(c.el, TASK_SOURCE_SETTING_NAME);
+    expect(component.kind).toBe("dropdown");
+    expect(component.options).toEqual(
+      TASK_SOURCE_ORDER.map((source) => ({ value: source, label: TASK_SOURCE_LABELS[source] }))
+    );
+    expect(component.value).toBe("folder");
+  });
+
+  it("sits ABOVE the folder path it governs", () => {
+    // Choosing "Current note" is what makes that path irrelevant, so the reader
+    // has to meet the decision before the field it decides about.
+    const c = makeTab();
+    const rows = declarativeRows(c.tab)
+      .filter((r) => r.heading === "Task selector")
+      .map((r) => r.name);
+    expect(rows.indexOf(TASK_SOURCE_SETTING_NAME)).toBeLessThan(rows.indexOf("Tasks folder path"));
+  });
+
+  it("keeps the folder path row visible in every source", () => {
+    // A control that vanished because you changed a dropdown reads as a fault.
+    // 0.6.3 learned this with the chimes and deleted the visibility machinery
+    // outright; nothing here may bring it back.
+    for (const source of TASK_SOURCE_ORDER) {
+      const c = makeTab({ taskSource: source });
+      const names = declarativeRows(c.tab).map((r) => r.name);
+      expect(names, source).toContain("Tasks folder path");
+      expect(names, source).toContain("Task lookahead window");
+    }
+  });
+
+  it("writes the source through, and fans out to open panels", async () => {
+    const c = makeTab();
+    await c.tab.setControlValue("taskSource", "current-note");
+
+    expect(c.settings.taskSource).toBe("current-note");
+    expect(c.calls.some((call) => call.method === "saveSettings")).toBe(true);
+    // Dual-surface: without the fan-out the gear panel's own dropdown stays on
+    // the old value, and an open picker never reloads against the new scope.
+    expect(c.calls.some((call) => call.method === "applySettings")).toBe(true);
+  });
+
+  it("NEVER unlinks the current task when the source changes", async () => {
+    // The maintainer's second requirement on issue #4. "Show task selector"
+    // right beside it DOES unlink on the way off, so this is a real
+    // neighbouring behaviour to be told apart, not a hypothetical.
+    for (const source of TASK_SOURCE_ORDER) {
+      const c = makeTab();
+      const timer = { currentTaskName: "Write docs", setTask: () => calls.push("setTask") };
+      const calls: string[] = [];
+      (c.tab as unknown as { plugin: { timer: unknown } }).plugin.timer = timer;
+
+      await c.tab.setControlValue("taskSource", source);
+
+      expect(calls, source).toEqual([]);
+      expect(timer.currentTaskName, source).toBe("Write docs");
+    }
+  });
+
+  it("refuses a stored value that is not one of the three", async () => {
+    const c = makeTab();
+    await c.tab.setControlValue("taskSource", "everything, everywhere");
+    expect(c.settings.taskSource).toBe("folder");
+  });
+
+  it("reads back a resolved value, so the dropdown always shows a selection", () => {
+    // coerceToDefaults only drops a value whose TYPE disagrees, so a
+    // hand-edited data.json can hold a string that is not one of the three.
+    const c = makeTab({ taskSource: "nonsense" as never });
+    expect(c.tab.getControlValue("taskSource")).toBe("folder");
+  });
+});
+
+describe("Task source — one wording, two surfaces", () => {
+  it("takes its name and its options from the shared consts in both places", () => {
+    // One control asking one question. The user is told the two screens stay in
+    // sync, so a re-typed literal in either is a promise quietly broken —
+    // the same guard the auto-start labels carry, for the same reason.
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    expect(view).toContain("TASK_SOURCE_SETTING_NAME");
+    expect(view).toContain("TASK_SOURCE_LABELS");
+    expect(view).toContain("TASK_SOURCE_ORDER");
+
+    // Searched over CODE only. These labels are dropdown option values, so
+    // unlike the auto-start ones they have no single argument shape to match —
+    // and a bare substring search fails on the next person who explains in a
+    // comment why the const exists, which is exactly what it did here.
+    const literals = [TASK_SOURCE_SETTING_NAME, ...Object.values(TASK_SOURCE_LABELS)];
+    const tab = readFileSync(resolve(__dirname, "..", "GentlePomoSettingTab.ts"), "utf8");
+    for (const file of [view, tab]) {
+      for (const label of literals) {
+        expect(codeOnly(file), `${label} must come from the shared const`).not.toContain(
+          `"${label}"`
+        );
+      }
+    }
   });
 });

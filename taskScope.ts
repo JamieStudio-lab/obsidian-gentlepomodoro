@@ -164,7 +164,7 @@ export function taskPickerEmptyState(args: {
   if (source === "current-note") {
     return scopeIsEmpty
       ? { icon: "file-search", title: "No note open", hint: "Open a note to see its tasks." }
-      : { icon: "calendar-check", title: "All clear", hint: "No open tasks in this note." };
+      : { icon: "calendar-check", title: "All clear", hint: "Nothing unfinished in this note." };
   }
 
   if (source === "open-notes") {
@@ -177,7 +177,7 @@ export function taskPickerEmptyState(args: {
       : {
           icon: "calendar-check",
           title: "All clear",
-          hint: "No open tasks in the notes you have open.",
+          hint: "Nothing unfinished in your open notes.",
         };
   }
 

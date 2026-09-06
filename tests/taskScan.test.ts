@@ -248,3 +248,249 @@ describe("groupTasksByDate — pre-0.6.4 behaviour", () => {
     expect(groupTasksByDate([])).toEqual([]);
   });
 });
+
+/** The 0.6.4 note scope: an explicit list of files, whatever folder they sit in. */
+const notes = (...paths: string[]): TaskScope => ({ kind: "notes", paths });
+
+describe("loadTasks — the note scopes (0.6.4)", () => {
+  it("reads exactly the listed notes, wherever they live", async () => {
+    const app = fakeApp({
+      "inbox/a.md": "- [ ] From A 📅 2026-09-05",
+      "archive/deep/b.md": "- [ ] From B 📅 2026-09-05",
+      "c.md": "- [ ] From C 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("inbox/a.md", "archive/deep/b.md") });
+
+    // Path order within the date group, not the order the scope listed them —
+    // the pre-0.6.4 sort, unchanged.
+    expect(tasks.map((t) => t.cleanText)).toEqual(["From B", "From A"]);
+  });
+
+  it("returns nothing for an empty note scope", async () => {
+    // "Current note" with no note open. The picker distinguishes this from an
+    // empty note in its own copy; the loader just has nothing to read.
+    const app = fakeApp({ "a.md": "- [ ] Something 📅 2026-09-05" });
+
+    expect(await loadTasks(app, { scope: notes() })).toEqual([]);
+  });
+
+  it("admits undated tasks when asked, with a null effective date", async () => {
+    const app = fakeApp({
+      "a.md": ["- [ ] Undated", "- [ ] Dated 📅 2026-09-05"].join("\n"),
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), includeUndated: true });
+
+    expect(tasks.map((t) => t.cleanText)).toEqual(["Dated", "Undated"]);
+    expect(tasks[1].effectiveDateStr).toBeNull();
+    expect(tasks[1].scheduled).toBeNull();
+    expect(tasks[1].due).toBeNull();
+  });
+
+  it("still hides undated tasks when NOT asked", async () => {
+    // includeUndated is what the two note scopes pass; the folder scope does
+    // not, and one flag governs both so they cannot drift apart.
+    const app = fakeApp({ "a.md": "- [ ] Undated" });
+
+    expect(await loadTasks(app, { scope: notes("a.md") })).toEqual([]);
+  });
+
+  it("sorts undated tasks after every dated one, as one block", async () => {
+    // groupTasksByDate closes the list with a single trailing "No date" group
+    // and has no special case for it — this ordering is what makes that work.
+    const app = fakeApp({
+      "b.md": ["- [ ] Undated B", "- [ ] Late 📅 2026-09-30"].join("\n"),
+      "a.md": ["- [ ] Undated A", "- [ ] Early 📅 2026-09-05"].join("\n"),
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: notes("a.md", "b.md"),
+      includeUndated: true,
+      limitDays: 90,
+    });
+
+    expect(tasks.map((t) => t.cleanText)).toEqual(["Early", "Late", "Undated A", "Undated B"]);
+  });
+
+  it("applies the lookahead window to the dated tasks it does admit", async () => {
+    const app = fakeApp({
+      "a.md": ["- [ ] Undated", "- [ ] Far off 📅 2026-12-01"].join("\n"),
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: notes("a.md"),
+      includeUndated: true,
+      limitDays: 3,
+    });
+
+    expect(tasks.map((t) => t.cleanText)).toEqual(["Undated"]);
+  });
+});
+
+describe("loadTasks — the pinned (linked) task", () => {
+  const pinned = { path: "elsewhere/linked.md", cleanText: "The linked task" };
+
+  it("reads the linked task's own note even when the scope excludes it", async () => {
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.map((t) => t.cleanText).sort()).toEqual(["In scope", "The linked task"]);
+    expect(tasks.find((t) => t.cleanText === "The linked task")?.pinned).toBe(true);
+    expect(tasks.find((t) => t.cleanText === "In scope")?.pinned).toBe(false);
+  });
+
+  it("takes ONLY the linked line from an out-of-scope note", async () => {
+    // Otherwise choosing "Current note" would quietly drag in every other task
+    // from wherever the linked one happens to live.
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": [
+        "- [ ] The linked task 📅 2026-09-05",
+        "- [ ] Its neighbour 📅 2026-09-05",
+      ].join("\n"),
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.map((t) => t.cleanText).sort()).toEqual(["In scope", "The linked task"]);
+  });
+
+  it("shows the linked task past the lookahead window, and undated", async () => {
+    const app = fakeApp({
+      "elsewhere/linked.md": "- [ ] The linked task 📅 2027-12-31",
+    });
+    const undatedApp = fakeApp({ "elsewhere/linked.md": "- [ ] The linked task" });
+
+    const dated = await loadTasks(app, { scope: notes(), pin: pinned, limitDays: 3 });
+    const undated = await loadTasks(undatedApp, { scope: notes(), pin: pinned, limitDays: 3 });
+
+    expect(dated.map((t) => t.pinned)).toEqual([true]);
+    expect(undated.map((t) => t.pinned)).toEqual([true]);
+    expect(undated[0].effectiveDateStr).toBeNull();
+  });
+
+  it("does NOT mark it pinned when the scope shows it anyway", async () => {
+    // Pinned means "here because it is linked". A task the scope already
+    // includes must stay in its date group, or the picker lists it twice.
+    const app = fakeApp({
+      "elsewhere/linked.md": "- [ ] The linked task 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("elsewhere/linked.md"), pin: pinned });
+
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].pinned).toBe(false);
+  });
+
+  it("matches on path AND text, so a same-named task elsewhere is not it", async () => {
+    const app = fakeApp({
+      "a.md": "- [ ] The linked task 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] Something else 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.map((t) => t.cleanText)).toEqual(["The linked task"]);
+    expect(tasks[0].pinned).toBe(false);
+    expect(tasks[0].path).toBe("a.md");
+  });
+
+  it("copes with a linked task whose line is gone", async () => {
+    const app = fakeApp({ "elsewhere/linked.md": "- [ ] Not it 📅 2026-09-05" });
+
+    expect(await loadTasks(app, { scope: notes(), pin: pinned })).toEqual([]);
+  });
+
+  it("copes with a linked task whose note is gone", async () => {
+    const app = fakeApp({ "a.md": "- [ ] In scope 📅 2026-09-05" });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.map((t) => t.cleanText)).toEqual(["In scope"]);
+  });
+
+  it("never resurrects a COMPLETED linked task", async () => {
+    // The maintainer's rule on issue #4 is "keep it selected unless it is
+    // marked as finished". TimerEngine unlinks on completion; the pin must not
+    // undo that by lifting a ticked line back into the list.
+    const app = fakeApp({ "elsewhere/linked.md": "- [x] The linked task 📅 2026-09-05" });
+
+    expect(await loadTasks(app, { scope: notes(), pin: pinned })).toEqual([]);
+  });
+
+  it("pins in the folder scope too", async () => {
+    const app = fakeApp({
+      "projects/a.md": "- [ ] In folder 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: { kind: "folder", tasksPath: "projects" },
+      pin: pinned,
+    });
+
+    expect(tasks.map((t) => t.cleanText).sort()).toEqual(["In folder", "The linked task"]);
+    expect(tasks.find((t) => t.cleanText === "The linked task")?.pinned).toBe(true);
+  });
+});
+
+describe("groupTasksByDate — undated and pinned (0.6.4)", () => {
+  const item = (cleanText: string, effectiveDateStr: string | null, pinned = false) => ({
+    text: cleanText,
+    cleanText,
+    displayText: cleanText,
+    status: "todo",
+    path: "a.md",
+    scheduled: effectiveDateStr,
+    due: null,
+    effectiveDateStr,
+    pinned,
+  });
+
+  it("closes the list with a single 'No date' group", () => {
+    const groups = groupTasksByDate([
+      item("Dated", "2026-09-05"),
+      item("Loose one", null),
+      item("Loose two", null),
+    ]);
+
+    expect(groups.map((g) => g.label)).toEqual(["Today", "No date"]);
+    expect(groups[1].items.map((t) => t.cleanText)).toEqual(["Loose one", "Loose two"]);
+  });
+
+  it("does NOT file undated tasks under Today", () => {
+    // moment(undefined) is *now*, so a missing date read through the date
+    // branch would land every one of these in whatever today is.
+    const groups = groupTasksByDate([item("Loose", null)]);
+
+    expect(groups.map((g) => g.label)).toEqual(["No date"]);
+  });
+
+  it("puts a pinned task first, under its own heading", () => {
+    const groups = groupTasksByDate([
+      item("Linked", "2020-01-01", true),
+      item("Normal", "2026-09-05"),
+    ]);
+
+    expect(groups.map((g) => g.label)).toEqual(["Linked task", "Today"]);
+    expect(groups[0].items.map((t) => t.cleanText)).toEqual(["Linked"]);
+  });
+
+  it("never also lists a pinned task in its date group", () => {
+    const groups = groupTasksByDate([item("Linked", "2026-09-05", true)]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("Linked task");
+  });
+
+  it("groups an undated pinned task the same way", () => {
+    const groups = groupTasksByDate([item("Linked", null, true), item("Loose", null)]);
+
+    expect(groups.map((g) => g.label)).toEqual(["Linked task", "No date"]);
+  });
+});
