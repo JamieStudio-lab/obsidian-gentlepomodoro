@@ -51,6 +51,11 @@ date show up too, so an ordinary `- [ ] something` in today's note is pickable.
 
 ### Fixed
 
+- The "Where to find tasks" dropdown in the gear panel had no arrow on it, and
+  kept a light grey band around it after you picked an option — Obsidian's own
+  focus highlight, which is unobtrusive on a small right-aligned dropdown but
+  spans the whole column on a full-width one. It now uses Obsidian's dropdown
+  styling and the plugin's own focus outline.
 - The two number boxes in the timer's gear panel (Focus and Break minutes) never
   picked up a change made from a second timer panel — "Reset to defaults" over
   there left them showing the old numbers until the panel was closed and

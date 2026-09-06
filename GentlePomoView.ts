@@ -1720,7 +1720,12 @@ export class GentlePomoView extends ItemView {
     ) => {
       const wrap = this.settingsPanel.createEl("label", { cls: "gp-settings-stack" });
       wrap.createSpan({ text: label });
-      const select = wrap.createEl("select", { cls: "gp-settings-select" });
+      // `dropdown` is Obsidian's own class and it is load-bearing, not
+      // decoration: the app's BARE `select` rule already sets
+      // `appearance: none`, but only `.dropdown` carries the chevron
+      // background-image — so a select without it renders as a plain filled
+      // rectangle with no arrow at all.
+      const select = wrap.createEl("select", { cls: "gp-settings-select dropdown" });
       for (const value of options) {
         select.createEl("option", { value, text: optionLabel(value) });
       }

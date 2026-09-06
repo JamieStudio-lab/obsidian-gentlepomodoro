@@ -220,6 +220,23 @@ describe("focus rings", () => {
     }
   });
 
+  it("gives the panel's dropdown the plugin's ring, not Obsidian's halo", () => {
+    // Obsidian styles a bare `select:focus` with a 3px
+    // `--background-modifier-border-focus` halo and KEEPS it after a mouse
+    // choice — `:focus-visible` matches a clicked <select> in Chromium, so
+    // narrowing to keyboard focus does not remove it. On the panel's
+    // full-width dropdown that halo is a light band across the whole 260px
+    // column, which reads as a selection that got stuck rather than as focus.
+    expect(rules).toContain(".gp-settings-select.dropdown:focus");
+    const rule = rules.slice(rules.indexOf(".gp-settings-select.dropdown:focus"));
+    const body = rule.slice(0, rule.indexOf("}"));
+    expect(body).toContain("--gp-focus-ring-width");
+    expect(body).toContain("--gp-focus-ring-color");
+    // The halo has to be overwritten, not merely outlined over.
+    expect(body).toContain("box-shadow:");
+    expect(body).not.toContain("--background-modifier-border-focus");
+  });
+
   // box-shadow has no `solid` keyword, so a shared `outline` shorthand is
   // invalid there at computed-value time and the property is dropped —
   // the toggle's ring disappears with nothing to show for it.
@@ -228,6 +245,28 @@ describe("focus rings", () => {
       "box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color)"
     );
     expect(tokenBlock).not.toMatch(/--gp-focus-ring:\s/);
+  });
+});
+
+describe("the panel's dropdown", () => {
+  const view = readFileSync(resolve(root, "GentlePomoView.ts"), "utf8");
+
+  it("carries Obsidian's own dropdown class", () => {
+    // Not decoration. Obsidian's BARE `select` rule already sets
+    // `appearance: none`, and only `.dropdown` carries the chevron
+    // background-image — so dropping this class leaves a plain filled
+    // rectangle with no arrow, which no local test could otherwise see.
+    expect(view).toContain('cls: "gp-settings-select dropdown"');
+  });
+
+  it("names both classes in CSS rather than relying on stylesheet order", () => {
+    // `.gp-settings-select` alone ties `.dropdown` on specificity, so which one
+    // won would depend on load order — the source-order trap the register in
+    // DESIGN.md exists for.
+    const code = rules.replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const match of code.matchAll(/^\.gp-settings-select[^{]*\{/gm)) {
+      expect(match[0], "must be qualified with .dropdown").toContain(".dropdown");
+    }
   });
 });
 
