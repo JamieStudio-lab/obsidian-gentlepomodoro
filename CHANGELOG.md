@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.3] — 2026-09-04
+## [0.6.3] — 2026-09-05
 
 You can now ask the timer to chime when a session runs out, without giving up
 the quiet. Gentle Pomodoro has always stayed silent at the end of a session
