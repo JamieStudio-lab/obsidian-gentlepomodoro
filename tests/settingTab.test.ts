@@ -505,6 +505,7 @@ describe("Audio group", () => {
       numberPanelRows: "numberRow(",
       segmentedPanelRows: "segmentedRow(",
       selectPanelRows: "selectRow<",
+      conditionalPanelRows: "onlyWhen(",
       endSummaryLines: 'summaryFor("',
     };
 
@@ -535,6 +536,7 @@ describe("Audio group", () => {
       "segmentedPanelRows",
       "numberPanelRows",
       "selectPanelRows",
+      "conditionalPanelRows",
       "endSummaryLines",
     ]) {
       expect(body, `${registry} must be re-seeded`).toContain(registry);
@@ -653,11 +655,19 @@ describe("the timer panel's segmented rows re-seed", () => {
   const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
 
   /** The bodies of the two `segmentedRow(...)` CALLS, not its definition. */
-  const segmentedCalls = (src: string) =>
-    src
-      .split("\n    segmentedRow(")
-      .slice(1)
-      .map((rest) => rest.slice(0, rest.indexOf("\n    );")));
+  // Indent-aware: the music volume row sits inside an `onlyWhen` block since
+  // 0.6.4, so a fixed four-space split silently found only one of the two and
+  // the assertions below passed over whichever row had moved.
+  const segmentedCalls = (src: string) => {
+    const out: string[] = [];
+    const opener = /\n([ \t]*)segmentedRow\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(src)) !== null) {
+      const rest = src.slice(opener.lastIndex);
+      out.push(rest.slice(0, rest.indexOf(`\n${match[1]});`)));
+    }
+    return out;
+  };
 
   it("builds both volume rows from the shared stop list, not a re-typed one", () => {
     const calls = segmentedCalls(view());
@@ -841,5 +851,93 @@ describe("Task source — one wording, two surfaces", () => {
         );
       }
     }
+  });
+});
+
+describe("the panel's feature-switch sections", () => {
+  const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+
+  /** The body of an `onlyWhen(predicate, …)` block, keyed by its predicate. */
+  const gatedBlocks = (src: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const opener = /\n([ \t]*)onlyWhen\(\n\s*\(\) => settings\.(\w+),/g;
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(src)) !== null) {
+      const rest = src.slice(opener.lastIndex);
+      out[match[2]] = rest.slice(0, rest.indexOf(`\n${match[1]});`));
+    }
+    return out;
+  };
+
+  it("gates the task-source row on the picker's own switch", () => {
+    // Turning "Show task selector" off hides the picker AND unlinks the task,
+    // so where that picker looks is then a setting for something absent.
+    const block = gatedBlocks(view()).showTaskSelector;
+    expect(block, "no onlyWhen block for showTaskSelector").toBeDefined();
+    expect(block).toContain('section("Tasks")');
+    expect(block).toContain("selectRow<");
+  });
+
+  it("gates both music rows on the music player's own switch", () => {
+    // With the player off the iframe is destroyed, so a mute and a level here
+    // would govern nothing that exists.
+    const block = gatedBlocks(view()).showMusicPlayer;
+    expect(block, "no onlyWhen block for showMusicPlayer").toBeDefined();
+    expect(block).toContain("MUSIC_SOUND_LABEL");
+    expect(block).toContain("MUSIC_VOLUME_LABEL");
+  });
+
+  it("leaves the timer's own audio rows ungated", () => {
+    // Only the two rows belonging to the music player move. "Timer sounds" and
+    // "Timer volume" answer to nothing above them and must never disappear.
+    const gated = Object.values(gatedBlocks(view())).join("\n");
+    expect(gated).not.toContain("MASTER_SOUND_LABEL");
+    expect(gated).not.toContain("TIMER_VOLUME_LABEL");
+    // Nor may the four end-of-session rows, which have no feature switch at
+    // all — 0.6.3 deleted the machinery that hid those and this is not it back.
+    expect(gated).not.toContain("AUTO_START_BREAK_LABEL");
+    expect(gated).not.toContain("AUTO_START_FOCUS_LABEL");
+    expect(gated).not.toContain('sharedToggle("focusEndSoundEnabled"');
+    expect(gated).not.toContain('sharedToggle("breakEndSoundEnabled"');
+  });
+
+  it("hides by CSS class on the tick, never by re-rendering", () => {
+    // renderSettingsPanel() empties the container and re-registers every
+    // listener, and registerDomEvent releases on unload rather than removal —
+    // rebuilding on a 50ms tick leaks rows by the second. The sync must reach
+    // for a class instead. (That it must not call renderSettingsPanel at all is
+    // asserted separately, on the whole method.)
+    const src = view();
+    const sync = src.slice(src.indexOf("private syncSettingsPanel()"));
+    const body = sync.slice(0, sync.indexOf("\n  }"));
+    expect(body).toContain("conditionalPanelRows");
+    expect(body).toContain('toggleClass("gp-hidden"');
+  });
+
+  it("keeps both parent switches on a surface the panel cannot hide", () => {
+    // A section that hides its own way back is a trap. Both switches live in
+    // the settings tab, and so do the rows this hides.
+    const c = makeTab();
+    c.tab.display();
+    const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
+    expect(names).toContain("Show task selector");
+    expect(names).toContain("Show music player");
+    expect(names).toContain(TASK_SOURCE_SETTING_NAME);
+    expect(names).toContain(MUSIC_SOUND_LABEL);
+  });
+});
+
+describe("the panel's captions", () => {
+  it("keeps only the two end-of-session outcome lines", () => {
+    // The master-sound and music-mute captions came out in 0.6.4: the Audio
+    // section now shows two matched pairs (mute + level, twice), so the layout
+    // makes the scope argument the prose used to. The two lines under the
+    // end-of-session pairs STAY — they answer a question the labels genuinely
+    // cannot ("does it still play if the break auto-starts?").
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const panel = src.slice(src.indexOf("renderSettingsPanel() {"));
+    const captions = panel.match(/gp-settings-hint/g) ?? [];
+    expect(captions).toHaveLength(1); // the one summaryFor() builds, used twice
+    expect(panel).toContain("sessionEndSummary");
   });
 });

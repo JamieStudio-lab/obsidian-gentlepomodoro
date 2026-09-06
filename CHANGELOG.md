@@ -26,11 +26,19 @@ date show up too, so an ordinary `- [ ] something` in today's note is pickable.
   note there is not much to filter, and requiring a date there would have shown
   most people an empty picker. The folder mode still asks for a date, so a
   whole-vault scan stays readable.
-- **A line under the dropdown saying what it will read**, in both places, so you
-  do not have to open the picker to find out.
 
 ### Changed
 
+- **The gear panel only shows settings for what is switched on.** With "Show
+  music player" off, the music mute and music volume rows go away; with "Show
+  task selector" off, the whole Tasks section does. Both switches, and both sets
+  of rows, are still in the plugin settings, so nothing hides its own way back.
+- **Fewer explanatory lines in the gear panel.** The captions under the timer
+  mute, the music mute and the task source are gone — the Audio section now
+  shows two obvious pairs (mute and level, twice), which says the same thing
+  without the prose. The plugin settings still describe each one in words, and
+  the two lines under "When focus ends" / "When a break ends" stay, because
+  those answer a question the labels genuinely cannot.
 - **Your linked task stays put when you change where tasks come from.** If the
   new scope would not have shown it, it appears at the top of the picker under
   **Linked task** instead of vanishing. It is only dropped when you tick it off,

@@ -6,7 +6,6 @@ import {
   resolveTaskScope,
   resolveTaskSource,
   taskScopeKey,
-  taskScopeSummary,
   taskPickerEmptyState,
   type ScopeLeaf,
   type ScopeWorkspace,
@@ -176,39 +175,6 @@ describe("taskScopeKey", () => {
     expect(a).not.toBe(b);
     const c = taskScopeKey({ kind: "notes", paths: ["a|b.md"] });
     expect(c).not.toBe(b);
-  });
-});
-
-describe("taskScopeSummary", () => {
-  it("distinguishes a configured folder from a whole-vault scan", () => {
-    expect(taskScopeSummary("folder", "projects")).not.toBe(taskScopeSummary("folder", ""));
-    // Whitespace is not a path.
-    expect(taskScopeSummary("folder", "   ")).toBe(taskScopeSummary("folder", ""));
-  });
-
-  it("gives every source a distinct sentence", () => {
-    const lines = [
-      taskScopeSummary("folder", "projects"),
-      taskScopeSummary("folder", ""),
-      taskScopeSummary("current-note", ""),
-      taskScopeSummary("open-notes", ""),
-    ];
-    expect(new Set(lines).size).toBe(lines.length);
-  });
-
-  it("ignores the folder in the note scopes", () => {
-    expect(taskScopeSummary("current-note", "projects")).toBe(taskScopeSummary("current-note", ""));
-    expect(taskScopeSummary("open-notes", "projects")).toBe(taskScopeSummary("open-notes", ""));
-  });
-
-  it("fits the panel's 260px column", () => {
-    // Same budget as the end-of-session summaries — this line sits in the same
-    // hard-width column and wraps to two lines past about 40 characters.
-    for (const source of TASK_SOURCE_ORDER) {
-      for (const path of ["", "projects/active"]) {
-        expect(taskScopeSummary(source, path).length).toBeLessThanOrEqual(40);
-      }
-    }
   });
 });
 

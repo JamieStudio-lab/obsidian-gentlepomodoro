@@ -110,21 +110,6 @@ export function resolveTaskScope(
 }
 
 /**
- * One line under the picker's source control saying what it will read.
- *
- * Deliberately a function of the SETTINGS only, never of the live workspace:
- * a hint naming the current note would have to be re-seeded on every
- * active-leaf-change, and a stale file name is worse than no file name. Kept
- * under 40 characters for the panel's hard 260px column, like the
- * end-of-session summaries.
- */
-export function taskScopeSummary(source: TaskSource, tasksPath: string): string {
-  if (source === "current-note") return "Reads the note you're in.";
-  if (source === "open-notes") return "Reads every note you have open.";
-  return tasksPath.trim() === "" ? "Reads every note in the vault." : "Reads your tasks folder.";
-}
-
-/**
  * A comparable identity for a resolved scope.
  *
  * Newline-delimited because the members are file paths: every other printable
