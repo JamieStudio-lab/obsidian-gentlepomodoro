@@ -18,6 +18,13 @@ import {
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
+import {
+  TASK_SOURCE_LABELS,
+  TASK_SOURCE_ORDER,
+  TASK_SOURCE_SETTING_NAME,
+  TASK_SOURCE_SETTING_DESC,
+  resolveTaskSource,
+} from "./taskScope";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -620,6 +627,23 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         heading: "Task selector",
         rows: [
           {
+            // First in the group, above the folder path it governs: choosing
+            // "Current note" is what makes that path irrelevant, so the reader
+            // meets the decision before the field it decides about. The path
+            // row stays VISIBLE and editable either way — a control that
+            // vanished because you changed a dropdown reads as a fault, and
+            // this plugin has already learned that once (0.6.3's chimes).
+            name: TASK_SOURCE_SETTING_NAME,
+            desc: TASK_SOURCE_SETTING_DESC,
+            control: {
+              type: "dropdown",
+              key: "taskSource",
+              options: Object.fromEntries(
+                TASK_SOURCE_ORDER.map((source) => [source, TASK_SOURCE_LABELS[source]])
+              ),
+            },
+          },
+          {
             name: "Tasks folder path",
             desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
             control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
@@ -715,6 +739,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   override getControlValue(key: string): unknown {
     // The lookahead dropdown persists a number but renders string option keys.
     if (key === "taskSelectorDays") return this.plugin.settings.taskSelectorDays.toString();
+    // Resolved rather than read raw: coerceToDefaults only drops a stored value
+    // whose TYPE disagrees, so a hand-edited data.json can hold a string that
+    // is not one of the three, and the dropdown would then show no selection at
+    // all while the picker quietly behaved as "folder".
+    if (key === "taskSource") return resolveTaskSource(this.plugin.settings.taskSource);
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -724,6 +753,16 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       case "tasksPath":
         settings.tasksPath = String(value);
         break;
+      // Dual-surface (the gear panel carries the same dropdown), so it fans
+      // out. It deliberately does NOT touch the task link: changing where the
+      // picker looks must never unlink the task you are timing — that is the
+      // maintainer's second requirement on issue #4, and the fan-out is also
+      // what makes an open picker reload against the new scope.
+      case "taskSource":
+        settings.taskSource = resolveTaskSource(value);
+        await this.plugin.saveSettings();
+        this.applySettingsToOpenViews();
+        return;
       case "showTaskSelector": {
         const show = Boolean(value);
         settings.showTaskSelector = show;

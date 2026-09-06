@@ -147,6 +147,9 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   tasksPath: "",
   logFolderPath: "",
   showTaskSelector: true,
+  // "folder" reproduces every pre-0.6.4 picker exactly, which is what this
+  // object owes an upgrading user (see GentlePomoSettings.taskSource).
+  taskSource: "folder",
   taskSelectorDays: 3,
   dailyFocusGoalMinutes: 120,
   goalNoticeEnabled: true,

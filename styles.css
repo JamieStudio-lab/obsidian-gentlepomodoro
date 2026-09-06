@@ -931,6 +931,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A labelled dropdown in the panel. Stacked rather than the flex label+control
+   of .gp-settings-row: the panel column is a hard 260px, and a question plus
+   three multi-word options do not share a line at that width. The element is a
+   <label> wrapping its own <select>, so the association needs no id. */
+.gp-settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gp-space-4);
+  font-size: var(--gp-text-body);
+  color: var(--text-muted);
+}
+
+.gp-settings-select {
+  width: 100%;
+  height: var(--gp-control-h);
+  border-radius: var(--gp-radius-sm);
+}
+
 /* --- Section header inside the in-view settings panel --- */
 .gp-settings-section-label {
   font-size: var(--gp-text-micro);

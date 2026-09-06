@@ -1,6 +1,7 @@
 import { TFile, normalizePath } from "obsidian";
 import type { App } from "obsidian";
 import type { TaskItem } from "./types";
+import type { TaskScope } from "./taskScope";
 import type { MomentFactory } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -10,9 +11,32 @@ export interface TaskGroup {
   items: TaskItem[];
 }
 
+/** The linked task, so it can be shown even when the scope would hide it. */
+export interface TaskPin {
+  path: string;
+  /** TimerEngine's `currentTaskName` — i.e. the line's normalizeTaskText form. */
+  cleanText: string;
+}
+
 export interface TaskLoadOptions {
-  tasksPath: string;
+  scope: TaskScope;
   limitDays?: number; // default 3
+  /**
+   * Admit tasks carrying neither ⏳ nor 📅. Only the note scopes pass this:
+   * inside one note (or your open tabs) the scope is already narrow, so a date
+   * filter on top of it mostly yields an empty list, which is precisely the
+   * complaint issue #4 opens with. A folder scan is wide and still needs the
+   * date to stay readable, so it never sets this and its list is unchanged.
+   */
+  includeUndated?: boolean;
+  /**
+   * The task the timer is linked to. Its file is read even when out of scope,
+   * and the task itself bypasses the date window — changing the scope must
+   * never make a live link look dropped (issue #4, the maintainer's second
+   * requirement). Marked `pinned` only when the normal filters would have
+   * dropped it, so a linked task already in view is not listed twice.
+   */
+  pin?: TaskPin | null;
 }
 
 // Tasks-plugin checkbox line, on any bullet Obsidian's list syntax allows:
@@ -371,16 +395,29 @@ export async function findTaskNameById(
 }
 
 export async function loadTasks(app: App, options: TaskLoadOptions): Promise<TaskItem[]> {
-  const { tasksPath, limitDays = 3 } = options;
+  const { scope, limitDays = 3, includeUndated = false, pin = null } = options;
   const tasks: TaskItem[] = [];
 
-  const files = app.vault
-    .getFiles()
-    .filter((f) => isPathInFolder(f.path, tasksPath) && f.extension === "md");
+  const markdown = app.vault.getFiles().filter((f) => f.extension === "md");
+  const inScope =
+    scope.kind === "folder"
+      ? markdown.filter((f) => isPathInFolder(f.path, scope.tasksPath))
+      : markdown.filter((f) => scope.paths.includes(f.path));
+
+  // The pin's own note is read even when the scope excludes it — but ONLY the
+  // pinned line is taken from it, or choosing "Current note" would quietly drag
+  // in every other task from wherever the linked one happens to live.
+  const files = [...inScope];
+  const pinFile =
+    pin && !inScope.some((f) => f.path === pin.path)
+      ? markdown.find((f) => f.path === pin.path)
+      : undefined;
+  if (pinFile) files.push(pinFile);
 
   const limitDate = moment().add(limitDays, "days").endOf("day");
 
   for (const file of files) {
+    const pinOnly = file === pinFile;
     const content = await app.vault.cachedRead(file);
     const lines = content.split("\n");
 
@@ -396,12 +433,17 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
       const due = dueMatch ? dueMatch[1] : null;
 
       const effectiveDateStr = scheduled || due;
-      if (!effectiveDateStr) continue;
+      const cleanText = normalizeTaskText(originalText) || "Untitled Task";
+      const isPin = pin !== null && file.path === pin.path && cleanText === pin.cleanText;
 
-      const dateObj = moment(effectiveDateStr);
-      if (!dateObj.isSameOrBefore(limitDate)) continue;
+      if (pinOnly && !isPin) continue;
 
-      const cleanText = normalizeTaskText(originalText);
+      // What the scope alone would have done with this line.
+      const passesFilters = effectiveDateStr
+        ? moment(effectiveDateStr).isSameOrBefore(limitDate)
+        : includeUndated;
+      if (!passesFilters && !isPin) continue;
+
       const displayText = normalizeTaskTextForDisplay(originalText);
 
       const idMatch = originalText.match(TASK_ID_REGEX);
@@ -409,20 +451,26 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
 
       tasks.push({
         text: originalText,
-        cleanText: cleanText || "Untitled Task",
-        displayText: displayText || cleanText || "Untitled Task",
+        cleanText,
+        displayText: displayText || cleanText,
         status: "todo",
         path: file.path,
         scheduled,
         due,
         effectiveDateStr,
         taskId,
+        pinned: isPin && !passesFilters,
       });
     }
   }
 
   tasks.sort((a, b) => {
-    if (a.effectiveDateStr !== b.effectiveDateStr) {
+    // Undated tasks sort last as a block, which is what lets groupTasksByDate
+    // close the list with a single trailing "No date" group without a special
+    // case of its own.
+    if (a.effectiveDateStr === null || b.effectiveDateStr === null) {
+      if (a.effectiveDateStr !== b.effectiveDateStr) return a.effectiveDateStr === null ? 1 : -1;
+    } else if (a.effectiveDateStr !== b.effectiveDateStr) {
       return a.effectiveDateStr.localeCompare(b.effectiveDateStr);
     }
     return a.path.localeCompare(b.path);
@@ -443,18 +491,33 @@ export function groupTasksByDate(tasks: TaskItem[]): TaskGroup[] {
     currentItems = [];
   };
 
+  // The linked task first, and only when the scope would otherwise have hidden
+  // it. Its own heading rather than a row inside "Overdue": it is there because
+  // it is linked, not because of its date, and saying so is the whole point —
+  // the picker must never read as though switching scope dropped the link.
+  const pinned = tasks.filter((t) => t.pinned);
+  if (pinned.length > 0) groups.push({ label: "Linked task", items: pinned });
+
   for (const task of tasks) {
-    const dateObj = moment(task.effectiveDateStr);
+    if (task.pinned) continue;
     let label = "";
 
-    if (dateObj.isBefore(today)) {
-      label = "Overdue";
-    } else if (dateObj.isSame(today, "day")) {
-      label = "Today";
-    } else if (dateObj.isSame(moment().add(1, "day"), "day")) {
-      label = "Tomorrow";
+    if (task.effectiveDateStr === null) {
+      // Never build a moment from this: `moment(undefined)` is NOW, so reading
+      // a missing date through the branch below would file every undated task
+      // under "Today".
+      label = "No date";
     } else {
-      label = dateObj.format("dddd, MMM D");
+      const dateObj = moment(task.effectiveDateStr);
+      if (dateObj.isBefore(today)) {
+        label = "Overdue";
+      } else if (dateObj.isSame(today, "day")) {
+        label = "Today";
+      } else if (dateObj.isSame(moment().add(1, "day"), "day")) {
+        label = "Tomorrow";
+      } else {
+        label = dateObj.format("dddd, MMM D");
+      }
     }
 
     if (label !== currentLabel) {

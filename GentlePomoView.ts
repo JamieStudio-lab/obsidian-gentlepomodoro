@@ -3,7 +3,7 @@ import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import { activeSegmentIndex, VOLUME_OPTIONS } from "./segmentedChoice";
 import type GentlePomoPlugin from "./main";
-import type { TimerListener, TimerState } from "./types";
+import type { TaskItem, TimerListener, TimerState } from "./types";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
@@ -44,6 +44,17 @@ import {
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
+import {
+  TASK_SOURCE_ORDER,
+  TASK_SOURCE_LABELS,
+  TASK_SOURCE_SETTING_NAME,
+  resolveTaskSource,
+  resolveTaskScope,
+  taskScopeKey,
+  taskScopeSummary,
+  taskPickerEmptyState,
+  type TaskSource,
+} from "./taskScope";
 import {
   buildDayNightIcon,
   dayNightIconFor,
@@ -112,6 +123,15 @@ export class GentlePomoView extends ItemView {
   private numberPanelRows: { seed: () => void }[] = [];
 
   /**
+   * The panel's dropdown rows (the task source). Same closure shape as the
+   * segmented rows and for the same reason — the option type stays inside
+   * selectRow, where it is already known. Each seed also rewrites the row's own
+   * caption, so a change made in the settings tab moves the control and the
+   * sentence under it together.
+   */
+  private selectPanelRows: { seed: () => void }[] = [];
+
+  /**
    * The plain-English outcome line under each pair of toggles. Re-worded by
    * syncSettingsPanel() whenever either of its two settings moves, from either
    * surface — which is the whole point of it: it has to be true right now, not
@@ -129,6 +149,17 @@ export class GentlePomoView extends ItemView {
   taskListContainer!: HTMLDivElement;
   taskListVisible = false;
   taskBtn!: HTMLButtonElement;
+  /**
+   * The rows currently on screen, addressed by the `data-gp-task-index` each
+   * row carries. The delegated click handler reads through this rather than
+   * closing over a TaskItem per row, so loadTasks() can rebuild the list as
+   * often as it likes without registering a single new listener.
+   */
+  private loadedTasks: TaskItem[] = [];
+  /** The scope the visible list was built from — see the active-leaf handler. */
+  private lastTaskScopeKey: string | null = null;
+  /** The task SETTINGS the visible list was built from; compared on each tick. */
+  private lastTaskSettingsKey: string | null = null;
 
   // Music (audio-only lofi playback; the YouTube iframe is a hidden audio engine)
   musicSection!: HTMLDivElement;
@@ -437,6 +468,43 @@ export class GentlePomoView extends ItemView {
       evt.preventDefault();
       row.click();
     });
+
+    // Activation is delegated too, for exactly the reason the comment above
+    // gives — which the per-row `click` listeners this replaces did not honour.
+    // Every gear-open, every picker-open and (since 0.6.4) every note switch
+    // rebuilt the rows, and each rebuild registered N more listeners against
+    // nodes that were already detached.
+    this.registerDomEvent(this.taskListContainer, "click", (evt: MouseEvent) => {
+      const row = (evt.target as Element | null)?.closest<HTMLElement>(".gp-task-item");
+      if (!row || !this.taskListContainer.contains(row)) return;
+
+      if (row.hasClass("gp-task-item-clear")) {
+        this.timer.setTask(NO_TASK_LABEL);
+        this.closeTaskList();
+        return;
+      }
+
+      const task = this.loadedTasks[Number(row.dataset.gpTaskIndex)];
+      if (!task) return;
+      this.timer.setTask(task.cleanText, task.path, task.taskId);
+      this.closeTaskList();
+    });
+
+    // An open picker has to stay honest about which note it is reading. Only
+    // the note scopes care, and only when the resolved scope actually moved:
+    // active-leaf-change also fires when you click the timer panel itself, and
+    // getActiveFile() deliberately does not change for that.
+    this.registerEvent(
+      this.plugin.app.workspace.on("active-leaf-change", () => {
+        if (!this.taskListVisible) return;
+        const settings = this.plugin.settings;
+        const source = resolveTaskSource(settings.taskSource);
+        if (source === "folder") return;
+        const scope = resolveTaskScope(this.plugin.app.workspace, source, settings.tasksPath);
+        if (taskScopeKey(scope) === this.lastTaskScopeKey) return;
+        void this.loadTasks();
+      })
+    );
 
     // --- Music (audio-only lofi playback) ---
     // Hairline between the task selector and the music row. Reconciled in
@@ -834,6 +902,18 @@ export class GentlePomoView extends ItemView {
       this.taskListVisible = false;
       this.taskListContainer.removeClass("gp-visible");
       this.taskListContainer.toggleAttribute("inert", true);
+    }
+
+    // A source / lookahead / path change has to reach a picker that is already
+    // open — including one changed from the settings tab or a second panel,
+    // which arrive here through applySettingsToOpenViews. Compared as a
+    // three-field string and NOT by resolving the scope: this runs on the 50ms
+    // tick, and resolving would walk every workspace leaf twenty times a second.
+    // A change of note is the other half, handled by the active-leaf listener.
+    const taskKey = this.taskSettingsKey();
+    if (taskKey !== this.lastTaskSettingsKey) {
+      this.lastTaskSettingsKey = taskKey;
+      if (this.taskListVisible) void this.loadTasks();
     }
 
     // Station picker reconciliation. Separate from the embed reconcile below and
@@ -1370,6 +1450,7 @@ export class GentlePomoView extends ItemView {
   /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */
   async loadTasks() {
     this.taskListContainer.empty();
+    this.loadedTasks = [];
 
     const clearItem = this.taskListContainer.createDiv("gp-task-item");
     clearItem.setAttribute("role", "option");
@@ -1379,36 +1460,44 @@ export class GentlePomoView extends ItemView {
     setIcon(clearItem, "x-circle");
     clearItem.createSpan({ text: "Unlink Current Task" });
 
-    this.registerDomEvent(clearItem, "click", () => {
-      this.timer.setTask(NO_TASK_LABEL);
-      this.closeTaskList();
-    });
+    const settings = this.plugin.settings;
+    const source = resolveTaskSource(settings.taskSource);
+    const scope = resolveTaskScope(this.plugin.app.workspace, source, settings.tasksPath);
+    this.lastTaskScopeKey = taskScopeKey(scope);
+    this.lastTaskSettingsKey = this.taskSettingsKey();
+
+    // The linked task travels with the request so the loader can fetch it out
+    // of scope. Its identity is (path, cleanText) — the same pair the tick below
+    // matches on, and the same pair TimerEngine unlinks by when the line is
+    // completed, so the three cannot disagree about which line is "the" task.
+    const linkedPath = this.timer.currentTaskPath;
+    const pin =
+      this.timer.currentTaskName !== NO_TASK_LABEL && linkedPath
+        ? { path: linkedPath, cleanText: this.timer.currentTaskName }
+        : null;
 
     const tasks = await fetchTasks(this.plugin.app, {
-      tasksPath: this.plugin.settings.tasksPath,
-      limitDays: this.plugin.settings.taskSelectorDays,
+      scope,
+      limitDays: settings.taskSelectorDays,
+      // Only the note scopes. A folder scan is wide enough to need the date
+      // filter; one note is not, and requiring a date there would answer issue
+      // #4's "my tasks live in my notes" with an empty list.
+      includeUndated: scope.kind === "notes",
+      pin,
     });
     const groups = groupTasksByDate(tasks);
 
     if (groups.length === 0) {
-      // An empty tasksPath scans the whole vault, so "no path + no results"
-      // almost always means task linking was never set up — nudge instead.
-      const configured = this.plugin.settings.tasksPath.trim() !== "";
+      const copy = taskPickerEmptyState({
+        source,
+        tasksPath: settings.tasksPath,
+        limitDays: settings.taskSelectorDays,
+        scopeIsEmpty: scope.kind === "notes" && scope.paths.length === 0,
+      });
       const empty = this.taskListContainer.createDiv("gp-task-empty");
-      setIcon(
-        empty.createDiv("gp-task-empty-icon"),
-        configured ? "calendar-check" : "folder-search"
-      );
-      empty.createDiv({
-        cls: "gp-task-empty-title",
-        text: configured ? "All clear" : "Nothing here yet",
-      });
-      empty.createDiv({
-        cls: "gp-task-empty-hint",
-        text: configured
-          ? `No tasks scheduled or due in the next ${this.plugin.settings.taskSelectorDays} days.`
-          : "Set a Tasks folder path in the plugin settings to pick tasks here.",
-      });
+      setIcon(empty.createDiv("gp-task-empty-icon"), copy.icon);
+      empty.createDiv({ cls: "gp-task-empty-title", text: copy.title });
+      empty.createDiv({ cls: "gp-task-empty-hint", text: copy.hint });
       return;
     }
 
@@ -1416,7 +1505,9 @@ export class GentlePomoView extends ItemView {
       this.taskListContainer.createDiv("gp-task-group-header").setText(group.label);
 
       for (const task of group.items) {
+        const index = this.loadedTasks.push(task) - 1;
         const item = this.taskListContainer.createDiv("gp-task-item");
+        item.dataset.gpTaskIndex = String(index);
         item.setAttribute("role", "option");
         item.setAttribute("tabindex", "0");
         item.setAttribute("aria-selected", "false");
@@ -1431,17 +1522,39 @@ export class GentlePomoView extends ItemView {
           const iconContainer = item.createDiv("gp-task-check-icon");
           setIcon(iconContainer, "check");
         }
-
-        this.registerDomEvent(item, "click", () => {
-          this.timer.setTask(task.cleanText, task.path, task.taskId);
-          this.closeTaskList();
-        });
       }
     }
   }
 
+  /**
+   * The task settings the visible picker depends on, as one string.
+   *
+   * Compared on every tick, so it must stay a read of three fields — resolving
+   * the scope here would walk the workspace's leaves twenty times a second,
+   * which is the shape of the iPhone-flicker regressions. A change of NOTE is
+   * caught by the active-leaf-change handler instead.
+   */
+  private taskSettingsKey(): string {
+    const s = this.plugin.settings;
+    return `${s.taskSource}|${s.taskSelectorDays}|${s.tasksPath}`;
+  }
+
   renderSettingsPanel() {
     this.settingsPanel.empty();
+
+    // EVERY registry is re-armed here, above the first row of any kind.
+    // renderSettingsPanel() runs again on every gear-open and empties the
+    // container first, so a reset placed lower down silently drops the rows
+    // built above it — and this plugin has now shipped that exact bug three
+    // times. The third: this block used to sit BELOW the two Timing number
+    // rows, so `numberPanelRows` was cleared immediately after they registered
+    // and the caret-guarded re-seed those rows exist for never ran once.
+    // The rule is positional, so the test that guards it is positional too.
+    this.sharedPanelRows = [];
+    this.numberPanelRows = [];
+    this.segmentedPanelRows = [];
+    this.selectPanelRows = [];
+    this.endSummaryLines = [];
 
     const settings = this.plugin.settings;
 
@@ -1559,16 +1672,48 @@ export class GentlePomoView extends ItemView {
       }
     );
 
-    // Both registries are re-armed HERE, before any row can register itself.
-    // renderSettingsPanel() runs again on every gear-open, and it empties the
-    // container first — so a reset placed lower down silently drops every row
-    // built above it. That shipped for one commit: `sharedPanelRows = []` sat
-    // below the Audio section, so "Timer sounds" registered and was then wiped,
-    // and changing it in the settings tab left the panel's toggle stale.
-    this.sharedPanelRows = [];
-    this.numberPanelRows = [];
-    this.segmentedPanelRows = [];
-    this.endSummaryLines = [];
+    /**
+     * A labelled dropdown, stacked rather than side-by-side: three multi-word
+     * options and their question do not both fit the panel's hard 260px column
+     * on one line. The <label> WRAPS the select, which associates the two
+     * without needing an id — the panel builds several of these and ids would
+     * have to be minted and kept unique.
+     */
+    const selectRow = <T extends string>(
+      label: string,
+      options: readonly T[],
+      optionLabel: (value: T) => string,
+      read: () => T,
+      caption: () => string,
+      onChange: (next: T) => Promise<void>
+    ) => {
+      const wrap = this.settingsPanel.createEl("label", { cls: "gp-settings-stack" });
+      wrap.createSpan({ text: label });
+      const select = wrap.createEl("select", { cls: "gp-settings-select" });
+      for (const value of options) {
+        select.createEl("option", { value, text: optionLabel(value) });
+      }
+      select.value = read();
+      const captionEl = this.settingsPanel.createDiv({ cls: "gp-settings-hint", text: caption() });
+
+      this.registerDomEvent(select, "change", () => {
+        void onChange(select.value as T);
+      });
+
+      // The control and its caption re-seed together: a change made in the
+      // settings tab has to move both, or the sentence contradicts the choice
+      // above it — the same failure the end-of-session summaries were built to
+      // avoid. A <select> has no caret to write over, so unlike the number
+      // inputs this needs no focus guard.
+      this.selectPanelRows.push({
+        seed: () => {
+          const next = read();
+          if (select.value !== next) select.value = next;
+          const text = caption();
+          if (captionEl.textContent !== text) captionEl.setText(text);
+        },
+      });
+    };
 
     const sharedToggle = (key: SharedPanelKey, label: string) => {
       const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
@@ -1588,6 +1733,24 @@ export class GentlePomoView extends ItemView {
     const hint = (text: string) => {
       this.settingsPanel.createDiv({ cls: "gp-settings-hint", text });
     };
+
+    section("Tasks");
+    selectRow<TaskSource>(
+      TASK_SOURCE_SETTING_NAME,
+      TASK_SOURCE_ORDER,
+      (value) => TASK_SOURCE_LABELS[value],
+      () => resolveTaskSource(settings.taskSource),
+      () => taskScopeSummary(resolveTaskSource(settings.taskSource), settings.tasksPath),
+      async (next) => {
+        settings.taskSource = next;
+        await this.plugin.saveSettings();
+        // Dual-surface, so it fans out like the audio rows. That also re-runs
+        // applySettings on THIS view, which is what reloads an open picker —
+        // the engine emits nothing while the timer is idle, and the gear panel
+        // is most often opened precisely then.
+        this.plugin.applySettingsToOpenViews();
+      }
+    );
 
     section("Audio");
     // Dual-surface since 0.6.3 (it gained a row in the settings tab, where it
@@ -1746,6 +1909,9 @@ export class GentlePomoView extends ItemView {
       entry.seed();
     }
     for (const entry of this.numberPanelRows) {
+      entry.seed();
+    }
+    for (const entry of this.selectPanelRows) {
       entry.seed();
     }
     for (const line of this.endSummaryLines) {

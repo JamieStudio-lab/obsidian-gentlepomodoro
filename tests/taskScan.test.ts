@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import moment from "moment";
 import type { App } from "obsidian";
 import { loadTasks, groupTasksByDate } from "../taskLoader";
+import type { TaskScope } from "../taskScope";
 
 /**
  * BASELINE LOCKS for loadTasks / groupTasksByDate.
@@ -34,6 +35,9 @@ afterAll(() => {
   delete (globalThis as unknown as { moment?: unknown }).moment;
 });
 
+/** The pre-0.6.4 scope: one folder, or the whole vault when the path is "". */
+const folder = (tasksPath: string): TaskScope => ({ kind: "folder", tasksPath });
+
 /** Build an App stub whose vault serves the given path → content map. */
 function fakeApp(files: Record<string, string>): App {
   const list = Object.keys(files).map((path) => ({
@@ -54,7 +58,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "notes/a.md": ["- [ ] Open task ⏳ 2026-09-05", "- [x] Done task ⏳ 2026-09-05"].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["Open task"]);
   });
@@ -64,7 +68,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "notes/a.md": ["- [ ] Undated task", "- [ ] Dated task 📅 2026-09-05"].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["Dated task"]);
   });
@@ -74,7 +78,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "notes/a.md": "- [ ] Both dates ⏳ 2026-09-06 📅 2026-09-07",
     });
 
-    const [task] = await loadTasks(app, { tasksPath: "" });
+    const [task] = await loadTasks(app, { scope: folder("") });
 
     expect(task.scheduled).toBe("2026-09-06");
     expect(task.due).toBe("2026-09-07");
@@ -90,7 +94,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       ].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "", limitDays: 3 });
+    const tasks = await loadTasks(app, { scope: folder(""), limitDays: 3 });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["Long overdue", "Inside window"]);
   });
@@ -100,7 +104,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "notes/a.md": ["- [ ] Day three 📅 2026-09-08", "- [ ] Day four 📅 2026-09-09"].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["Day three"]);
   });
@@ -108,7 +112,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
   it("includes a task dated later today (the window ends at end-of-day)", async () => {
     const app = fakeApp({ "notes/a.md": "- [ ] Today 📅 2026-09-05" });
 
-    const tasks = await loadTasks(app, { tasksPath: "", limitDays: 0 });
+    const tasks = await loadTasks(app, { scope: folder(""), limitDays: 0 });
 
     expect(tasks).toHaveLength(1);
   });
@@ -120,7 +124,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "projects/c.txt": "- [ ] Not markdown 📅 2026-09-05",
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "projects" });
+    const tasks = await loadTasks(app, { scope: folder("projects") });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["Inside"]);
   });
@@ -131,7 +135,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "other/b.md": "- [ ] Two 📅 2026-09-05",
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks).toHaveLength(2);
   });
@@ -139,12 +143,13 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
   it("sorts by effective date, then by path", async () => {
     const app = fakeApp({
       "z.md": "- [ ] Later note, same day 📅 2026-09-06",
-      "a.md": ["- [ ] Earlier note, same day 📅 2026-09-06", "- [ ] Earlier day 📅 2026-09-05"].join(
-        "\n"
-      ),
+      "a.md": [
+        "- [ ] Earlier note, same day 📅 2026-09-06",
+        "- [ ] Earlier day 📅 2026-09-05",
+      ].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks.map((t) => t.cleanText)).toEqual([
       "Earlier day",
@@ -158,7 +163,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       "projects/a.md": "- [ ] Write docs ⏫ #work ⏳ 2026-09-05 🆔 abc123",
     });
 
-    const [task] = await loadTasks(app, { tasksPath: "" });
+    const [task] = await loadTasks(app, { scope: folder("") });
 
     expect(task.path).toBe("projects/a.md");
     expect(task.taskId).toBe("abc123");
@@ -175,7 +180,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
   it("falls back to 'Untitled Task' when the description is only metadata", async () => {
     const app = fakeApp({ "a.md": "- [ ] ⏳ 2026-09-05" });
 
-    const [task] = await loadTasks(app, { tasksPath: "" });
+    const [task] = await loadTasks(app, { scope: folder("") });
 
     expect(task.cleanText).toBe("Untitled Task");
     expect(task.displayText).toBe("Untitled Task");
@@ -193,7 +198,7 @@ describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
       ].join("\n"),
     });
 
-    const tasks = await loadTasks(app, { tasksPath: "" });
+    const tasks = await loadTasks(app, { scope: folder("") });
 
     expect(tasks).toHaveLength(6);
   });

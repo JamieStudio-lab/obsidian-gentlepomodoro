@@ -481,28 +481,29 @@ describe("Audio group", () => {
     // "Timer sounds" registered and was immediately wiped, and changing it in
     // this tab left the panel's toggle stale. Read as text; nothing can import
     // the view.
+    // Each registry is checked against ITS OWN first registration, not against
+    // the first sharedToggle. Checking one common landmark is what let the
+    // third instance of this bug through: the re-arm block sat below the two
+    // Timing `numberRow` calls but above every `sharedToggle`, so the old
+    // assertion passed while `numberPanelRows` was cleared the instant after
+    // those two rows had pushed into it — the caret-guarded re-seed they exist
+    // for never ran once in 0.6.3.
     const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
-    const armed = view.indexOf("this.sharedPanelRows = [];");
-    const summariesArmed = view.indexOf("this.endSummaryLines = [];");
-    const firstRegistration = view.indexOf('sharedToggle("');
-    const firstSummary = view.indexOf('summaryFor("');
+    const registries: Record<string, string> = {
+      sharedPanelRows: 'sharedToggle("',
+      numberPanelRows: "numberRow(",
+      segmentedPanelRows: "segmentedRow(",
+      selectPanelRows: "selectRow<",
+      endSummaryLines: 'summaryFor("',
+    };
 
-    expect(armed).toBeGreaterThan(-1);
-    expect(firstRegistration).toBeGreaterThan(-1);
-    expect(armed, "sharedPanelRows must be re-armed before the first sharedToggle").toBeLessThan(
-      firstRegistration
-    );
-    expect(
-      summariesArmed,
-      "endSummaryLines must be re-armed before the first summaryFor"
-    ).toBeLessThan(firstSummary);
-
-    // Every registry, not just the two that already shipped wrong.
-    for (const field of ["segmentedPanelRows", "numberPanelRows"]) {
-      const at = view.indexOf(`this.${field} = [];`);
-      expect(at, `${field} must be re-armed`).toBeGreaterThan(-1);
-      expect(at, `${field} must be re-armed before the first sharedToggle`).toBeLessThan(
-        firstRegistration
+    for (const [field, firstCall] of Object.entries(registries)) {
+      const armed = view.indexOf(`this.${field} = [];`);
+      const registration = view.indexOf(firstCall);
+      expect(armed, `${field} must be re-armed`).toBeGreaterThan(-1);
+      expect(registration, `no call site found for ${field} (${firstCall})`).toBeGreaterThan(-1);
+      expect(armed, `${field} must be re-armed before the first ${firstCall}`).toBeLessThan(
+        registration
       );
     }
   });
@@ -522,6 +523,7 @@ describe("Audio group", () => {
       "sharedPanelRows",
       "segmentedPanelRows",
       "numberPanelRows",
+      "selectPanelRows",
       "endSummaryLines",
     ]) {
       expect(body, `${registry} must be re-seeded`).toContain(registry);
