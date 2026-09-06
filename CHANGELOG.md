@@ -31,11 +31,10 @@ next session **without** a sound.
   of dropping off the edge with nothing to come back to. The timer panel's Audio
   section now reads as two matched pairs — **Timer sounds** with **Timer volume**,
   **Music sound** with **Music volume**.
-- **The whole mixer is in the plugin settings too.** **Timer volume**, **Music
-  sound** and **Music volume** were reachable only from the timer panel's gear;
-  all three now sit in Settings → Gentle Pomodoro → **Audio**, in the same order
-  and under the same names. Every audio setting is now on both screens, and
-  neither is a subset of the other.
+- **The music's mute is in the plugin settings too**, next to the timer's, so
+  every on/off switch for sound is on both screens. The two **volumes** stay in
+  the timer panel, where you can move them while you listen — both switches now
+  say so, so you know where to look.
 
 ### Changed
 

@@ -15,12 +15,9 @@ import {
   AUTO_START_FOCUS_LABEL,
   MASTER_SOUND_LABEL,
   MUSIC_SOUND_LABEL,
-  MUSIC_VOLUME_LABEL,
-  TIMER_VOLUME_LABEL,
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
-import { VOLUME_DROPDOWN_OPTIONS, parseVolumeOptionKey, volumeOptionKey } from "./segmentedChoice";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -523,38 +520,21 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             // user could turn both off, expect silence, and meet a drum at
             // 00:00. It also has to disclaim the music: soundEnabled is read
             // only by TimerEngine.playSound and never reaches the player.
-            desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate.",
+            desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate, and both volumes are in the timer panel.",
             control: { type: "toggle", key: "soundEnabled" },
           },
-          // The mixer: two channels, each a switch and a level, in the order
-          // the timer panel shows them. It reads as two matched pairs on both
-          // surfaces, which is the argument for keeping the music's switch and
-          // level HERE rather than in the Music group — that group is about
-          // which link plays, and its neighbour "Show music player" stops
-          // playback, the opposite of what a mute does. Low/Mid/High are the
-          // panel's own three stops, imported rather than re-typed.
-          {
-            name: TIMER_VOLUME_LABEL,
-            desc: "How loud the timer's own sounds are. The music has its own level.",
-            control: {
-              type: "dropdown",
-              key: "soundVolume",
-              options: { ...VOLUME_DROPDOWN_OPTIONS },
-            },
-          },
+          // The music's mute belongs beside the timer's, not in the Music
+          // group: that group is about which link plays, and its neighbour
+          // "Show music player" STOPS playback, the opposite of a mute.
+          //
+          // The two VOLUMES are deliberately NOT here. A level is something you
+          // move while listening, which is a timer-panel gesture; they have
+          // been panel-only since 0.1.2 and stay that way. Both switches say
+          // where to find them, so the omission reads as a decision, not a gap.
           {
             name: MUSIC_SOUND_LABEL,
-            desc: "Off silences the music without stopping it, so a live stream stays live.",
+            desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
             control: { type: "toggle", key: "musicSoundEnabled" },
-          },
-          {
-            name: MUSIC_VOLUME_LABEL,
-            desc: "How loud the music plays. The timer's own sounds are separate.",
-            control: {
-              type: "dropdown",
-              key: "musicVolume",
-              options: { ...VOLUME_DROPDOWN_OPTIONS },
-            },
           },
           {
             name: "Play a sound when focus ends",
@@ -735,14 +715,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   override getControlValue(key: string): unknown {
     // The lookahead dropdown persists a number but renders string option keys.
     if (key === "taskSelectorDays") return this.plugin.settings.taskSelectorDays.toString();
-    // Same for the two volumes — but they must SNAP to a stop first, not just
-    // stringify. 0.1.0 shipped a volume slider and coerceToDefaults only checks
-    // the field's type, so a real data.json can hold 0.42; unsnapped, this
-    // dropdown would be handed "0.42", match no option and render arbitrarily,
-    // while the timer panel showed "Mid" for the same number. volumeOptionKey
-    // uses the panel's own nearest-stop rule, so the two agree by construction.
-    if (key === "soundVolume") return volumeOptionKey(this.plugin.settings.soundVolume);
-    if (key === "musicVolume") return volumeOptionKey(this.plugin.settings.musicVolume);
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -820,22 +792,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
-      // The mixer rows, dual-surface since 0.6.3 and the first NON-toggle rows
-      // to be. Note what these must not copy from `taskSelectorDays` below:
-      // `Math.floor` turns 0.3 and 0.7 into 0 and silences the channel while
-      // reporting nothing. parseVolumeOptionKey returns null for anything that
-      // is not one of our three stops, and null writes nothing at all.
-      case "soundVolume": {
-        const volume = parseVolumeOptionKey(value);
-        if (volume === null) return;
-        settings.soundVolume = volume;
-        await this.plugin.saveSettings();
-        // TimerEngine reads soundVolume when it plays a cue, so nothing needs
-        // applying here — the fan-out is for the panel's segmented row, whose
-        // only other chance to re-seed is being closed and reopened.
-        this.applySettingsToOpenViews();
-        return;
-      }
       case "musicSoundEnabled":
         settings.musicSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();
@@ -844,14 +800,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         // actually silences the player, not just what repaints the toggle.
         this.applySettingsToOpenViews();
         return;
-      case "musicVolume": {
-        const volume = parseVolumeOptionKey(value);
-        if (volume === null) return;
-        settings.musicVolume = volume;
-        await this.plugin.saveSettings();
-        this.applySettingsToOpenViews();
-        return;
-      }
       case "showEndTime":
         settings.showEndTime = Boolean(value);
         await this.plugin.saveSettings();

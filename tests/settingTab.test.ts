@@ -573,24 +573,26 @@ describe("Audio group", () => {
 // dual-surface NON-toggle settings, which is why the panel needed a re-seed
 // for segmented rows before these rows could be added at all.
 // ---------------------------------------------------------------------------
-describe("the audio mixer is reachable from both surfaces", () => {
+describe("the audio mixer across the two surfaces", () => {
   const audioGroup = (tab: GentlePomoSettingTab) => {
     const group = tab
       .getSettingDefinitions()
       .find((g) => (g as { heading?: string }).heading === "Audio");
     if (!group) throw new Error("no Audio group");
-    return group as unknown as { heading: string; items: { name: string }[] };
+    return group as unknown as {
+      heading: string;
+      items: { name: string; desc?: string; control?: { key?: string } }[];
+    };
   };
 
-  it("holds the whole mixer, in the timer panel's own order", () => {
-    // Order is the assertion, not just membership: the panel reads as two
-    // matched pairs (switch, then level, twice) and the tab has to say the same
-    // thing. The two empty names are the outcome lines, which are text rows.
+  it("carries both mutes and neither volume", () => {
+    // The split is a decision, not an oversight: a level is something you move
+    // WHILE LISTENING, which is a timer-panel gesture, and both volumes have
+    // been panel-only since 0.1.2. The mutes are policy and belong here. Order
+    // is asserted too — the two empty names are the outcome lines, text rows.
     expect(audioGroup(ctx.tab).items.map((i) => i.name)).toEqual([
       MASTER_SOUND_LABEL,
-      TIMER_VOLUME_LABEL,
       MUSIC_SOUND_LABEL,
-      MUSIC_VOLUME_LABEL,
       "Play a sound when focus ends",
       AUTO_START_BREAK_LABEL,
       "",
@@ -600,101 +602,35 @@ describe("the audio mixer is reachable from both surfaces", () => {
     ]);
   });
 
-  it("keeps the mixer out of the Music group", () => {
-    // Music is the group you open to change WHICH link plays, and its rows sit
-    // next to "Show music player", which STOPS playback — the opposite of what
-    // a mute does. A level belongs with the other level.
-    const music = ctx.tab
-      .getSettingDefinitions()
-      .find((g) => (g as { heading?: string }).heading === "Music") as unknown as {
-      items: { name: string }[];
-    };
-    const names = music.items.map((i) => i.name);
-    expect(names).not.toContain(MUSIC_VOLUME_LABEL);
-    expect(names).not.toContain(MUSIC_SOUND_LABEL);
+  it("says where the volumes live, so their absence reads as a decision", () => {
+    // Without this the tab is simply missing a control the panel has, which is
+    // the complaint that started this work. Both switches point at the panel.
+    const items = audioGroup(ctx.tab).items;
+    const byKey = (key: string) => items.find((i) => i.control?.key === key);
+    expect(byKey("soundEnabled")?.desc).toContain("timer panel");
+    expect(byKey("musicSoundEnabled")?.desc).toContain("timer panel");
   });
 
-  it("offers the panel's three stops, in the panel's order, on both volume rows", () => {
-    ctx.tab.display();
-    const stops = VOLUME_OPTIONS.map((o) => ({ value: o.key, label: o.label }));
-    expect(componentOf(ctx.el, TIMER_VOLUME_LABEL).options).toEqual(stops);
-    expect(componentOf(ctx.el, MUSIC_VOLUME_LABEL).options).toEqual(stops);
+  it("keeps no volume plumbing behind, on either read or write path", async () => {
+    // A getControlValue branch or a setControlValue case for a row that no
+    // longer exists is dead code that reads as an intention. Both volumes must
+    // fall through to the generic passthrough and be unwritable from here.
+    const c = makeTab();
+    expect(c.settings.soundVolume).toBe(0.7);
+    await c.tab.setControlValue("soundVolume", "low");
+    await c.tab.setControlValue("musicVolume", "low");
+    expect(c.settings.soundVolume, "the tab must not write soundVolume").toBe(0.7);
+    expect(c.settings.musicVolume, "the tab must not write musicVolume").toBe(0.7);
   });
 
-  it("seeds each volume dropdown from the stored value, SNAPPED to a stop", () => {
-    // 0.1.0 shipped a volume slider, and coerceToDefaults only checks a field's
-    // type — so 0.6 is a value a real data.json can hold. The panel paints it
-    // as Mid (nearest stop); a dropdown seeded by exact lookup would show
-    // whatever the browser picked for an unknown key, and the two surfaces
-    // would disagree about a value neither of them had changed.
-    const seeded = makeTab({ soundVolume: 0.6, musicVolume: 0.3 });
-    seeded.tab.display();
-    expect(componentOf(seeded.el, TIMER_VOLUME_LABEL).value).toBe("mid");
-    expect(componentOf(seeded.el, MUSIC_VOLUME_LABEL).value).toBe("low");
-    // ...and the stored value is untouched by merely rendering it.
-    expect(seeded.settings.soundVolume).toBe(0.6);
-  });
-
-  it("writes a volume through as its exact float, and fans out", async () => {
-    for (const [key, name] of [
-      ["soundVolume", TIMER_VOLUME_LABEL],
-      ["musicVolume", MUSIC_VOLUME_LABEL],
-    ] as const) {
-      const c = makeTab();
-      c.tab.display();
-      componentOf(c.el, name).change?.("low" as never);
-      await Promise.resolve();
-      // NOT 0 — Math.floor is the pattern the taskSelectorDays case next door
-      // uses, and copy-pasting it here silences the channel with no error.
-      expect(c.settings[key], key).toBe(0.3);
-      expect(
-        c.calls.some((call) => call.method === "applySettings"),
-        `${key} must fan out to open views`
-      ).toBe(true);
-      expect(c.tab.getControlValue(key), key).toBe("low");
-    }
-  });
-
-  it("refuses a value that is not one of the stops instead of storing it", async () => {
-    const c = makeTab({ soundVolume: 0.7 });
-    for (const bogus of ["0.6", "", "loud", 0.3]) {
-      await c.tab.setControlValue("soundVolume", bogus);
-      expect(c.settings.soundVolume, String(bogus)).toBe(0.7);
-    }
-  });
-
-  it("writes the music mute through and fans out, so the player actually goes quiet", async () => {
-    // The mute is applied at the view's musicVolume() accessor, which
-    // MusicController's convergence check reads — so the fan-out is not a
-    // repaint here, it is the thing that silences the player.
-    const c = makeTab({ musicSoundEnabled: true });
+  it("still fans the music mute out to open panels", async () => {
+    // It is the one mixer control that IS dual-surface, and the mute only
+    // reaches the player through the view's musicVolume() accessor — so the
+    // fan-out is what actually silences it, not just what repaints a toggle.
+    const c = makeTab();
     await c.tab.setControlValue("musicSoundEnabled", false);
     expect(c.settings.musicSoundEnabled).toBe(false);
-    expect(c.calls.map((call) => call.method)).toContain("saveSettings");
-    expect(c.calls.map((call) => call.method)).toContain("applySettings");
-  });
-
-  it("gives every dual-surface panel toggle a working case here", async () => {
-    // A ratchet, derived from the view's own union rather than a list typed
-    // here: adding a member to SharedPanelKey without a case in
-    // setControlValue is a silent no-op (`default: return;`, and `key` is a
-    // string), and the panel row it names would then be one no settings-tab
-    // row can move.
-    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
-    const union = /type SharedPanelKey =([\s\S]*?);/.exec(view);
-    expect(union, "SharedPanelKey union not found").not.toBeNull();
-    const keys = [...(union?.[1] ?? "").matchAll(/"([A-Za-z]+)"/g)].map((m) => m[1]);
-    expect(keys.length).toBeGreaterThanOrEqual(6);
-    for (const key of keys) {
-      const c = makeTab();
-      (c.settings as unknown as Record<string, boolean>)[key] = false;
-      await c.tab.setControlValue(key, true);
-      expect((c.settings as unknown as Record<string, boolean>)[key], key).toBe(true);
-      expect(
-        c.calls.some((call) => call.method === "applySettings"),
-        `${key} must fan out to open views`
-      ).toBe(true);
-    }
+    expect(c.calls.some((call) => call.method === "applySettings")).toBe(true);
   });
 });
 
