@@ -4,6 +4,81 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] — 2026-09-10
+
+The Frosted Glass theme now looks like glass. The pane has a thin lit rim that
+carries the session's own colour, two specular glints sit on its edge, and the
+colour orbs behind it are sharper — three drifting balls and a still fourth
+behind a frosted face instead of one wash. Nothing else changes: same three themes, same
+settings, same clock.
+
+### Changed
+
+- **Frosted Glass theme** — a Liquid Glass-inspired redesign of the pane (the
+  timer square's artwork; the chrome around it is untouched):
+  - A 3px rim mixed from the same colours as the orbs behind it, so it turns
+    from sunrise gold to twilight lavender with the session — deep on the faces
+    turned away from the light, lit under two white glints (a long one at the
+    top-left corner, a short one at the bottom-right).
+  - Colour pools inward from the edges for about 14px and stops long before the
+    clock. The bottom-right corner is left in shadow on purpose; that dark run
+    is what makes the two glints read as lights rather than trim.
+  - The orbs are smaller and more saturated (92% of the square, a tighter
+    falloff) and a fourth indigo lobe sits bottom-right; the face blur drops
+    from 22px to 17px so they show through as balls.
+  - A light radial tint under the digits keeps the clock at least as readable
+    as before in every frame, light and dark (measured: the sharper orbs would
+    otherwise have cost about seven luminance units under the clock).
+  - The flat top sheen that used to cross the digits is gone; the catch-light is
+    now the rim, the glints and two corner blooms.
+  - Dark mode keeps its fireplace palette and gets its own deeper night end:
+    the lavender, rose and periwinkle a session settles into (and a break
+    starts from) used to be the light theme's pastels, which read pale
+    against a dark ground; they are now a deeper lavender, rose and
+    periwinkle, so a break is no brighter than a focus session.
+  - Dark mode's rim whites — the two
+    glints, the edge line, the corner blooms and the lit stops of the coloured
+    ring — run at 35% there, so the edge catches light without reading as a
+    white stripe on the plum. The drop shadow outside the square is untouched.
+    One token, `--gp-lg-rim-light`, scales them (1 in light mode).
+  - **The rim's shaded side now takes its colour from your theme.** It used
+    to be a fixed near-black, which read as a drawn-on outline on white and
+    cream themes and fought blue-grey ones. The shade is now Obsidian's own
+    background colour darkened — grey on white, warm grey on cream, slate on a
+    blue-grey theme, near-black on the default dark theme — and the two dark
+    lips past the glints, the bottom-right shadow pool and the pane's inner lip
+    are the local orb colour deepened rather than grey. Dark mode is within a
+    few levels of before. The read is registered so a theme that sets a
+    non-colour background falls back instead of losing the rim.
+- No new settings. The theme picker is unchanged.
+
+### Fixed
+
+- **Frosted Glass ignored "reduce motion" for its orbs.** The rule that was
+  meant to stop the orb drift under `prefers-reduced-motion` lost on
+  specificity to the three drift rules, on every platform since the theme
+  shipped, so the orbs kept moving for exactly the people who had asked them
+  not to. The reduce rule now out-ranks the drift, and a test holds it there.
+
+### Internal
+
+- The rim is three masked pseudo-element rings on the existing glass nodes: no
+  new DOM, no TypeScript change, still exactly one `backdrop-filter`, no SVG
+  filter, no animation. An engine without `mask-composite` falls back to the
+  previous plain 1px border.
+- Sixteen `--gp-lg-*` tokens are declared on `.gp-theme-frosted-glass .gp-timer-shape`
+  and must stay there (`--gp-progress` only resolves inside the square); the
+  design-token test lists them as scoped exceptions and asserts they stay in
+  that block, that every masked ring writes its `-webkit-mask` lines before the
+  standard ones, that the no-mask fallback border survives, and that the rim
+  reads `--background-primary` exactly twice — the one sanctioned read of a
+  chrome colour inside the square (DESIGN.md's artwork-vs-chrome rule now
+  records the exception). THEMES.md
+  documents the rule and the masked-ring recipe; DESIGN.md's register gains
+  entry 12.
+- The overtime desaturation rules for the orbs and the lobe read the orb blur
+  from a token, so a future retune cannot silently revert it.
+
 ## [0.6.4] — 2026-09-06
 
 The task picker can now read the note you are in, or every note you have open,

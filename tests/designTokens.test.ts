@@ -347,6 +347,24 @@ describe("raw values outside the scale", () => {
             "--gp-icon-svg-size",
             "--gp-orb-warm",
             "--gp-orb-cool",
+            // the frosted rim's tokens, declared on .gp-timer-shape because
+            // --gp-progress only resolves there
+            "--gp-lg-1",
+            "--gp-lg-2",
+            "--gp-lg-3",
+            "--gp-lg-deep",
+            "--gp-lg-deepen",
+            "--gp-lg-lift",
+            "--gp-lg-pool",
+            "--gp-lg-pool-lift",
+            "--gp-lg-face-blur",
+            "--gp-lg-orb-blur",
+            "--gp-lg-rim-light",
+            "--gp-lg-rim-dark",
+            "--gp-lg-env",
+            "--gp-lg-shade",
+            "--gp-lg-deep-2",
+            "--gp-lg-deep-3",
             "--gp-glow-color",
             "--gp-caption-fade",
             "--gp-caption-delay",
@@ -361,5 +379,210 @@ describe("raw values outside the scale", () => {
   it("has a :root token block at the top of the file", () => {
     expect(tokenBlock).toContain(":root {");
     expect(tokenBlock.indexOf(":root {")).toBeGreaterThan(-1);
+  });
+});
+
+describe("frosted rim", () => {
+  // DESIGN.md register entry 12. Every check here is for a trap that the
+  // 0.6.5 review proved was documented and unguarded: hoisting the rim's
+  // tokens to the theme root, deleting one per mode, reversing the mask
+  // order and deleting the no-mask fallback all passed the whole suite,
+  // because the scoped-exception list above only PERMITS the names.
+  const stripped = rules.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  /** The body of the block whose opening brace is at `open`. */
+  const bodyAt = (text: string, open: number): string => {
+    let depth = 0;
+    for (let i = open; i < text.length; i += 1) {
+      if (text[i] === "{") depth += 1;
+      if (text[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return text.slice(open + 1, i);
+      }
+    }
+    throw new Error("unbalanced braces");
+  };
+
+  /** The selector text that owns the declaration at `pos`. */
+  const selectorOf = (text: string, pos: number): string => {
+    const open = text.lastIndexOf("{", pos);
+    const prev = Math.max(text.lastIndexOf("}", open), text.lastIndexOf("{", open - 1));
+    return text.slice(prev + 1, open).trim();
+  };
+
+  const RIM_TOKENS = [
+    "--gp-lg-1",
+    "--gp-lg-2",
+    "--gp-lg-3",
+    "--gp-lg-deep",
+    "--gp-lg-deepen",
+    "--gp-lg-lift",
+    "--gp-lg-pool",
+    "--gp-lg-pool-lift",
+    "--gp-lg-face-blur",
+    "--gp-lg-orb-blur",
+    "--gp-lg-rim-light",
+    "--gp-lg-rim-dark",
+    "--gp-lg-env",
+    "--gp-lg-shade",
+    "--gp-lg-deep-2",
+    "--gp-lg-deep-3",
+  ];
+  const DARK_RIM_TOKENS = [
+    "--gp-lg-1",
+    "--gp-lg-2",
+    "--gp-lg-3",
+    "--gp-lg-deep",
+    "--gp-lg-deepen",
+    "--gp-lg-lift",
+    "--gp-lg-pool-lift",
+    "--gp-lg-rim-light",
+    "--gp-lg-rim-dark",
+    "--gp-lg-env",
+    "--gp-lg-shade",
+    "--gp-lg-deep-2",
+    "--gp-lg-deep-3",
+  ];
+
+  it("declares every rim token on .gp-timer-shape, in both modes", () => {
+    // Three of the tokens are color-mix() expressions that read --gp-progress,
+    // which is set inline on .gp-timer-visual. A custom property resolves its
+    // var()s where it is DECLARED, so on the theme root every mix would
+    // freeze at progress 0 with no error and the rim would never reach
+    // twilight.
+    const light = stripped.indexOf(".gp-theme-frosted-glass .gp-timer-shape {");
+    const dark = stripped.indexOf(".theme-dark .gp-theme-frosted-glass .gp-timer-shape {");
+    expect(light, "the light rim token block is gone").toBeGreaterThan(-1);
+    expect(dark, "the dark rim token block is gone").toBeGreaterThan(-1);
+    const lightBody = bodyAt(stripped, stripped.indexOf("{", light));
+    const darkBody = bodyAt(stripped, stripped.indexOf("{", dark));
+    for (const t of RIM_TOKENS) {
+      expect(lightBody, `${t} is not declared in the light .gp-timer-shape block`).toMatch(
+        new RegExp(`^\\s*${t}\\s*:`, "m")
+      );
+    }
+    for (const t of DARK_RIM_TOKENS) {
+      expect(darkBody, `${t} is not redeclared in the dark .gp-timer-shape block`).toMatch(
+        new RegExp(`^\\s*${t}\\s*:`, "m")
+      );
+    }
+  });
+
+  it("declares no rim token anywhere but a .gp-timer-shape rule", () => {
+    expect(tokenBlock, "a rim token has been hoisted to :root").not.toMatch(/--gp-lg-/);
+    const owners = [...stripped.matchAll(/^\s*--gp-lg-[a-z0-9-]+\s*:/gm)].map((m) =>
+      selectorOf(stripped, m.index ?? 0)
+    );
+    expect(owners.length, "the rim tokens are gone").toBeGreaterThan(0);
+    const strays = owners.filter((sel) => !/\.gp-timer-shape$/.test(sel));
+    expect(strays, "a rim token is declared outside a .gp-timer-shape rule").toEqual([]);
+  });
+
+  it("writes each mask shorthand before its composite, prefixed pair first, in every ring", () => {
+    // Both `-webkit-mask` and `mask` are shorthands that reset mask-composite.
+    // In an engine where the prefixed name aliases the standard one, a
+    // shorthand written after the composite silently resets it and the ring
+    // paints as a filled rounded rectangle over the clock.
+    const bodies: string[] = [];
+    for (const m of stripped.matchAll(/^\s*mask-composite\s*:/gm)) {
+      const open = stripped.lastIndexOf("{", m.index ?? 0);
+      bodies.push(bodyAt(stripped, open));
+    }
+    expect(bodies.length, "no masked ring left in the file").toBeGreaterThanOrEqual(3);
+    for (const body of bodies) {
+      const at = (re: RegExp): number => {
+        const hit = re.exec(body);
+        return hit ? hit.index : -1;
+      };
+      const wm = at(/^\s*-webkit-mask\s*:/m);
+      const wmc = at(/^\s*-webkit-mask-composite\s*:/m);
+      const sm = at(/^\s*mask\s*:/m);
+      const smc = at(/^\s*mask-composite\s*:/m);
+      expect(
+        [wm, wmc, sm, smc].every((i) => i > -1),
+        "a ring is missing one of its four mask lines"
+      ).toBe(true);
+      expect(wm < wmc && wmc < sm && sm < smc, "a ring's mask lines are out of order").toBe(true);
+    }
+  });
+
+  it("restores a plain border when the engine cannot cut a ring", () => {
+    const gate = stripped.indexOf(
+      "@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor))"
+    );
+    expect(gate, "the no-mask fallback is gone").toBeGreaterThan(-1);
+    const body = bodyAt(stripped, stripped.indexOf("{", gate));
+    expect(body, "the fallback no longer restores the pane's border").toMatch(
+      /\.gp-glass-pane\s*\{[^}]*border:\s*1px solid/
+    );
+  });
+
+  it("reads the ground colour in exactly two places, both rim token blocks", () => {
+    // DESIGN.md "artwork vs chrome": nothing inside .gp-timer-visual reads
+    // --text-* or --background-*. The rim's SHADE is the one scoped
+    // exception (0.6.5): a glass edge reflects the room it sits in, so its
+    // dark side is the ground darkened rather than a fixed near-black — which
+    // read as ink on every pale user theme. Two reads, one per mode, both
+    // assigned to --gp-lg-env and nowhere else. A third read is the boundary
+    // eroding; zero is the feature gone.
+    // .gp-timer-visual paints the ground itself (chrome, shared by every
+    // theme) and is the one legitimate read outside a theme block; every
+    // other read in the file must be one of these two.
+    const reads = [...stripped.matchAll(/var\(\s*--background-primary\b/g)]
+      .map((m) => selectorOf(stripped, m.index ?? 0))
+      .filter((sel) => sel !== ".gp-timer-visual");
+    expect(reads, "the rim's ground read is gone, or has spread").toEqual([
+      ".gp-theme-frosted-glass .gp-timer-shape",
+      ".theme-dark .gp-theme-frosted-glass .gp-timer-shape",
+    ]);
+    const lines = stripped
+      .split("\n")
+      .filter((l) => /var\(\s*--background-primary\b/.test(l))
+      .filter((l) => !/^\s*background:/.test(l));
+    expect(
+      lines.every((l) => /^\s*--gp-lg-env\s*:/.test(l)),
+      "the ground must be read into --gp-lg-env only, never inline"
+    ).toBe(true);
+    // (--gp-ink-faint: var(--text-muted) in the theme root is the contract's
+    // own ink slot, shared by every theme, and is not part of this rule.)
+  });
+
+  it("registers --gp-lg-env as a <color> so a non-colour ground cannot delete the rim", () => {
+    // var() only covers a MISSING variable. A theme that sets
+    // --background-primary to none, a gradient or an image substitutes that
+    // text into the color-mix() and the whole conic-gradient becomes invalid
+    // at computed-value time — no rim, no fallback. Registration makes the
+    // bad value fall back to the initial colour instead. Probed: without it
+    // the rim vanishes on a non-colour ground.
+    expect(stripped).toMatch(/@property\s+--gp-lg-env\s*\{[^}]*syntax:\s*"<color>"/);
+    expect(stripped).toMatch(/@property\s+--gp-lg-env\s*\{[^}]*inherits:\s*true/);
+  });
+
+  it("stops the orb drift under reduced motion with a selector that out-ranks every drift rule", () => {
+    // DESIGN.md rule 4, third incident: a bare `.gp-orb` (0,1,0) in the reduce
+    // block lost to `.gp-theme-frosted-glass .gp-orb-N` (0,2,0) from 0.2.0 to
+    // 0.6.4, and the orbs kept drifting for exactly the users who had opted
+    // out. Class count stands in for specificity — nothing here uses ids,
+    // elements or pseudo-classes.
+    const classes = (sel: string): number => (sel.match(/\.[a-z0-9_-]+/gi) ?? []).length;
+    const drift: number[] = [];
+    for (const m of stripped.matchAll(/^\s*animation\s*:\s*gp-orb-drift/gm)) {
+      drift.push(classes(selectorOf(stripped, m.index ?? 0)));
+    }
+    expect(drift.length, "the orb drift rules are gone").toBe(3);
+    const stops: number[] = [];
+    for (const m of stripped.matchAll(/@media \(prefers-reduced-motion: reduce\)/g)) {
+      const body = bodyAt(stripped, stripped.indexOf("{", m.index ?? 0));
+      for (const rule of body.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (/\.gp-orb\b/.test(rule[1]) && /animation\s*:\s*none/.test(rule[2])) {
+          stops.push(classes(rule[1]));
+        }
+      }
+    }
+    expect(stops.length, "no reduce-motion rule stops the orb drift").toBeGreaterThan(0);
+    expect(
+      Math.max(...stops),
+      "the reduce-motion orb rule is out-specified by a drift rule"
+    ).toBeGreaterThanOrEqual(Math.max(...drift));
   });
 });

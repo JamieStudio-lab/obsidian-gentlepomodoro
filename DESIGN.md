@@ -20,7 +20,13 @@ The plugin draws two kinds of thing, and they get opposite treatment.
 
 **Chrome inherits, artwork declares.** There are 54 `var()` references to 17 Obsidian variables in
 the file today and they are all correct; do not re-mint them as `--gp-*`. Conversely, nothing inside
-`.gp-timer-visual` may read `--text-*` or `--background-*`.
+`.gp-timer-visual` may read `--text-*` or `--background-*` — with one scoped exception, made in
+0.6.5 and pinned by a test: the Frosted Glass rim's **shade** reads `--background-primary`, once per
+mode, into `--gp-lg-env`. A glass edge reflects the room it sits in, so its dark side is the ground
+darkened, not a fixed near-black — which read as ink on every pale user theme and fought every
+coloured one. The palette, the face, the pools' hues and the text still declare their own colours;
+`tests/designTokens.test.ts` asserts exactly two reads, both in the rim token blocks, and that the
+read is registered as a `<color>` so a non-colour ground falls back instead of deleting the rim.
 
 The proof that the boundary is real: `.gp-total-time` is the one
 on-artwork element coloured with a chrome token, and it pays for it with three colour overrides
@@ -69,8 +75,8 @@ Pixel City (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per
 the way a gradient can, so the plates keep every pale band out of the clock zone and the veil
 carries the rest.
 
-**Frosted Glass is the one theme whose legibility is not fully token-driven.** Its two
-orb-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
+**Frosted Glass is the one theme whose legibility is not fully token-driven.** Its four
+orb-and-lobe-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
 `.gp-orb` so overtime text stays readable. They were kept deliberately in 0.6.1 rather than retired,
 to leave the shipped themes looking exactly as they look. A raster theme cannot copy that trick; it
 has the scrim instead.
@@ -151,7 +157,11 @@ on the developer's machine. The file already records two incidents: the caption 
 **exactly one** `transition` shorthand at 0,1,0 with the delay cascaded through
 `--gp-caption-delay`, and the mobile frosted pulse (`body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape`) needs its
 `@media (prefers-reduced-motion: no-preference)` wrapper because its selector is 0,4,1 against a
-0,2,0 `animation: none`.
+0,2,0 `animation: none`. The third incident hid from 0.2.0 to 0.6.4: the reduce block stopped the
+orb drift with a bare `.gp-orb` (0,1,0) while the three drift rules are `.gp-theme-frosted-glass
+.gp-orb-N` (0,2,0), so the orbs kept drifting for exactly the users who had opted out, on every
+platform, and no test looked. The selector is `.gp-theme-frosted-glass .gp-glass-orbs .gp-orb`
+(0,3,0) since 0.6.5 and `tests/designTokens.test.ts` holds it above every orb animation.
 
 Zeroing a duration token is **not** a substitute for the explicit `transform: none` resets in the
 reduced-motion blocks. A collapsed element's resting state _is_ a transform, so a zero duration makes
@@ -252,6 +262,43 @@ selector out-ranks both the shared overtime glow and the reduced-motion `animati
 plates themselves reach users only because they are **inside `main.js`** — Obsidian installs
 three files, and a loose image is missing for everyone but the machine that put it there.
 `tests/designTokens.test.ts` holds the first three; `tests/pixelCityArt.test.ts` the delivery.
+
+### 12. The frosted rim reads `--gp-progress` through tokens on `.gp-timer-shape`, and its masks are order-sensitive.
+
+Four things in the 0.6.5 Frosted Glass block look like tidy-up targets and are not:
+
+- **The sixteen `--gp-lg-*` tokens are declared on `.gp-theme-frosted-glass .gp-timer-shape`, not on the
+  theme root.** Three of them are `color-mix(...)` expressions that read `--gp-progress`, which is set
+  inline on `.gp-timer-visual`; a custom property resolves its `var()`s where it is declared, so hoisting
+  the block to the root freezes every mix at progress 0 with no error. The scoped-exception list in
+  `tests/designTokens.test.ts` only permits the names; the guard is the test beside it that asserts
+  every `--gp-lg-*` is declared inside the `.gp-timer-shape` block and none inside the theme root.
+- **The three session mixes repeat the `.gp-orb-N` endpoint hexes.** The orbs declare `--gp-orb-warm`
+  on themselves, descendants the rim cannot read, so the literals are duplicated on purpose and both
+  sites say so. Retune an orb without its mix and the rim stops matching what is behind it.
+- **Each `mask` shorthand comes before its own `mask-composite` longhand, and the `-webkit-` pair
+  before the standard pair, in every ring.** `-webkit-mask` and `mask` are both shorthands and each
+  resets `mask-composite`; in an engine where the prefixed name aliases the standard one, a shorthand
+  written after a composite longhand silently resets it and the ring paints as a filled rounded
+  rectangle over the clock. Prefixed-first is convention rather than a known failure; the
+  shorthand-before-longhand order is the load-bearing part, and the test holds both. The rings sit
+  inside `@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)`, and the
+  `@supports not` branch restores the plain border.
+- **The four overtime desaturation rules (orbs and the fourth lobe, light and dark) read
+  `--gp-lg-orb-blur`.** They restate the whole `filter`, so a base blur changed above and not there used
+  to revert silently the moment a break ran into overtime. The pane's radial tint (0.17 light / 0.22
+  dark) is the smallest value at which the clock measures at least as readable as 0.6.4 over the
+  sharper orbs — a flat 0.10 measured about seven luminance units lighter under the digits.
+- **The rim's shade is the ground, darkened.** `--gp-lg-env` is the theme's one read of
+  `--background-primary` (see the exception under "The one rule"), registered with `@property` as a
+  `<color>` inside the frosted block — `var()` only covers a missing variable, and a theme that sets
+  `--background-primary: none` or a gradient would otherwise substitute that text into the
+  `color-mix()` and invalidate the whole rim. `--gp-lg-deep` is that ground mixed toward black
+  (`--gp-lg-shade`, 40% light / 65% dark) and feeds the five deep stops; the two dark lips, the
+  bottom-right pool and the pane's inner lip take the LOCAL colour deepened instead
+  (`--gp-lg-deep-2/3` = palette mixed with the deep), because a neutral shade over saturated orange
+  reads muddy. Dark and Nord grounds stay within 8/255 of the fixed-black version; white, cream and
+  grey lose the ink.
 
 ## Build
 

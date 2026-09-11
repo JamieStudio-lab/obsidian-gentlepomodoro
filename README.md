@@ -1,14 +1,14 @@
 # Gentle Pomodoro
 
-A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (drifting color orbs behind a frosted pane) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
+A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (colour orbs behind a frosted pane with a lit glass rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.4 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.5 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
 ### 🍅 Gentle visual timer
 
-- **Three themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (three drifting color orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode) and **Pixel City** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
+- **Three themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (soft colour orbs behind a frosted pane whose glass rim picks up the session's colour, with two specular glints on the edge — pastel-twilight palette in light mode, fireplace warmth in dark mode) and **Pixel City** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
 - Ambient shape that transitions through warm → cool colors as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
