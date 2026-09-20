@@ -21,6 +21,7 @@
 export const THEMES = {
   classic: "Classic",
   "frosted-glass": "Frosted glass",
+  "frosted-glass-2": "Frosted glass 2",
   "pixel-city": "Pixel city",
 } as const;
 

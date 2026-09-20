@@ -6,67 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.5] — 2026-09-10
 
-The Frosted Glass theme now looks like glass. The pane has a thin lit rim that
-carries the session's own colour, two specular glints sit on its edge, and the
-colour orbs behind it are sharper — three drifting balls and a still fourth
-behind a frosted face instead of one wash. Nothing else changes: same three themes, same
-settings, same clock.
+A fourth theme, **Frosted glass 2**: the frosted pane drawn as real glass. It
+has a thin lit rim that carries the session's own colour, two highlights on its
+edge, and sharper colour balls behind it — three drifting and a still fourth
+instead of one wash. The original **Frosted glass** looks exactly as it did — it
+gains two bug fixes and nothing else — so if you like it as it is, nothing
+happens to you: your theme does not change on update, and the new one is simply
+there in the picker when you want it.
 
-### Changed
+### Added
 
-- **Frosted Glass theme** — a Liquid Glass-inspired redesign of the pane (the
-  timer square's artwork; the chrome around it is untouched):
-  - A 3px rim mixed from the same colours as the orbs behind it, so it turns
+- **Frosted glass 2**, a fourth theme. The picker now reads Classic, Frosted
+  glass, Frosted glass 2, Pixel city; this one is the Frosted glass idea taken
+  the rest of the way to glass (the timer square's artwork only — the chrome
+  around it is the same):
+  - A 3px rim mixed from the same colours as the balls behind it, so it turns
     from sunrise gold to twilight lavender with the session — deep on the faces
-    turned away from the light, lit under two white glints (a long one at the
-    top-left corner, a short one at the bottom-right).
+    turned away from the light, lit under two white highlights (a long one at
+    the top-left corner, a short one at the bottom-right).
   - Colour pools inward from the edges for about 14px and stops long before the
     clock. The bottom-right corner is left in shadow on purpose; that dark run
-    is what makes the two glints read as lights rather than trim.
-  - The orbs are smaller and more saturated (92% of the square, a tighter
-    falloff) and a fourth indigo lobe sits bottom-right; the face blur drops
-    from 22px to 17px so they show through as balls.
+    is what makes the two highlights read as lights rather than trim.
+  - The colour balls are smaller and more saturated (92% of the square, a
+    tighter falloff) and a fourth indigo lobe sits bottom-right; the face blur
+    is 17px rather than 22px, so they show through as balls.
   - A light radial tint under the digits keeps the clock at least as readable
-    as before in every frame, light and dark (measured: the sharper orbs would
-    otherwise have cost about seven luminance units under the clock).
-  - The flat top sheen that used to cross the digits is gone; the catch-light is
-    now the rim, the glints and two corner blooms.
-  - Dark mode keeps its fireplace palette and gets its own deeper night end:
-    the lavender, rose and periwinkle a session settles into (and a break
-    starts from) used to be the light theme's pastels, which read pale
-    against a dark ground; they are now a deeper lavender, rose and
-    periwinkle, so a break is no brighter than a focus session.
+    as Frosted glass in every frame, light and dark (measured: the sharper
+    balls would otherwise have cost about seven luminance units under the
+    clock).
+  - There is no flat top sheen across the digits; the catch-light is the rim,
+    the two highlights and two corner blooms.
+  - Dark mode keeps the fireplace palette and has its own deeper night end: the
+    lavender, rose and periwinkle a session settles into (and a break starts
+    from) are Frosted glass's pastels deepened, because the pale ones read
+    washed-out against a dark ground — so a break is no brighter than a focus
+    session.
   - Dark mode's rim whites — the two
-    glints, the edge line, the corner blooms and the lit stops of the coloured
-    ring — run at 35% there, so the edge catches light without reading as a
-    white stripe on the plum. The drop shadow outside the square is untouched.
-    One token, `--gp-lg-rim-light`, scales them (1 in light mode).
-  - **The rim's shaded side now takes its colour from your theme.** It used
-    to be a fixed near-black, which read as a drawn-on outline on white and
-    cream themes and fought blue-grey ones. The shade is now Obsidian's own
-    background colour darkened — grey on white, warm grey on cream, slate on a
-    blue-grey theme, near-black on the default dark theme — and the two dark
-    lips past the glints, the bottom-right shadow pool and the pane's inner lip
-    are the local orb colour deepened rather than grey. Dark mode is within a
-    few levels of before. The read is registered so a theme that sets a
+    highlights, the edge line, the corner blooms and the lit stops of the
+    coloured ring — run at 35% there, so the edge catches light without reading
+    as a white stripe on the plum. The drop shadow outside the square is the
+    shared one. One token, `--gp-lg-rim-light`, scales them (1 in light mode).
+  - **The rim's shaded side takes its colour from your theme.** A fixed
+    near-black reads as a drawn-on outline on white and cream themes and fights
+    blue-grey ones, so the shade is Obsidian's own background colour darkened —
+    grey on white, warm grey on cream, slate on a blue-grey theme, near-black
+    on the default dark theme — and the two dark lips past the highlights, the
+    bottom-right shadow pool and the pane's inner lip are the local ball colour
+    deepened rather than grey. The read is registered so a theme that sets a
     non-colour background falls back instead of losing the rim.
-- No new settings. The theme picker is unchanged.
+- **Frosted glass keeps its look, and nobody's theme switches.** There is no
+  migration: the new look is opt-in, in **Timer appearance → Theme**. The two
+  fixes below are the only changes it takes, and neither of them is a change to
+  how it looks when it is behaving. (If you later run an older version of the
+  plugin, a stored `frosted-glass-2` falls back to Classic rather than leaving
+  the square empty.)
 
 ### Fixed
 
-- **Frosted Glass ignored "reduce motion" for its orbs.** The rule that was
-  meant to stop the orb drift under `prefers-reduced-motion` lost on
+- **Frosted glass ignored "reduce motion" for its colour balls.** The rule that
+  was meant to stop the drift under `prefers-reduced-motion` lost on
   specificity to the three drift rules, on every platform since the theme
-  shipped, so the orbs kept moving for exactly the people who had asked them
-  not to. The reduce rule now out-ranks the drift, and a test holds it there.
+  shipped in 0.2.0, so the balls kept moving for exactly the people who had
+  asked them not to. The reduce rule now out-ranks the drift, and a test holds
+  it there. Frosted glass 2 was built with the fix and never had the bug.
+- **On iPhone and iPad, Frosted glass showed the overtime glow only while
+  paused.** Once a session ran past its time the square was supposed to switch
+  to the slow blue or orange glow; on a phone or tablet it kept its ordinary
+  breath instead, and the glow appeared only if you paused. That had been true
+  since 0.3.2. It now glows while the timer runs on, as it always has on
+  desktop. Frosted glass 2 ships with the fix.
+- **The Theme dropdown could show no selection at all.** If the stored theme was
+  one this version does not know — a newer theme synced over from another
+  device, or one left behind by going back to an older plugin — the square fell
+  back to Classic but the dropdown sat blank, so the setting looked broken. It
+  now shows the theme actually in use.
 
 ### Internal
 
-- The rim is three masked pseudo-element rings on the existing glass nodes: no
-  new DOM, no TypeScript change, still exactly one `backdrop-filter`, no SVG
-  filter, no animation. An engine without `mask-composite` falls back to the
-  previous plain 1px border.
-- Sixteen `--gp-lg-*` tokens are declared on `.gp-theme-frosted-glass .gp-timer-shape`
+- **No TypeScript beyond one registry entry.** Both frosted themes paint the
+  view's existing glass nodes (`.gp-glass-orbs`, `.gp-orb-1..3`,
+  `.gp-glass-pane`, `.gp-glass-highlight`), so the theme registry's "an entry
+  plus a CSS block" promise held with no change to the view. The new theme does
+  carry its own copies of the drift keyframes (`gp-glass2-drift-1..3`):
+  keyframe names are global, and either block has to survive the other's
+  deletion.
+- The rim is three masked pseudo-element rings on those nodes: no new DOM,
+  still exactly one `backdrop-filter`, no SVG filter, no animation. An engine
+  without `mask-composite` falls back to a plain 1px border.
+- Sixteen `--gp-lg-*` tokens are declared on `.gp-theme-frosted-glass-2 .gp-timer-shape`
   and must stay there (`--gp-progress` only resolves inside the square); the
   design-token test lists them as scoped exceptions and asserts they stay in
   that block, that every masked ring writes its `-webkit-mask` lines before the
@@ -76,8 +103,25 @@ settings, same clock.
   records the exception). THEMES.md
   documents the rule and the masked-ring recipe; DESIGN.md's register gains
   entry 12.
-- The overtime desaturation rules for the orbs and the lobe read the orb blur
-  from a token, so a future retune cannot silently revert it.
+- The overtime desaturation rules for the balls and the lobe read the blur from
+  a token, so a future retune cannot silently revert it.
+- **`gp-theme-frosted-glass` is a prefix of `gp-theme-frosted-glass-2`.** CSS
+  class selectors match whole tokens, so the stylesheet itself is safe — but
+  anything that looks a theme class up as _text_ (a test, a script, a grep)
+  needs a boundary, e.g. `/gp-theme-frosted-glass(?![\w-])/`, or it matches
+  every rule of the new theme too. The scattered rules that exist once per
+  frosted id — the mobile pulse swap, the overtime colour and desaturation
+  rules, the reduced-motion block — are written twice on purpose rather than
+  shared under one selector list.
+- The split was done by script, not by hand. The redesign was first built as an
+  in-place replacement of Frosted glass (commit `68cd9e3`); the rebuild restores
+  the original block and puts the redesign beside it. What the script asserted
+  is that `main` and `68cd9e3` are byte-identical outside the two frosted
+  islands — the rest of the stylesheet was never in play. On top of `main`, the
+  split adds the new theme's block, its overtime group, its sibling mobile
+  pulse-swap rule and their comments, plus the two fixes above. In the render
+  harness all eight static frames of Frosted glass match 0.6.4 pixel for pixel,
+  and all eight of Frosted glass 2 match the pre-split build.
 
 ## [0.6.4] — 2026-09-06
 

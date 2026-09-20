@@ -1,0 +1,40 @@
+.gp-theme-frosted-glass-2
+.gp-theme-frosted-glass-2 .gp-glass-highlight
+.gp-theme-frosted-glass-2 .gp-glass-orbs
+.gp-theme-frosted-glass-2 .gp-glass-orbs, .gp-theme-frosted-glass-2 .gp-glass-pane, .gp-theme-frosted-glass-2 .gp-glass-highlight
+.gp-theme-frosted-glass-2 .gp-glass-orbs::before
+.gp-theme-frosted-glass-2 .gp-glass-pane
+.gp-theme-frosted-glass-2 .gp-glass-pane::before
+.gp-theme-frosted-glass-2 .gp-orb
+.gp-theme-frosted-glass-2 .gp-orb-1
+.gp-theme-frosted-glass-2 .gp-orb-2
+.gp-theme-frosted-glass-2 .gp-orb-3
+.gp-theme-frosted-glass-2 .gp-timer-shape
+.theme-dark .gp-theme-frosted-glass-2
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-orbs::before
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane::before
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-1
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-2
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-3
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-glass-orbs::before
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-orb
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-overtime
+.theme-dark .gp-theme-frosted-glass-2 .gp-timer-shape
+.theme-dark .gp-theme-frosted-glass-2 .gp-total-time
+.theme-light .gp-theme-frosted-glass-2 .gp-overtime
+.theme-light .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-glass-orbs::before
+.theme-light .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-orb
+.theme-light .gp-theme-frosted-glass-2 .gp-total-time
+[@media (prefers-reduced-motion: no-preference)] body.is-mobile .gp-theme-frosted-glass-2 .gp-state-running:not(.gp-state-overtime) .gp-timer-shape, body.is-tablet .gp-theme-frosted-glass-2 .gp-state-running:not(.gp-state-overtime) .gp-timer-shape
+[@media (prefers-reduced-motion: reduce)] .gp-theme-frosted-glass-2 .gp-glass-orbs .gp-orb
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .gp-theme-frosted-glass-2 .gp-glass-highlight::after
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .gp-theme-frosted-glass-2 .gp-glass-highlight::before
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .gp-theme-frosted-glass-2 .gp-glass-pane::after
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight::after
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight::before
+[@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)] .theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane::after
+[@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor))] .gp-root.gp-theme-frosted-glass-2 .gp-glass-pane
+[@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor))] .gp-root.gp-theme-frosted-glass-2 .gp-timer-shape

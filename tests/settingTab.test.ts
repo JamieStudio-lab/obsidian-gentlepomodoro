@@ -19,6 +19,7 @@ import {
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
 import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
+import { DEFAULT_THEME } from "../themes";
 import type { GentlePomoSettings } from "../types";
 
 /**
@@ -318,11 +319,35 @@ describe("controls are wired through setControlValue", () => {
 
   it("offers every registered theme", () => {
     ctx.tab.display();
+    // Registry order, written out rather than derived from THEMES: what the
+    // picker offers and the order it offers them in are product decisions, and
+    // a test that reads them off the same map cannot notice either changing.
     expect(componentOf(ctx.el, "Theme").options).toEqual([
       { value: "classic", label: "Classic" },
       { value: "frosted-glass", label: "Frosted glass" },
+      { value: "frosted-glass-2", label: "Frosted glass 2" },
       { value: "pixel-city", label: "Pixel city" },
     ]);
+  });
+
+  it("shows the default theme when data.json holds an id this build does not know", () => {
+    // The same hole `taskSource` had, for the same reason: coerceToDefaults
+    // only drops a stored value whose TYPE disagrees, and a theme id is a
+    // string whatever it says. A newer theme synced from another device, or
+    // one left behind by a downgrade, therefore reaches the dropdown intact.
+    //
+    // The view already resolves it — the square falls back to Classic rather
+    // than rendering empty — so reading the field raw here made the two
+    // disagree: a dropdown showing NO selection at all, beside a timer that is
+    // plainly wearing a theme. Asserted through the rendered control, not
+    // through getControlValue, because what was wrong was what the user saw.
+    const c = makeTab({ theme: "aurora-borealis" as never });
+    c.tab.display();
+    const component = componentOf(c.el, "Theme");
+    expect(component.value).toBe(DEFAULT_THEME);
+    // And the fallback has to be one of the options, or the select still shows
+    // a blank row — which is the whole failure, one step later.
+    expect(component.options.map((o) => o.value)).toContain(DEFAULT_THEME);
   });
 });
 

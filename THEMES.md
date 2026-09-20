@@ -5,7 +5,8 @@ Visual themes for the Gentle Pomodoro timer view. Each theme should preserve the
 ## Shipped
 
 - **Classic** — the original (formerly "Sunset / Aurora"). Three stacked gradient layers (day → dusk → night) whose opacities blend as progress advances. Squircle shape, gentle 8s scale pulse, day/night SVG badge.
-- **Frosted Glass** — three drifting colour orbs and a still fourth lobe (smaller, bottom-right) behind a frosted-glass pane with a **lit glass rim** (0.6.5). Orb hues interpolate through the sunrise→sunset palette via `--gp-progress` + `color-mix(in oklab, ...)` — dark mode swaps BOTH ends, fireplace oranges for the day and a deeper lavender / rose / periwinkle for the night, so a break is no paler than a focus session against a dark ground — and the rim is mixed from the same endpoints so it turns with them: deep on the faces turned away from the light, lit under two specular glints (a long one at the top-left corner, a short one bottom-right), with colour pooling about 14px in from the edges and the bottom-right corner left in shadow so the glints read as lights. The rim is three masked pseudo-element rings on the existing glass nodes — no new DOM, still one `backdrop-filter`, no SVG filter, no animation; engines without `mask-composite` fall back to a plain 1px border. Its sixteen `--gp-lg-*` knobs (the three session mixes, the deep/lift/pool values, the face blur, the orb blur, `--gp-lg-rim-light`, which scales the rim's own whites — 1 in light mode, 0.35 in dark — `--gp-lg-rim-dark`, an alpha knob on its darks, now 1 in both modes, and the environment set: `--gp-lg-env` (the theme's one read of Obsidian's `--background-primary`, registered as a `<color>`), `--gp-lg-shade` (how far the ground is pushed toward black to make the rim's shade, 40% light / 65% dark — the 65 here is the shade, not the rim light) and `--gp-lg-deep-2/3` (the local palette deepened, for the lips, the shadow pool and the inner lip). The rim's dark side is therefore the room darkened: grey on white, warm grey on cream, slate on a blue-grey theme, near-black on Obsidian dark) are declared on `.gp-theme-frosted-glass .gp-timer-shape` — see [Scoped theme tokens](#scoped-theme-tokens).
+- **Frosted Glass** — three soft color orbs drifting behind a frosted-glass pane. Orb hues interpolate through the sunrise→sunset palette via `--gp-progress` + `color-mix(in oklab, ...)`. Backdrop-filter blur gives the depth-of-field look. The 0.6.5 glass redesign shipped **beside** it as a theme of its own rather than over it, so its look is exactly 0.6.4's; the only two rules that changed that release are bug fixes — the reduced-motion orb rule, and `:not(.gp-state-overtime)` on the mobile pulse swap (see [DESIGN.md](DESIGN.md) register entry 11).
+- **Frosted Glass 2** (0.6.5) — the same idea taken the rest of the way to glass, as a separate theme so the original keeps shipping as it is. Three drifting colour orbs and a still fourth lobe (smaller, bottom-right) behind a frosted-glass pane with a **lit glass rim**. Orb hues interpolate through the sunrise→sunset palette via `--gp-progress` + `color-mix(in oklab, ...)` — dark mode swaps BOTH ends, fireplace oranges for the day and a deeper lavender / rose / periwinkle for the night, so a break is no paler than a focus session against a dark ground — and the rim is mixed from the same endpoints so it turns with them: deep on the faces turned away from the light, lit under two specular glints (a long one at the top-left corner, a short one bottom-right), with colour pooling about 14px in from the edges and the bottom-right corner left in shadow so the glints read as lights. The rim is three masked pseudo-element rings on the glass nodes it shares with Frosted Glass — no new DOM, still one `backdrop-filter`, no SVG filter, no animation; engines without `mask-composite` fall back to a plain 1px border. Its sixteen `--gp-lg-*` knobs (the three session mixes, the deep/lift/pool values, the face blur, the orb blur, `--gp-lg-rim-light`, which scales the rim's own whites — 1 in light mode, 0.35 in dark — `--gp-lg-rim-dark`, an alpha knob on its darks, now 1 in both modes, and the environment set: `--gp-lg-env` (the theme's one read of Obsidian's `--background-primary`, registered as a `<color>`), `--gp-lg-shade` (how far the ground is pushed toward black to make the rim's shade, 40% light / 65% dark — the 65 here is the shade, not the rim light) and `--gp-lg-deep-2/3` (the local palette deepened, for the lips, the shadow pool and the inner lip). The rim's dark side is therefore the room darkened: grey on white, warm grey on cream, slate on a blue-grey theme, near-black on Obsidian dark) are declared on `.gp-theme-frosted-glass-2 .gp-timer-shape` — see [Scoped theme tokens](#scoped-theme-tokens). The two frosted themes are a **family**: same DOM, no cross-references, duplicated drift keyframes — see [A theme family](#a-theme-family).
 - **Pixel City** (working name Rooftop Skyline) (0.6.2) — pixel art. A two-plane city silhouette along the bottom of the square, a dithered sky above, and **windows that light up as night falls** — the only theme where the artwork itself reports progress. Sixteen 128×128 plates generated by [art/pixel-city/skyline.py](art/pixel-city/skyline.py) on the Endesga 32 palette, bundled into `main.js`, cross-faded on `--gp-progress` and scaled with `image-rendering: pixelated`. Reverses cleanly: on a break the windows go dark as dawn comes up. The first theme to use the scrim (0.10), and the recipe for every raster theme after it — see [Raster themes](#raster-themes) below.
 
   Three things the plan for it predicted that shipping it corrected. The corner
@@ -138,9 +139,9 @@ registered theme's block to declare all fourteen, so a new theme must.
 
 | Token                                                                                                                                                                   | Meaning                                                                                                                                                                                                       |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--gp-font-display`                                                                                                                                                     | The face the four pieces of on-artwork text set in. All three shipped themes point it at `--gp-font-rounded`.                                                                                                 |
+| `--gp-font-display`                                                                                                                                                     | The face the four pieces of on-artwork text set in. All four shipped themes point it at `--gp-font-rounded`.                                                                                                  |
 | `--gp-ink`, `--gp-ink-dim`, `--gp-ink-soft`, `--gp-ink-faint`, `--gp-ink-badge`, `--gp-ink-shadow-lg`, `--gp-ink-shadow`, `--gp-ink-overtime`, `--gp-ink-overtime-glow` | The nine ink slots: text colour, its dim / soft / faint tiers, the badge, two text shadows, the overtime colour and its glow. Every shipped theme declares the same white-on-dark values independently.       |
-| `--gp-scrim-alpha`                                                                                                                                                      | A dark veil between the artwork and the text, 0 to 1. 0 for the two gradient themes; Pixel City sets 0.1. The lever that makes an arbitrary picture safe for white text.                                      |
+| `--gp-scrim-alpha`                                                                                                                                                      | A dark veil between the artwork and the text, 0 to 1. 0 for the three gradient themes; Pixel City sets 0.1. The lever that makes an arbitrary picture safe for white text.                                    |
 | `--gp-shape-base`                                                                                                                                                       | The flat colour behind your artwork.                                                                                                                                                                          |
 | `--gp-shape-radius`                                                                                                                                                     | The square's corner rounding. You may change it. You may **not** remove `overflow: hidden` — the frosted pane's `backdrop-filter` and its iOS pulse workaround are both written against that clipped surface. |
 | `--gp-shadow-rgb`                                                                                                                                                       | Three comma-separated RGB **channels** for the drop shadow — `0, 0, 0`, not a hex. A colour here makes all six shadow declarations invalid at computed-value time and the timer's depth silently disappears.  |
@@ -148,7 +149,7 @@ registered theme's block to declare all fourteen, so a new theme must.
 ### Scoped theme tokens
 
 A theme may mint custom properties of its own for its knobs, beyond the
-fourteen contract tokens. Two rules, both learned on Frosted Glass's rim:
+fourteen contract tokens. Two rules, both learned on Frosted Glass 2's rim:
 
 - **Declare them on `.gp-theme-<id> .gp-timer-shape` (or lower) whenever their
   value reads `--gp-progress`.** A custom property's `var()` references resolve
@@ -158,26 +159,30 @@ fourteen contract tokens. Two rules, both learned on Frosted Glass's rim:
 - **List them in the scoped-exception list in `tests/designTokens.test.ts`**,
   which otherwise fails the build on any `--gp-*` declared outside `:root` —
   and add a check that they stay where they are declared, because the list
-  only permits the names. Frosted Glass's `describe("frosted rim")` is the
-  worked example: it asserts the sixteen tokens sit inside the `.gp-timer-shape`
-  block and none inside the theme root.
+  only permits the names. Frosted Glass 2's
+  `describe("Frosted glass 2's lit rim")` is the
+  worked example: it asserts the sixteen tokens sit inside the
+  `.gp-theme-frosted-glass-2 .gp-timer-shape` block and none inside that theme's
+  root.
 
 **Reading the ground is the one sanctioned read of a chrome colour inside the square.** The
-Frosted Glass rim's shade reads `--background-primary` exactly twice (once per mode) into
+Frosted Glass 2 rim's shade reads `--background-primary` exactly twice (once per mode) into
 `--gp-lg-env`, registered with `@property` as a `<color>` so a theme that sets a non-colour value
 falls back instead of invalidating the rim; a test pins the count and the registration. A future
 theme that needs the room's colour should do the same — one registered read, into one token,
 consumed only by the parts that are physically a reflection of the surroundings — and never read
 `--text-*` or let the palette or the face follow the ground.
 
-If a token duplicates a literal that also lives elsewhere (Frosted Glass's three
-session mixes repeat the `.gp-orb-N` endpoint hexes, because the orbs declare
+If a token duplicates a literal that also lives elsewhere (Frosted Glass 2's three
+session mixes repeat its own `.gp-orb-N` endpoint hexes, because the orbs declare
 theirs on descendants where the rim cannot read them), say so at both sites:
 retune one without the other and the rim drifts from what is behind it.
 
 ### Masked rings
 
-The rim, the glints and the inner-wall arcs are all the same primitive: a
+Frosted Glass 2's rim, glints and inner-wall arcs are all the same primitive,
+written three times on `.gp-theme-frosted-glass-2 .gp-glass-pane::after` and its
+`.gp-glass-highlight::before` / `::after`: a
 pseudo-element with `inset`, `border-radius`, a `padding` equal to the band
 width, a gradient `background`, and a two-layer mask that keeps the border box
 minus the content box. Write each `mask` shorthand **before** its own
@@ -266,6 +271,45 @@ Classic's three layers by name, which is why "classic" was not really a theme at
 all — it was whatever was left over. That pattern needs N × (N−1) rules; this
 one needs one block per theme.
 
+### A theme family
+
+0.6.5 is the first release where a **redesign shipped beside the original rather
+than over it** — Frosted Glass 2 is the glass rework of Frosted Glass, and both
+are in the picker, because the maintainer wanted the shipped look to stay
+available. It cost one registry entry and one CSS block, no migration and no
+change to the view, which is the API working as advertised. Four things it
+taught:
+
+- **Two themes may share artwork nodes.** Frosted Glass 2 paints the same
+  `.gp-glass-orbs` / `.gp-orb-1..3` / `.gp-glass-pane` / `.gp-glass-highlight`
+  the view already builds, so neither needed new DOM. This is not a breach of
+  "never name another theme's classes": those are **shared structure**, like
+  `.gp-timer-shape`, and neither block mentions the other's `.gp-theme-*` class.
+  Independence is about the theme classes, not about owning a node.
+- **An id that is a prefix of another is legal, and every _text_ search about it
+  is not.** `gp-theme-frosted-glass` is a prefix of `gp-theme-frosted-glass-2`.
+  CSS matches class selectors as whole tokens, so the stylesheet is safe — but
+  a test, script or grep that looks a theme class up as a substring silently
+  matches the other theme's rules too. Use a boundary:
+  `/gp-theme-frosted-glass(?![\w-])/`.
+- **Keyframe names are global, so a theme carries its own copies.** Frosted
+  Glass 2's orb drift is `gp-glass2-drift-1..3`, byte-identical to
+  `gp-orb-drift-1..3` and duplicated on purpose: sharing them would mean
+  deleting either theme's block breaks the other, which is the coupling a
+  self-contained block exists to avoid. (`gp-gentle-pulse-glow` is the
+  exception that proves the shape — it is a _shared_ animation several themes
+  opt into by name, declared once outside every theme block.)
+- **Not every rule for a theme lives in its block.** The mobile pulse swap and
+  the overtime text-colour and orb-desaturation rules sit in shared sections,
+  keyed by theme class; the reduced-motion rule sits beside its own block. Each
+  of those exists **once per theme id** and had to be written twice — grouping
+  the two frosted ids into one selector list would read as tidier and would
+  couple the blocks again.
+
+An old plugin version reading a theme id it does not know resolves it to
+Classic (`resolveTheme`), so a user who downgrades sees the default rather than
+an empty square.
+
 ### Two rules that are easy to get wrong
 
 - **Pick exactly one smoothing route.** Either read the eased `--gp-progress`,
@@ -276,6 +320,11 @@ one needs one block per theme.
   selector out-specifies the shared `animation: none` block, so an ungated
   animation re-enables motion for exactly the people who turned it off — with no
   error and nothing visible on your own machine. This has already shipped here
-  once; see the wrapper on the mobile frosted pulse.
+  once; see the wrapper on the mobile frosted pulse. The same selector
+  out-ranks the shared overtime glow, so a theme that swaps the pulse must also
+  exclude `.gp-state-overtime` — and if you write your rule by copying another
+  theme's, read the original first: Frosted Glass 2's swap was a copy, and it
+  inherited a missing exclusion that had been live since 0.3.2. Both traps are
+  [DESIGN.md](DESIGN.md) register entry 11.
 
 See [DESIGN.md](DESIGN.md) for the rules governing the rest of the stylesheet.
