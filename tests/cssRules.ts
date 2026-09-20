@@ -76,9 +76,9 @@ export const bodyAt = (text: string, open: number): string => {
  * index arithmetic tricks over the raw text.
  *
  * `@keyframes` is descended into as well, so its steps arrive as rules whose
- * selector is `0%, 100%`. Harmless: nothing here asks a question a keyframe
- * step can answer wrongly, and excluding it would need a list of at-rule names
- * that would go stale.
+ * selector is `0%, 100%` carrying `@keyframes <name>` in `context`. Harmless
+ * to the selector guards — a step names no class — and load-bearing for the
+ * freeze, which reaches for those steps through that context.
  */
 export function parseRules(text: string, context: string[] = [], offset = 0): CssRule[] {
   const out: CssRule[] = [];
@@ -129,19 +129,49 @@ export function selectorText(rule: CssRule): string {
   return `${rule.context.map((c) => `[${c}] `).join("")}${rule.sel}`;
 }
 
+/** The keyframes name in an at-rule prelude, or null for any other at-rule. */
+const keyframesName = (prelude: string): string | null =>
+  /^@(?:-\w+-)?keyframes\s+([\w-]+)$/.exec(prelude)?.[1] ?? null;
+
 /**
- * Every rule whose selector names `cls`, as fixture text in source order.
+ * Every rule whose selector names `cls`, plus every `@keyframes` block those
+ * rules animate with, as fixture text.
  *
  * This is the shape of the freeze: a theme is the set of rules that name its
  * class, and "left as shipped" means that set, rendered this way, has not
  * changed. A retarget onto another theme's class removes a rule from the set;
  * a retune changes a declaration line; a rule slipping out of a media gate
  * changes its context line.
+ *
+ * The keyframes are here because a selector filter cannot see them: a step's
+ * selector is `0%, 100%`, so it names no theme, and retuning a transform
+ * inside `@keyframes gp-orb-drift-1` moved the frozen theme's orbs while the
+ * whole suite stayed green. Every keyframe the theme's rules NAME is included,
+ * shared ones too: `gp-gentle-pulse-glow` is also Pixel City's and the mobile
+ * swap's, and retuning it still changes how this theme breathes, which is the
+ * only question the freeze asks. So a shared retune fails here even though the
+ * edit was aimed elsewhere — that failure is correct, and the answer is to
+ * regenerate the fixture and say why the frozen theme moved.
+ *
+ * Owned rules first in source order, then the keyframes sorted by name (steps
+ * keep their source order inside each block), so moving a block in the file is
+ * not a diff.
  */
 export function themeSnapshot(css: string, cls: string): string {
-  const stripped = stripComments(css);
-  return parseRules(stripped)
-    .filter((r) => namesClass(r.sel, cls))
-    .map(ruleText)
-    .join("\n\n");
+  const all = parseRules(stripComments(css));
+  const owned = all.filter((r) => namesClass(r.sel, cls));
+  const animated = owned.flatMap((r) =>
+    [...r.body.matchAll(/(?:^|[\s;])animation(?:-name)?\s*:([^;]*)/g)].map((m) => m[1])
+  );
+  const named = (prelude: string): boolean => {
+    const name = keyframesName(prelude);
+    return name !== null && animated.some((value) => namesClass(value, name));
+  };
+  const key = (r: CssRule): string => r.context.map(keyframesName).find(Boolean) ?? "";
+  const steps = all
+    .filter((r) => r.context.some(named))
+    // Codepoint order, not localeCompare: the fixture must not depend on the
+    // locale the suite happens to run under.
+    .sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  return [...owned, ...steps].map(ruleText).join("\n\n");
 }

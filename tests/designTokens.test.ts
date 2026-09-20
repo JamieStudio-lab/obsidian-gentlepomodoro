@@ -64,6 +64,40 @@ const selectorOf = (text: string, pos: number): string => {
 const styleRules: CssRule[] = parseRules(stripped);
 
 /**
+ * Class count, per comma-separated selector.
+ *
+ * It stands in for specificity — nothing in this stylesheet uses ids, elements
+ * or pseudo-classes in a way that changes the comparison — and it is counted
+ * PER SELECTOR because that is the unit the cascade compares. A selector list
+ * has no specificity of its own: each of its selectors is weighed separately
+ * against each of the other rule's. An earlier count ran over the whole list,
+ * so a two-selector (0,2,0) rule scored 4 and beat a (0,3,0) rule it loses to.
+ */
+const classes = (sel: string): number => (sel.match(/\.[a-z0-9_-]+/gi) ?? []).length;
+const parts = (sel: string): number[] => sel.split(",").map((s) => classes(s));
+
+/** Strings gone as well — only the guard below has to read past a value. */
+const stripStrings = (text: string): string => text.replace(/"[^"\n]*"|'[^'\n]*'/g, '""');
+
+describe("what the rule parser assumes", () => {
+  // parseRules never re-parses a style rule's BODY: it takes the balanced text
+  // between the braces as declarations and moves on. So a CSS-nested rule —
+  // `.gp-root { & .gp-theme-frosted-glass .gp-orb-1 { ... } }` — is not a rule
+  // to any guard in this file. It would be invisible to the theme freeze, to
+  // the family check, to the two-themes-in-one-rule check and to the glass
+  // scoping check below, all of which would stay green while the nested rule
+  // repainted whatever it liked. The stylesheet is flat today; this is the
+  // assumption written down, so nesting arrives as a failed test rather than
+  // as a silent hole in nine other ones.
+  it("keeps the stylesheet flat — no style rule contains another", () => {
+    const nested = parseRules(stripStrings(stripped))
+      .filter((r) => r.body.includes("{"))
+      .map((r) => r.sel);
+    expect(nested, "a nested style rule is invisible to every guard here").toEqual([]);
+  });
+});
+
+/**
  * A committed fixture, with line endings normalised — the two theme freezes
  * are compared as text, and a checkout that converted the file to CRLF would
  * otherwise fail every line of the diff for a reason no one could act on.
@@ -192,6 +226,32 @@ describe("theme independence", () => {
         expect(offending, `.${cls} reaches into theme "${other.id}"`).toEqual([]);
       }
     }
+  });
+
+  /**
+   * The glass family's node classes, as CLASS TOKENS.
+   *
+   * Substrings would be wrong in both directions: `.gp-orbit` is not an orb,
+   * and `gp-glass2-drift-1` is a keyframes name rather than a class. Hence the
+   * boundaries — and the optional suffix, which is what keeps `.gp-orb`,
+   * `.gp-orb-1` and `.gp-glass-pane` all in and `.gp-glass2-…` out.
+   */
+  const GLASS_NODE = /\.gp-glass(?:-[a-z0-9-]+)?(?![\w-])|\.gp-orb(?:-\d+)?(?![\w-])/;
+
+  it("scopes every rule on a shared glass node to some theme", () => {
+    // The view builds .gp-glass-orbs, .gp-orb-N, .gp-glass-pane and
+    // .gp-glass-highlight once and BOTH glass themes style those same nodes.
+    // So an unscoped rule on one of them repaints the original theme too — the
+    // one 0.6.5 promised to leave exactly as users have it — and passes
+    // everything else here, because every other guard starts by asking which
+    // theme a rule names: the freeze only collects rules naming the old class,
+    // the family check and the two-themes check only look at rules that name a
+    // theme at all. Zero exceptions in the tree; keep it that way rather than
+    // adding one.
+    const offending = styleRules
+      .filter((r) => GLASS_NODE.test(r.sel) && !/gp-theme-[a-z0-9-]+/.test(r.sel))
+      .map((r) => r.sel);
+    expect(offending, "a glass node is painted for every theme at once").toEqual([]);
   });
 
   it("never names two different theme classes in one rule's selector list", () => {
@@ -600,14 +660,34 @@ describe("Frosted glass 2's lit rim", () => {
   });
 
   it("restores a plain border when the engine cannot cut a ring", () => {
-    const gate = stripped.indexOf(
-      "@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor))"
+    const gate = "@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor))";
+    expect(stripped.indexOf(gate), "the no-mask fallback is gone").toBeGreaterThan(-1);
+    const fallback = styleRules.filter(
+      (r) => r.context.includes(gate) && /(^|[\s;])border\s*:\s*1px solid/.test(r.body)
     );
-    expect(gate, "the no-mask fallback is gone").toBeGreaterThan(-1);
-    const body = bodyAt(stripped, stripped.indexOf("{", gate));
-    expect(body, "the fallback no longer restores the pane's border").toMatch(
-      new RegExp(`\\.${GLASS_2} \\.gp-glass-pane\\s*\\{[^}]*border:\\s*1px solid`)
+    expect(fallback.length, "the fallback no longer restores the pane's border").toBe(1);
+
+    // The extra .gp-root is the load-bearing part, and until now it was held
+    // only by the selector fixture beside this file — which is regenerated
+    // whenever the theme is tuned, so it would have recorded the loss rather
+    // than refused it. The rule this one overrides sets `border: 0` on the
+    // same pane at (0,2,0); at equal specificity only SOURCE ORDER decides,
+    // and a regroup that moved the @supports block above the pane rule would
+    // silently delete the edge on every mask-less engine. Strictly greater,
+    // for the same reason the reduced-motion guard is.
+    expect(fallback[0].sel).toBe(`.gp-root.${GLASS_2} .gp-glass-pane`);
+    const pane = styleRules.filter(
+      (r) =>
+        r.context.length === 0 &&
+        namesClass(r.sel, GLASS_2) &&
+        /\.gp-glass-pane$/.test(r.sel) &&
+        /(^|[\s;])border\s*:\s*0\s*;/.test(r.body)
     );
+    expect(pane.length, "the pane rule whose border the fallback restores is gone").toBe(1);
+    expect(
+      Math.min(...parts(fallback[0].sel)),
+      "the fallback only ties the pane's `border: 0` — source order would decide"
+    ).toBeGreaterThan(Math.max(...parts(pane[0].sel)));
   });
 
   it("reads the ground colour in exactly two places, both rim token blocks", () => {
@@ -662,16 +742,8 @@ describe("orb drift under reduced motion", () => {
   // names being prefixes of one another makes a text check that misses this
   // look like it passed.
   //
-  // Class count stands in for specificity — nothing here uses ids, elements
-  // or pseudo-classes.
-  //
-  // Counted PER COMMA-SEPARATED SELECTOR, because that is the unit the
-  // cascade compares. A selector list has no specificity of its own: each of
-  // its selectors is weighed separately against each of the other rule's. The
-  // old count ran over the whole list, so a two-selector (0,2,0) stop rule
-  // scored 4 and beat a (0,3,0) drift rule it in fact loses to.
-  const classes = (sel: string): number => (sel.match(/\.[a-z0-9_-]+/gi) ?? []).length;
-  const parts = (sel: string): number[] => sel.split(",").map((s) => classes(s));
+  // Specificity is compared through `parts` at the top of this file: class
+  // count, per comma-separated selector.
 
   /** Every `animation: …drift…` rule whose selector names this theme. */
   const driftRules = (cls: string): { sel: string; name: string }[] => {

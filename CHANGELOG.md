@@ -83,7 +83,7 @@ there in the picker when you want it.
 
 ### Internal
 
-- **No TypeScript beyond one registry entry.** Both frosted themes paint the
+- **No TypeScript for the theme itself beyond one registry entry.** Both frosted themes paint the
   view's existing glass nodes (`.gp-glass-orbs`, `.gp-orb-1..3`,
   `.gp-glass-pane`, `.gp-glass-highlight`), so the theme registry's "an entry
   plus a CSS block" promise held with no change to the view. The new theme does

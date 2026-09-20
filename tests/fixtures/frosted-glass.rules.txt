@@ -145,3 +145,73 @@
 body.is-mobile .gp-theme-frosted-glass .gp-state-running:not(.gp-state-overtime) .gp-timer-shape, body.is-tablet .gp-theme-frosted-glass .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
   animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
 }
+
+[@keyframes gp-gentle-pulse-glow]
+0%, 100% {
+  box-shadow: var(--gp-elev-rest);
+}
+
+[@keyframes gp-gentle-pulse-glow]
+50% {
+  box-shadow: var(--gp-elev-lift);
+}
+
+[@keyframes gp-orb-drift-1]
+0%, 100% {
+  transform: translate(0%, 0%) scale(1);
+}
+
+[@keyframes gp-orb-drift-1]
+25% {
+  transform: translate(12%, 3%) scale(1.03);
+}
+
+[@keyframes gp-orb-drift-1]
+50% {
+  transform: translate(15%, 14%) scale(1.05);
+}
+
+[@keyframes gp-orb-drift-1]
+75% {
+  transform: translate(3%, 12%) scale(1.03);
+}
+
+[@keyframes gp-orb-drift-2]
+0%, 100% {
+  transform: translate(0%, 0%) scale(1);
+}
+
+[@keyframes gp-orb-drift-2]
+25% {
+  transform: translate(-12%, 4%) scale(1.04);
+}
+
+[@keyframes gp-orb-drift-2]
+50% {
+  transform: translate(-15%, 12%) scale(1.06);
+}
+
+[@keyframes gp-orb-drift-2]
+75% {
+  transform: translate(-4%, 14%) scale(1.04);
+}
+
+[@keyframes gp-orb-drift-3]
+0%, 100% {
+  transform: translate(0%, 0%) scale(1);
+}
+
+[@keyframes gp-orb-drift-3]
+25% {
+  transform: translate(10%, -10%) scale(1.03);
+}
+
+[@keyframes gp-orb-drift-3]
+50% {
+  transform: translate(-3%, -14%) scale(1.05);
+}
+
+[@keyframes gp-orb-drift-3]
+75% {
+  transform: translate(-12%, -4%) scale(1.03);
+}

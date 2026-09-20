@@ -300,7 +300,7 @@ Everything in this entry belongs to **`.gp-theme-frosted-glass-2`**, the theme 0
 original `.gp-theme-frosted-glass` block has none of it — no `--gp-lg-*` tokens, no masked rings, no
 ground read — and looks exactly as 0.6.4 shipped it: two of its rules changed that release, both
 bug fixes carried into the restored block (entries 4 and 11), and neither touches how it renders
-when it is behaving. Seven things here look like tidy-up targets and are not:
+when it is behaving. Eight things here look like tidy-up targets and are not:
 
 - **`gp-theme-frosted-glass` is a PREFIX of `gp-theme-frosted-glass-2`.** CSS class selectors match
   whole tokens, so no rule of one theme can leak into the other and the stylesheet needs no guard.
@@ -319,7 +319,8 @@ when it is behaving. Seven things here look like tidy-up targets and are not:
   `gp-orb-drift-1..3`: keyframe names are global, and a shared name is a shared fate.
 - **The original Frosted Glass is frozen by a fixture, and Frosted Glass 2's shape by another.**
   `tests/fixtures/frosted-glass.rules.txt` holds every rule that names the old theme class —
-  selector, declarations and at-rule context, comments stripped — so an edit aimed at the new theme
+  selector, declarations and at-rule context, comments stripped, plus every `@keyframes` block those
+  rules name (its three drift sets and the shared `gp-gentle-pulse-glow`) — so an edit aimed at the new theme
   that lands on the old one through the prefix trap fails with a line diff instead of repainting a
   theme nobody was looking at. `frosted-glass-2.selectors.txt` pins the new theme's selector list
   only; its numbers stay free to tune. To move the old theme on purpose, run
