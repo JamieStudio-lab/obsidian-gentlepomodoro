@@ -1749,14 +1749,26 @@
 
      These are the slots the deferred contrast work will retune: white on the
      idle daylight gradient currently measures about 1.46:1, and once it is a
-     token the fix is one line per theme instead of six patched rules. */
+     token the fix is one line per theme instead of six patched rules.
+
+     This theme is the first to take that work, in LIGHT mode, before it
+     shipped — so no one's existing look moves. While a session runs the
+     clock is hidden and the mode label and end time are the only text on
+     the square; over these pinks and lavenders they measured about 2.3:1
+     at worst. The label and end time go to full white (0.9 and 0.82 before),
+     and the shadows become a tight plum edge plus a soft plum halo: plum
+     rather than black, because a black halo on pink reads as dirt. A shadow
+     does not change the measured contrast — the deeper centre tint on the
+     pane does that — it is what makes thin white strokes hold their edge.
+     Dark mode's faces already clear 4.4:1, so the dark block below restates
+     the shared values rather than inheriting these. */
   --gp-ink: #ffffff;
-  --gp-ink-dim: rgba(255, 255, 255, 0.9);
-  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-dim: #ffffff;
+  --gp-ink-soft: rgba(255, 255, 255, 0.96);
   --gp-ink-faint: var(--text-muted);
   --gp-ink-badge: rgba(255, 255, 255, 0.92);
-  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
-  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  --gp-ink-shadow-lg: 0 1px 3px rgba(60, 24, 52, 0.26), 0 2px 14px rgba(60, 24, 52, 0.22);
+  --gp-ink-shadow: 0 1px 2px rgba(60, 24, 52, 0.34), 0 0 8px rgba(60, 24, 52, 0.22);
   --gp-ink-overtime: #ff6b6b;
   --gp-ink-overtime-glow: 0 0 15px rgba(255, 107, 107, 0.5);
 
@@ -2379,7 +2391,13 @@
 
    0.17 is therefore the SMALLEST tint that keeps the clock at least as
    readable as Frosted glass's square in every light frame, and it clears
-   it in all four. Dark mode needed none of this — the sharpened orbs are
+   it in all four. The pre-release review then took the light centre to
+   0.25 on purpose, because "no worse than Frosted glass" still meant
+   about 2.3:1 at worst for white over these pinks: worst-case contrast
+   under the clock 2.25 -> 2.56, under the running label and end time
+   2.29 -> 2.64, with the other gradient stops raised by about the same
+   factor so the falloff keeps its shape. It is still under 3:1; the ink shadow in the theme
+   root does the rest of the work. Dark mode needed none of this — the sharpened orbs are
    darker there, so even the flat tint measured 9 units better than that
    square — so the dark centre is 0.22 rather than Clear liquid's 0.27,
    which is the same "smallest that passes" rule applied to a mode that
@@ -2420,10 +2438,10 @@
   border-radius: inherit;
   background: radial-gradient(
     118% 112% at 50% 45%,
-    rgba(44, 26, 42, 0.17) 0%,
-    rgba(44, 26, 42, 0.145) 32%,
-    rgba(44, 26, 42, 0.068) 62%,
-    rgba(44, 26, 42, 0.013) 84%,
+    rgba(44, 26, 42, 0.25) 0%,
+    rgba(44, 26, 42, 0.21) 32%,
+    rgba(44, 26, 42, 0.095) 62%,
+    rgba(44, 26, 42, 0.018) 84%,
     rgba(44, 26, 42, 0) 100%
   );
   backdrop-filter: blur(var(--gp-lg-face-blur)) saturate(195%);
@@ -2808,6 +2826,12 @@
    from reading as a bezel. */
 .theme-dark .gp-theme-frosted-glass-2 {
   --gp-shape-base: #2a2438;
+  /* The shared ink, restated: the light values in the theme root are a
+     light-mode legibility fix, and the dark faces never needed it. */
+  --gp-ink-dim: rgba(255, 255, 255, 0.9);
+  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
 }
 
 /* --- Dark mode -------------------------------------------------------
@@ -3147,8 +3171,19 @@
   --gp-orb-cool: #8497c9; /* deep periwinkle */
 }
 
+/* Saturation eases off toward the night end: 190% at the start of a focus
+   session, 135% at its end and at the start of a break. With the deeper cool
+   ends above and a flat 190%, the night end measured as vivid as the day
+   (face chroma .142 against .153; Frosted glass's night end is .107), so
+   the moment the timer says "rest" was the loudest blue in the plugin.
+   The ramp brings it to .112 and leaves the day end byte-identical. It reads
+   --gp-progress directly and carries no transition of its own — one
+   smoothing route — at the same once-a-second cadence as the colour mixes
+   that already repaint these orbs. A break overtime sits at the day end
+   (progress 0), so the overtime rules' fixed 150% still cut from 190%. */
 .theme-dark .gp-theme-frosted-glass-2 .gp-orb {
-  filter: blur(var(--gp-lg-orb-blur)) saturate(190%) brightness(0.99);
+  filter: blur(var(--gp-lg-orb-blur)) saturate(calc(190% - 55% * var(--gp-progress, 0)))
+    brightness(0.99);
 }
 
 .theme-dark .gp-theme-frosted-glass-2 .gp-glass-orbs::before {
@@ -3157,7 +3192,9 @@
     color-mix(in oklab, #c94f22, #5b5fa8 calc(var(--gp-progress, 0) * 100%)) 0%,
     transparent 70%
   );
-  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(175%) brightness(0.92);
+  /* The same ramp as the orbs above, 175% -> 125%. */
+  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(calc(175% - 50% * var(--gp-progress, 0)))
+    brightness(0.92);
   opacity: 0.82;
 }
 

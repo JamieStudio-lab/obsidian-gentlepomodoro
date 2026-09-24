@@ -30,17 +30,20 @@ there in the picker when you want it.
   - The colour balls are smaller and more saturated (92% of the square, a
     tighter falloff) and a fourth indigo lobe sits bottom-right; the face blur
     is 17px rather than 22px, so they show through as balls.
-  - A light radial tint under the digits keeps the clock at least as readable
-    as Frosted glass in every frame, light and dark (measured: the sharper
-    balls would otherwise have cost about seven luminance units under the
-    clock).
+  - The text is a little easier to read than on Frosted glass. A soft tint
+    under the digits pays for the sharper balls (they would otherwise have
+    cost about seven luminance units under the clock), and in light mode the
+    tint is a shade deeper and the "Focus" label and end time are full white
+    with a soft plum shadow — they are the only text you see while a session
+    runs.
   - There is no flat top sheen across the digits; the catch-light is the rim,
     the two highlights and two corner blooms.
   - Dark mode keeps the fireplace palette and has its own deeper night end: the
     lavender, rose and periwinkle a session settles into (and a break starts
     from) are Frosted glass's pastels deepened, because the pale ones read
     washed-out against a dark ground — so a break is no brighter than a focus
-    session.
+    session. The colours also calm down as a focus session nears its end, so
+    the start of a break is the quietest moment rather than the most vivid.
   - Dark mode's rim whites — the two
     highlights, the edge line, the corner blooms and the lit stops of the
     coloured ring — run at 35% there, so the edge catches light without reading

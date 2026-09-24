@@ -70,8 +70,12 @@ so an over-wide row loses content off **both** ends with no way to scroll back. 
 caps.
 
 **Ink is a theme's business.** The four pieces of text on the artwork read `--gp-ink*` slots that each
-theme declares for itself. All four shipped themes declare identical values — they are not sharing
-a default, they independently chose the same one, which is what independence costs and is the point.
+theme declares for itself. Classic, Frosted Glass and Pixel City declare identical values — they are
+not sharing a default, they independently chose the same one, which is what independence costs and
+is the point. Frosted Glass 2 is the first theme to use the slots as intended: in LIGHT mode its
+label and end time are full white and its two shadows are a tight plum edge plus a soft plum halo,
+because white over its pinks and lavenders measured about 2.3:1 at worst while the clock is hidden
+and those two lines are the only text on the square. Its dark block restates the shared values.
 `--gp-scrim-alpha` drives `.gp-timer-shape::after`, a veil between artwork and text; it is the only
 lever that makes an arbitrary supplied picture safe for white text, and it is a pseudo-element so
 it needs no DOM node and no place in the artwork switch. Classic and both frosted themes set it to
@@ -350,10 +354,11 @@ when it is behaving. Eight things here look like tidy-up targets and are not:
   `@supports not` branch restores the plain border.
 - **The four overtime desaturation rules (orbs and the fourth lobe, light and dark) read
   `--gp-lg-orb-blur`.** They restate the whole `filter`, so a base blur changed above and not there used
-  to revert silently the moment a break ran into overtime. The pane's radial tint (0.17 light / 0.22
-  dark) is the smallest value at which the clock measures at least as readable as the original
-  Frosted Glass over these sharper orbs — a flat 0.10 measured about seven luminance units lighter
-  under the digits.
+  to revert silently the moment a break ran into overtime. The pane's radial tint in dark (0.22)
+  is the smallest value at which the clock measures at least as readable as the original Frosted
+  Glass over these sharper orbs — a flat 0.10 measured about seven luminance units lighter under the
+  digits. Light started at that rule's 0.17 and went to 0.25 before release, because "as readable as
+  the original" still meant about 2.3:1 at worst; 0.25 takes it to about 2.6:1.
 - **The rim's shade is the ground, darkened.** `--gp-lg-env` is the theme's one read of
   `--background-primary` (see the exception under "The one rule"), registered with `@property` as a
   `<color>` inside the Frosted Glass 2 block — `var()` only covers a missing variable, and a theme that sets
