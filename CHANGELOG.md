@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.5] — 2026-09-10
+## [0.6.5] — 2026-09-24
 
 A fourth theme, **Frosted glass 2**: the frosted pane drawn as real glass. It
 has a thin lit rim that carries the session's own colour, two highlights on its
