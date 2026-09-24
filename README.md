@@ -24,7 +24,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - **Your linked task stays linked** when you change where tasks come from — if the new scope would not show it, it appears at the top under _Linked task_. Only ticking it off unlinks it.
 - One-click **Unlink current task**.
 - **Opt-in (beta — edits your task files)**: adds a lifetime `🍅 N` count to the task line each time you finish a focus session for it, placed before the Tasks date fields so they keep parsing (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`).
-- **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts and never touch a `🍅 N` you typed yourself.
+- **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts first. Repair and Remove only act on a marker sitting _after_ a task's date fields — the placement that breaks them, whoever typed it — and Remove all leaves alone a `🍅 N` you typed inside a task's own text (one at the very end of the line counts as a marker).
 
 ### 📊 Daily focus goal
 
