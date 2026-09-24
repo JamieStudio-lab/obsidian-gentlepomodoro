@@ -833,12 +833,15 @@
      height: auto lets the button grow to fit instead. */
   height: auto;
   min-height: 52px; /* Increased height for 2 rows */
-  padding: var(--gp-space-2) var(--gp-space-5);
+  /* Room around the text. 4px above and below read as cramped once the task
+     name could take two lines; the touch rule restates this for the iPad,
+     where Obsidian's tablet button padding out-specifies this rule. */
+  padding: var(--gp-space-5) var(--gp-space-7);
   display: flex;
   flex-direction: column; /* Stack content vertically */
   align-items: flex-start; /* Align text to left */
   justify-content: center;
-  gap: var(--gp-space-1);
+  gap: var(--gp-space-2);
   font-weight: var(--gp-weight-medium);
   font-size: var(--gp-text-body);
   line-height: 1.2;
@@ -4102,10 +4105,15 @@ body.is-tablet .gp-segmented-btn {
 
 /* Bigger task-picker button and dropdown rows — the primary touch targets for
    linking a task. min-height on both tracks --gp-tap-min; extra padding on the
-   rows gives the text room and lifts single-line rows to a comfortable size. */
-body.is-mobile .gp-btn-full,
-body.is-tablet .gp-btn-full {
+   rows gives the text room and lifts single-line rows to a comfortable size.
+   The button's padding is restated because Obsidian's
+   `.is-tablet button:not(.clickable-icon)` (0,2,1) sets 4px above and below
+   and beats the base .gp-btn-full rule. `button.gp-btn-full` makes this (0,2,2)
+   so it wins outright rather than on stylesheet order. */
+body.is-mobile button.gp-btn-full,
+body.is-tablet button.gp-btn-full {
   min-height: 60px;
+  padding: var(--gp-space-5) var(--gp-space-7);
 }
 
 body.is-mobile .gp-task-item,

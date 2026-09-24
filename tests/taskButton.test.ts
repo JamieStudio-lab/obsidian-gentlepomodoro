@@ -203,6 +203,18 @@ describe("the task button's stylesheet", () => {
     expect(bodyOf(".gp-btn-full")).toMatch(/(^|;)\s*height: auto;/);
   });
 
+  it("keeps its padding on the iPad, where Obsidian's tablet button rule out-ranks the base", () => {
+    // app.css: `.is-tablet button:not(.clickable-icon) { padding: 4px 20px }`,
+    // specificity (0,2,1). The touch rule must restate the base padding and
+    // beat that outright — a tie would leave the winner to stylesheet order.
+    const padding = (body: string): string | undefined =>
+      /(?:^|;)\s*padding: ([^;]+);/.exec(body)?.[1];
+    const base = padding(bodyOf(".gp-btn-full"));
+    const touch = bodyOf("body.is-mobile button.gp-btn-full, body.is-tablet button.gp-btn-full");
+    expect(base).toBeDefined();
+    expect(padding(touch)).toBe(base);
+  });
+
   it("clamps the name to two lines with an ellipsis", () => {
     const body = bodyOf(".gp-task-btn-text");
     expect(body).toContain("display: -webkit-box;");

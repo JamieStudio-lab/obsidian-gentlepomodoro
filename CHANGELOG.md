@@ -12,8 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   It printed the name with its `#tags` (for example
   `… Transcript 5 #task/research/aiprobe`) on a single line ending in "…",
   while the picker list showed the same task cleanly. The button now shows the
-  name as the list does, on up to two lines, and on a computer hovering it
-  shows the whole name whenever two lines are not enough. Nothing else changes:
+  name as the list does, on up to two lines, with more room around the text,
+  and on a computer hovering it shows the whole name whenever two lines are not
+  enough. Nothing else changes:
   the daily log still records the name with its tags, so Dataview queries that
   read a tag off a log line keep working, and a linked task stays linked.
 - **Task names in the picker and on the button hide three more Tasks fields.**
