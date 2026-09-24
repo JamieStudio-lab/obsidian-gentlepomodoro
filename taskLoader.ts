@@ -74,9 +74,14 @@ const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 const CLEANUP_REGEX =
   /[⏳📅🛫➕✅]\s*\d{4}-\d{2}-\d{2}|[🔺🔽🔥⏫⏬🔼]\uFE0F?\s*\w*|🔁\s*[a-zA-Z0-9\s]+|🆔\s*[A-Za-z0-9_-]+/gu;
 
-// Dates + recurrence + ID + tags (for display, keep priority icons only)
+// Dates + recurrence + ID + dependencies + on-completion + tags (for display,
+// keep priority icons only). Display only: the ⛔ and 🏁 alternatives are NOT
+// in CLEANUP_REGEX, because that one builds the identity key and the logged
+// name, and widening it would re-key every linked task that carries them.
+// A tag stops at a Tasks field emoji — `#paper📅 2026-09-30`, written with no
+// space, would otherwise swallow the 📅 and leave the bare date behind.
 const DISPLAY_CLEANUP_REGEX =
-  /[⏳📅🛫➕✅]\s*\d{4}-\d{2}-\d{2}|🔁\s*[a-zA-Z0-9\s]+|🆔\s*[A-Za-z0-9_-]+|#\S+/gu;
+  /[⏳📅🛫➕✅❌]\s*\d{4}-\d{2}-\d{2}|🔁\s*[a-zA-Z0-9\s]+|🆔\s*[A-Za-z0-9_-]+|⛔\s*[A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*|🏁\s*[a-zA-Z]+|#[^\s⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]+/gu;
 
 // shared normalization for task text
 export function normalizeTaskText(text: string): string {
@@ -96,6 +101,25 @@ export function normalizeTaskTextForDisplay(text: string): string {
   }
 
   return cleaned;
+}
+
+/**
+ * The name the "Current task" button shows for the linked task.
+ *
+ * The timer holds a task by its normalizeTaskText form, and that form keeps
+ * `#tags` on purpose: it is the key the picker, the 🆔 name refresh, the
+ * completion unlink and the 🍅 counter all compare against, and it is the name
+ * written into the daily log, where a Dataview query may read a tag straight
+ * off the line. So the button derives a display form here rather than the
+ * timer storing a different name. It is the cleanup the picker's rows get, so
+ * the two read alike; only the row adds a priority icon, which the timer's
+ * name has already lost. One more difference it cannot undo: a priority emoji
+ * typed mid-description takes the word after it out of the timer's name
+ * (CLEANUP_REGEX's `\s*\w*`), and the button only ever sees that name. A name
+ * that is nothing but tags falls back to itself, as the rows do.
+ */
+export function linkedTaskDisplayName(cleanText: string): string {
+  return normalizeTaskTextForDisplay(cleanText) || cleanText;
 }
 
 /**

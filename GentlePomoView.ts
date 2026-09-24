@@ -43,7 +43,7 @@ import {
   CAPTION_NAME_FADE_MS,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
-import { loadTasks as fetchTasks, groupTasksByDate } from "./taskLoader";
+import { loadTasks as fetchTasks, groupTasksByDate, linkedTaskDisplayName } from "./taskLoader";
 import {
   TASK_SOURCE_ORDER,
   TASK_SOURCE_LABELS,
@@ -169,6 +169,14 @@ export class GentlePomoView extends ItemView {
   taskListContainer!: HTMLDivElement;
   taskListVisible = false;
   taskBtn!: HTMLButtonElement;
+  private taskBtnText!: HTMLDivElement;
+  /**
+   * What the button last showed, so the ~20Hz tick writes it only on a change —
+   * and the tooltip, which has to read layout, is re-measured only then.
+   */
+  private lastTaskBtnText: string | null = null;
+  /** The linked task's whole name for the tooltip; "" while no task is linked. */
+  private taskBtnFullText = "";
   /**
    * The rows currently on screen, addressed by the `data-gp-task-index` each
    * row carries. The delegated click handler reads through this rather than
@@ -272,12 +280,27 @@ export class GentlePomoView extends ItemView {
       this.updateCompactClass();
       // Whether the caption is cut depends on the panel's width, not its text.
       this.updateCaptionTooltip();
+      this.updateTaskBtnTooltip();
     });
     this.resizeObserver.observe(container);
     this.registerDomEvent(window, "resize", () => {
       this.updateCompactClass();
       this.updateCaptionTooltip();
     });
+    // Both tooltips can also flip with NO box changing size: a wider or
+    // narrower font re-wraps the text inside the same box, so the task name can
+    // gain a hidden third line under an unchanged two-line clamp, and the
+    // caption's cut point moves inside an unchanged width. Neither observer can
+    // see that. css-change covers themes, snippets and the Appearance fonts;
+    // loadingdone covers a theme's web font landing after the first measure.
+    const remeasureText = () => {
+      this.updateCaptionTooltip();
+      this.updateTaskBtnTooltip();
+    };
+    this.registerEvent(this.plugin.app.workspace.on("css-change", remeasureText));
+    const fonts = container.doc.fonts;
+    fonts.addEventListener("loadingdone", remeasureText);
+    this.register(() => fonts.removeEventListener("loadingdone", remeasureText));
 
     // --- Timer Visual Area ---
     const visual = container.createDiv("gp-timer-visual");
@@ -457,6 +480,16 @@ export class GentlePomoView extends ItemView {
 
     const btnText = this.taskBtn.createDiv("gp-task-btn-text");
     btnText.setText("Select a task...");
+    this.taskBtnText = btnText;
+    // A fresh button shows the placeholder, whatever the last one showed.
+    this.lastTaskBtnText = null;
+    // Observed directly, not only through the panel: the control column is a
+    // fixed 260px on desktop (capped at 360px on touch), so a panel resize need
+    // not resize the button. The text box's own size does change when it is
+    // first laid out, unhidden or given a new width — the cases a measurement
+    // taken earlier cannot have seen. A re-wrap at the same size is the font
+    // listener's job, above.
+    this.resizeObserver.observe(btnText);
 
     this.registerDomEvent(this.taskBtn, "click", () => {
       this.taskListVisible = !this.taskListVisible;
@@ -794,13 +827,17 @@ export class GentlePomoView extends ItemView {
       this.modeLabel.setText(state.mode === "focus" ? "Focus" : "Rest");
       visual.toggleClass("gp-state-running", state.isRunning);
 
-      const textEl = this.taskBtn.querySelector(".gp-task-btn-text");
-      if (textEl) {
-        if (state.taskName === NO_TASK_LABEL) {
-          textEl.setText("Select a task...");
-        } else {
-          textEl.setText(state.taskName);
-        }
+      // The engine's name keeps the task's #tags, because it is also the key
+      // every task comparison uses and the name the log records — so the button
+      // shows the display form the picker's rows show, never the raw name.
+      const linked = state.taskName !== NO_TASK_LABEL;
+      const taskText = linked ? linkedTaskDisplayName(state.taskName) : "Select a task...";
+      const fullText = linked ? taskText : "";
+      if (taskText !== this.lastTaskBtnText || fullText !== this.taskBtnFullText) {
+        this.lastTaskBtnText = taskText;
+        this.taskBtnFullText = fullText;
+        this.taskBtnText.setText(taskText);
+        this.updateTaskBtnTooltip();
       }
 
       // The timer ticks every 50ms (see TimerEngine), but the displayed second — and
@@ -1281,6 +1318,26 @@ export class GentlePomoView extends ItemView {
     );
     if (cut) caption.setAttribute("title", this.stationCaptionFullText);
     else caption.removeAttribute("title");
+  }
+
+  /**
+   * Offer the linked task's whole name as a tooltip on the task button, but
+   * only while the two-line clamp is actually hiding some of it — the same
+   * rule as the station caption's. A pointer-only aid: `title` is suppressed on
+   * touch, where the two lines are all there is.
+   *
+   * `title`, not `setTooltip()`: Obsidian's tooltip reads `aria-label`, which
+   * would replace the button's accessible name ("Current task" and the name)
+   * with the name alone. Reads layout, so it runs when the text changes and
+   * from the ResizeObserver — never per tick. A box that is not laid out reads
+   * 0 for both heights and so drops the tooltip, which nobody can hover
+   * anyway; the observer fires again the moment it is laid out.
+   */
+  private updateTaskBtnTooltip() {
+    const text = this.taskBtnText;
+    const cut = this.taskBtnFullText !== "" && text.scrollHeight > text.clientHeight + 1;
+    if (cut) this.taskBtn.setAttribute("title", this.taskBtnFullText);
+    else this.taskBtn.removeAttribute("title");
   }
 
   /**

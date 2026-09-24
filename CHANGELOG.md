@@ -4,6 +4,25 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-09-24
+
+### Fixed
+
+- **The "Current task" button showed the task's tag and cut the name short.**
+  It printed the name with its `#tags` (for example
+  `… Transcript 5 #task/research/aiprobe`) on a single line ending in "…",
+  while the picker list showed the same task cleanly. The button now shows the
+  name as the list does, on up to two lines, and on a computer hovering it
+  shows the whole name whenever two lines are not enough. Nothing else changes:
+  the daily log still records the name with its tags, so Dataview queries that
+  read a tag off a log line keep working, and a linked task stays linked.
+- **Task names in the picker and on the button hide three more Tasks fields.**
+  A task's "depends on" (`⛔ abc123`) and "on completion" (`🏁 delete`) values
+  and a cancelled date (`❌ 2026-01-06`) no longer show as part of its name, and
+  a tag typed with no space before a date (`#paper📅 2026-09-30`) no longer
+  leaves the bare date behind. Display only — what the log records is
+  unchanged.
+
 ## [0.6.5] — 2026-09-24
 
 A fourth theme, **Frosted glass 2**: the frosted pane drawn as real glass. It

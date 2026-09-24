@@ -826,6 +826,12 @@
 
 .gp-btn-full {
   width: 100%;
+  /* Obsidian gives every button a fixed height: var(--input-height). With
+     the min-height below, that pins this box at 52px (60px on touch) however
+     much it holds, and a two-line task name then makes the text box — a flex
+     item with overflow: hidden — shrink and cut its second line in half.
+     height: auto lets the button grow to fit instead. */
+  height: auto;
   min-height: 52px; /* Increased height for 2 rows */
   padding: var(--gp-space-2) var(--gp-space-5);
   display: flex;
@@ -856,10 +862,19 @@
   width: 100%;
   text-align: left;
 
-  /* Truncate with ellipsis */
-  white-space: nowrap;
+  /* Up to two lines, then an ellipsis. One line cut most task names short,
+     and on touch there is no tooltip to read the rest — the view offers the
+     whole name as a `title`, which only a pointer shows, and only while this
+     clamp is hiding some of it.
+     white-space must be restated: Obsidian's button rule sets nowrap and it
+     inherits. overflow-wrap lets an unbroken run (a URL) break instead of
+     overflowing the column. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* --- Settings Panel (collapsible) --- */
