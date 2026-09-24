@@ -20,14 +20,24 @@ The plugin draws two kinds of thing, and they get opposite treatment.
 
 **Chrome inherits, artwork declares.** There are 54 `var()` references to 17 Obsidian variables in
 the file today and they are all correct; do not re-mint them as `--gp-*`. Conversely, nothing inside
-`.gp-timer-visual` may read `--text-*` or `--background-*`.
+`.gp-timer-visual` may read `--text-*` or `--background-*` — with one scoped exception, made in
+0.6.5 and pinned by a test: the **Frosted Glass 2** rim's **shade** reads `--background-primary`,
+once per mode, into `--gp-lg-env`. A glass edge reflects the room it sits in, so its dark side is
+the ground darkened, not a fixed near-black — which read as ink on every pale user theme and fought
+every coloured one. The palette, the face, the pools' hues and the text still declare their own
+colours; `tests/designTokens.test.ts` asserts exactly two reads, both in that theme's rim token
+blocks, and that the read is registered as a `<color>` so a non-colour ground falls back instead of
+deleting the rim. The original Frosted Glass block makes no such read.
 
 The proof that the boundary is real: `.gp-total-time` is the one
-on-artwork element coloured with a chrome token, and it pays for it with three colour overrides
-(`.gp-theme-classic .gp-state-overtime.gp-mode-break .gp-total-time` and the `.theme-dark` /
-`.theme-light` Frosted Glass rules on `.gp-total-time`) plus two orb desaturations (`.gp-state-overtime.gp-mode-break .gp-orb`, one per Obsidian theme) — and still leaves
+on-artwork element coloured with a chrome token, and it pays for it with five colour overrides
+(`.gp-theme-classic .gp-state-overtime.gp-mode-break .gp-total-time`, plus a `.theme-dark` and a
+`.theme-light` rule on `.gp-total-time` for each of the two frosted themes) plus six orb and lobe
+desaturations (`.gp-state-overtime.gp-mode-break .gp-orb` per frosted theme per Obsidian theme, and
+the fourth lobe's `.gp-glass-orbs::before` for Frosted Glass 2) — and still leaves
 classic + light Obsidian + focus overtime uncovered, where the grey lands on the night gradient at
-about 2.34:1.
+about 2.34:1. Every one of those rules exists once per theme id: that is what one chrome token on
+the artwork costs, multiplied by the number of themes.
 
 Also delete rules that merely restate an Obsidian default rather than adding one: `.gp-status-label`
 re-states `--status-bar-font-size`, and two `line-height: 1.3` declarations re-state the inherited
@@ -60,18 +70,23 @@ so an over-wide row loses content off **both** ends with no way to scroll back. 
 caps.
 
 **Ink is a theme's business.** The four pieces of text on the artwork read `--gp-ink*` slots that each
-theme declares for itself. All three shipped themes declare identical values — they are not sharing
-a default, they independently chose the same one, which is what independence costs and is the point.
+theme declares for itself. Classic, Frosted Glass and Pixel City declare identical values — they are
+not sharing a default, they independently chose the same one, which is what independence costs and
+is the point. Frosted Glass 2 is the first theme to use the slots as intended: in LIGHT mode its
+label and end time are full white and its two shadows are a tight plum edge plus a soft plum halo,
+because white over its pinks and lavenders measured about 2.3:1 at worst while the clock is hidden
+and those two lines are the only text on the square. Its dark block restates the shared values.
 `--gp-scrim-alpha` drives `.gp-timer-shape::after`, a veil between artwork and text; it is the only
 lever that makes an arbitrary supplied picture safe for white text, and it is a pseudo-element so
-it needs no DOM node and no place in the artwork switch. Classic and Frosted Glass set it to 0;
-Pixel City (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per Obsidian theme
+it needs no DOM node and no place in the artwork switch. Classic and both frosted themes set it to
+0; Pixel City (0.6.2) is its first user, at 0.10 — a bitmap cannot be retuned per Obsidian theme
 the way a gradient can, so the plates keep every pale band out of the clock zone and the veil
 carries the rest.
 
-**Frosted Glass is the one theme whose legibility is not fully token-driven.** Its two
-orb-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
-`.gp-orb` so overtime text stays readable. They were kept deliberately in 0.6.1 rather than retired,
+**The frosted themes are the ones whose legibility is not fully token-driven.** Their
+orb-and-lobe-desaturation rules fix a _text_ problem by mutating _artwork_ — dropping `saturate()` on
+`.gp-orb` so overtime text stays readable (two rules in Frosted Glass, four in Frosted Glass 2,
+which also desaturates its fourth lobe). They were kept deliberately in 0.6.1 rather than retired,
 to leave the shipped themes looking exactly as they look. A raster theme cannot copy that trick; it
 has the scrim instead.
 
@@ -112,6 +127,15 @@ Two behaviours are decided by source order alone, both between rules of equal sp
 Regrouping rules by component is the most natural design-system move available and is the most
 dangerous one here.
 
+An artwork change that replaces a theme substitutes values where they stand, and the 0.6.5 redesign
+was first built that way. What shipped does not: Frosted Glass's rules are back where 0.6.4 left
+them and Frosted Glass 2's block sits **after** them, with its own copies of the drift keyframes.
+Two of the restored rules differ from 0.6.4, both bug fixes and neither a look — the reduced-motion
+orb selector (entry 4) and `:not(.gp-state-overtime)` on the mobile pulse swap (entry 11); both sit
+in shared sections rather than in the theme block. Adding a block beside an existing one is the safe
+shape — nothing moves, so every remaining difference is a rule somebody meant to change, and a diff
+that shows only those is the check.
+
 ### 2. Variant classes stay double-class.
 
 `.gp-task-item.gp-task-selected .gp-task-check-icon` (specificity 0,3,0) is the only thing
@@ -149,9 +173,20 @@ Media queries add no specificity, so any rule more specific than the `transition
 silently re-enables motion for exactly the users who opted out — with no error and nothing visible
 on the developer's machine. The file already records two incidents: the caption labels must keep
 **exactly one** `transition` shorthand at 0,1,0 with the delay cascaded through
-`--gp-caption-delay`, and the mobile frosted pulse (`body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape`) needs its
-`@media (prefers-reduced-motion: no-preference)` wrapper because its selector is 0,4,1 against a
-0,2,0 `animation: none`.
+`--gp-caption-delay`, and the mobile frosted pulse
+(`body.is-mobile .gp-theme-frosted-glass .gp-state-running:not(.gp-state-overtime) .gp-timer-shape`,
+and its `-2` twin) needs its
+`@media (prefers-reduced-motion: no-preference)` wrapper because its selector is 0,5,1 against a
+0,2,0 `animation: none` — `:not()` contributes its argument's specificity, so the overtime exclusion
+entry 11 added makes it one class heavier, not lighter. The third incident hid from 0.2.0 to 0.6.4: the reduce block stopped the
+orb drift with a bare `.gp-orb` (0,1,0) while the three drift rules are `.gp-theme-frosted-glass
+.gp-orb-N` (0,2,0), so the orbs kept drifting for exactly the users who had opted out, on every
+platform, and no test looked. Each frosted theme carries its own (0,3,0) reduce rule since 0.6.5 —
+`.gp-theme-frosted-glass .gp-glass-orbs .gp-orb` and
+`.gp-theme-frosted-glass-2 .gp-glass-orbs .gp-orb` — and the `designTokens` guard has to be written
+**per theme id**, because neither rule covers the other: a class selector matches a whole token, so
+`.gp-theme-frosted-glass` does not select an element carrying `gp-theme-frosted-glass-2`. A guard
+that finds one reduce rule and stops is exactly the shape that let this hide for four releases.
 
 Zeroing a duration token is **not** a substitute for the explicit `transform: none` resets in the
 reduced-motion blocks. A collapsed element's resting state _is_ a transform, so a zero duration makes
@@ -252,6 +287,88 @@ selector out-ranks both the shared overtime glow and the reduced-motion `animati
 plates themselves reach users only because they are **inside `main.js`** — Obsidian installs
 three files, and a loose image is missing for everyone but the machine that put it there.
 `tests/designTokens.test.ts` holds the first three; `tests/pixelCityArt.test.ts` the delivery.
+
+The overtime exclusion has a second incident, and it is the older one. The frosted themes' mobile
+pulse swap (`body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape`, 0,4,1) had
+no `:not(.gp-state-overtime)` from 0.3.2 to 0.6.4 — eighteen releases — so on a phone or tablet
+Frosted Glass kept its ordinary breath through overtime and showed the blue / orange glow only
+while PAUSED. Then 0.6.5 wrote the new theme's swap by copying that rule, and copied the hole with
+it. **A copied rule inherits the original's bugs: review the original before duplicating it**, and
+treat a rule that has never been read as unreviewed however long it has shipped. Both glass ids
+carry the exclusion now, verified in headless Chrome on a mobile body class — `gp-breathing-glow`
+when running in overtime, `gp-gentle-pulse-glow` when merely running.
+
+### 12. The Frosted Glass 2 rim reads `--gp-progress` through tokens on `.gp-timer-shape`, and its masks are order-sensitive.
+
+Everything in this entry belongs to **`.gp-theme-frosted-glass-2`**, the theme 0.6.5 added. The
+original `.gp-theme-frosted-glass` block has none of it — no `--gp-lg-*` tokens, no masked rings, no
+ground read — and looks exactly as 0.6.4 shipped it: two of its rules changed that release, both
+bug fixes carried into the restored block (entries 4 and 11), and neither touches how it renders
+when it is behaving. Eight things here look like tidy-up targets and are not:
+
+- **`gp-theme-frosted-glass` is a PREFIX of `gp-theme-frosted-glass-2`.** CSS class selectors match
+  whole tokens, so no rule of one theme can leak into the other and the stylesheet needs no guard.
+  Anything that looks a class up as **text** does: `includes`, `indexOf` or a bare regex finds every
+  new-theme rule while claiming to have found the old theme. Use a **token** boundary —
+  `/gp-theme-frosted-glass(?![\w-])/`. `\b` is not one: a hyphen is a word boundary, so `\b` matches
+  between `glass` and `-2` and the search still finds the new theme. This applies to the two suites
+  that read `styles.css` as text, to any splice or rename script, and to a grep you are about to
+  trust.
+- **Scattered rules exist once per frosted id, written out twice.** The two blocks are not the whole
+  story: the mobile pulse swap and the overtime `.gp-total-time` / `.gp-overtime` colours and orb
+  desaturations live in shared sections, the reduced-motion rule beside its own block, and each is
+  duplicated, one selector per theme. Merging a pair into one selector list reads as tidier and re-couples the
+  blocks — after which deleting or retuning either theme edits the other. The same reasoning is why
+  Frosted Glass 2 carries its own `gp-glass2-drift-1..3` keyframes rather than reusing
+  `gp-orb-drift-1..3`: keyframe names are global, and a shared name is a shared fate.
+- **The original Frosted Glass is frozen by a fixture, and Frosted Glass 2's shape by another.**
+  `tests/fixtures/frosted-glass.rules.txt` holds every rule that names the old theme class —
+  selector, declarations and at-rule context, comments stripped, plus every `@keyframes` block those
+  rules name (its three drift sets and the shared `gp-gentle-pulse-glow`) — so an edit aimed at the new theme
+  that lands on the old one through the prefix trap fails with a line diff instead of repainting a
+  theme nobody was looking at. `frosted-glass-2.selectors.txt` pins the new theme's selector list
+  only; its numbers stay free to tune. To move the old theme on purpose, run
+  `GP_UPDATE_FIXTURES=1 npx vitest run tests/designTokens.test.ts`, review the fixture's diff, and
+  say in the commit why a frozen theme moved. The fixture never refreshes itself.
+- **The sixteen `--gp-lg-*` tokens are declared on `.gp-theme-frosted-glass-2 .gp-timer-shape`, not on the
+  theme root.** Three of them are `color-mix(...)` expressions that read `--gp-progress`, which is set
+  inline on `.gp-timer-visual`; a custom property resolves its `var()`s where it is declared, so hoisting
+  the block to the root freezes every mix at progress 0 with no error. The scoped-exception list in
+  `tests/designTokens.test.ts` only permits the names; the guard is the test beside it that asserts
+  every `--gp-lg-*` is declared inside the `.gp-timer-shape` block and none inside the theme root.
+- **The three session mixes repeat that theme's own `.gp-orb-N` endpoint hexes.** The orbs declare
+  `--gp-orb-warm`
+  on themselves, descendants the rim cannot read, so the literals are duplicated on purpose and both
+  sites say so. Retune an orb without its mix and the rim stops matching what is behind it. Several
+  of the light-mode endpoints are the same literals the older Frosted Glass block uses; they are
+  **independent declarations that happen to agree**, not a shared value, and the dark-mode cool ends
+  already differ (Frosted Glass 2's night is deeper). Retuning one theme does not retune the other,
+  and it must not.
+- **Each `mask` shorthand comes before its own `mask-composite` longhand, and the `-webkit-` pair
+  before the standard pair, in every ring.** `-webkit-mask` and `mask` are both shorthands and each
+  resets `mask-composite`; in an engine where the prefixed name aliases the standard one, a shorthand
+  written after a composite longhand silently resets it and the ring paints as a filled rounded
+  rectangle over the clock. Prefixed-first is convention rather than a known failure; the
+  shorthand-before-longhand order is the load-bearing part, and the test holds both. The rings sit
+  inside `@supports (mask-composite: exclude) or (-webkit-mask-composite: xor)`, and the
+  `@supports not` branch restores the plain border.
+- **The four overtime desaturation rules (orbs and the fourth lobe, light and dark) read
+  `--gp-lg-orb-blur`.** They restate the whole `filter`, so a base blur changed above and not there used
+  to revert silently the moment a break ran into overtime. The pane's radial tint in dark (0.22)
+  is the smallest value at which the clock measures at least as readable as the original Frosted
+  Glass over these sharper orbs — a flat 0.10 measured about seven luminance units lighter under the
+  digits. Light started at that rule's 0.17 and went to 0.25 before release, because "as readable as
+  the original" still meant about 2.3:1 at worst; 0.25 takes it to about 2.6:1.
+- **The rim's shade is the ground, darkened.** `--gp-lg-env` is the theme's one read of
+  `--background-primary` (see the exception under "The one rule"), registered with `@property` as a
+  `<color>` inside the Frosted Glass 2 block — `var()` only covers a missing variable, and a theme that sets
+  `--background-primary: none` or a gradient would otherwise substitute that text into the
+  `color-mix()` and invalidate the whole rim. `--gp-lg-deep` is that ground mixed toward black
+  (`--gp-lg-shade`, 40% light / 65% dark) and feeds the five deep stops; the two dark lips, the
+  bottom-right pool and the pane's inner lip take the LOCAL colour deepened instead
+  (`--gp-lg-deep-2/3` = palette mixed with the deep), because a neutral shade over saturated orange
+  reads muddy. Dark and Nord grounds stay within 8/255 of the fixed-black version; white, cream and
+  grey lose the ink.
 
 ## Build
 

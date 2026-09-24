@@ -1,14 +1,14 @@
 # Gentle Pomodoro
 
-A visually soothing, task-integrated Pomodoro timer for your daily focus work. Three ambient themes — Classic (day→night gradient), Frosted Glass (drifting color orbs behind a frosted pane) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
+A visually soothing, task-integrated Pomodoro timer for your daily focus work. Four ambient themes — Classic (day→night gradient), Frosted Glass (drifting colour orbs behind a frosted pane), Frosted Glass 2 (the same idea drawn as real glass, with a lit rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.4 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.5 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
 ### 🍅 Gentle visual timer
 
-- **Three themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (three drifting color orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode) and **Pixel City** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
+- **Four themes**: **Classic** (the original day → dusk → night gradient), **Frosted Glass** (three drifting colour orbs behind a 3D frosted pane — pastel-twilight palette in light mode, fireplace warmth in dark mode), **Frosted Glass 2** (the same idea drawn as real glass: a thin lit rim that picks up the session's colour, two highlights on the edge, sharper colour balls behind the pane, and an edge shade that follows your own theme's background colour so it sits well on light and coloured themes) and **Pixel City** (a pixel-art city under a dithered sky; the windows come on wave by wave as the session runs toward night, and go dark again over a break). Switch in the main Obsidian Settings tab.
 - Ambient shape that transitions through warm → cool colors as the timer runs.
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
@@ -24,7 +24,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. T
 - **Your linked task stays linked** when you change where tasks come from — if the new scope would not show it, it appears at the top under _Linked task_. Only ticking it off unlinks it.
 - One-click **Unlink current task**.
 - **Opt-in (beta — edits your task files)**: adds a lifetime `🍅 N` count to the task line each time you finish a focus session for it, placed before the Tasks date fields so they keep parsing (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`).
-- **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts and never touch a `🍅 N` you typed yourself.
+- **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts first. Repair and Remove only act on a marker sitting _after_ a task's date fields — the placement that breaks them, whoever typed it — and Remove all leaves alone a `🍅 N` you typed inside a task's own text (one at the very end of the line counts as a marker).
 
 ### 📊 Daily focus goal
 
@@ -85,7 +85,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 **Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
-- **Timer appearance**: **theme** (`Classic` default, `Frosted glass` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
+- **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. All of these also live in the timer panel and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).

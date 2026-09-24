@@ -377,7 +377,9 @@
 
 /* Every theme's artwork nodes are built once, for every theme, and carry
    `gp-art`. They are hidden by default and each theme shows only its own, in
-   its own block — so no theme's CSS ever names another theme's nodes. The old
+   its own block — so no theme's CSS ever names another theme's CLASS, or
+   another family's nodes (the two glass themes share one set of nodes; see
+   the Frosted glass 2 header). The old
    arrangement had frosted-glass hiding classic's three layers by name, which
    needs N x (N-1) rules to add a third theme and made "classic" whatever was
    left over rather than a theme in its own right. */
@@ -1593,9 +1595,1646 @@
   filter: blur(24px) saturate(155%) brightness(0.97);
 }
 
+/* Reduced motion, and the ONE thing in this otherwise-0.6.4 block that
+   0.6.5 changed. The three drift rules above are (0,2,0) — theme class
+   plus orb class — and a media query adds no specificity, so the plain
+   `.gp-orb` (0,1,0) this block carried from 0.2.0 to 0.6.4 lost to every
+   one of them: the orbs kept drifting for exactly the users who had asked
+   them not to, on every Obsidian, with nothing on screen to say so. The
+   selector is (0,3,0) now so it wins on specificity, not on source order,
+   and tests/designTokens.test.ts holds it there. DESIGN.md rule 4, third
+   incident. The newer glass theme carries its own copy of the fix; this
+   is a bug, not a look, so it was worth touching a frozen block for. */
 @media (prefers-reduced-motion: reduce) {
-  .gp-orb {
+  .gp-theme-frosted-glass .gp-glass-orbs .gp-orb {
     animation: none;
+  }
+}
+
+/* --- Frosted glass 2 theme ---
+   The fourth theme, and the second glass one: a frosted pane with a lit
+   glass rim, in front of four colour lobes — three drifting orbs plus a
+   smaller, still fourth lobe in the bottom-right. The orb colours
+   interpolate through the sunrise→sunset palette as --gp-progress
+   advances (set by the timer listener in GentlePomoView), and the rim is
+   mixed from the same endpoints so it turns with them. The lobes sit
+   behind a backdrop-filter pane that blurs them into soft, separable
+   balls; the rim, two specular glints and two corner blooms carry the
+   catch-light.
+
+   It grew out of Frosted glass and SHIPS BESIDE IT rather than over it:
+   that theme stays exactly as it was, because people chose it and some
+   of them will prefer it. Picking between them is opt-in — the registry
+   offers both and no stored setting moves.
+
+   The two share the view's glass DOM nodes — .gp-glass-orbs with its
+   three .gp-orb-N children, .gp-glass-pane, .gp-glass-highlight — which
+   is why this theme needed no TypeScript beyond its registry entry. They
+   share nothing else: every rule below is scoped to this theme's own
+   class, the keyframes are its own, and neither theme's CSS names the
+   other's class, so either block can be deleted whole and leave the
+   other working. Where a comment below cites Frosted glass it is citing
+   provenance — what a number used to be, and why this one differs — never
+   a dependency.
+
+   ONE TRAP, and it is for TEXT SEARCHES rather than for the cascade:
+   this theme's class has the older theme's as a PREFIX. Class selectors
+   match whole tokens, so the stylesheet itself is safe; but any code
+   that looks the older name up as text (includes, indexOf, a regex with
+   no boundary) matches every rule in this block too. Such a search needs
+   a token boundary after the name, or it will report this theme as that
+   one. */
+
+/* =====================================================================
+   Frosted glass 2 — Lit rim over Clear liquid orbs (the merge)
+   ---------------------------------------------------------------------
+   The maintainer picked two halves out of round two, verbatim: "I like
+   the 'glass' part in 'Lit rim,' and the background color balls part in
+   'Clear liquid.'" So this theme is Lit rim's glass — its palette rim,
+   its two torches, its inner wall, its directional pools, its blooms —
+   sitting over Clear liquid's orbs, which are smaller, tighter, more
+   saturated and joined by a fourth lobe in the bottom-right.
+
+   Everything below that is NOT one of those two halves is here because
+   putting them together forced it. There are five such changes and each
+   one is marked FORCED with the reason:
+
+     1. the face blur, which is now a token (--gp-lg-face-blur) because
+        it is the single number that decides whether the balls are
+        visible at all — Lit rim's 20px hides them, Clear liquid's 14px
+        shows them and stops looking like frost;
+     2. the pane's saturate, down from Frosted glass's 220% (Lit rim ran
+        225%) to 195%: what you see is the product of the orb
+        saturation and the face saturation, and 220%+ over 178% orbs is
+        poster paint (Clear liquid's own finding);
+     3. the tint under the clock, which had to be measured rather than
+        argued about — see THE TINT below;
+     4. the bottom-right pool, which Lit rim made a SHADOW on the
+        grounds that "there is no orb behind that corner". There is one
+        now. It stays a shadow and the reason is in that rule;
+     5. --gp-lg-pool-lift, 20% -> 30% in light mode only. A pool of a
+        colour is only visible against a face that is NOT that colour,
+        and the balls put orb 3's own colour, at strength, exactly where
+        orb 3's pool lies. The token block has the measurement.
+
+   Kept from Lit rim without a single number moved: the 3px conic rim
+   with its deep/lit swing and its two dark lips, the 1.5px torch cores
+   with their white shoulders, the 1px inner-wall arcs, the four
+   corner blooms, the pane's meniscus box-shadow, the @supports
+   discipline and the mask-less fallback.
+
+   Kept from Clear liquid without a single number moved: orb size 92%,
+   falloff 72%, offsets, blur 19 / saturate 178% / brightness 0.93
+   (dark 190% / 0.99), the fourth lobe at 66% bottom-right with its own
+   colour pair and its own blur, and both overtime desaturation rules —
+   restated here against the new base filters, orbs AND lobe.
+
+   Still rejected, and the evidence has not changed: any second
+   backdrop-filter (Clear liquid's lens band is the one thing of its
+   that is NOT here — it is the second filter, it is the nested
+   backdrop root under the desktop pulse, and on WebKit it may do
+   nothing at all); the SVG displacement map; any band wider than the
+   3px rim; a hard inner contact line; a lit perimeter all the way
+   round.
+
+   Cues, outside in, at 220px:
+     0 .. 1.5px   torch cores  — two white specular arcs on the outer
+                                 half of the rim, hot centre, steep ends
+     0 .. 3px     rim          — a masked conic ring of the palette that
+                                 swings between DEEP (faces turned away)
+                                 and LIT (under the torches); a dark lip
+                                 just past each torch
+     8px, 1px     inner wall   — two ARCS, only under the torches
+     0 .. ~12px   pools        — three directional coloured inset
+                                 shadows, one per orb, plus a shadow at
+                                 the bottom-right
+     corners      bloom        — four tight radials, none over the digits
+     the field    four balls   — three drifting orbs plus a still fourth
+                                 lobe, now readable as separate colours
+     middle 60%   the clock    — nothing above paints here
+
+   Budget: ONE backdrop-filter, on the pane — the same single filter the
+   older glass theme spends. No filter: url(), no clip-path, no blend
+   mode, no animation, no new duration, no .gp-timer-shape::after. Three
+   masked rings, all inside one @supports guard with a fallback that puts
+   a plain 1px border back, so an engine that cannot cut a ring gets no
+   ring rather than a white square over the clock.
+
+   How this ships (0.6.5): as its own block, beside Frosted glass rather
+   than over it. Nothing here substitutes for a rule of that theme's and
+   nothing here shadows one — the two selector families are disjoint, so
+   neither specificity nor source order can put them in contact. Every
+   rule below is scoped to this theme's class; `.gp-glass-orbs::before`
+   (the fourth lobe), the token block on `.gp-timer-shape`, the three
+   masked rings and the `@supports not` fallback have no counterpart in
+   the older theme at all. The sixteen `--gp-lg-*` tokens are on the
+   scoped-exception list in tests/designTokens.test.ts, and the same file
+   asserts that they stay declared on `.gp-timer-shape`, that every ring
+   writes its -webkit-mask lines before the standard ones, and that the
+   fallback border survives.
+   ===================================================================== */
+
+/* Pale-lavender base — keeps the composition luminous so it lands at
+   "twilight" not "midnight" by the end of a focus session. Declared as a
+   token rather than as an override of .gp-timer-shape: the theme now fills a
+   slot instead of out-specifying a shared rule. */
+.gp-theme-frosted-glass-2 {
+  --gp-font-display: var(--gp-font-rounded);
+  /* --- Ink: text that sits ON the artwork -------------------------------
+     Hardcoded before 0.6.1, on the assumption every theme paints a dark,
+     saturated square. A photograph or a pixel plate breaks that assumption,
+     so each theme now owns its own. Every shipped theme declares the same
+     values independently rather than sharing a default — that is what
+     "independent" costs, and it is the point.
+
+     These are the slots the deferred contrast work will retune: white on the
+     idle daylight gradient currently measures about 1.46:1, and once it is a
+     token the fix is one line per theme instead of six patched rules.
+
+     This theme is the first to take that work, in LIGHT mode, before it
+     shipped — so no one's existing look moves. While a session runs the
+     clock is hidden and the mode label and end time are the only text on
+     the square; over these pinks and lavenders they measured about 2.3:1
+     at worst. The label and end time go to full white (0.9 and 0.82 before),
+     and the shadows become a tight plum edge plus a soft plum halo: plum
+     rather than black, because a black halo on pink reads as dirt. A shadow
+     does not change the measured contrast — the deeper centre tint on the
+     pane does that — it is what makes thin white strokes hold their edge.
+     Dark mode's faces already clear 4.4:1, so the dark block below restates
+     the shared values rather than inheriting these. */
+  --gp-ink: #ffffff;
+  --gp-ink-dim: #ffffff;
+  --gp-ink-soft: rgba(255, 255, 255, 0.96);
+  --gp-ink-faint: var(--text-muted);
+  --gp-ink-badge: rgba(255, 255, 255, 0.92);
+  --gp-ink-shadow-lg: 0 1px 3px rgba(60, 24, 52, 0.26), 0 2px 14px rgba(60, 24, 52, 0.22);
+  --gp-ink-shadow: 0 1px 2px rgba(60, 24, 52, 0.34), 0 0 8px rgba(60, 24, 52, 0.22);
+  --gp-ink-overtime: #ff6b6b;
+  --gp-ink-overtime-glow: 0 0 15px rgba(255, 107, 107, 0.5);
+
+  /* A dark veil between the artwork and the text, 0 to 1. Zero here, as
+     on the other two gradient/glass themes — their artwork is controlled,
+     so they need none; only the raster theme spends any. It is the only
+     lever that makes an ARBITRARY supplied picture safe for white text,
+     which is why it exists before the theme that needs it. */
+  --gp-scrim-alpha: 0;
+  --gp-shape-base: #ede5f3;
+  --gp-shape-radius: var(--gp-radius-shape);
+  --gp-shadow-rgb: 0, 0, 0;
+}
+
+/* --- The room the rim reflects, registered ---------------------------
+   `--gp-lg-env` below is the theme's ONE read of `--background-primary`
+   (once per mode block, and a test pins the count at two). It is
+   registered as a `<color>` because `var()` only covers the variable
+   being MISSING; nothing covers it being present and not a colour. A
+   theme writing `--background-primary: none`, or a gradient, or an
+   `image-set()`, substitutes literally into the `color-mix()` below,
+   which is then invalid at computed-value time — and that expression
+   feeds a conic-gradient STOP, where one bad stop invalidates the whole
+   gradient. Unregistered, such a theme does not get a duller rim; it
+   gets NO rim, silently. Registered, the bad value is dropped at parse
+   time and the initial value stands.
+
+   It sits INSIDE this theme's block, unlike `@property --gp-progress` at
+   the top of this file, and for the same reason that one belongs there:
+   registration is document-global, so the rule is "register
+   where the consumer is". `--gp-progress` is read by every theme;
+   `--gp-lg-env` is read by this theme and nothing else, so deleting this
+   section should take the registration with it.
+
+   The initial value is light mode's default. A hostile value in DARK
+   mode therefore lands on #ffffff and the shade comes out mid-grey
+   rather than near-black — cosmetic, and strictly better than the
+   alternative, which is no rim at all. `inherits: true` because the
+   token is declared on `.gp-timer-shape` and read by its pseudo-elements
+   and descendants. */
+@property --gp-lg-env {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #ffffff;
+}
+
+/* --- Reflection palette, and the two blurs --------------------------
+   These MUST stay declared at or below .gp-timer-shape, never on the
+   theme root or .gp-root. A custom property's var() references resolve
+   on the element it is DECLARED on, and --gp-progress is set inline on
+   .gp-timer-visual — declared any higher, all three mixes silently
+   freeze at progress 0 and the rim never reaches twilight. The two blur
+   tokens have no such constraint of their own, but they live here so
+   that a reader retuning this theme finds every number in one block,
+   and so that nobody is tempted to move the block up to the root
+   "because blurs are global".
+
+   The endpoint literals are the three .gp-orb-N pairs, verbatim (light
+   here; dark mode's own warm AND cool ends in the dark block). They cannot be read
+   from the orb rules — those declare --gp-orb-warm on the orbs
+   themselves, which are descendants — so retuning an orb means
+   retuning the same hex here, or the rim drifts from what is behind it.
+
+   CONFIRMED for this merge: Clear liquid changed the orbs' size,
+   falloff, offsets and filter but NOT one colour endpoint. #f6d365 /
+   #a594c9, #ff8c9c / #e0a5bd, #ff9145 / #b8c5e8 and the three dark
+   warms #ffae40 / #ff9333 / #ff7530 are byte-identical between the two
+   candidates and Frosted glass, so the three mixes below still name
+   exactly what is behind each corner and needed no edit. (The dark COOL
+   ends are this theme's one palette departure — Frosted glass shares
+   light mode's there and this one does not; see the dark .gp-orb-N rules
+   below, and note that the dark mixes moved with them.) The fourth
+   lobe is the one thing on the face with no mix of its own up here —
+   deliberately: the rim gives that corner a shadow, not a colour, so
+   there is nothing to keep in step. */
+.gp-theme-frosted-glass-2 .gp-timer-shape {
+  /* orb 1, top-left: sunny yellow -> soft lavender */
+  --gp-lg-1: color-mix(in oklab, #f6d365, #a594c9 calc(var(--gp-progress, 0) * 100%));
+  /* orb 2, top-right: warm pink -> dusty rose */
+  --gp-lg-2: color-mix(in oklab, #ff8c9c, #e0a5bd calc(var(--gp-progress, 0) * 100%));
+  /* orb 3, bottom-left: sunset orange -> soft periwinkle */
+  --gp-lg-3: color-mix(in oklab, #ff9145, #b8c5e8 calc(var(--gp-progress, 0) * 100%));
+
+  /* The two ends the rim swings between.
+     deep = the local palette pulled toward near-black: the faces that
+            turn away from the light. This is the stop that makes a
+            reflection legible on a BRIGHT face — in light mode there is
+            no brightness headroom left, so the rim earns its contrast
+            downward, not upward.
+     lift = how much palette is tinted into the specular white under
+            the torches. Zero is a UI stroke; too much and the glint
+            stops being light. */
+
+  /* THE SHADE IS THE ROOM, DARKENED. Through most of this theme's design
+     the deep end was a fixed near-black plum — #1b1220 in light, #090610
+     in dark — and the maintainer's report of it is exactly what that is:
+     "those parts still look too 'black' in the light theme... if users
+     use themes with background colors other than white and black, our
+     timer may not look good."
+
+     Two earlier rounds pulled the darks' ALPHA down (that is
+     --gp-lg-rim-dark, below) and the answer both times was "not enough",
+     which is the correct answer, because alpha was the wrong axis. A
+     near-black shade on a white or cream page reads as INK — a drawn
+     outline — at every alpha, for the same reason each time: nothing in
+     the room it sits in is that colour. Real glass has no dark of its
+     own. Its shaded side is the surrounding surface, darker: grey on a
+     white desk, warm grey on a cream one, slate on a blue-grey one, black
+     only in a black room.
+
+     So the shade is the ground darkened, in oklab, which is what makes
+     it a RATIO on perceptual lightness with the ground's hue surviving
+     (L_shade = (1 - shade) x L_ground). In srgb the same mix drops a warm
+     ground's chroma faster than its lightness and the shade arrives grey,
+     which is the failure this is fixing.
+
+       ground                        shade
+       #ffffff white                 neutral grey
+       #f4ecdc cream                 warm grey
+       #e9e9ec light grey            cool grey
+       #2e3440 Nord                  dark slate, not purple-black
+       #1e1e1e Obsidian dark         near-black (within render noise of
+                                     the fixed #090610 it replaced)
+       #000000 pure black            black
+
+     --gp-lg-env is the single read (see the @property above it); the
+     fallback in the var() is the matching Obsidian default, so a leaf
+     that somehow resolves no --background-primary renders white's shade
+     in light mode and #1e1e1e's in dark rather than nothing.
+
+     --gp-lg-shade is how far toward black, --gp-lg-deepen is how much of
+     that shade the five deep rim stops take, and the two pull in the SAME
+     direction — so they must be retuned one at a time. An earlier round
+     moved both (a lighter shade under more deepen) and the band did not
+     move at all: it is one lever pulled twice with opposite signs.
+
+     WHY 62 / 34 rather than a lighter shade carrying more room. Relief,
+     measured as the darkest pixel of the band minus the face 6-10px
+     inside it, oklab L, white ground, at the five deep stops:
+
+       shade / deepen    p0 right face   p0 yellow face   p1 right face
+       fixed plum ink        .073             .072            .084
+       45% / 44%             .031             .033            .041
+       52% / 38%             .037             .036            .047
+       62% / 30%             .041             .035            .049
+       62% / 34%  (first cut)        .046   .044   .053
+       40% / 34%  SHIPPED — the maintainer asked for "even lighter,
+                  still very visible" after seeing 62%; chosen from
+                  62 / 50 / 40 / 30 rendered on white, cream and grey,
+                  where 30 is where the bottom-right shadow starts to
+                  fade at session end on pure white.
+
+     Band chroma at the same three sites rises rather than falls (p0 right
+     face .089 -> .093 against a face at .093, p0 yellow face .082 ->
+     .089) — which is the actual test of the report: what left is the
+     grey-violet, not the edge. Every row above is lighter than the fixed
+     plum ink; 45/44 is lighter still and was rejected on the two hard
+     cases, the p1 twilight right face (.041, where the edge starts to
+     dissolve at 1x on a white theme) and the p0 yellow orb (.033).
+
+     The other thing 45/44 lost was dark mode. The budget for both dark
+     grounds is 8/255 against the fixed plum ink, since neither was ever
+     the complaint: 62/34 measures max 8 on Obsidian dark and max 8 on
+     Nord, while 45/44 measures 11 and 14 — the shade there is lighter
+     than the fixed near-black it replaced, and on a dark page that reads.
+     Light grounds move by up to 24/255 across about 4% of the pixels,
+     i.e. the rim and nothing else.
+
+     WHAT MUST NOT FOLLOW IT. The exception is the shade and only the
+     shade. The palette (--gp-lg-1/2/3), the face tint, the orbs, the
+     fourth lobe, the three colour pools' HUES, the specular whites and
+     the drop shadow outside the square all stay independent of the UI's
+     colours. A theme that paints its own picture and then asks the UI
+     what colour to be is chrome, not artwork; the one place that rule
+     bends is the place where the artwork is genuinely REFLECTING the
+     room rather than choosing a colour. DESIGN.md carries the same
+     sentence, and the two-read test is what holds it.
+
+     A theme that sets --background-primary to a TRANSLUCENT colour (a
+     few do, for a window-vibrancy effect) gets a translucent shade, so
+     the darks fade out rather than turning black — the safe direction,
+     and the only one available without reading a second variable. */
+  --gp-lg-env: var(--background-primary, #ffffff);
+  --gp-lg-shade: 40%;
+  --gp-lg-deep: color-mix(in oklab, var(--gp-lg-env), #000000 var(--gp-lg-shade));
+  --gp-lg-deepen: 34%;
+
+  /* The four sites that are PURE shade — the two dark lips just past the
+     glints, the bottom-right shadow pool and the pane's soft inner lip —
+     do not take the shade neat. They take the LOCAL colour deepened by
+     it, because each one sits over a saturated orb and a neutral grey at
+     12-16% over orange reads grey-brown, i.e. muddy, where the same
+     weight of deepened orange reads as the edge of the orange. The five
+     rim stops already work this way (they mix the palette with the deep
+     at --gp-lg-deepen); these four had literal near-blacks instead, and
+     that is the difference the review kept finding at 4x.
+
+     -2 is orb 2's colour (top-right, where the 30deg lip falls), -3 is
+     orb 3's (bottom-left and the bottom-right quadrant, where the 171deg
+     lip, the pool and the inner lip fall). There is no -1 because
+     nothing that is pure shade sits over orb 1. Dark mode declares the
+     same two names at a much higher shade fraction — see that block.
+
+     Each lip fades to the bare `transparent` keyword rather than to the
+     same colour at alpha 0. That is not a shortcut and it was measured,
+     not assumed: gradient stops interpolate premultiplied, so the two
+     forms render identically — max channel difference 0 on all five
+     grounds at p0 and p1 — and naming the colour twice is one more copy
+     to drift. */
+  --gp-lg-deep-2: color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) 50%);
+  --gp-lg-deep-3: color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) 50%);
+  --gp-lg-lift: 34%;
+
+  /* Pools: alpha of the colour gathered inside the rim, and how far it
+     is lifted toward white. Light caught in an edge is brighter than the
+     field it came from; without the lift a pool is indistinguishable
+     from "the orb got stronger". Reach is in cqi on the shadows
+     themselves so the 150px square keeps the same proportion.
+
+     RETUNE, and the only one the stronger orbs forced. Lit rim's own
+     comment above turned out to be a prediction: with a flat wash
+     behind a corner, a 20% lift was enough to tell the pool apart from
+     the face; with a sharp, saturated ball sitting in that same corner,
+     it is not, because the pool and the face are now the SAME colour at
+     full strength. Measured as the colour distance between a sample 7px
+     inside the edge (the pool) and one 26px in (the face), light mode,
+     bottom-left corner — the worst case, because orb 3 is the biggest
+     and reaches furthest along that edge:
+
+       Lit rim, the older orbs      p0 16.4   p1 15.8
+       this theme, lift 20%         p0  6.7   p1  7.3   pool has vanished
+       this theme, lift 30%         p0 11.2   p1 10.3   reads again
+       this theme, lift 38% + pool
+         62%                        p0 14.1   p1 11.2   and a pale halo
+                                                        appears along the
+                                                        top-left inner
+                                                        edge — the milky
+                                                        frame round one
+                                                        spent a week
+                                                        removing
+
+     So 30%, and the pool ALPHA does not move: the fix has to be in
+     luminance, not in more colour, because more of a colour the face is
+     already saturated with changes nothing. Dark mode declares its own
+     --gp-lg-pool-lift (8%) and is deliberately not touched — there the
+     same orbs made the pools STRONGER, not weaker (bottom-left distance
+     46.7 -> 67.9), because a bright edge on a dark ground separates on
+     luminance for free.
+
+     The other candidate retune was --gp-lg-deepen, on the theory that
+     the rim's DEEP stops lose contrast against a brighter face. They do,
+     a little: the swing from the long torch to the right-face deep stop
+     falls from 87 to 78 luminance units in light p0. 44% -> 50% recovers
+     under 2 of those 9 units, because at that point what sets the stop's
+     luminance is mostly what is behind it. Not worth a token move; the
+     swing is still 78 units on a rim 3px wide, which is not subtle. */
+  --gp-lg-pool: 54%;
+  --gp-lg-pool-lift: 30%;
+
+  /* FORCED (1), and the received wisdom about this number turned out to
+     be wrong, so the number is a token and the measurement is here.
+
+     The brief for this merge — and my own first draft of this comment —
+     said the balls are only visible below about 18px of face blur, so
+     the value had to come down into the 14-17 range to show them at
+     all. Measured, that is false. Across light p0, light p0.5 and dark
+     p0.5, structure on the face (mean colour distance from the face's
+     own mean, and the largest colour difference between the four
+     quadrant centres) reads:
+
+       Frosted glass, unchanged      dE 36.9 / 22.5 / 19.9  lobes 42/18/21
+       20px    + these orbs          dE 48.6 / 26.0 / 31.0  lobes 90/30/36
+       16px    + these orbs          dE 50.5 / 27.1 / 31.7  lobes 96/32/37
+       14px    + these orbs (CL)     dE 49.8 / 29.0 / 28.5  lobes 89/31/35
+
+     Almost the entire gain is the ORBS — 92% instead of 110%, falloff
+     72% instead of 85%, 178% saturation instead of 140%. The face blur
+     moves the result by about 4%, i.e. the four balls are already
+     separable at 20px and clearing the face further buys detail nobody
+     is looking for on a 220px square. Legibility says the same thing:
+     16px and 20px differ by about one luminance unit under the clock,
+     which is inside the noise.
+
+     So the value is chosen on FROST, not on the balls. 17px: two down
+     from Lit rim's 20 (the glass the maintainer picked, and a theme
+     called Frosted should stay frost), three up from Clear liquid's 14
+     (which reads as clear glass and changes what the theme IS, not just
+     how much of it you can see through). It is the largest value that
+     still visibly sharpens the two lobes' meeting line at 1x against
+     Lit rim's 20 — and if the maintainer disagrees, this is one number
+     and the lineup renders it at 14 and 20.
+
+     A token rather than two literals because the value appears twice
+     (standard + -webkit-) and the two MUST agree: a -webkit- line left
+     at the old number is invisible on every Chromium-based Obsidian
+     and wrong on exactly the WebKit devices nobody testing this has.
+     Declared here, NOT on the theme root, for the reason in the block
+     header — and read only on the pane, which is a descendant. 17px was
+     chosen from 14 / 17 / 20 rendered side by side: 14 shows the balls
+     crispest but the rim starts to merge with the yellow orb beneath it,
+     20 is the calmest frost and the balls soften back toward a wash. */
+  --gp-lg-face-blur: 17px;
+
+  /* The orbs' own blur, exposed because it has to move WITH the face
+     blur, not against it: what the eye sees is one convolution after
+     another, so clearing the face by 4px and softening the balls by 4px
+     is a no-op with extra steps. It is a token for a second reason —
+     this theme's four break-overtime rules, in the Overtime Visuals
+     section further down, are FULL filter
+     overrides that restate the blur, and that restatement has silently
+     reverted the blur on every previous round of this theme. With a
+     token they cannot disagree; without one, only a reader who runs a
+     break into overtime finds out.
+
+     19px is Clear liquid's number, unchanged. The fourth lobe runs 2px
+     softer (see its rule) because it is the still water the other three
+     drift over and a hard-edged still lobe reads as a stain. */
+  --gp-lg-orb-blur: 19px;
+
+  /* How much of the rim's OWN white the dark mode paints, 0-1. A pure
+     multiplier on the specular whites and on nothing else: the two torch
+     cores and their white shoulders, the inner-wall arcs, the four corner
+     blooms, the pane's three inset white lines and the white-mixed (lit)
+     stops of the 3px rim. It does NOT touch the dark lips, the deep stops,
+     the colour pools, the face tint or the drop shadow outside the square —
+     the complaint is the light ON the border, not the light around it, and
+     scaling the darks with it would flatten the rim's relief instead of
+     dimming it.
+
+     1 in light mode, so the knob cannot move a light frame: calc(0.48 * 1)
+     resolves to 0.48. The light rules do not read the token at all — it is
+     declared here so the two modes declare the same set, which is what the
+     rim-token test checks. */
+  --gp-lg-rim-light: 1;
+
+  /* How much of the rim's OWN dark the LIGHT mode paints, 0-1. The mirror of
+     --gp-lg-rim-light above, and it scales the opposite half of the relief:
+     the five DEEP stops of the 3px rim (the faces turned away from the two
+     torches), the two dark lips just past the glints, the bottom-right shadow
+     pool, and the pane's soft inner lip. It does NOT touch the whites or the
+     glints (--gp-lg-rim-light owns those), the three colour pools, the face
+     tint, the orbs, the fourth lobe, or the drop shadow outside the square —
+     the report is that the border's dark side is too obvious, not that the
+     square is too heavy.
+
+     Why it exists at all, and why the lever is ALPHA rather than
+     --gp-lg-deepen: on a pale lavender face the deep stops are the ONLY thing
+     giving the rim contrast (the token block above says so — "the rim earns
+     its contrast downward, not upward"), so they cannot simply be deleted.
+     Scaling the stop's alpha lets more of the face through the band and dims
+     it toward the face it sits on; scaling --gp-lg-deepen instead would keep
+     the band fully opaque and merely recolour it toward the palette, which
+     turns the deep stops into a second saturated ring rather than a shadow —
+     and deepen cannot reach the lips, the shadow pool or the inner lip at all,
+     so it would need alpha for those anyway and the rim would come apart in
+     two directions. Measured both; the notes carry the numbers.
+
+     1 in dark mode, and the knob cannot move a dark frame either — in fact
+     the dark rules restate their own darks as literals, so they never read
+     this token. It is declared there so the two modes declare the same set,
+     which is what the rim-token test checks.
+
+     AND 1 IN LIGHT MODE TOO, since the shade work above. The 0.8 was the
+     second of the two knob rounds the maintainer called "not enough",
+     and the shade's own comment says why it could not have been enough:
+     the problem was the dark's HUE, not its strength, and 20% off the
+     alpha of the wrong colour is still the wrong colour. With the dark
+     side made of the room, the light-mode alphas go back to the values
+     the relief was drawn at — 0.12 / 0.16 — and every measurement in
+     this block is taken there. The knob stays wired: every light dark
+     still multiplies by it, so if some ground needs the whole shaded
+     side taken down it is one number and nothing else moves. It is
+     simply not carrying the fix any more. */
+  --gp-lg-rim-dark: 1;
+}
+
+.gp-theme-frosted-glass-2 .gp-glass-orbs,
+.gp-theme-frosted-glass-2 .gp-glass-pane,
+.gp-theme-frosted-glass-2 .gp-glass-highlight {
+  display: block;
+}
+
+.gp-theme-frosted-glass-2 .gp-glass-orbs {
+  position: absolute;
+  inset: 0;
+  z-index: 1; /* above the (hidden) gradient layers, below the pane */
+  border-radius: inherit;
+}
+
+/* =====================================================================
+   THE BALLS — Clear liquid's orbs, verbatim
+   ---------------------------------------------------------------------
+   Smaller (92% against Frosted glass's 110%), tighter falloff
+   (transparent at 72% not 85%), less blur (19px not 24px), more
+   saturation (178% not 140%), offsets pulled in so the lobes stay
+   distinct. Only the definition changes; every colour endpoint is that
+   theme's own, so at true size this is Frosted glass with the mud taken
+   out.
+
+   This is also what the rim needed. Lit rim computes its colour from
+   the palette rather than sampling the backdrop, and the honest
+   criticism of that construction was that the pooled corners look like
+   they come from something only if there IS something — a flat wash
+   behind a corner makes the pool read as "the orb got stronger". Four
+   separable lobes give each pool a source.
+
+   The drift is Frosted glass's, unchanged. The three gp-glass2-drift-N
+   keyframes below are byte-identical copies of that theme's own — see
+   the note at the keyframes for why they are copied rather than shared —
+   and the three `animation:` shorthands carry its durations verbatim
+   (65s / 58s / 72s) rather than three new duration literals. No
+   animation is added, removed or retimed by this theme.
+   ------------------------------------------------------------------ */
+.gp-theme-frosted-glass-2 .gp-orb {
+  position: absolute;
+  width: 92%;
+  height: 92%;
+  border-radius: 50%;
+  /* Frosted glass runs blur(24px) saturate(140%) brightness(0.9) here;
+     this is the sharper, more saturated version. This theme's four
+     break-overtime rules (Overtime Visuals section, further down)
+     RESTATE this whole filter — they are full
+     overrides, not partial ones — which is why the blur is a token
+     rather than a literal. */
+  filter: blur(var(--gp-lg-orb-blur)) saturate(178%) brightness(0.93);
+  opacity: 0.95;
+  transition: background var(--gp-dur-ambient) ease-out;
+}
+
+/* Warm/cool endpoints are exposed as custom properties per orb so the
+   dark-mode block below can swap BOTH endpoints — fireplace warms, and
+   in this theme deeper cools too — without restating the whole
+   radial-gradient. */
+.gp-theme-frosted-glass-2 .gp-orb-1 {
+  --gp-orb-warm: #f6d365; /* warm gold */
+  --gp-orb-cool: #a594c9; /* soft lavender */
+  top: -22%;
+  left: -22%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 72%
+  );
+  animation: gp-glass2-drift-1 65s ease-in-out infinite;
+}
+
+.gp-theme-frosted-glass-2 .gp-orb-2 {
+  --gp-orb-warm: #ff8c9c; /* warm pink */
+  --gp-orb-cool: #e0a5bd; /* dusty rose */
+  top: -14%;
+  right: -22%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 72%
+  );
+  animation: gp-glass2-drift-2 58s ease-in-out infinite;
+}
+
+.gp-theme-frosted-glass-2 .gp-orb-3 {
+  --gp-orb-warm: #ff9145; /* sunset orange */
+  --gp-orb-cool: #b8c5e8; /* soft periwinkle */
+  bottom: -22%;
+  left: -6%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, var(--gp-orb-warm), var(--gp-orb-cool) calc(var(--gp-progress, 0) * 100%))
+      0%,
+    transparent 72%
+  );
+  animation: gp-glass2-drift-3 72s ease-in-out infinite;
+}
+
+/* The fourth lobe: a DEEPER, more saturated pool in the bottom-right,
+   which the three orbs leave bare. Two jobs — it stops that
+   corner falling to flat --gp-shape-base once the orbs are smaller, and
+   it is the dark end of the range, which is what gives the other three
+   somewhere to be bright against. Same palette family, one step down in
+   value. Deliberately NOT animated: it is the still water the other
+   three drift over, and a fourth drift would start to look busy in the
+   corner of the eye.
+
+   It has no --gp-lg-N mix of its own up in the token block, and that is
+   deliberate rather than an omission: the rim's bottom-right is a
+   shadow, so no painted stop reads this colour and there is nothing to
+   keep in step. If a future round ever lights that corner, this pair
+   (#e2673f / #6c72bd, dark #c94f22 / #5b5fa8) is the one it must
+   duplicate.
+
+   +2px of blur over the other three because it never moves. A still
+   lobe with the same edge as a drifting one reads as a stain on the
+   glass rather than as light behind it. */
+.gp-theme-frosted-glass-2 .gp-glass-orbs::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  border-radius: 50%;
+  width: 66%;
+  height: 66%;
+  right: -16%;
+  bottom: -18%;
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, #e2673f, #6c72bd calc(var(--gp-progress, 0) * 100%)) 0%,
+    transparent 70%
+  );
+  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(165%) brightness(0.9);
+  opacity: 0.78;
+  transition: background var(--gp-dur-ambient) ease-out;
+}
+
+/* Each orb traces a soft 4-waypoint loop inside the visible area so the
+   motion reads as gentle drift rather than back-and-forth bobbing.
+   Different rotation directions + different durations (65s/58s/72s) keep
+   the trio from syncing — they pass each other instead.
+
+   THESE THREE ARE BYTE-IDENTICAL COPIES of Frosted glass's own drift
+   keyframes, under this theme's names, and the duplication is deliberate.
+   @keyframes are document-global and have no theme scope, so a shared set
+   would be the one thing the two blocks held in common: delete the other
+   theme's block, or retune its drift, and this theme's orbs would stop or
+   change with it, with nothing in this block to say why. The duplicated
+   lines buy the property the registry promises — a theme is an entry plus
+   a self-contained CSS block, and either block can be removed alone. If
+   you retune one theme's drift, the other's is meant NOT to follow. */
+@keyframes gp-glass2-drift-1 {
+  /* clockwise loop, anchored top-left */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(12%, 3%) scale(1.03);
+  }
+  50% {
+    transform: translate(15%, 14%) scale(1.05);
+  }
+  75% {
+    transform: translate(3%, 12%) scale(1.03);
+  }
+}
+
+@keyframes gp-glass2-drift-2 {
+  /* counter-clockwise loop, anchored top-right */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(-12%, 4%) scale(1.04);
+  }
+  50% {
+    transform: translate(-15%, 12%) scale(1.06);
+  }
+  75% {
+    transform: translate(-4%, 14%) scale(1.04);
+  }
+}
+
+@keyframes gp-glass2-drift-3 {
+  /* diagonal sweep, anchored bottom */
+  0%,
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(10%, -10%) scale(1.03);
+  }
+  50% {
+    transform: translate(-3%, -14%) scale(1.05);
+  }
+  75% {
+    transform: translate(-12%, -4%) scale(1.03);
+  }
+}
+
+/* --- The face --------------------------------------------------------
+   Still the theme's ONE backdrop-filter.
+
+   FORCED (1): the blur is now var(--gp-lg-face-blur), 17px, down from
+   Lit rim's 20 and up from Clear liquid's 14 — the reasoning is on the
+   token. Lit rim could afford 20 because its rim paints its own colour
+   and needs nothing from the face; the balls are the half of this merge
+   that lives ON the face, and 20px is where they stop existing.
+
+   FORCED (2): saturate 195%, down from Frosted glass's 220% (Lit rim ran
+   225%). What the eye receives is the product of the orb saturation and
+   the face saturation. The orbs went from that theme's 140% to 178%, so
+   holding the face at 220% or more pushes the light p0
+   frame past orange into poster paint. 195% is Clear liquid's measured
+   number against these same orbs. Anything the rim loses by this it
+   does not miss: its stops are colour-mix()es of the palette, computed,
+   not sampled.
+
+   FORCED (3): the tint stops being flat, and it is the one choice in
+   this theme that was decided by a number rather than by an eye.
+
+   THE TINT. Lit rim kept Frosted glass's flat rgba(40,30,50,0.10) and
+   could afford to: its face is a 20px wash of pastel, and it measured
+   2-5 luminance units DARKER than that square under the clock. These
+   orbs are sharper and more saturated, so the same flat tint measured
+   7.5 units LIGHTER than Frosted glass in light p0 (150.4 vs 142.9) and
+   the white-on-face contrast ratio fell from 2.91 to 2.70. That is a
+   legibility regression on the one element nothing may compete with,
+   and the balls are what caused it, so the balls have to pay for it.
+
+   Measured over the central 60% of the square, background pixels only
+   (digits excluded), light and dark, at p0 / p0.5 / p1 / running:
+
+     tint                    light p0 mean / CR    light p1 mean / CR
+     Frosted glass           142.9 / 2.91          168.5 / 2.46
+     flat 0.10 (Lit rim)     150.4 / 2.70          173.6 / 2.30   worse
+     radial 0.15 centre      146.2 / 2.85          168.6 / 2.44   worse
+     radial 0.17 centre      144.1 / 2.93          166.0 / 2.51   PASS
+     radial 0.20 (Clear liq) 140.8 / 3.06          162.0 / 2.63   more
+                                                                  than
+                                                                  needed
+
+   0.17 is therefore the SMALLEST tint that keeps the clock at least as
+   readable as Frosted glass's square in every light frame, and it clears
+   it in all four. The pre-release review then took the light centre to
+   0.25 on purpose, because "no worse than Frosted glass" still meant
+   about 2.3:1 at worst for white over these pinks: worst-case contrast
+   under the clock 2.25 -> 2.56, under the running label and end time
+   2.29 -> 2.64, with the other gradient stops raised by about the same
+   factor so the falloff keeps its shape. It is still under 3:1; the ink shadow in the theme
+   root does the rest of the work. Dark mode needed none of this — the sharpened orbs are
+   darker there, so even the flat tint measured 9 units better than that
+   square — so the dark centre is 0.22 rather than Clear liquid's 0.27,
+   which is the same "smallest that passes" rule applied to a mode that
+   had already passed.
+
+   RADIAL rather than a stronger flat value, and this is the part that
+   is about the rim rather than about the clock: a flat tint dense
+   enough to fix the middle also greys the OUTER 10%, where Lit rim's
+   three colour pools live, and those pools are the whole reflection.
+   The radial is at its densest exactly under the digits and at zero by
+   the rim, so it pays for the clock out of the region that has contrast
+   to spare and hands the edge back untouched. Warm plum rather than
+   Frosted glass's blue-violet: a cool tint over the sunrise palette
+   turns the mid-session frame grey.
+
+   The honest cost the tint does NOT fix, because no tint can: the
+   ground under the clock is more VARIED than Frosted glass's. The 5-95
+   percentile spread across the clock region goes from 39 to 44 in light
+   p0 and from 26 to 29 in dark. That is four separable balls instead of
+   one wash, which is what was asked for; a tint scales the whole region
+   and cannot flatten it. It is the one measurement in this theme that is
+   worse than Frosted glass's and it is worth the maintainer's eye at 1x.
+
+   There is no 1px white border here, unlike Frosted glass. The edge is a
+   drawn ring instead, and a uniform stroke under it is exactly the
+   "picture frame" note from round one. A 1px inset box-shadow at a tenth
+   alpha stays as the FLOOR — it paints inside the box, so unlike a real
+   border it does not push
+   the ring pseudo-elements in by a pixel and leave their inherited
+   radius a pixel too big. The rest of the box-shadow is the meniscus: a
+   bright line where the top face catches light, a returned (never
+   black) line at the bottom, and a soft inner lip for the rim and the
+   torches to be bright against. Unchanged from Lit rim. */
+.gp-theme-frosted-glass-2 .gp-glass-pane {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  background: radial-gradient(
+    118% 112% at 50% 45%,
+    rgba(44, 26, 42, 0.25) 0%,
+    rgba(44, 26, 42, 0.21) 32%,
+    rgba(44, 26, 42, 0.095) 62%,
+    rgba(44, 26, 42, 0.018) 84%,
+    rgba(44, 26, 42, 0) 100%
+  );
+  backdrop-filter: blur(var(--gp-lg-face-blur)) saturate(195%);
+  -webkit-backdrop-filter: blur(var(--gp-lg-face-blur)) saturate(195%);
+  border: 0;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.1),
+    /* the pane's soft inner lip: orb 3's colour deepened by the room,
+       at the alpha it was drawn at. An earlier cut used a literal
+       rgba(30, 18, 40, ...) here. */
+    inset 0 0 5px -1px
+      color-mix(in srgb, var(--gp-lg-deep-3) calc(16% * var(--gp-lg-rim-dark)), transparent);
+}
+
+/* --- 1. Colour pooling ----------------------------------------------
+   The reflection itself: three directional coloured inset shadows, each
+   offset AWAY from the corner it lights, so orb 1's colour gathers on
+   the top and left edges near the top-left corner, orb 2's at the
+   top-right, orb 3's at the bottom-left — and a plain SHADOW at the
+   bottom-right.
+
+   FORCED (4), and it is the one place the two halves genuinely
+   disagree. Lit rim's reason for making that corner a shadow was "there
+   is no orb behind it": colour, light, colour, shadow around the
+   perimeter, because a rim lit all the way round is a bezel. Clear
+   liquid's fourth lobe puts a deep ember exactly there, so the premise
+   is gone — but the CONCLUSION is not, and the shadow stays. Two
+   reasons: the dark run is what makes the two torches read as light
+   sources rather than as decals, and the lobe is the DEEPEST thing on
+   the face, so a shadow over it is the one pool that still reads as
+   shadow rather than as a fifth colour.
+
+   What changed is the alpha, 0.16 -> 0.12 in light and 0.22 -> 0.17 in
+   dark, and the honest version of why: the corner is now darker than
+   the face by MORE than Lit rim ever made it (bottom-right band against
+   the face, dark p1: -64 luminance units there, -80 here) because the
+   lobe brings its own darkness, so the painted shadow no longer has to
+   supply all of it. The change is worth about half a luminance unit on
+   its own — 0.12 and 0.16 are indistinguishable side by side at 3x, and
+   I looked. It is here to keep the corner's TOTAL darkening at roughly
+   what Lit rim intended, not because 0.16 looked wrong. If a future
+   round drops the fourth lobe, put both numbers back.
+
+   Inset shadows rather than a masked band, on purpose: they follow the
+   35px arc for free, they have a soft inner falloff (a band has a hard
+   inner boundary, which is what reads as a tray), and they cost no
+   mask, no filter and no extra paint layer.
+
+   Read the numbers as: spread -5cqi shrinks the shadow box, the 8cqi
+   offset pushes it back out on two edges, so a 3cqi strip of colour
+   survives against those edges and is blurred 8cqi inward — about 14px
+   of visible reach at 220px, 10px at 150px, gone long before the middle
+   60%. In cqi so the compact square gets the same proportion, not the
+   same pixels (the candidates that used px here were coloured frames at
+   150px).
+
+   The pool alphas do NOT rise in dark mode — the first candidate to try
+   that produced a copper tray. */
+.gp-theme-frosted-glass-2 .gp-glass-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    /* top-left, orb 1 */
+    inset 8cqi 8cqi 8cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-1), #ffffff var(--gp-lg-pool-lift)) var(--gp-lg-pool),
+        transparent
+      ),
+    /* top-right, orb 2 — a shade quieter: its cool end is a mauve pink
+       that reads as a pink border against a periwinkle face at p1 */
+    inset -8cqi 7.5cqi 8cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-2), #ffffff var(--gp-lg-pool-lift))
+          calc(var(--gp-lg-pool) * 0.76),
+        transparent
+      ),
+    /* bottom-left, orb 3 — the biggest footprint, reaches a little
+       further along the bottom */
+    inset 7cqi -8.5cqi 9cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-3), #ffffff var(--gp-lg-pool-lift))
+          calc(var(--gp-lg-pool) * 0.92),
+        transparent
+      ),
+    /* bottom-right: shadow, over the fourth lobe rather than over bare
+       base — hence 0.12, not Lit rim's 0.16. */
+    inset -7cqi -7cqi 8cqi -5cqi
+      color-mix(in srgb, var(--gp-lg-deep-3) calc(12% * var(--gp-lg-rim-dark)), transparent);
+}
+
+/* --- 2 + 3. The rim, the torches and the inner wall ------------------
+   All three are masked rings (border box MINUS content box). If the
+   engine cannot cut a ring, a ring paints as a FILLED rounded square
+   over the clock, so they live inside this guard and the fallback at
+   the bottom puts a plain 1px border back instead.
+
+   Nothing in this section moved for the merge. It was retuned against
+   the new orbs and did not need it: the rim's stops are computed from
+   the palette, so a sharper ball behind a corner changes what the pool
+   sits on but not what the rim paints, and the two torches sit at 322deg
+   and 139deg — the top-left corner and the bottom-right — where the
+   sharpened orbs are respectively brightest and darkest, which is the
+   same relationship they had before. The one thing that WAS checked and
+   nearly moved is the 172deg dark lip past the short torch: it now
+   falls over the fourth lobe, and a dark stop over a dark lobe is the
+   place a lip can disappear. Measured at 1x it survives, because the
+   lip's contrast is against the torch beside it and not against the
+   face beneath it. Left alone.
+
+   Order of the mask declarations is load-bearing: each `mask` shorthand
+   BEFORE its own `mask-composite` longhand, and the -webkit- pair before
+   the standard pair. Both `-webkit-mask` and `mask` are shorthands that
+   reset mask-composite, so in an engine where the prefixed name aliases
+   the standard one, a shorthand written after the composite silently
+   resets it and the ring paints as a filled rounded rectangle over the
+   clock. tests/designTokens.test.ts holds the order in every ring. */
+@supports (mask-composite: exclude) or (-webkit-mask-composite: xor) {
+  /* --- 2. The coloured rim ------------------------------------------
+     3px, and every stop is the palette. Read clockwise from 12 o'clock:
+     the top-left quadrant (300-360deg) is orb 1 and where the long torch
+     lands, so it is the brightest; the LIP at 30deg is the dark notch
+     just past where that torch dies (the relief that makes the glint an
+     object rather than the bright end of a gradient); the right face
+     (92deg) turns away from both lights and goes DEEP rather than dim —
+     the colour is still there, it has just stopped being lit; the
+     bottom-right corner (138deg) comes up only a little, for the short
+     torch to sit on; a second lip at 172deg; then orb 3's deep and mid
+     stops along the bottom and orb 1's up the left.
+
+     Deep stops are what carry the reflection in LIGHT mode. On a bright
+     orange face a white-ish rim has almost no contrast left to spend;
+     a dense saturated one has plenty. */
+  .gp-theme-frosted-glass-2 .gp-glass-pane::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 3px;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-2) var(--gp-lg-lift)) 40%,
+          transparent
+        )
+        0deg,
+      /* The 30deg deep stop ran 50%, the strongest in the ring, and it sits
+         just right of the top centre where the long glint hands over to
+         shade — the maintainer saw it as "a small part near the middle of
+         the top border, a little too dark". 34% is what its neighbours
+         run at; the lip on the glint ring at the same angle came down
+         12% -> 7% with it (light mode only; dark restates its own). */
+        /* lip past the long torch */
+        color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) var(--gp-lg-deepen))
+            calc(34% * var(--gp-lg-rim-dark)),
+          transparent
+        )
+        30deg,
+      color-mix(in srgb, var(--gp-lg-2) 24%, transparent) 50deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) var(--gp-lg-deepen))
+            calc(40% * var(--gp-lg-rim-dark)),
+          transparent
+        )
+        92deg,
+      /* bottom-right: barely lit ground for the short torch */
+        color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-3) var(--gp-lg-lift)) 34%,
+          transparent
+        )
+        138deg,
+      /* lip past the short torch */
+        color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) var(--gp-lg-deepen))
+            calc(46% * var(--gp-lg-rim-dark)),
+          transparent
+        )
+        172deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) var(--gp-lg-deepen))
+            calc(36% * var(--gp-lg-rim-dark)),
+          transparent
+        )
+        186deg,
+      color-mix(in srgb, var(--gp-lg-3) 28%, transparent) 214deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-1), var(--gp-lg-deep) var(--gp-lg-deepen))
+            calc(42% * var(--gp-lg-rim-dark)),
+          transparent
+        )
+        268deg,
+      color-mix(in srgb, var(--gp-lg-1) 46%, transparent) 300deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-1) var(--gp-lg-lift)) 92%,
+          transparent
+        )
+        322deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-1) var(--gp-lg-lift)) 56%,
+          transparent
+        )
+        348deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-2) var(--gp-lg-lift)) 40%,
+          transparent
+        )
+        360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  /* --- 3a. The torch cores ------------------------------------------
+     1.5px, so the glint sits on the OUTER half of the 3px coloured rim
+     and the colour still shows just inside it — where the specular on a
+     real bevel lives, on the outside surface. Narrow cores with steep
+     shoulders: a specular that fades in over 50 degrees is a gradient,
+     not a light.
+
+       long  torch  296 -> 12deg  (left face, top-left corner, top run)
+       short torch  120 -> 166deg (bottom-right corner)
+
+     The stops flanking each core are plain white shoulders. They were a
+     chromatic fringe until the maintainer's fifth look — warm on the
+     leading side, cool on the trailing side, "sub-perceptual at 1x" by
+     the designer's own note — and the cool one at 17deg was painted at
+     0.44 against a 0.14 white beside it, so on a pink or lavender face
+     it was a 4-degree blue tick at the top edge, and it was reported as
+     "an abrupt blue colour … a rendering issue". A fringe that is
+     invisible costs nothing and a fringe that is visible reads as a bug;
+     there is no value in between, so the four stops are neutral now and
+     their alphas continue the core's own falloff.
+
+     The dark stop past each core is the LIP: a hair of shadow where the
+     light stops, so the end of the streak has an edge. */
+  .gp-theme-frosted-glass-2 .gp-glass-highlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    border-radius: inherit;
+    padding: 1.5px;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255, 255, 255, 0.6) 0deg,
+      rgba(255, 255, 255, 0.4) 7deg,
+      rgba(255, 255, 255, 0.14) 13deg,
+      rgba(255, 255, 255, 0.06) 17deg,
+      rgba(255, 255, 255, 0) 24deg,
+      color-mix(in srgb, var(--gp-lg-deep-2) calc(7% * var(--gp-lg-rim-dark)), transparent) 30deg,
+      transparent 40deg,
+      rgba(255, 255, 255, 0) 112deg,
+      rgba(255, 255, 255, 0.1) 120deg,
+      rgba(255, 255, 255, 0.24) 128deg,
+      rgba(255, 255, 255, 0.82) 139deg,
+      rgba(255, 255, 255, 0.26) 151deg,
+      rgba(255, 255, 255, 0.1) 158deg,
+      rgba(255, 255, 255, 0) 165deg,
+      color-mix(in srgb, var(--gp-lg-deep-3) calc(12% * var(--gp-lg-rim-dark)), transparent) 171deg,
+      transparent 180deg,
+      rgba(255, 255, 255, 0) 286deg,
+      rgba(255, 255, 255, 0.14) 296deg,
+      rgba(255, 255, 255, 0.34) 305deg,
+      rgba(255, 255, 255, 0.95) 317deg,
+      rgba(255, 255, 255, 0.88) 332deg,
+      rgba(255, 255, 255, 0.72) 350deg,
+      rgba(255, 255, 255, 0.6) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  /* --- 3b. The inner wall -------------------------------------------
+     A 1px arc set 8px in, carrying only the two torches and nothing in
+     between: the same light after it has crossed the thickness of the
+     glass and lit the far wall. Two ARCS, deliberately not a ring — a
+     continuous second ring inside the first is the double frame round
+     one kept producing. Because it exists only where the torches are,
+     it reads as depth rather than as a moulding.
+
+     Its radius is derived from --gp-shape-radius rather than inherited
+     (this ring is inset, so the inherited 35px would not be concentric);
+     max() keeps it positive if the radius ever drops below the inset. */
+  .gp-theme-frosted-glass-2 .gp-glass-highlight::after {
+    content: "";
+    position: absolute;
+    inset: 8px;
+    z-index: 1;
+    border-radius: max(6px, calc(var(--gp-shape-radius) - 8px));
+    padding: 1px;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255, 255, 255, 0.18) 0deg,
+      rgba(255, 255, 255, 0) 16deg,
+      rgba(255, 255, 255, 0) 128deg,
+      rgba(255, 255, 255, 0.16) 142deg,
+      rgba(255, 255, 255, 0) 158deg,
+      rgba(255, 255, 255, 0) 302deg,
+      rgba(255, 255, 255, 0.24) 324deg,
+      rgba(255, 255, 255, 0.2) 348deg,
+      rgba(255, 255, 255, 0.18) 360deg
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+}
+
+/* --- Torch bloom -----------------------------------------------------
+   Frosted glass paints this layer as one flat 180deg top sheen, which
+   crosses the digits and gives the whole face a milky top third. Here
+   the layer carries the two torches' glow spilling a little way in,
+   anchored to the stretches they light, so the middle 60% gets nothing.
+   This is also what stops the torches reading as decals: a light source
+   with no bloom is a sticker. Tight and bright rather than wide and
+   faint — a wide faint bloom is fog. */
+.gp-theme-frosted-glass-2 .gp-glass-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    /* the long torch: the corner, the top run, the left face */
+    radial-gradient(17% 17% at 12% 7%, rgba(255, 255, 255, 0.32) 0%, transparent 68%),
+    radial-gradient(28% 9% at 33% 0%, rgba(255, 255, 255, 0.2) 0%, transparent 74%),
+    radial-gradient(9% 22% at 0% 27%, rgba(255, 255, 255, 0.16) 0%, transparent 72%),
+    /* the short torch, bottom-right */
+    radial-gradient(14% 14% at 92% 95%, rgba(255, 255, 255, 0.2) 0%, transparent 70%);
+}
+
+/* Dark-mode tuning. Obsidian sets body.theme-dark on the document root;
+   these overrides scope cleanly so light mode stays untouched. The pale
+   base + white frost are right for light Obsidian themes but read as
+   "too bright" against a dark UI — so the base flips to deep plum, the
+   frost overlay flips to a plum-tinted dark wash, and orbs drop another
+   notch in luminance so they read as soft washes rather than light
+   sources. This theme has no flat top sheen and no 1px white border: the
+   catch-light is the rim, the two torch cores and the corner blooms,
+   and every white on them comes down by roughly a third here — bright at
+   two points, dim between them, which is what keeps a dark overtime break
+   from reading as a bezel. */
+.theme-dark .gp-theme-frosted-glass-2 {
+  --gp-shape-base: #2a2438;
+  /* The shared ink, restated: the light values in the theme root are a
+     light-mode legibility fix, and the dark faces never needed it. */
+  --gp-ink-dim: rgba(255, 255, 255, 0.9);
+  --gp-ink-soft: rgba(255, 255, 255, 0.82);
+  --gp-ink-shadow-lg: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --gp-ink-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+}
+
+/* --- Dark mode -------------------------------------------------------
+   Fireplace orbs on deep plum. The rim's four shifts are Lit rim's:
+     - the warm ends of all three mixes move to the fireplace oranges,
+       the same literals the .gp-orb-N dark rules carry;
+     - --gp-lg-deep goes almost black, because plum has very little room
+       below it and a plum "deep" stop would vanish against the base;
+     - the lift drops. On plum, white-tinted colour is the fastest way to
+       turn a rim into chrome, and the colour reads more easily anyway
+       because less light competes with it;
+     - every white on the rings comes down by roughly a third, and the
+       non-torch rim stays between 0.24 and 0.40 — bright at two points,
+       dim between them. That is what kept this out of the dark-overtime
+       bezel every wider treatment fell into. Pool alpha is the LIGHT
+       value; only the lift drops.
+
+   The balls' dark values are Clear liquid's, in the rules below the
+   token block: warm ends into fireplace orange, saturate 190% and
+   brightness 0.99 on the three orbs, and the lobe onto its own darker
+   ember pair. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-timer-shape {
+  /* Both ends are dark mode's own here — the fireplace warms and the
+     deeper cool ends declared on the dark .gp-orb-N rules below (Frosted
+     glass swaps only its warms and keeps light mode's cool ends); keep
+     the six hexes identical to those. */
+  --gp-lg-1: color-mix(in oklab, #ffae40, #7d6aa8 calc(var(--gp-progress, 0) * 100%));
+  --gp-lg-2: color-mix(in oklab, #ff9333, #b27a99 calc(var(--gp-progress, 0) * 100%));
+  --gp-lg-3: color-mix(in oklab, #ff7530, #8497c9 calc(var(--gp-progress, 0) * 100%));
+  /* The same rule as light mode, at a higher shade fraction. "Almost
+     black, because plum has very little room below it" is still true —
+     it is derived now rather than picked. What it buys here is the dark
+     themes that are NOT neutral grey: on Nord the shade is a dark slate
+     rather than a purple-black, so the lips and the bottom-right pool
+     sit in the page's own family instead of punching a hole in it.
+
+     Dark mode was never the complaint, so the budget is that it must not
+     visibly move against the fixed near-black it replaced: max 8/255 on
+     both dark grounds. It measures 8 on Obsidian dark and 8 on Nord.
+
+     65% IS THE NUMBER THAT HITS THAT, and it has to be measured rather
+     than reasoned, because the arithmetic points the wrong way. As a
+     COLOUR, 65% of #1e1e1e is oklab L .085 against the earlier cut's
+     #090610 at L .133 — darker, not equal — so matching the old
+     lightness would mean about 45%. Rendered, 45% is the WORST of the
+     three (max 11 on dark, 14 on Nord) and 55% is in between (8 / 11).
+     The reason is that nothing here paints the shade neat: these sites
+     run at 16-28% alpha and most of them go through --gp-lg-deep-2/-3,
+     so a lighter deep hands more of the lip to the fireplace-orange
+     palette and moves it FURTHER from the near-black literal of the
+     earlier cut. Retune this against the render, never against the swatch.
+
+     This is the second and last read of --background-primary in the
+     file. */
+  --gp-lg-env: var(--background-primary, #1e1e1e);
+  --gp-lg-shade: 65%;
+  --gp-lg-deep: color-mix(in oklab, var(--gp-lg-env), #000000 var(--gp-lg-shade));
+  --gp-lg-deepen: 40%;
+
+  /* The pure-shade sites, as in light mode, but taking far more shade:
+     over a fireplace-orange orb on a near-black page the lip has to fall
+     below its own darkest neighbour to read as a notch, so the palette
+     is only a tint here rather than the substance. Written WITHOUT the
+     --gp-lg-rim-dark multiplier at each site, like every other dark
+     literal in this block, so dark mode still never reads that token. */
+  --gp-lg-deep-2: color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) 78%);
+  --gp-lg-deep-3: color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) 78%);
+  --gp-lg-lift: 22%;
+  --gp-lg-pool-lift: 8%;
+
+  /* See the light block for what this scales. Dark mode is the only place it
+     is not 1, because dark mode is where the rim's whites were reported too
+     contrasty: the long torch's core is alpha 0.64 and the top-edge stops run
+     0.48-0.57, over a base of #2a2438, so the rim arrives about 145 luminance
+     units above the face it sits on.
+
+     Measured on the dark frames, peak luminance in the 3px band along the top
+     torch run against the face 26px inside (p0 / p0.5 / p1):
+
+       k = 1.00 (no cut)    238 / 236 / 234   over a face of 92 / 91 / 88
+                            rim-face  145 / 145 / 146
+       k = 0.80             227 / 225 / 221   rim-face  135 / 134 / 134
+       k = 0.65             216 / 213 / 209   rim-face  124 / 123 / 121
+       k = 0.50             205 / 201 / 196   rim-face  113 / 111 / 108
+
+     0.35 SHIPPED, the maintainer's own pick from 0.55 / 0.45 / 0.35
+     rendered on the dark and Nord grounds after 0.65 read too bright in
+     Obsidian. 0.45 was the recommendation (the last step at which the
+     two glints read as lights rather than pale marks); the maintainer
+     tried 0.35 and kept it. The measurements below are the earlier 0.65
+     round and still describe the knob's behaviour.
+
+     0.65 is "a little": a 15% cut in the rim-to-face swing, which is visible
+     side by side at 1x and reads as a lit edge rather than as a white stripe,
+     while the glint peaks stay 120+ units above the face — still unmistakably
+     lights. 0.80 measures 7% and is hard to see at 1x on anything but the
+     twilight frame; 0.50 starts taking the inner-wall arc and the bottom-right
+     torch below the point where the corner reads as glass.
+
+     The face does not move with it (92.5 -> 92.0 at p0): nothing here paints
+     on the face. Neither does the drop shadow outside the square — pixel-
+     identical at every value, which is the half of the contrast the report
+     explicitly did not ask about. */
+  --gp-lg-rim-light: 0.35;
+
+  /* See the light block. 1 here: the dark rules below restate every one of
+     their own darks as a literal, so nothing in dark mode reads this token
+     and the knob cannot move a dark frame. It is declared for mode parity,
+     which is what the rim-token test checks. */
+  --gp-lg-rim-dark: 1;
+}
+
+/* The dark tint is the same radial shape at 0.22 in the middle, not
+   Clear liquid's 0.27: dark mode was already 9 luminance units better
+   than Frosted glass's square with a flat tint, so it gets the smallest
+   value that holds that, not the biggest one that was on offer. The
+   box-shadow (meniscus + floor) is Lit rim's, unchanged. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane {
+  background: radial-gradient(
+    118% 112% at 50% 45%,
+    rgba(16, 14, 26, 0.22) 0%,
+    rgba(16, 14, 26, 0.196) 32%,
+    rgba(16, 14, 26, 0.122) 62%,
+    rgba(16, 14, 26, 0.049) 84%,
+    rgba(16, 14, 26, 0) 100%
+  );
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, calc(0.05 * var(--gp-lg-rim-light))),
+    inset 0 1px 0 rgba(255, 255, 255, calc(0.14 * var(--gp-lg-rim-light))),
+    inset 0 -1px 0 rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))),
+    inset 0 0 5px -1px color-mix(in srgb, var(--gp-lg-deep-3) 28%, transparent);
+}
+
+/* The bottom-right shadow pool is plain black here; plum-on-plum reads
+   as nothing. Lit rim ran it at 0.22 over bare plum; over the fourth
+   lobe's ember it is 0.17, for the same reason the light value came
+   down — the corner it darkens is no longer empty. The three colour
+   pools are restated verbatim: box-shadow is one property, so this rule
+   must carry all four or the colour pools vanish in dark mode. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane::before {
+  box-shadow:
+    inset 8cqi 8cqi 8cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-1), #ffffff var(--gp-lg-pool-lift)) var(--gp-lg-pool),
+        transparent
+      ),
+    inset -8cqi 7.5cqi 8cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-2), #ffffff var(--gp-lg-pool-lift))
+          calc(var(--gp-lg-pool) * 0.76),
+        transparent
+      ),
+    inset 7cqi -8.5cqi 9cqi -5cqi
+      color-mix(
+        in srgb,
+        color-mix(in oklab, var(--gp-lg-3), #ffffff var(--gp-lg-pool-lift))
+          calc(var(--gp-lg-pool) * 0.92),
+        transparent
+      ),
+    inset -7cqi -7cqi 8cqi -5cqi color-mix(in srgb, var(--gp-lg-deep-3) 17%, transparent);
+}
+
+@supports (mask-composite: exclude) or (-webkit-mask-composite: xor) {
+  .theme-dark .gp-theme-frosted-glass-2 .gp-glass-pane::after {
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-2) var(--gp-lg-lift))
+            calc(24% * var(--gp-lg-rim-light)),
+          transparent
+        )
+        0deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) var(--gp-lg-deepen)) 46%,
+          transparent
+        )
+        30deg,
+      color-mix(in srgb, var(--gp-lg-2) 24%, transparent) 50deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-2), var(--gp-lg-deep) var(--gp-lg-deepen)) 40%,
+          transparent
+        )
+        92deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-3) var(--gp-lg-lift))
+            calc(30% * var(--gp-lg-rim-light)),
+          transparent
+        )
+        138deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) var(--gp-lg-deepen)) 42%,
+          transparent
+        )
+        172deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-3), var(--gp-lg-deep) var(--gp-lg-deepen)) 36%,
+          transparent
+        )
+        186deg,
+      color-mix(in srgb, var(--gp-lg-3) 26%, transparent) 214deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, var(--gp-lg-1), var(--gp-lg-deep) var(--gp-lg-deepen)) 38%,
+          transparent
+        )
+        268deg,
+      color-mix(in srgb, var(--gp-lg-1) 34%, transparent) 300deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-1) var(--gp-lg-lift))
+            calc(62% * var(--gp-lg-rim-light)),
+          transparent
+        )
+        322deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-1) var(--gp-lg-lift))
+            calc(44% * var(--gp-lg-rim-light)),
+          transparent
+        )
+        348deg,
+      color-mix(
+          in srgb,
+          color-mix(in oklab, #ffffff, var(--gp-lg-2) var(--gp-lg-lift))
+            calc(24% * var(--gp-lg-rim-light)),
+          transparent
+        )
+        360deg
+    );
+  }
+
+  .theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight::before {
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255, 255, 255, calc(0.48 * var(--gp-lg-rim-light))) 0deg,
+      rgba(255, 255, 255, calc(0.33 * var(--gp-lg-rim-light))) 7deg,
+      rgba(255, 255, 255, calc(0.11 * var(--gp-lg-rim-light))) 13deg,
+      rgba(255, 255, 255, calc(0.05 * var(--gp-lg-rim-light))) 17deg,
+      rgba(255, 255, 255, 0) 24deg,
+      color-mix(in srgb, var(--gp-lg-deep-2) 16%, transparent) 30deg,
+      transparent 40deg,
+      rgba(255, 255, 255, 0) 112deg,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 120deg,
+      rgba(255, 255, 255, calc(0.16 * var(--gp-lg-rim-light))) 128deg,
+      rgba(255, 255, 255, calc(0.62 * var(--gp-lg-rim-light))) 139deg,
+      rgba(255, 255, 255, calc(0.17 * var(--gp-lg-rim-light))) 151deg,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 158deg,
+      rgba(255, 255, 255, 0) 165deg,
+      color-mix(in srgb, var(--gp-lg-deep-3) 16%, transparent) 171deg,
+      transparent 180deg,
+      rgba(255, 255, 255, 0) 286deg,
+      rgba(255, 255, 255, calc(0.1 * var(--gp-lg-rim-light))) 296deg,
+      rgba(255, 255, 255, calc(0.22 * var(--gp-lg-rim-light))) 305deg,
+      rgba(255, 255, 255, calc(0.64 * var(--gp-lg-rim-light))) 317deg,
+      rgba(255, 255, 255, calc(0.57 * var(--gp-lg-rim-light))) 332deg,
+      rgba(255, 255, 255, calc(0.51 * var(--gp-lg-rim-light))) 350deg,
+      rgba(255, 255, 255, calc(0.48 * var(--gp-lg-rim-light))) 360deg
+    );
+  }
+
+  .theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight::after {
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 0deg,
+      rgba(255, 255, 255, 0) 16deg,
+      rgba(255, 255, 255, 0) 128deg,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 142deg,
+      rgba(255, 255, 255, 0) 158deg,
+      rgba(255, 255, 255, 0) 302deg,
+      rgba(255, 255, 255, calc(0.11 * var(--gp-lg-rim-light))) 324deg,
+      rgba(255, 255, 255, calc(0.09 * var(--gp-lg-rim-light))) 348deg,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 360deg
+    );
+  }
+}
+
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-highlight {
+  background:
+    radial-gradient(
+      17% 17% at 12% 7%,
+      rgba(255, 255, 255, calc(0.14 * var(--gp-lg-rim-light))) 0%,
+      transparent 68%
+    ),
+    radial-gradient(
+      28% 9% at 33% 0%,
+      rgba(255, 255, 255, calc(0.08 * var(--gp-lg-rim-light))) 0%,
+      transparent 74%
+    ),
+    radial-gradient(
+      9% 22% at 0% 27%,
+      rgba(255, 255, 255, calc(0.07 * var(--gp-lg-rim-light))) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      14% 14% at 92% 95%,
+      rgba(255, 255, 255, calc(0.09 * var(--gp-lg-rim-light))) 0%,
+      transparent 70%
+    );
+}
+
+/* Fireplace warm endpoints, and — unlike Frosted glass — dark mode's OWN
+   cool endpoints. The warm ends swap so the orbs glow like flame on a
+   winter night against the deep-plum dark base. Frosted glass shares its
+   cool ends between the two modes ("twilight is twilight"); with this
+   theme's sharper, more saturated orbs that stopped working: the pastel
+   lavender / rose / periwinkle read PALE against a dark ground, so a
+   break (which runs from the night end) sat a step brighter than a focus
+   session (the maintainer: "the glass looks too white on the rest
+   colours; the focus colours are fine" — measured, the face at progress
+   1 was L .416 against .367 at progress 0). These deeper cool ends bring
+   the night end to the day end's brightness (.349). A darker pane tint
+   was tried instead and greyed the night rather than deepening it.
+
+   The three dark rim mixes in the dark .gp-timer-shape block above repeat
+   these hexes — retune one, retune the other, or the rim drifts from
+   what is behind it. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-1 {
+  --gp-orb-warm: #ffae40; /* warm orange */
+  --gp-orb-cool: #7d6aa8; /* deep lavender */
+}
+
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-2 {
+  --gp-orb-warm: #ff9333; /* vivid mid-orange */
+  --gp-orb-cool: #b27a99; /* deep rose */
+}
+
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb-3 {
+  --gp-orb-warm: #ff7530; /* deep orange */
+  --gp-orb-cool: #8497c9; /* deep periwinkle */
+}
+
+/* Saturation eases off toward the night end: 190% at the start of a focus
+   session, 135% at its end and at the start of a break. With the deeper cool
+   ends above and a flat 190%, the night end measured as vivid as the day
+   (face chroma .142 against .153; Frosted glass's night end is .107), so
+   the moment the timer says "rest" was the loudest blue in the plugin.
+   The ramp brings it to .112 and leaves the day end byte-identical. It reads
+   --gp-progress directly and carries no transition of its own — one
+   smoothing route — at the same once-a-second cadence as the colour mixes
+   that already repaint these orbs. A break overtime sits at the day end
+   (progress 0), so the overtime rules' fixed 150% still cut from 190%. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-orb {
+  filter: blur(var(--gp-lg-orb-blur)) saturate(calc(190% - 55% * var(--gp-progress, 0)))
+    brightness(0.99);
+}
+
+.theme-dark .gp-theme-frosted-glass-2 .gp-glass-orbs::before {
+  background: radial-gradient(
+    circle,
+    color-mix(in oklab, #c94f22, #5b5fa8 calc(var(--gp-progress, 0) * 100%)) 0%,
+    transparent 70%
+  );
+  /* The same ramp as the orbs above, 175% -> 125%. */
+  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(calc(175% - 50% * var(--gp-progress, 0)))
+    brightness(0.92);
+  opacity: 0.82;
+}
+
+/* Reduced motion, and the selector is (0,3,0) from this theme's first
+   day BECAUSE the older glass theme carried it wrong for its whole life
+   up to 0.6.4. The three drift rules above are (0,2,0) — theme class plus
+   orb class — and a media query adds no specificity, so a bare `.gp-orb`
+   (0,1,0) here would lose to every one of them and the orbs would keep
+   drifting for exactly the users who had asked them not to, on every
+   platform, with nothing on screen to say so. That is not a hypothetical:
+   it is what Frosted glass did from 0.2.0 to 0.6.4, and DESIGN.md rule 4
+   records it as that rule's third incident. Winning on specificity rather
+   than on source order is the whole point of the extra class, and
+   tests/designTokens.test.ts holds it there. */
+@media (prefers-reduced-motion: reduce) {
+  .gp-theme-frosted-glass-2 .gp-glass-orbs .gp-orb {
+    animation: none;
+  }
+}
+
+/* --- Fallback --------------------------------------------------------
+   No ring compositing: no rim, no torches, no inner wall. Put a 1px
+   border back — Frosted glass's, at the same alpha — so the square still
+   has an edge, and lean the pooling a little harder since it is then the
+   only reflection cue.
+   The balls are unaffected — they need no mask, so an engine that lands
+   here still gets the half of this merge that lives on the face.
+
+   Written at (0,3,0) — one level above the pane rule's `border: 0` —
+   on purpose. At equal specificity only source order would decide, and
+   a future regroup that moved this block above the pane rule would
+   silently delete the edge on every mask-less engine. The extra class
+   is the whole point of the selector; do not "simplify" it. */
+@supports not ((mask-composite: exclude) or (-webkit-mask-composite: xor)) {
+  .gp-root.gp-theme-frosted-glass-2 .gp-glass-pane {
+    border: 1px solid rgba(255, 255, 255, 0.22);
+  }
+
+  .gp-root.gp-theme-frosted-glass-2 .gp-timer-shape {
+    --gp-lg-pool: 62%;
   }
 }
 
@@ -1723,6 +3362,88 @@
   filter: blur(24px) saturate(115%) brightness(0.9);
 }
 
+/* Dark Obsidian + Frosted glass 2: the plum/violet glass backdrop is too
+   close in tone to --text-muted for the overtime "Total: M:SS" line to
+   remain legible — especially in focus mode, which had no override.
+   Slightly stronger shadow than break-mode for the darker base. This
+   group is Frosted glass 2's own; the older glass theme has the matching
+   group above, for the same reason, and neither reads the other's. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-total-time {
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* Dark + Frosted glass 2 + break overtime: the warm orange orb field at
+   peak saturation collides with the reddish .gp-overtime color, so the
+   "+M:SS" number disappears into the day-color wash. Drop orb saturate
+   a touch and flip the overtime number to white-with-red-glow — the
+   warning semantic survives via the red halo, but legibility wins on
+   the actual digits. */
+/* --- Overtime legibility, restated ----------------------------------
+   These two rules desaturate the orbs during a break overtime — Frosted
+   glass carries the same pair, above — and they RESTATE the whole orb
+   filter, so a base blur changed above and not here silently reverts to
+   the old blur the moment a break runs into overtime. That happened
+   during this theme's design, which is why the blur is
+   var(--gp-lg-orb-blur) in all four places and the only number these
+   rules carry of their own is the desaturation.
+
+   The saturation values are Clear liquid's, not Lit rim's, and they had
+   to move with the base: Frosted glass cuts 140% -> 115% (light) and
+   155% -> 125% (dark), roughly a fifth off. Against a base that is now
+   178% / 190% roughly the same relative cut is 140% / 150% (79-80% of
+   base, against that theme's 81-82% — a shade deeper, not identical).
+   Restating 115/125 here would have made overtime a bigger drop than
+   either theme has ever taken, which is a mood change dressed up as a
+   legibility rule. Brightness is each mode's base value, unchanged. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-orb {
+  filter: blur(var(--gp-lg-orb-blur)) saturate(150%) brightness(0.99);
+}
+
+/* The fourth lobe is an orb too, and it sits behind the clock's lower
+   half — without these it would stay fully saturated through an
+   overtime break and undo the two rules above exactly where they matter
+   most. Same relative cut as its own base 165% / 175%, same +2px blur
+   relation, same brightness. Four rules for one idea, and all four have
+   to move together; that is what the token buys. */
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-glass-orbs::before {
+  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(140%) brightness(0.92);
+}
+
+.theme-dark .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-overtime {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 0 18px rgba(255, 107, 107, 0.6);
+}
+
+/* Light Obsidian + Frosted glass 2: the pale lavender base + saturated
+   pastel orbs make the default --text-muted gray (Total) and the
+   reddish .gp-overtime (Timer) both wash out. Mirror the dark-mode
+   approach with white text — combined with the slightly-darker glass
+   overlay (the base .gp-glass-pane change above), readability lands. */
+.theme-light .gp-theme-frosted-glass-2 .gp-total-time {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.theme-light .gp-theme-frosted-glass-2 .gp-overtime {
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 0 18px rgba(255, 107, 107, 0.6);
+}
+
+/* Day-phase orb saturation drop only when warm orbs collide with the
+   overtime text in light mode (break overtime). Cool focus-overtime
+   keeps full saturate — pastels don't fight white text the way warm
+   tones do. */
+.theme-light .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-orb {
+  filter: blur(var(--gp-lg-orb-blur)) saturate(140%) brightness(0.93);
+}
+
+/* The light half of the pair above: same relative cut off the lobe's own
+   165% base, same +2px blur relation, same brightness. */
+.theme-light .gp-theme-frosted-glass-2 .gp-state-overtime.gp-mode-break .gp-glass-orbs::before {
+  filter: blur(calc(var(--gp-lg-orb-blur) + 2px)) saturate(130%) brightness(0.9);
+}
+
 /* When running, hide it (like the main timer) */
 .gp-state-running .gp-total-time {
   opacity: 0;
@@ -1776,7 +3497,7 @@
    ========================================================================= */
 .gp-theme-pixel-city {
   --gp-font-display: var(--gp-font-rounded);
-  /* Ink: the same values the other two themes declare, declared again. */
+  /* Ink: the same values the other themes declare, declared again. */
   --gp-ink: #ffffff;
   --gp-ink-dim: rgba(255, 255, 255, 0.9);
   --gp-ink-soft: rgba(255, 255, 255, 0.82);
@@ -2481,8 +4202,11 @@ body.is-tablet .gp-timer-time {
    rounded clip re-rasterizes the blurred edge every frame and flickers on iOS (constant on
    iPhone, occasional on iPad). Swap in a shadow-only breath so the shape no longer scales;
    the drop shadow lives outside the clip, so animating it never touches the backdrop edge.
-   Scoped to frosted glass (classic has no backdrop, so it keeps its pulse); desktop keeps
-   the full size-pulse. */
+   BOTH glass themes need this, and each gets its OWN sibling rule below — one theme's class
+   is a prefix of the other's, but a class selector matches whole tokens, so neither rule can
+   stand in for the other and a pair is what covers both. Classic has no backdrop-filter, so
+   it keeps its pulse (Pixel city swaps the same breath in for its own bitmap reason, in the
+   theme's own block); desktop keeps the full size-pulse everywhere. */
 @keyframes gp-gentle-pulse-glow {
   0%,
   100% {
@@ -2494,11 +4218,30 @@ body.is-tablet .gp-timer-time {
 }
 
 /* Gated to no-preference: this selector out-specifies the reduced-motion `animation: none`
-   rule (0,4,1 vs 0,2,0), so without this gate it would re-enable motion for reduced-motion
-   users. Under reduce, this rule is absent and that block disables the shape animation. */
+   rule (0,5,1 vs 0,2,0), so without this gate it would re-enable motion for reduced-motion
+   users. Under reduce, this rule is absent and that block disables the shape animation.
+
+   :not(.gp-state-overtime) on every selector: overtime is still "running", and this rule
+   also out-specifies the shared `.gp-state-overtime .gp-timer-shape` (0,2,0) that swaps the
+   breath for the blue / orange breathing glow. Without the exclusion the glow showed on a
+   phone or tablet only while PAUSED in overtime — true of Frosted glass from 0.3.2 to 0.6.4,
+   and copied into Frosted glass 2's sibling rule before the 0.6.5 review caught it. The
+   breathing glow animates box-shadow only, so it is as safe for the backdrop edge as the
+   breath it replaces. Pixel city carries the same guard for the same reason. */
 @media (prefers-reduced-motion: no-preference) {
-  body.is-mobile .gp-theme-frosted-glass .gp-state-running .gp-timer-shape,
-  body.is-tablet .gp-theme-frosted-glass .gp-state-running .gp-timer-shape {
+  body.is-mobile .gp-theme-frosted-glass .gp-state-running:not(.gp-state-overtime) .gp-timer-shape,
+  body.is-tablet .gp-theme-frosted-glass .gp-state-running:not(.gp-state-overtime) .gp-timer-shape {
+    animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
+  }
+
+  body.is-mobile
+    .gp-theme-frosted-glass-2
+    .gp-state-running:not(.gp-state-overtime)
+    .gp-timer-shape,
+  body.is-tablet
+    .gp-theme-frosted-glass-2
+    .gp-state-running:not(.gp-state-overtime)
+    .gp-timer-shape {
     animation: gp-gentle-pulse-glow 8s ease-in-out infinite;
   }
 }

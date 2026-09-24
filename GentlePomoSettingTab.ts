@@ -744,6 +744,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // is not one of the three, and the dropdown would then show no selection at
     // all while the picker quietly behaved as "folder".
     if (key === "taskSource") return resolveTaskSource(this.plugin.settings.taskSource);
+    // The same hole, for the same reason: an id this build does not know — a
+    // newer theme synced from another device, or left behind by a downgrade —
+    // is still a string. The view already resolves it (the square falls back
+    // to the default theme); read raw here, the dropdown beside it would show
+    // no selection at all.
+    if (key === "theme") return resolveTheme(this.plugin.settings.theme);
     return this.plugin.settings[key as SettingsKey];
   }
 
