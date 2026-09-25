@@ -142,10 +142,12 @@ export class SessionEndNotifier {
   private current: ShownNotification | null = null;
 
   /**
-   * Set by dispose() and never cleared. The timer can outlive the plugin by a
-   * moment: an auto-start that was mid-way through its vault writes when the
-   * plugin unloaded restarts the tick afterwards, and a notifier that still
-   * worked would then keep posting from a plugin the user had switched off.
+   * Set by dispose() and never cleared. An auto-start that was mid-way through
+   * its vault writes when the plugin unloaded used to restart the tick
+   * afterwards, and a notifier that still worked then kept posting from a
+   * plugin the user had switched off. TimerEngine.dispose() is terminal now,
+   * so the engine no longer calls in after unload; this flag keeps the
+   * notifier's own promise — nothing after dispose — without relying on that.
    */
   private disposed = false;
 

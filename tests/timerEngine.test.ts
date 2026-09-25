@@ -305,17 +305,87 @@ describe("TimerEngine — Stop vs Skip with auto-start on", () => {
 });
 
 describe("TimerEngine — dispose", () => {
-  it("stops a running timer without throwing and can be restarted", () => {
+  beforeEach(() => {
+    // getTimerCount() only sees fake timers, and the orphan test below needs
+    // the clock to reach a zero crossing.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  // dispose() is TERMINAL. Until 0.6.6 this test asserted the opposite — that
+  // start() still worked after dispose() — which nothing in the plugin used
+  // (onload() constructs a new engine every time), and which was exactly the
+  // property that let an in-flight auto-start restart the loop after unload.
+  it("is terminal: nothing the engine is asked afterwards arms a timer", () => {
     const stub = makePluginStub();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
 
     timer.start();
+    expect(vi.getTimerCount()).toBe(2); // the tick and the end-time wake-up
     expect(() => timer.dispose()).not.toThrow();
-    // Re-start works after dispose (loop was cleared, not corrupted).
-    expect(() => timer.start()).not.toThrow();
-    expect(timer.getState().isRunning).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Each of these arms a timer on a live engine. Checked one at a time,
+    // because a later call's clearLoop() would hide an earlier call's timer.
     timer.pause();
+    timer.start(); // startLoop
+    expect(vi.getTimerCount(), "start").toBe(0);
+    timer.reset(); // armEndWake — the state still says running
+    expect(vi.getTimerCount(), "reset").toBe(0);
+    timer.addMinutes(5); // armEndWake
+    expect(vi.getTimerCount(), "addMinutes").toBe(0);
+    timer.switchMode("break", true); // startLoop, the auto-start path
+    expect(vi.getTimerCount(), "switchMode").toBe(0);
+  });
+
+  // The hole that made dispose terminal. A zero crossing with auto-start on
+  // awaits handleFinished()'s vault writes before switchMode() restarts the
+  // loop; unload the plugin inside that window and the continuation used to
+  // start an interval nothing would ever clear, which went on logging sessions
+  // from a disabled plugin until Obsidian restarted.
+  it("an auto-start still in its vault writes at unload does not restart the loop", async () => {
+    const stub = makePluginStub({
+      focusMinutes: 1,
+      breakMinutes: 1,
+      sessionCounterDate: "2025-05-18",
+    });
+    // Both on, so an orphaned loop would chain sessions and show up as extra log writes.
+    stub.settings.autoStartBreak = true;
+    stub.settings.autoStartFocus = true;
+    // Hold the finished session's log write open until the plugin has unloaded.
+    let endSessions = 0;
+    let finishWrite = () => {};
+    stub.plugin.logManager.endSession = () => {
+      endSessions++;
+      if (endSessions > 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(60_010);
+    expect(endSessions).toBe(1); // crossed zero; now inside the log write
+    expect(timer.getState().mode).toBe("focus"); // not switched yet
+
+    timer.dispose(); // the plugin unloads here
+    finishWrite();
+    // Run the continuation, then give any loop it started five minutes to show itself.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(endSessions).toBe(1);
+    expect(stub.calls.filter((c) => c.name === "notifySessionEnd").map((c) => c.args)).toEqual([
+      ["focus", true],
+    ]);
+    // The session that DID finish is still recorded; only the next one never starts.
+    expect(stub.settings.sessionsSinceLongBreak).toBe(1);
   });
 
   it("is a no-op (no throw) on a fresh, idle engine", () => {

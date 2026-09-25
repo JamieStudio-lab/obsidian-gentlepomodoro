@@ -49,6 +49,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   a tag typed with no space before a date (`#paper📅 2026-09-30`) no longer
   leaves the bare date behind. Display only — what the log records is
   unchanged.
+- **Turning the plugin off can no longer leave a hidden timer running.** If the
+  plugin was switched off or updated in the moment just after a session ran
+  out with auto-start on (or just after pressing Skip with it on), the next
+  session could start anyway, with nothing on screen, and keep writing
+  sessions to your log and playing sounds until Obsidian was restarted.
+  Present since 0.2.1.
 
 ## [0.6.5] — 2026-09-24
 

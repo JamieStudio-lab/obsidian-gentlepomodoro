@@ -57,6 +57,19 @@ export class TimerEngine {
   // a double fire a no-op. Re-armed wherever targetTime moves while running.
   private endWakeId: number | null = null;
 
+  // Set by dispose() and never cleared: a disposed engine never arms a timer
+  // again. Clearing the loop at dispose is not enough on its own, because an
+  // async continuation can outlive it — a zero crossing with auto-start on
+  // awaits four vault round trips in handleFinished() before switchMode()
+  // restarts the loop, and a Skip does the same. Unload the plugin inside that
+  // window and the continuation used to start a fresh interval nothing would
+  // ever clear, logging sessions and ringing cues from a disabled plugin until
+  // Obsidian restarted. Checked where timers are CREATED (startLoop,
+  // armEndWake) rather than at each continuation, so a future async path
+  // cannot reopen the hole by forgetting a check. Nothing restarts a disposed
+  // engine on purpose: onload() constructs a new one every time.
+  private disposed = false;
+
   // Track current task name for logging
   public currentTaskName: string = NO_TASK_LABEL;
   public currentTaskPath: string | undefined;
@@ -163,7 +176,7 @@ export class TimerEngine {
    */
   private armEndWake() {
     this.clearEndWake();
-    if (!this.state.isRunning || this.targetTime === null) return;
+    if (this.disposed || !this.state.isRunning || this.targetTime === null) return;
     const delay = this.targetTime - Date.now();
     if (delay <= 0) return;
     this.endWakeId = window.setTimeout(() => {
@@ -174,6 +187,7 @@ export class TimerEngine {
 
   private startLoop() {
     this.clearLoop();
+    if (this.disposed) return; // see `disposed`
 
     // Safety: Ensure targetTime is set if running
     if (this.state.isRunning && this.targetTime === null) {
@@ -477,9 +491,10 @@ export class TimerEngine {
    * Release engine resources on plugin unload: stop the tick loop, close the
    * shared AudioContext (Chromium caps live contexts, so leaking one per
    * disable/enable cycle would eventually silence all sound), and drop the
-   * decoded-buffer cache.
+   * decoded-buffer cache. Terminal: see `disposed`.
    */
   dispose() {
+    this.disposed = true;
     this.clearLoop();
     if (this.audioCtx) {
       void this.audioCtx.close().catch(() => {});

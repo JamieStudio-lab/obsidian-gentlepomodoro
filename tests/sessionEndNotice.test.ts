@@ -196,9 +196,9 @@ describe("SessionEndNotifier", () => {
   });
 
   it("closes what it posted when the plugin unloads, and posts nothing after", () => {
-    // The timer can outlive the plugin by a moment — an auto-start mid-way
-    // through its vault writes restarts the tick after unload — and a notifier
-    // that still worked would post from a plugin the user had switched off.
+    // An auto-start mid-way through its vault writes used to restart the tick
+    // after unload. The engine's own dispose() stops that now; this holds the
+    // notifier to "nothing after dispose" on its own, whoever calls it.
     const { notifier, posted } = makeNotifier();
     notifier.sessionEnded("focus", false);
     notifier.dispose();
