@@ -41,6 +41,11 @@ export interface GentlePomoSettings {
   // edge where a chime would interrupt a session someone wants to keep going.
   focusEndSoundEnabled: boolean;
   breakEndSoundEnabled: boolean;
+  // Opt-in SILENT system notification when focus or break time is up (0.6.6),
+  // for a user whose Obsidian is covered by other windows. Desktop only; one
+  // switch for both edges. Independent of every sound setting on purpose — it
+  // exists for people who keep the sound off.
+  sessionEndNotification: boolean;
 
   // Paths
   tasksPath: string;

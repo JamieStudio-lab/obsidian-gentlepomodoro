@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 // is a vitest resolution rule, so `tsc` would type these against the real
 // package (which has no recording stubs). Vitest points the alias at this very
 // file, so it is the same module instance the tab constructs.
-import { Setting, type RecordedComponent } from "../__mocks__/obsidian";
+import { Platform, Setting, type RecordedComponent } from "../__mocks__/obsidian";
 import { GentlePomoSettingTab } from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
 import {
@@ -18,6 +18,7 @@ import {
   sessionEndSummary,
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
+import { SESSION_END_NOTIFICATION_LABEL } from "../sessionEndNotice";
 import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import { DEFAULT_THEME } from "../themes";
 import type { GentlePomoSettings } from "../types";
@@ -63,6 +64,8 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
       return Promise.resolve();
     },
     clearAllMusicPositions: () => calls.push({ method: "clearAllMusicPositions", args: [] }),
+    previewSessionEndNotification: () =>
+      calls.push({ method: "previewSessionEndNotification", args: [] }),
     checkPomodoroMarkers: () => {
       calls.push({ method: "checkPomodoroMarkers", args: [] });
       return Promise.resolve();
@@ -197,6 +200,8 @@ describe("the two settings paths cannot drift", () => {
       "Display & behavior",
       "Timer appearance",
       "Audio",
+      // Desktop only — the mock's Platform is the desktop app by default.
+      "Notifications",
       "Music",
       "Long break",
       "Daily focus goal",
@@ -472,7 +477,7 @@ describe("Audio group", () => {
         [edge === "focus" ? 0 : 1].settingEl.children.map((child) => child.text)
         .join("");
 
-    expect(summaryOf("focus")).toBe("Nothing — the timer counts up.");
+    expect(summaryOf("focus")).toBe("No sound — the timer counts up.");
 
     await c.tab.setControlValue("autoStartBreak", true);
     expect(summaryOf("focus")).toBe("The break starts, with no sound.");
@@ -481,7 +486,7 @@ describe("Audio group", () => {
     expect(summaryOf("focus")).toBe("A sound, then the break starts.");
 
     // And the other edge is untouched by either write.
-    expect(summaryOf("break")).toBe("Nothing — the timer counts up.");
+    expect(summaryOf("break")).toBe("No sound — the timer counts up.");
   });
 
   it("uses the same auto-start labels as the timer panel", () => {
@@ -587,6 +592,7 @@ describe("Audio group", () => {
       "autoStartBreak",
       "autoStartFocus",
       "soundEnabled",
+      "sessionEndNotification",
     ] as const) {
       const c = makeTab();
       c.settings[key] = false;
@@ -1040,5 +1046,151 @@ describe("the panel's Reset to defaults", () => {
     for (const key of written) {
       expect(reset, `Reset to defaults never restores ${key}`).toContain(`settings.${key} =`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.6 — the session-end notification (the follow-up on issue #4). One switch
+// for both edges, on both surfaces, desktop only.
+// ---------------------------------------------------------------------------
+describe("the Notifications switch", () => {
+  const view = () => readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+  const names = (el: { settings: Setting[] }) => el.settings.map((s) => s.name);
+
+  it("is on the desktop app's settings tab, on both render paths", () => {
+    const c = makeTab();
+    expect(declarativeRows(c.tab)).toContainEqual(
+      expect.objectContaining({ heading: "Notifications", name: SESSION_END_NOTIFICATION_LABEL })
+    );
+    c.tab.display();
+    expect(names(c.el)).toContain(SESSION_END_NOTIFICATION_LABEL);
+  });
+
+  it("is not built on the mobile apps, heading included", () => {
+    // They have no system notifications; a switch that cannot do anything on
+    // the device in your hand is a switch that lies. And an empty heading left
+    // behind would be its own small lie.
+    Platform.isDesktopApp = false;
+    try {
+      const c = makeTab();
+      const declared = declarativeRows(c.tab);
+      expect(declared.map((r) => r.heading)).not.toContain("Notifications");
+      c.tab.display();
+      expect(names(c.el)).not.toContain("Notifications");
+      expect(names(c.el)).not.toContain(SESSION_END_NOTIFICATION_LABEL);
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("shows a sample when switched ON, and only then", async () => {
+    // The sample is when the operating system asks whether to allow
+    // notifications — it should ask now, not at the end of the next session.
+    const on = makeTab({ sessionEndNotification: false });
+    await on.tab.setControlValue("sessionEndNotification", true);
+    expect(on.calls.filter((c) => c.method === "previewSessionEndNotification")).toHaveLength(1);
+
+    const off = makeTab({ sessionEndNotification: true });
+    await off.tab.setControlValue("sessionEndNotification", false);
+    expect(off.settings.sessionEndNotification).toBe(false);
+    expect(off.calls.some((c) => c.method === "previewSessionEndNotification")).toBe(false);
+    expect(off.calls.some((c) => c.method === "applySettings")).toBe(true);
+  });
+
+  it("is wired to its own key, on both render paths", async () => {
+    // A copy-paste from the Audio rows above would still carry the right
+    // label and heading while flipping the break chime instead.
+    const c = makeTab({ sessionEndNotification: false });
+    const item = c.tab
+      .getSettingDefinitions()
+      .flatMap((g) => (g as { items: { name: string; control?: { key?: string } }[] }).items)
+      .find((i) => i.name === SESSION_END_NOTIFICATION_LABEL);
+    expect(item?.control?.key).toBe("sessionEndNotification");
+
+    c.tab.display();
+    componentOf(c.el, SESSION_END_NOTIFICATION_LABEL).change?.(true as never);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(c.settings.sessionEndNotification).toBe(true);
+    expect(c.settings.breakEndSoundEnabled).toBe(DEFAULT_SETTINGS.breakEndSoundEnabled);
+    expect(c.calls.filter((call) => call.method === "previewSessionEndNotification")).toHaveLength(
+      1
+    );
+  });
+
+  it("shows ONE sample for a quick off-then-on, and none for an on overtaken by an off", async () => {
+    // The sample is decided before the save's await and re-checked after it.
+    // Decided after, both writes of an off-then-on pair would read the later
+    // value and show two; checked only before, an on overtaken by an off would
+    // announce "Notifications are on" with the switch off.
+    const slowSaves = (c: ReturnType<typeof makeTab>) => {
+      const pending: (() => void)[] = [];
+      (c.tab as unknown as { plugin: { saveSettings: () => Promise<void> } }).plugin.saveSettings =
+        () => new Promise<void>((resolve) => pending.push(resolve));
+      return () => pending.splice(0).forEach((resolve) => resolve());
+    };
+    const previews = (c: ReturnType<typeof makeTab>) =>
+      c.calls.filter((call) => call.method === "previewSessionEndNotification").length;
+
+    const offOn = makeTab({ sessionEndNotification: true });
+    const flush1 = slowSaves(offOn);
+    const a = offOn.tab.setControlValue("sessionEndNotification", false);
+    const b = offOn.tab.setControlValue("sessionEndNotification", true);
+    flush1();
+    await Promise.all([a, b]);
+    expect(previews(offOn)).toBe(1);
+
+    const onOff = makeTab({ sessionEndNotification: false });
+    const flush2 = slowSaves(onOff);
+    const c1 = onOff.tab.setControlValue("sessionEndNotification", true);
+    const c2 = onOff.tab.setControlValue("sessionEndNotification", false);
+    flush2();
+    await Promise.all([c1, c2]);
+    expect(previews(onOff)).toBe(0);
+    expect(onOff.settings.sessionEndNotification).toBe(false);
+  });
+
+  it("runs the panel's after-change hook, after the save", () => {
+    // The panel's sample rides on sharedToggle's optional hook. Nothing else
+    // calls it, so a helper that stopped running it would silently drop the
+    // sample from the panel — the minute-25 permission prompt it exists for.
+    const src = codeOnly(view());
+    const helper = src.slice(src.indexOf("const sharedToggle = ("));
+    const body = helper.slice(0, helper.indexOf("this.sharedPanelRows.push"));
+    const save = body.indexOf("await this.plugin.saveSettings();");
+    const hook = body.indexOf("afterChange?.(v);");
+    expect(save).toBeGreaterThan(-1);
+    expect(hook).toBeGreaterThan(save);
+  });
+
+  it("is off by default, for new installs and upgrades alike", () => {
+    expect(DEFAULT_SETTINGS.sessionEndNotification).toBe(false);
+  });
+
+  it("uses the shared label in the panel, not a typed copy", () => {
+    const src = view();
+    expect(src).toContain('sharedToggle("sessionEndNotification", SESSION_END_NOTIFICATION_LABEL');
+    expect(src).not.toContain(`, "${SESSION_END_NOTIFICATION_LABEL}"`);
+  });
+
+  it("is built, previewed and reset only on the desktop app in the panel", () => {
+    // Read as text; nothing can import the view. The row sits inside the
+    // platform check, so does its reset — a phone must not switch off a
+    // choice made on a computer — and the sample fires only when turned on.
+    const src = view();
+    const panel = src.slice(src.indexOf("renderSettingsPanel() {"));
+    const gate = panel.indexOf("if (Platform.isDesktopApp) {");
+    const row = panel.indexOf('sharedToggle("sessionEndNotification"');
+    expect(gate, "no platform gate around the panel row").toBeGreaterThan(-1);
+    expect(row).toBeGreaterThan(gate);
+    expect(panel.slice(gate, row)).not.toContain("\n    }");
+    expect(panel.slice(gate, row)).toContain('section("Notifications")');
+    expect(panel.slice(row, row + 600)).toContain(
+      "if (on && settings.sessionEndNotification) this.plugin.previewSessionEndNotification();"
+    );
+
+    const reset = panel.slice(panel.indexOf("const resetWrap"));
+    expect(reset).toMatch(
+      /if \(Platform\.isDesktopApp\) \{\s*settings\.sessionEndNotification = DEFAULT_SETTINGS\.sessionEndNotification;/
+    );
   });
 });

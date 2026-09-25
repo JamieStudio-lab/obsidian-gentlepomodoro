@@ -14,6 +14,7 @@ import {
   sessionEndSummary,
   type SessionEndEdge,
 } from "./sessionEndSummary";
+import { SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
 
 /**
  * The dual-surface TOGGLES — the boolean settings that live on both the gear
@@ -33,7 +34,8 @@ type SharedPanelKey =
   | "autoStartFocus"
   | "focusEndSoundEnabled"
   | "breakEndSoundEnabled"
-  | "musicSoundEnabled";
+  | "musicSoundEnabled"
+  | "sessionEndNotification";
 import {
   DEFAULT_SETTINGS,
   VIEW_TYPE_GENTLE_POMO,
@@ -1806,13 +1808,18 @@ export class GentlePomoView extends ItemView {
       });
     };
 
-    const sharedToggle = (key: SharedPanelKey, label: string) => {
+    const sharedToggle = (
+      key: SharedPanelKey,
+      label: string,
+      afterChange?: (next: boolean) => void
+    ) => {
       const { row, input } = toggleRow(label, Boolean(settings[key]), async (v) => {
         settings[key] = v;
         await this.plugin.saveSettings();
         // Fan out: the engine is silent while the timer is idle, so without
         // this a second open panel (and the settings tab) never converges.
         this.plugin.applySettingsToOpenViews();
+        afterChange?.(v);
       });
       this.sharedPanelRows.push({ key, row, input });
       return { row, input };
@@ -1966,6 +1973,22 @@ export class GentlePomoView extends ItemView {
     sharedToggle("autoStartFocus", AUTO_START_FOCUS_LABEL);
     summaryFor("break");
 
+    // The one end-of-session signal that is not a sound (0.6.6), so it is not
+    // in either section above — it covers both edges, and a copy in each would
+    // be one setting wearing two switches. Desktop only, like the tab's row:
+    // the mobile apps have no system notifications to post, and the platform
+    // cannot change while the panel is open, so there is nothing to re-check.
+    if (Platform.isDesktopApp) {
+      section("Notifications");
+      sharedToggle("sessionEndNotification", SESSION_END_NOTIFICATION_LABEL, (on) => {
+        // Same sample the settings tab shows, for the same reason: the
+        // operating system asks about notifications on the first one. The
+        // live setting is checked too, because this runs after the save's
+        // await — a quick on-then-off must not announce "Notifications are on".
+        if (on && settings.sessionEndNotification) this.plugin.previewSessionEndNotification();
+      });
+    }
+
     // Seed the summaries now rather than waiting for the next engine emit: the
     // rows above are built empty, and the tick that would fill them does not
     // run while the timer is idle — which is exactly when someone opens the
@@ -1997,6 +2020,12 @@ export class GentlePomoView extends ItemView {
       // the upgrade merge base (see settingsStore.deriveBreakEndChime). What a
       // reset should restore is the value a NEW install gets, which is on.
       settings.breakEndSoundEnabled = true;
+      // Only where the panel shows it. On a phone the row is not built, and a
+      // panel reset does not speak for a setting it has no row for — nor
+      // should a phone switch off the notification chosen on a computer.
+      if (Platform.isDesktopApp) {
+        settings.sessionEndNotification = DEFAULT_SETTINGS.sessionEndNotification;
+      }
       await this.plugin.saveSettings();
       this.timer.updateDuration("focus", settings.focusMinutes);
       this.timer.updateDuration("break", settings.breakMinutes);

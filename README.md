@@ -14,6 +14,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
 - **Estimated end time** — while a session runs, the timer shows the wall-clock time you'll finish (e.g. `Ends 15:30`, with `(+1 day)` if it crosses midnight): a calm way to know when you're free without watching the countdown. Toggle in settings.
 - Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
+- **Notify when time is up** (computers, opt-in) — a silent system notification when focus or break time is up, so you notice even when other windows cover Obsidian. It works with the timer's sounds off. Turning it on shows a sample, which is when your computer may ask to allow notifications from Obsidian.
 - Respects `prefers-reduced-motion`: timer animations soften when the OS requests it.
 
 ### ✅ Task integration
@@ -63,6 +64,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
 - **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
 - **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — platform constraints, not bugs.
+- **Notify when time is up** is for computers only — the mobile apps can't show system notifications, so the switch isn't shown there.
 - **Lofi music doesn't play on iPhone or iPad** — YouTube won't load its player inside Obsidian there (error 153). See [Lofi study music](#-lofi-study-music) for why; it isn't the link, and no other link works.
 
 ## Install
@@ -88,6 +90,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. All of these also live in the timer panel and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
+- **Notifications** (computers only): **notify when time is up** — a silent system notification when focus or break time is up. Also in the timer panel.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -100,6 +103,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Tasks**: **Where to find tasks** — tasks folder / current note / open notes. Hidden while **Show task selector** is off.
 - **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only. The music pair is hidden while **Show music player** is off.
 - **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
+- **Notifications** (computers only): **Notify when time is up** — the same switch as in the settings tab.
 - **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.
 

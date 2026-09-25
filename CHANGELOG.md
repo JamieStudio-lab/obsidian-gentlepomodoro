@@ -6,8 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.6] — 2026-09-24
 
+### Added
+
+- **Notify when time is up** (computers only, off by default). A silent system
+  notification when focus or break time is up, so you notice even when other
+  windows cover Obsidian — and, because it makes no sound, it works with the
+  timer's sounds turned off. It says what happens next: that your break or
+  next focus session has started, or that the timer keeps counting until you
+  stop it. Turn it on in the settings tab (new **Notifications** group) or in
+  the timer panel under the gear; turning it on shows a sample straight away,
+  which is also when your computer may ask to allow notifications from
+  Obsidian. Each new notice replaces the last one, so they don't pile up.
+  Stop and Skip never post one — you are already there. Asked for in
+  [issue #4](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/4).
+
+### Changed
+
+- The outcome line under each end-of-session pair now reads **"No sound — the
+  timer counts up."** instead of "Nothing — …", since a notification can now
+  appear at that moment.
+
 ### Fixed
 
+- **The end of a session is noticed on time while Obsidian is covered.** With
+  Obsidian hidden behind other windows for more than a few minutes, the moment
+  a session ran out — its sound, the auto-start of the next session, and now
+  the notification — could come up to about a minute late, because the system
+  slows a hidden window's timers. The timer now also wakes at the exact end
+  time.
 - **The "Current task" button showed the task's tag and cut the name short.**
   It printed the name with its `#tags` (for example
   `… Transcript 5 #task/research/aiprobe`) on a single line ending in "…",

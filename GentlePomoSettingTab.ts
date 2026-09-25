@@ -1,5 +1,6 @@
 import {
   App,
+  Platform,
   PluginSettingTab,
   Setting,
   debounce,
@@ -25,6 +26,7 @@ import {
   TASK_SOURCE_SETTING_DESC,
   resolveTaskSource,
 } from "./taskScope";
+import { SESSION_END_NOTIFICATION_DESC, SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
 import { markDestructive } from "./confirmModal";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
@@ -567,6 +569,28 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           this.endSummaryRow("break"),
         ],
       },
+      // New in 0.6.6, and built on the desktop app only: the mobile apps have
+      // no system notifications, and a switch that can do nothing on the
+      // device in your hand is a switch that lies. The value itself still
+      // syncs, so a phone never overwrites the choice made on a computer.
+      //
+      // Its own group rather than a row in Audio: it is the one end-of-session
+      // signal that is NOT a sound — it exists for people who keep the sound
+      // off — and filing it under Audio would say the opposite.
+      ...(Platform.isDesktopApp
+        ? [
+            {
+              heading: "Notifications",
+              rows: [
+                {
+                  name: SESSION_END_NOTIFICATION_LABEL,
+                  desc: SESSION_END_NOTIFICATION_DESC,
+                  control: { type: "toggle", key: "sessionEndNotification" },
+                } satisfies SettingRowSpec,
+              ],
+            },
+          ]
+        : []),
       {
         heading: "Music",
         rows: [
@@ -821,7 +845,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
         this.applySettingsToOpenViews();
         return;
-      // The four dual-surface rows. Every one of them MUST fan out: they also
+      // The dual-surface rows. Every one of them MUST fan out: they also
       // live on the gear panel, and the engine is silent while the timer is
       // idle, so without applySettingsToOpenViews an open panel would keep
       // showing the old value until it was closed and reopened. A missing case
@@ -859,6 +883,23 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();
         return;
+      case "sessionEndNotification": {
+        // A sample straight away when it goes ON: it proves the switch works,
+        // and it is when the operating system asks whether to allow them.
+        // "Went on" is decided BEFORE the await — read after it, a quick
+        // off-then-on pair would have both writes see the later value and show
+        // two samples — and it is re-checked after, so a write that was
+        // overtaken by an OFF shows nothing.
+        const turnedOn = Boolean(value) && !settings.sessionEndNotification;
+        settings.sessionEndNotification = Boolean(value);
+        await this.plugin.saveSettings();
+        if (turnedOn && settings.sessionEndNotification) {
+          this.plugin.previewSessionEndNotification();
+        }
+        // Dual-surface: the gear panel carries the same switch.
+        this.applySettingsToOpenViews();
+        return;
+      }
       case "musicSoundEnabled":
         settings.musicSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();

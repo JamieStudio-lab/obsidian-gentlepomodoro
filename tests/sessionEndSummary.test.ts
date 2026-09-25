@@ -75,10 +75,12 @@ describe("sessionEndSummary", () => {
     );
   });
 
-  it("describes the deliberate default — nothing happens and the timer counts up", () => {
+  it("describes the deliberate default — no sound, and the timer counts up", () => {
+    // Not "Nothing": since 0.6.6 a silent system notification can fire at this
+    // very moment, and this line has to stay true whether it does or not.
     for (const edge of ["focus", "break"] as const) {
       expect(sessionEndSummary(edge, forEdge(edge, false, false))).toBe(
-        "Nothing — the timer counts up."
+        "No sound — the timer counts up."
       );
     }
   });
@@ -121,11 +123,11 @@ describe("sessionEndSummary", () => {
     // other edge's pair must leave this one at its default sentence.
     expect(
       sessionEndSummary("focus", settings({ breakEndSoundEnabled: true, autoStartFocus: true }))
-    ).toBe("Nothing — the timer counts up.");
+    ).toBe("No sound — the timer counts up.");
 
     expect(
       sessionEndSummary("break", settings({ focusEndSoundEnabled: true, autoStartBreak: true }))
-    ).toBe("Nothing — the timer counts up.");
+    ).toBe("No sound — the timer counts up.");
 
     // And each edge does react to its own pair.
     expect(sessionEndSummary("focus", settings({ autoStartBreak: true }))).toBe(
@@ -165,7 +167,7 @@ describe("sessionEndSummary", () => {
     // Muted with the chime OFF is not a thwarted intention — nothing was going
     // to play anyway, so the ordinary wording is the honest one.
     expect(sessionEndSummary("focus", settings({ soundEnabled: false }))).toBe(
-      "Nothing — the timer counts up."
+      "No sound — the timer counts up."
     );
     expect(
       sessionEndSummary("focus", settings({ soundEnabled: false, autoStartBreak: true }))
