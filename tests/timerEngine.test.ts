@@ -80,6 +80,7 @@ function makePluginStub(opts: PluginStubOptions = {}) {
       },
       manifest: { dir: null },
       saveSettings: async () => {},
+      notifySessionEnd: record("notifySessionEnd"),
     },
   };
 }
@@ -304,17 +305,87 @@ describe("TimerEngine — Stop vs Skip with auto-start on", () => {
 });
 
 describe("TimerEngine — dispose", () => {
-  it("stops a running timer without throwing and can be restarted", () => {
+  beforeEach(() => {
+    // getTimerCount() only sees fake timers, and the orphan test below needs
+    // the clock to reach a zero crossing.
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  // dispose() is TERMINAL. Until 0.6.6 this test asserted the opposite — that
+  // start() still worked after dispose() — which nothing in the plugin used
+  // (onload() constructs a new engine every time), and which was exactly the
+  // property that let an in-flight auto-start restart the loop after unload.
+  it("is terminal: nothing the engine is asked afterwards arms a timer", () => {
     const stub = makePluginStub();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
 
     timer.start();
+    expect(vi.getTimerCount()).toBe(2); // the tick and the end-time wake-up
     expect(() => timer.dispose()).not.toThrow();
-    // Re-start works after dispose (loop was cleared, not corrupted).
-    expect(() => timer.start()).not.toThrow();
-    expect(timer.getState().isRunning).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Each of these arms a timer on a live engine. Checked one at a time,
+    // because a later call's clearLoop() would hide an earlier call's timer.
     timer.pause();
+    timer.start(); // startLoop
+    expect(vi.getTimerCount(), "start").toBe(0);
+    timer.reset(); // armEndWake — the state still says running
+    expect(vi.getTimerCount(), "reset").toBe(0);
+    timer.addMinutes(5); // armEndWake
+    expect(vi.getTimerCount(), "addMinutes").toBe(0);
+    timer.switchMode("break", true); // startLoop, the auto-start path
+    expect(vi.getTimerCount(), "switchMode").toBe(0);
+  });
+
+  // The hole that made dispose terminal. A zero crossing with auto-start on
+  // awaits handleFinished()'s vault writes before switchMode() restarts the
+  // loop; unload the plugin inside that window and the continuation used to
+  // start an interval nothing would ever clear, which went on logging sessions
+  // from a disabled plugin until Obsidian restarted.
+  it("an auto-start still in its vault writes at unload does not restart the loop", async () => {
+    const stub = makePluginStub({
+      focusMinutes: 1,
+      breakMinutes: 1,
+      sessionCounterDate: "2025-05-18",
+    });
+    // Both on, so an orphaned loop would chain sessions and show up as extra log writes.
+    stub.settings.autoStartBreak = true;
+    stub.settings.autoStartFocus = true;
+    // Hold the finished session's log write open until the plugin has unloaded.
+    let endSessions = 0;
+    let finishWrite = () => {};
+    stub.plugin.logManager.endSession = () => {
+      endSessions++;
+      if (endSessions > 1) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        finishWrite = resolve;
+      });
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(60_010);
+    expect(endSessions).toBe(1); // crossed zero; now inside the log write
+    expect(timer.getState().mode).toBe("focus"); // not switched yet
+
+    timer.dispose(); // the plugin unloads here
+    finishWrite();
+    // Run the continuation, then give any loop it started five minutes to show itself.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(endSessions).toBe(1);
+    expect(stub.calls.filter((c) => c.name === "notifySessionEnd").map((c) => c.args)).toEqual([
+      ["focus", true],
+    ]);
+    // The session that DID finish is still recorded; only the next one never starts.
+    expect(stub.settings.sessionsSinceLongBreak).toBe(1);
   });
 
   it("is a no-op (no throw) on a fresh, idle engine", () => {
@@ -859,5 +930,320 @@ describe("TimerEngine — opt-in end-of-session chime", () => {
 
     expect(played).toEqual([DING]);
     timer.pause();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.6 — the opt-in system notification (the follow-up on GitHub issue #4)
+//
+// The engine only ASKS: it tells the plugin, once per crossing, which session
+// ended and whether the next one started. Whether anything is posted is the
+// plugin's setting and the notifier's job (tests/sessionEndNotice.test.ts).
+// These tests hold the engine's half — the moment, the arguments, and that
+// the flow guarantee at the crossing is untouched.
+// ---------------------------------------------------------------------------
+describe("TimerEngine — session-end notification", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const notified = (calls: LogCall[]) =>
+    calls.filter((c) => c.name === "notifySessionEnd").map((c) => c.args);
+
+  it("asks once when focus runs out into overtime, and changes nothing else", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    vi.advanceTimersByTime(30_000); // 600 more ticks of overtime, all prev <= 0
+
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    // The flow guarantee holds: overtime, still running, nothing logged.
+    const state = timer.getState();
+    expect(state.mode).toBe("focus");
+    expect(state.isRunning).toBe(true);
+    expect(state.remainingMs).toBeLessThan(0);
+    expect(stub.calls.filter((c) => c.name === "endSession")).toHaveLength(0);
+    timer.pause();
+  });
+
+  it("does not depend on any sound setting — it exists for people who mute", () => {
+    const stub = makePluginStub({ breakMinutes: 1 });
+    stub.settings.soundEnabled = false;
+    stub.settings.breakEndSoundEnabled = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.switchMode("break");
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(notified(stub.calls)).toEqual([["break", false]]);
+    timer.pause();
+  });
+
+  it("names the session that ENDED when the next one starts on its own", async () => {
+    // completeNaturally() switches the mode, so the call must read it first.
+    const stub = makePluginStub({ focusMinutes: 1, sessionCounterDate: "2025-05-18" });
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(notified(stub.calls)).toEqual([["focus", true]]);
+    expect(timer.getState().mode).toBe("break");
+    timer.pause();
+  });
+
+  it("stays quiet for Stop and Skip — a button press needs no reminder", async () => {
+    const stub = makePluginStub({ focusMinutes: 25 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(5_000);
+    await timer.finish();
+    timer.start();
+    vi.advanceTimersByTime(5_000);
+    await timer.skip();
+
+    expect(notified(stub.calls)).toEqual([]);
+  });
+
+  it("does not ask again when Stop ends the overtime it already announced", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    await timer.finish();
+
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+  });
+});
+
+describe("TimerEngine — session-end notification: edges and repeats", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const notified = (calls: LogCall[]) =>
+    calls.filter((c) => c.name === "notifySessionEnd").map((c) => c.args);
+
+  it("each edge reads its OWN auto-start: a break ending with only auto-start-focus on", async () => {
+    // The crossing that matters: what starts when a BREAK ends is focus, so
+    // the break edge is governed by autoStartFocus. Reading autoStartBreak
+    // here would tell the user the timer is counting when focus had started.
+    const stub = makePluginStub({ breakMinutes: 1, sessionCounterDate: "2025-05-18" });
+    stub.settings.autoStartFocus = true;
+    stub.settings.autoStartBreak = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.switchMode("break");
+    timer.start();
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(notified(stub.calls)).toEqual([["break", true]]);
+    expect(timer.getState().mode).toBe("focus");
+    timer.pause();
+  });
+
+  it("…and a focus ending with only auto-start-focus on says nothing started", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.autoStartFocus = true;
+    stub.settings.autoStartBreak = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    expect(timer.getState().mode).toBe("focus");
+    timer.pause();
+  });
+
+  it("still asks when the chime DOES ring — it is not a stand-in for the sound", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played: string[] = [];
+    (timer as unknown as { playSound: (f: string) => Promise<void> }).playSound = async (f) => {
+      played.push(f);
+    };
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toContain("singing_bell_short.mp3");
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    timer.pause();
+  });
+
+  it("asks again for a SECOND crossing after +5 in overtime — time was put back", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(70_000); // 10s into overtime
+    timer.addMinutes(5); // back to 4m50s on the clock
+    vi.advanceTimersByTime(5 * 60_000);
+
+    expect(notified(stub.calls)).toEqual([
+      ["focus", false],
+      ["focus", false],
+    ]);
+    timer.pause();
+  });
+
+  it("does not ask again for a pause and resume in overtime, nor for Skip", async () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+    timer.pause();
+    vi.advanceTimersByTime(10_000);
+    timer.start();
+    vi.advanceTimersByTime(30_000);
+    await timer.skip();
+
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.6 — the end-time wake-up. A covered Obsidian window is a hidden page,
+// and five minutes after a page goes hidden Chromium wakes a repeating timer
+// at most once a minute (unless audio is playing — and this feature is for
+// people who keep it off). These tests kill the 50ms tick outright, which is
+// the limit of that throttling, and check the crossing still lands on time.
+// ---------------------------------------------------------------------------
+describe("TimerEngine — end-time wake-up", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // A tick that never fires: the worst case of intensive throttling.
+    vi.spyOn(globalThis, "setInterval").mockImplementation((() => 0) as never);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  const notified = (calls: LogCall[]) =>
+    calls.filter((c) => c.name === "notifySessionEnd").map((c) => c.args);
+
+  it("crosses zero on time with no tick at all", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(59_000);
+    expect(notified(stub.calls)).toEqual([]);
+    vi.advanceTimersByTime(1_010);
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    expect(timer.getState().remainingMs).toBeLessThanOrEqual(0);
+    timer.pause();
+  });
+
+  it("moves with +5: the old end time wakes nothing, the new one crosses", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(30_000);
+    timer.addMinutes(5); // the end moves to 5m30s from now
+    vi.advanceTimersByTime(60_000);
+    expect(notified(stub.calls)).toEqual([]);
+    vi.advanceTimersByTime(4 * 60_000 + 30_010);
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    timer.pause();
+  });
+
+  it("moves with Reset: a fresh minute from the press, not from the start", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    vi.advanceTimersByTime(30_000);
+    timer.reset();
+    vi.advanceTimersByTime(59_000);
+    expect(notified(stub.calls)).toEqual([]);
+    vi.advanceTimersByTime(1_010);
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    timer.pause();
+  });
+
+  it("is cancelled by pause, and re-armed by resume", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    timer.pause();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(notified(stub.calls)).toEqual([]);
+
+    // Paused straight after the start because pause() keeps the last TICKED
+    // time, and this suite has no tick — a click only happens with the window
+    // visible, where the tick is fresh.
+    timer.start();
+    vi.advanceTimersByTime(59_000);
+    expect(notified(stub.calls)).toEqual([]);
+    vi.advanceTimersByTime(1_010);
+    expect(notified(stub.calls)).toEqual([["focus", false]]);
+    timer.pause();
+  });
+
+  it("arms again for the session an auto-start begins", async () => {
+    const stub = makePluginStub({
+      focusMinutes: 1,
+      breakMinutes: 1,
+      sessionCounterDate: "2025-05-18",
+    });
+    stub.settings.autoStartBreak = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    await vi.advanceTimersByTimeAsync(60_010);
+    expect(timer.getState().mode).toBe("break");
+    await vi.advanceTimersByTimeAsync(60_010);
+
+    expect(notified(stub.calls)).toEqual([
+      ["focus", true],
+      ["break", false],
+    ]);
+    timer.pause();
+  });
+
+  it("leaves nothing pending after dispose", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.start();
+    timer.dispose();
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(notified(stub.calls)).toEqual([]);
   });
 });

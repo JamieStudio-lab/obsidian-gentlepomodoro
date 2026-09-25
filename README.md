@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Four ambient themes — Classic (day→night gradient), Frosted Glass (drifting colour orbs behind a frosted pane), Frosted Glass 2 (the same idea drawn as real glass, with a lit rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.5 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.6 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -14,6 +14,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
 - **Estimated end time** — while a session runs, the timer shows the wall-clock time you'll finish (e.g. `Ends 15:30`, with `(+1 day)` if it crosses midnight): a calm way to know when you're free without watching the countdown. Toggle in settings.
 - Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
+- **Notify when time is up** (computers, opt-in) — a silent system notification when focus or break time is up, so you notice even when other windows cover Obsidian. It works with the timer's sounds off. Turning it on shows a sample, which is when your computer may ask to allow notifications from Obsidian.
 - Respects `prefers-reduced-motion`: timer animations soften when the OS requests it.
 
 ### ✅ Task integration
@@ -22,6 +23,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - **Choose where tasks come from**: a **tasks folder**, the **note you are in**, or **every note you have open**. The two note options also show tasks with no date, under a _No date_ heading — handy if you keep todos inline in your notes rather than in one folder.
 - Smart filtering: Overdue, Today, Tomorrow, and upcoming tasks. Choose the lookahead window (3 / 5 / 7 / 14 / 30 days) in settings; overdue tasks always show.
 - **Your linked task stays linked** when you change where tasks come from — if the new scope would not show it, it appears at the top under _Linked task_. Only ticking it off unlinks it.
+- The **Current task** button shows the task's name without its tags, on up to two lines; on a computer, hover it to read a longer name in full.
 - One-click **Unlink current task**.
 - **Opt-in (beta — edits your task files)**: adds a lifetime `🍅 N` count to the task line each time you finish a focus session for it, placed before the Tasks date fields so they keep parsing (e.g. `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`).
 - **Recovery actions** (settings buttons + commands): if an older version left markers after your task dates and broke their parsing — **Check** counts them without changing anything, **Repair** moves them back in place, **Remove** deletes the misplaced ones, and **Remove all** deletes every marker the counter ever wrote (back up your vault first). The writing actions ask for confirmation with exact counts first. Repair and Remove only act on a marker sitting _after_ a task's date fields — the placement that breaks them, whoever typed it — and Remove all leaves alone a `🍅 N` you typed inside a task's own text (one at the very end of the line counts as a marker).
@@ -62,6 +64,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - Touch-friendly: bigger tap targets, one smooth-scrolling panel, and a layout that adapts to the screen — on a short/landscape phone the timer shrinks and gets out of the way.
 - **Tap the timer shape** to peek at the hidden countdown — it fades back on its own after a couple of seconds. The daily-goal progress shows in the view (Obsidian hides the status bar on mobile).
 - **Sound:** press **Start** once to unlock audio, and note iOS's hardware silent switch mutes it — platform constraints, not bugs.
+- **Notify when time is up** is for computers only — the mobile apps can't show system notifications, so the switch isn't shown there.
 - **Lofi music doesn't play on iPhone or iPad** — YouTube won't load its player inside Obsidian there (error 153). See [Lofi study music](#-lofi-study-music) for why; it isn't the link, and no other link works.
 
 ## Install
@@ -87,6 +90,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. All of these also live in the timer panel and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
+- **Notifications** (computers only): **notify when time is up** — a silent system notification when focus or break time is up. Also in the timer panel.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
 - **Daily focus goal**: minutes (default 120, 0 disables) and goal-hit notice toggle.
@@ -99,6 +103,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Tasks**: **Where to find tasks** — tasks folder / current note / open notes. Hidden while **Show task selector** is off.
 - **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only. The music pair is hidden while **Show music player** is off.
 - **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
+- **Notifications** (computers only): **Notify when time is up** — the same switch as in the settings tab.
 - **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
 - Full-width **Reset to defaults** button at the bottom.
 

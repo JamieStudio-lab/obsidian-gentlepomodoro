@@ -23,6 +23,11 @@ export class PluginSettingTab {
 }
 export class Modal {}
 export class WorkspaceLeaf {}
+/**
+ * Desktop by default, and MUTABLE on purpose: a test that needs the mobile
+ * app flips a field and puts it back. Only the fields the plugin reads.
+ */
+export const Platform = { isDesktopApp: true, isMobile: false, isIosApp: false };
 export class Notice {
   constructor(_message: string) {}
 }

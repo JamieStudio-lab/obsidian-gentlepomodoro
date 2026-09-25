@@ -1,4 +1,4 @@
-import { Notice, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
 import { DEFAULT_THEME } from "./themes";
 
 import { confirmAction } from "./confirmModal";
@@ -22,6 +22,7 @@ import {
   scanMisplacedPomodoroMarkersInVault,
 } from "./taskLoader";
 import { MusicStationStore, type MusicStationStoreHost } from "./musicStationStore";
+import { SessionEndNotifier, systemNotificationFactory } from "./sessionEndNotice";
 import { TimerEngine } from "./TimerEngine";
 import {
   DEFAULT_SETTINGS,
@@ -71,6 +72,14 @@ export default class GentlePomoPlugin extends Plugin {
   /** Station slots and their remembered positions. Constructed here rather
    *  than in onload because loadSettings() reconciles through it. */
   private readonly musicStations = new MusicStationStore(this.createMusicStationHost());
+  /** The opt-in "time is up" system notification (desktop only). */
+  private readonly sessionEndNotifier = new SessionEndNotifier({
+    enabled: () => this.settings.sessionEndNotification,
+    create: systemNotificationFactory(
+      Platform.isDesktopApp,
+      typeof Notification === "function" ? Notification : undefined
+    ),
+  });
 
   override async onload() {
     await this.loadSettings();
@@ -391,6 +400,7 @@ export default class GentlePomoPlugin extends Plugin {
     }
 
     this.destroyStatusBar();
+    this.sessionEndNotifier.dispose();
 
     // Release the tick loop + shared AudioContext so they don't leak across
     // plugin disable/enable cycles.
@@ -740,6 +750,20 @@ export default class GentlePomoPlugin extends Plugin {
         leaf.view.duckMusic(cueDurationSec);
       }
     }
+  }
+
+  /** Called by TimerEngine at the zero crossing — the engine does no UI of its
+   *  own. `endedMode` is the session that just ran out; `nextStarts` says
+   *  whether the next one began on its own. Gated on the setting inside. */
+  notifySessionEnd(endedMode: PomoMode, nextStarts: boolean): void {
+    this.sessionEndNotifier.sessionEnded(endedMode, nextStarts);
+  }
+
+  /** Shows a sample notification when the switch is turned on, from either
+   *  surface, so the operating system's "allow notifications?" question comes
+   *  now rather than at the end of the next session. */
+  previewSessionEndNotification(): void {
+    this.sessionEndNotifier.preview();
   }
 
   /**

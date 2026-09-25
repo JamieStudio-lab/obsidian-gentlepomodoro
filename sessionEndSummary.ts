@@ -127,8 +127,11 @@ export function sessionEndSummary(edge: SessionEndEdge, settings: SessionEndSett
   }
   if (muted) return "Sounds are off — the timer counts up.";
   // No auto-start: the timer slides into overtime and counts up, which is the
-  // plugin's deliberate flow-protecting default.
-  return chime ? "A sound, then the timer counts up." : "Nothing — the timer counts up.";
+  // plugin's deliberate flow-protecting default. "No sound", not "Nothing":
+  // since 0.6.6 a silent system notification can fire here, and this line
+  // speaks about sound and what starts — it must stay true whether that
+  // notification is on or not, on a platform that has one or not.
+  return chime ? "A sound, then the timer counts up." : "No sound — the timer counts up.";
 }
 
 function capitalize(text: string): string {

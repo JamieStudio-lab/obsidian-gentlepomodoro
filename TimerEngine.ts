@@ -46,6 +46,30 @@ export class TimerEngine {
   // flag would silence the cue for that second crossing's Stop.
   private endCueSounded = false;
 
+  // A one-shot wake-up at the session's end time, beside the 50ms tick. The
+  // tick alone can be up to a MINUTE late: a covered Obsidian window counts as
+  // hidden (Electron maps macOS occlusion to a hidden page, and Obsidian sets
+  // no backgroundThrottling), and five minutes after a page goes hidden
+  // Chromium wakes a repeating timer at most once a minute unless audio is
+  // playing — which, for someone who keeps the sound off, it is not. A single
+  // setTimeout armed outside the tick is not "chained", so it is only ever
+  // aligned to the second. It runs the same tick, whose `prev > 0` guard makes
+  // a double fire a no-op. Re-armed wherever targetTime moves while running.
+  private endWakeId: number | null = null;
+
+  // Set by dispose() and never cleared: a disposed engine never arms a timer
+  // again. Clearing the loop at dispose is not enough on its own, because an
+  // async continuation can outlive it — a zero crossing with auto-start on
+  // awaits four vault round trips in handleFinished() before switchMode()
+  // restarts the loop, and a Skip does the same. Unload the plugin inside that
+  // window and the continuation used to start a fresh interval nothing would
+  // ever clear, logging sessions and ringing cues from a disabled plugin until
+  // Obsidian restarted. Checked where timers are CREATED (startLoop,
+  // armEndWake) rather than at each continuation, so a future async path
+  // cannot reopen the hole by forgetting a check. Nothing restarts a disposed
+  // engine on purpose: onload() constructs a new one every time.
+  private disposed = false;
+
   // Track current task name for logging
   public currentTaskName: string = NO_TASK_LABEL;
   public currentTaskPath: string | undefined;
@@ -134,58 +158,93 @@ export class TimerEngine {
       window.clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    this.clearEndWake();
+  }
+
+  private clearEndWake() {
+    if (this.endWakeId !== null) {
+      window.clearTimeout(this.endWakeId);
+      this.endWakeId = null;
+    }
+  }
+
+  /**
+   * Arm (or re-arm) the one-shot wake-up for the current end time. Nothing to
+   * arm while paused or once the session is already in overtime. The extra
+   * millisecond keeps a timer that fires exactly on time from reading a
+   * remaining time of +0.x and finding nothing to do.
+   */
+  private armEndWake() {
+    this.clearEndWake();
+    if (this.disposed || !this.state.isRunning || this.targetTime === null) return;
+    const delay = this.targetTime - Date.now();
+    if (delay <= 0) return;
+    this.endWakeId = window.setTimeout(() => {
+      this.endWakeId = null;
+      this.tick();
+    }, delay + 1);
   }
 
   private startLoop() {
     this.clearLoop();
+    if (this.disposed) return; // see `disposed`
 
     // Safety: Ensure targetTime is set if running
     if (this.state.isRunning && this.targetTime === null) {
       this.targetTime = Date.now() + this.state.remainingMs;
     }
 
-    this.intervalId = window.setInterval(() => {
-      if (!this.state.isRunning || this.targetTime === null) return;
+    this.intervalId = window.setInterval(() => this.tick(), 50);
+    this.armEndWake();
+  }
 
-      // Calculate remaining time based on system clock
-      const now = Date.now();
-      const prev = this.state.remainingMs;
-      this.state.remainingMs = this.targetTime - now;
+  private tick() {
+    if (!this.state.isRunning || this.targetTime === null) return;
 
-      // The tick is a writer of remainingMs like reset() and addMinutes(), so it
-      // needs their clear too. `targetTime - now` rises whenever the system clock
-      // steps BACKWARD (an NTP correction, a manual change, a VM or laptop resume
-      // that re-syncs), which is arithmetically identical to adding time — and a
-      // stale flag would then silence the next crossing's Stop.
-      if (this.state.remainingMs > 0) this.endCueSounded = false;
+    // Calculate remaining time based on system clock
+    const now = Date.now();
+    const prev = this.state.remainingMs;
+    this.state.remainingMs = this.targetTime - now;
 
-      // Natural completion: fire once on the tick that crosses zero. The
-      // `prev > 0` guard guarantees this fires a single time (later ticks have
-      // prev <= 0; a new session restores a positive remainingMs). Only act
-      // when the next mode's auto-start toggle is on — otherwise fall through
-      // and let the timer count up into overtime (unchanged behavior).
-      if (prev > 0 && this.state.remainingMs <= 0) {
-        const autoStart =
-          this.state.mode === "focus"
-            ? this.plugin.settings.autoStartBreak
-            : this.plugin.settings.autoStartFocus;
-        if (autoStart) {
-          this.state.remainingMs = 0; // freeze display at 00:00
-          this.clearLoop(); // stop ticking; completeNaturally restarts the loop
-          this.emit();
-          void this.completeNaturally();
-          return;
-        }
-        // Auto-start is off, so the session deliberately slides into overtime
-        // to protect flow (see CLAUDE.md — this silence is a product value,
-        // not a defect). The optional chime ANNOUNCES the end and changes
-        // nothing else: no logging, no mode switch, no clearLoop. Everything
-        // below this line must stay identical to the pre-0.6.3 fall-through.
-        this.maybeChimeAtCrossing();
+    // The tick is a writer of remainingMs like reset() and addMinutes(), so it
+    // needs their clear too. `targetTime - now` rises whenever the system clock
+    // steps BACKWARD (an NTP correction, a manual change, a VM or laptop resume
+    // that re-syncs), which is arithmetically identical to adding time — and a
+    // stale flag would then silence the next crossing's Stop.
+    if (this.state.remainingMs > 0) this.endCueSounded = false;
+
+    // Natural completion: fire once on the tick that crosses zero. The
+    // `prev > 0` guard guarantees this fires a single time (later ticks have
+    // prev <= 0; a new session restores a positive remainingMs). Only act
+    // when the next mode's auto-start toggle is on — otherwise fall through
+    // and let the timer count up into overtime (unchanged behavior).
+    if (prev > 0 && this.state.remainingMs <= 0) {
+      const autoStart =
+        this.state.mode === "focus"
+          ? this.plugin.settings.autoStartBreak
+          : this.plugin.settings.autoStartFocus;
+      // The opt-in system notification (0.6.6). Placed ABOVE the branch so
+      // both paths post it, and read here because state.mode is still the
+      // mode that ENDED — completeNaturally() switches it. It is silent and
+      // changes nothing about the timer, so the overtime guarantee below
+      // still holds. The plugin owns it: the engine does no UI.
+      this.plugin.notifySessionEnd(this.state.mode, autoStart);
+      if (autoStart) {
+        this.state.remainingMs = 0; // freeze display at 00:00
+        this.clearLoop(); // stop ticking; completeNaturally restarts the loop
+        this.emit();
+        void this.completeNaturally();
+        return;
       }
+      // Auto-start is off, so the session deliberately slides into overtime
+      // to protect flow (see CLAUDE.md — this silence is a product value,
+      // not a defect). The optional chime ANNOUNCES the end and changes
+      // nothing else: no logging, no mode switch, no clearLoop. Everything
+      // below this line must stay identical to the pre-0.6.3 fall-through.
+      this.maybeChimeAtCrossing();
+    }
 
-      this.emit();
-    }, 50);
+    this.emit();
   }
 
   /**
@@ -432,9 +491,10 @@ export class TimerEngine {
    * Release engine resources on plugin unload: stop the tick loop, close the
    * shared AudioContext (Chromium caps live contexts, so leaking one per
    * disable/enable cycle would eventually silence all sound), and drop the
-   * decoded-buffer cache.
+   * decoded-buffer cache. Terminal: see `disposed`.
    */
   dispose() {
+    this.disposed = true;
     this.clearLoop();
     if (this.audioCtx) {
       void this.audioCtx.close().catch(() => {});
@@ -676,6 +736,7 @@ export class TimerEngine {
 
     if (this.state.isRunning) {
       this.targetTime = Date.now() + total;
+      this.armEndWake();
     } else {
       this.targetTime = null;
       this.clearLoop();
@@ -712,6 +773,7 @@ export class TimerEngine {
     if (this.state.isRunning && this.targetTime !== null) {
       const effectiveChange = newRemaining - oldRemaining;
       this.targetTime += effectiveChange;
+      this.armEndWake();
     }
     this.emit();
   }

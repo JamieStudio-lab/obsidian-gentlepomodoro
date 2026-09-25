@@ -4,6 +4,58 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-09-25
+
+### Added
+
+- **Notify when time is up** (computers only, off by default). A silent system
+  notification when focus or break time is up, so you notice even when other
+  windows cover Obsidian — and, because it makes no sound, it works with the
+  timer's sounds turned off. It says what happens next: that your break or
+  next focus session has started, or that the timer keeps counting until you
+  stop it. Turn it on in the settings tab (new **Notifications** group) or in
+  the timer panel under the gear; turning it on shows a sample straight away,
+  which is also when your computer may ask to allow notifications from
+  Obsidian. Each new notice replaces the last one, so they don't pile up.
+  Stop and Skip never post one — you are already there. Asked for in
+  [issue #4](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/4).
+
+### Changed
+
+- The outcome line under each end-of-session pair now reads **"No sound — the
+  timer counts up."** instead of "Nothing — …", since a notification can now
+  appear at that moment.
+
+### Fixed
+
+- **The end of a session is noticed on time while Obsidian is covered.** With
+  Obsidian hidden behind other windows for more than a few minutes, the moment
+  a session ran out — its sound, the auto-start of the next session, and now
+  the notification — could come up to about a minute late, because the system
+  slows a hidden window's timers. The timer now also wakes at the exact end
+  time.
+- **The "Current task" button showed the task's tag and cut the name short.**
+  It printed the name with its `#tags` (for example
+  `… Transcript 5 #task/research/aiprobe`) on a single line ending in "…",
+  while the picker list showed the same task cleanly. The button now shows the
+  name as the list does, on up to two lines, with more room around the text,
+  and on a computer hovering it shows the whole name whenever two lines are not
+  enough. Nothing else changes:
+  the daily log still records the name with its tags, so Dataview queries that
+  read a tag off a log line keep working, and a linked task stays linked.
+- **Task names in the picker and on the button hide three more Tasks fields.**
+  A task's "depends on" (`⛔ abc123`) and "on completion" (`🏁 delete`) values
+  and a cancelled date (`❌ 2026-01-06`) no longer show as part of its name, and
+  a tag typed with no space before a date (`#paper📅 2026-09-30`) no longer
+  leaves the bare date behind. Display only — what the log records is
+  unchanged.
+- **Turning the plugin off can no longer leave a hidden timer running.** If the
+  plugin was switched off or updated in the moment just after a session ran
+  out with auto-start on (or just after pressing Skip with it on), the next
+  session could start anyway, with nothing on screen, and keep writing
+  sessions to your log and playing sounds until Obsidian was restarted.
+  Present since 0.2.1.
+
 ## [0.6.5] — 2026-09-24
 
 A fourth theme, **Frosted glass 2**: the frosted pane drawn as real glass. It

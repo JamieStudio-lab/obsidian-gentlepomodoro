@@ -144,6 +144,9 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   // fresh install only (read.kind === "fresh") and persists it once.
   focusEndSoundEnabled: false,
   breakEndSoundEnabled: false,
+  // Off for everyone, new installs included: an interruption at the end of a
+  // session is something to ask for, never something to find turned on.
+  sessionEndNotification: false,
   tasksPath: "",
   logFolderPath: "",
   showTaskSelector: true,
