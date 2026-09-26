@@ -757,6 +757,16 @@ export default class GentlePomoPlugin extends Plugin {
     }
   }
 
+  /** A previewed sound stopped before its end: let the music come back once
+   *  the real cues still ringing (`owedSec`) are done. Called by TimerEngine. */
+  shortenMusicDuckInOpenViews(owedSec: number): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+      if (leaf.view instanceof GentlePomoView) {
+        leaf.view.shortenMusicDuck(owedSec);
+      }
+    }
+  }
+
   /** Called by TimerEngine at the zero crossing — the engine does no UI of its
    *  own. `endedMode` is the session that just ran out; `nextStarts` says
    *  whether the next one began on its own. Gated on the setting inside. */

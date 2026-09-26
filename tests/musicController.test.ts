@@ -532,6 +532,48 @@ describe("ducking", () => {
     expect(h.lastVolume()).toBe(100);
   });
 
+  it("comes back early when a previewed sound is stopped (0.6.7)", () => {
+    bootPlaying(h);
+    h.controller.duck(30); // a 30-second preview
+    h.clock.advance(2000);
+    h.controller.shortenDuck(0); // ■ — nothing real is ringing
+    h.clock.advance(2000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("stays down for a real cue still ringing when a preview is stopped", () => {
+    bootPlaying(h);
+    h.controller.duck(30);
+    h.clock.advance(1000);
+    h.controller.shortenDuck(10); // a real sound has 10 s left
+    h.clock.advance(5000);
+    expect(h.lastVolume()).toBe(Math.round(MUSIC_DUCK_FACTOR * 100));
+    h.clock.advance(7000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("never lengthens a dip", () => {
+    bootPlaying(h);
+    h.controller.duck(2);
+    h.controller.shortenDuck(20);
+    h.clock.advance(4000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("shortens what a PAUSED player is owed, so ▶️ afterwards is not held down", () => {
+    bootPlaying(h);
+    h.controller.pressPause();
+    h.clock.advance(MUSIC_FADE_OUT_MS);
+    h.state(YT_STATE.PAUSED);
+    h.controller.duck(30); // turned away while paused, but owed
+    h.controller.shortenDuck(0);
+    h.clock.advance(1000);
+    h.controller.pressPlay();
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(100);
+  });
+
   it("▶️ pressed inside a fade-out, under a ringing sound, stays dipped too", () => {
     // The still-running branch of armFadeIn: the player never stopped, so the
     // fade eases straight back up — and must stop at the dip, not at full.

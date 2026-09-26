@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - If a chosen file is later missing on a device — still syncing, deleted,
     renamed or moved — the built-in sound plays instead, and the row in the
     settings tab says why. Nothing pops up when the session ends.
+  - While a sound plays, ▶ turns into ■ to stop it. Only one plays at a
+    time: picking another sound, pressing the other row's ▶ or closing the
+    settings stops it straight away, and lofi music turned down for it comes
+    back up.
   - ▶ stays silent while **Timer sounds** is off, and says so.
   - The file is read ahead of time, so the sound plays on time even from a
     slow or syncing vault.

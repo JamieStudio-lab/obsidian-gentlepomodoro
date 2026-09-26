@@ -27,6 +27,10 @@ interface FakeSource {
   buffer: unknown;
   connect: () => void;
   start: (n: number) => void;
+  /** When stop() was asked for, in context time; null while it plays on. */
+  stoppedAt: number | null;
+  stop: (when?: number) => void;
+  onended: (() => void) | null;
 }
 
 /**
@@ -38,11 +42,16 @@ const vaultDecodes = new WeakMap<ArrayBuffer, number | "bad">();
 class FakeAudioContext {
   static lastInstance: FakeAudioContext | null = null;
   static instances = 0;
+  /** When set, every decode waits on it — to catch what lands mid-decode. */
+  static decodeGate: Promise<void> | null = null;
   state: string = "running";
   resumeCalls = 0;
   started: number[] = [];
   /** The `tag` of each buffer started, in order: "bundled" or a vault path. */
   startedTags: string[] = [];
+  /** Every source started, in order, so a test can stop or end one. */
+  sources: FakeSource[] = [];
+  currentTime = 10;
   destination = {};
 
   constructor() {
@@ -57,7 +66,11 @@ class FakeAudioContext {
   close() {
     return Promise.resolve();
   }
-  decodeAudioData(bytes: ArrayBuffer) {
+  async decodeAudioData(bytes: ArrayBuffer) {
+    if (FakeAudioContext.decodeGate) await FakeAudioContext.decodeGate;
+    return this.decodeNow(bytes);
+  }
+  decodeNow(bytes: ArrayBuffer) {
     const fromVault = vaultDecodes.get(bytes);
     if (fromVault === "bad") return Promise.reject(new Error("EncodingError"));
     if (fromVault !== undefined) {
@@ -74,12 +87,27 @@ class FakeAudioContext {
       start: (n: number) => {
         self.started.push(n);
         self.startedTags.push((source.buffer as { tag: string }).tag);
+        self.sources.push(source);
       },
+      stoppedAt: null,
+      stop: (when = 0) => {
+        source.stoppedAt = when;
+      },
+      onended: null,
     };
     return source;
   }
   createGain() {
-    return { gain: { value: 0 }, connect: () => {} };
+    const ramps: [number, number][] = [];
+    return {
+      gain: {
+        value: 0,
+        ramps,
+        setValueAtTime: () => {},
+        linearRampToValueAtTime: (v: number, t: number) => ramps.push([v, t]),
+      },
+      connect: () => {},
+    };
   }
 }
 
@@ -93,6 +121,7 @@ beforeAll(() => {
 
 function makeStub(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
   const ducks: number[] = [];
+  const shortened: number[] = [];
   const settings = { ...DEFAULT_SETTINGS, soundEnabled: true, soundVolume: 0.7, ...overrides };
   return {
     ducks,
@@ -109,7 +138,9 @@ function makeStub(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
       manifest: { dir: null },
       saveSettings: async () => {},
       duckMusicInOpenViews: (d: number) => ducks.push(d),
+      shortenMusicDuckInOpenViews: (owed: number) => shortened.push(owed),
     },
+    shortened,
   };
 }
 
@@ -709,5 +740,171 @@ describe("previewEndCue — the settings tab's ▶", () => {
 
     await timer.previewEndCue("focus");
     expect(seams(timer).endCueSounded).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stopping a preview (0.6.7, from the maintainer's own try-out): a preview was
+// fire-and-forget like every cue, so ▶ on a 30-second file could not be
+// stopped, and picking another sound played the new one on top of the old.
+// Real cues stay fire-and-forget; only the preview is held and stoppable.
+// ---------------------------------------------------------------------------
+describe("stopping a preview", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("stops the playing preview, with a short fade rather than a click", async () => {
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.previewEndCue("focus");
+    expect(timer.previewingEdge()).toBe("focus");
+
+    timer.stopPreview();
+    const ctx = FakeAudioContext.lastInstance!;
+    const stopped = ctx.sources[0];
+    expect(timer.previewingEdge()).toBe(null);
+    // Stopped a moment AFTER now, once the gain has ramped to zero.
+    expect(stopped.stoppedAt).toBeGreaterThan(ctx.currentTime);
+    expect(stopped.stoppedAt).toBeLessThan(ctx.currentTime + 0.2);
+  });
+
+  it("lets only one preview play: a new one stops the last at once", async () => {
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.previewEndCue("focus");
+    await timer.previewEndCue("break");
+
+    const [first, second] = FakeAudioContext.lastInstance!.sources;
+    expect(first.stoppedAt).not.toBe(null);
+    expect(second.stoppedAt).toBe(null);
+    expect(timer.previewingEdge()).toBe("break");
+  });
+
+  it("stops the old one BEFORE the new file has loaded", async () => {
+    // Reading a file can take a moment; the old sound must not play through it.
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault, { breakEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.previewEndCue("focus");
+    vault.holdReads();
+
+    const next = timer.previewEndCue("break");
+    expect(FakeAudioContext.lastInstance!.sources[0].stoppedAt).not.toBe(null);
+    vault.releaseReads();
+    await next;
+  });
+
+  it("never starts a preview that was stopped while its file loaded", async () => {
+    // Closing the settings, or pressing another row's ▶, during the read.
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    const pending = timer.previewEndCue("focus");
+    await flush();
+    timer.stopPreview();
+    vault.releaseReads();
+
+    expect(await pending).toBe("stale");
+    expect(FakeAudioContext.lastInstance?.sources ?? []).toEqual([]);
+    expect(timer.previewingEdge()).toBe(null);
+  });
+
+  it("never starts a built-in preview stopped while it was being decoded", async () => {
+    // The first play of a bundled sound decodes it; ■ or another row's ▶ can
+    // land inside that await, after previewEndCue's own checks have passed.
+    let open: () => void = () => {};
+    FakeAudioContext.decodeGate = new Promise<void>((r) => {
+      open = r;
+    });
+    try {
+      const stub = makeCueStub(fakeVault([]));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const timer = new TimerEngine(stub.plugin as any);
+      const pending = timer.previewEndCue("focus");
+      await flush();
+      timer.stopPreview();
+      open();
+
+      expect(await pending).toBe("stale");
+      expect(FakeAudioContext.lastInstance?.sources).toEqual([]);
+      expect(timer.previewingEdge()).toBe(null);
+      expect(stub.ducks).toEqual([]); // nor dips the music for a sound it never plays
+    } finally {
+      FakeAudioContext.decodeGate = null;
+    }
+  });
+
+  it("tells the settings tab when a preview starts, ends on its own, or is stopped", async () => {
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const seen: (string | null)[] = [];
+    timer.setPreviewListener(() => seen.push(timer.previewingEdge()));
+
+    await timer.previewEndCue("focus");
+    FakeAudioContext.lastInstance!.sources[0].onended?.(); // played to the end
+    await timer.previewEndCue("break");
+    timer.stopPreview();
+
+    expect(seen).toEqual(["focus", null, "break", null]);
+  });
+
+  it("ignores the `ended` of a preview it already replaced", async () => {
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.previewEndCue("focus");
+    await timer.previewEndCue("break");
+
+    FakeAudioContext.lastInstance!.sources[0].onended?.(); // the stopped one ends
+    expect(timer.previewingEdge()).toBe("break");
+  });
+
+  it("never stops a real cue", async () => {
+    // Real cues stay fire-and-forget: two may overlap, as they always have.
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await seams(timer).playSound("ding-sound.mp3");
+    await timer.previewEndCue("focus");
+    timer.stopPreview();
+
+    const [real, preview] = FakeAudioContext.lastInstance!.sources;
+    expect(real.stoppedAt).toBe(null);
+    expect(preview.stoppedAt).not.toBe(null);
+  });
+
+  it("hands the music back once the real cues still ringing are done", async () => {
+    // A 30-second preview stopped after two seconds would otherwise keep the
+    // music down for the other 28.
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.previewEndCue("focus");
+    timer.stopPreview();
+    expect(stub.shortened).toEqual([0]); // nothing real is ringing
+
+    await seams(timer).playSound("ding-sound.mp3"); // a real cue, 2.5 s here
+    await timer.previewEndCue("break");
+    timer.stopPreview();
+    expect(stub.shortened[1]).toBeGreaterThan(2);
+    expect(stub.shortened[1]).toBeLessThanOrEqual(2.5);
+  });
+
+  it("does nothing, and moves no music, when no preview is playing", () => {
+    const stub = makeCueStub(fakeVault([]));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.stopPreview();
+    expect(stub.shortened).toEqual([]);
   });
 });

@@ -628,6 +628,34 @@ export class MusicController {
   }
 
   /**
+   * A sound stopped before its end — the settings tab's preview, stopped or
+   * replaced (0.6.7). Bring the music back once the sounds still ringing are
+   * done (`owedSec`, 0 for none) rather than when the stopped one would have
+   * ended; a preview of a 30-second file stopped after two seconds would
+   * otherwise leave the music down for the other 28. The caller counts every
+   * real cue still playing into `owedSec`, so this never cuts one short. It
+   * never lengthens the hold either.
+   */
+  shortenDuck(owedSec: number): void {
+    const hold = this.duckHoldUntilMs;
+    if (hold === null) return;
+    const now = this.host.now();
+    const until = now + Math.max(0, owedSec) * 1000;
+    if (until >= hold) return;
+    this.duckHoldUntilMs = until;
+    // A live dip is waiting on its restore: move it. With none — the music is
+    // paused, so only the stamp is owed, or the restore is already rising —
+    // the stamp is all there is to change.
+    if (this.duckRestoreTimeout !== null) {
+      this.host.clearTimeout(this.duckRestoreTimeout);
+      this.duckRestoreTimeout = this.host.setTimeout(() => {
+        this.duckRestoreTimeout = null;
+        this.restoreDucked();
+      }, until - now);
+    }
+  }
+
+  /**
    * Take the volume down to the ducked level from wherever it is, and bring it
    * back when `holdUntil` passes. The body of duck() without its guards, so a
    * fade-in that starts while a cue is still ringing can hand over to it — see

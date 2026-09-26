@@ -65,7 +65,14 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
   const plugin = {
     settings,
     app: {},
-    timer: { currentTaskName: "No task", setTask: () => undefined },
+    timer: {
+      currentTaskName: "No task",
+      setTask: () => undefined,
+      // The Sounds rows' ▶ / ■ reads and hooks these on every render.
+      previewingEdge: () => null,
+      setPreviewListener: () => undefined,
+      stopPreview: () => undefined,
+    },
     saveSettings: () => {
       calls.push({ method: "saveSettings", args: [] });
       return Promise.resolve();
@@ -1223,6 +1230,17 @@ describe("the Sounds group", () => {
     const timer = {
       currentTaskName: "No task",
       setTask: () => undefined,
+      previewing: null as string | null,
+      listener: null as (() => void) | null,
+      previewingEdge: () => timer.previewing,
+      setPreviewListener: (l: (() => void) | null) => {
+        timer.listener = l;
+      },
+      stopPreview: () => {
+        asked.push("stopPreview");
+        timer.previewing = null;
+        timer.listener?.();
+      },
       wakeAudio: () => asked.push("wakeAudio"),
       loadCustomCue: (path: string) => {
         asked.push(`load:${path}`);
@@ -1367,7 +1385,7 @@ describe("the Sounds group", () => {
       kind: "file",
       path: "Sounds/gong.mp3",
     });
-    expect(asked).toEqual(["wakeAudio", "load:Sounds/gong.mp3"]);
+    expect(asked).toEqual(["wakeAudio", "stopPreview", "load:Sounds/gong.mp3"]);
     await flush();
   });
 
@@ -1504,6 +1522,62 @@ describe("the Sounds group", () => {
     await pick(c, FOCUS_END_CUE_NAME, { kind: "builtin", id: "ding" });
     // Released AFTER the setting moved, or the old file would still be "chosen".
     expect(asked).toContain("release:ding");
+  });
+
+  it("turns ▶ into ■ while that row's preview plays, and ■ stops it", () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (
+      c.tab as unknown as {
+        plugin: { timer: { previewing: string | null; listener: (() => void) | null } };
+      }
+    ).plugin.timer;
+    c.tab.display();
+    const play = () => componentOf(c.el, FOCUS_END_CUE_NAME);
+    const other = () => componentOf(c.el, BREAK_END_CUE_NAME);
+    expect([play().icon, play().tooltip]).toEqual(["play", "Play"]);
+
+    // The engine reports the focus preview playing.
+    timer.previewing = "focus";
+    timer.listener?.();
+    expect([play().icon, play().tooltip]).toEqual(["square", "Stop"]);
+    expect(other().icon).toBe("play"); // only the row that is playing
+
+    play().click?.();
+    expect(asked.filter((a) => a === "stopPreview")).toHaveLength(1);
+    expect(asked.filter((a) => a.startsWith("preview:"))).toEqual([]);
+    expect(play().icon).toBe("play");
+  });
+
+  it("stops the playing preview the moment another sound is picked", async () => {
+    // Not after the new file is read and checked: that can take a moment,
+    // and the old sound played on under the choice that replaced it.
+    const c = makeTab();
+    const asked = withTimer(c, () => new Promise<Load>(() => {})); // never lands
+    c.tab.display();
+    await flush();
+    asked.length = 0;
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    expect(asked).toContain("stopPreview");
+  });
+
+  it("stops the preview, and lets go of the engine, when the settings close", () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (c.tab as unknown as { plugin: { timer: { listener: unknown } } }).plugin.timer;
+    c.tab.display();
+    expect(timer.listener).not.toBe(null);
+
+    c.tab.hide();
+    expect(asked).toContain("stopPreview");
+    expect(timer.listener).toBe(null);
   });
 
   it("drops a pick that lands after the tab was closed", async () => {

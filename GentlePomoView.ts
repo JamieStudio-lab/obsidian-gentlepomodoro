@@ -1436,6 +1436,11 @@ export class GentlePomoView extends ItemView {
     this.music.duck(cueDurationSec);
   }
 
+  /** A previewed sound was stopped early; see MusicController.shortenDuck. */
+  shortenMusicDuck(owedSec: number) {
+    this.music.shortenDuck(owedSec);
+  }
+
   /**
    * The view's half of the music contract: real timers, the hidden iframe, the
    * plugin's position store, and the two statements the controller makes to the

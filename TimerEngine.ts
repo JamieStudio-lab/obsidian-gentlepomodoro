@@ -44,6 +44,17 @@ const fileVersion = (file: TFile): string => `${String(file.stat.mtime)}|${Strin
 
 const END_CUE_EDGES: readonly CueEdge[] = ["focus", "break"];
 
+// How long a stopped preview takes to fall silent. Stopping a sound dead
+// mid-waveform clicks; this is short enough to read as "stopped at once".
+const PREVIEW_STOP_FADE_S = 0.08;
+
+/** The settings tab's preview while it plays: the one sound that can be stopped. */
+interface PlayingPreview {
+  edge: CueEdge;
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}
+
 export class TimerEngine {
   private state: TimerState;
   private intervalId: number | null = null;
@@ -69,6 +80,19 @@ export class TimerEngine {
   // decodable) is cached too, under the same version, so a file that cannot
   // play is not read again on every cue; a failed READ is not (loadCustomCue).
   private customCues: Map<string, CustomCueEntry> = new Map();
+
+  // The settings tab's preview (0.6.7) — the ONE sound the plugin can stop.
+  // Real cues stay fire-and-forget on purpose (two may overlap, as they always
+  // have); a preview is something the user starts, and a 30-second file they
+  // cannot stop, or that plays on under the next one they try, is a bug.
+  // `previewToken` is bumped by every stop and every new preview, so one still
+  // loading its file never starts after it was stopped or replaced.
+  private preview: PlayingPreview | null = null;
+  private previewToken = 0;
+  private previewListener: (() => void) | null = null;
+  // When the last REAL cue still ringing ends, so a stopped preview can hand
+  // the music back without cutting a real cue's dip short.
+  private cueRingingUntil = 0;
 
   // Track the target end time (timestamp)
   private targetTime: number | null = null;
@@ -556,6 +580,10 @@ export class TimerEngine {
     }
     this.audioBuffers.clear();
     this.customCues.clear();
+    // Closing the context above silences a preview too; drop the bookkeeping.
+    this.preview = null;
+    this.previewToken++;
+    this.previewListener = null;
   }
 
   /**
@@ -576,7 +604,11 @@ export class TimerEngine {
    *
    * Returns what played — the vault path or the bundled filename — or null.
    */
-  private async playSound(filename: string, customPath: string | null = null) {
+  private async playSound(
+    filename: string,
+    customPath: string | null = null,
+    preview: { edge: CueEdge; token: number } | null = null
+  ) {
     if (!this.plugin.settings.soundEnabled) return null;
     // Volume 0 is not reachable from the segmented control (0.3 / 0.7 / 1.0) but
     // is from a hand-edited data.json. Returning here rather than playing silence
@@ -615,6 +647,9 @@ export class TimerEngine {
       // An unload can land during the resume or the decode above, and a
       // disabled plugin must not ring or dip the music.
       if (this.disposed) return null;
+      // A preview stopped or replaced while it loaded. Previews only: a real
+      // cue has no such return, or cueIsAudible would stop being honest.
+      if (preview !== null && preview.token !== this.previewToken) return null;
 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -628,6 +663,14 @@ export class TimerEngine {
       // (view-side; no-op when nothing is playing).
       this.plugin.duckMusicInOpenViews(audioBuffer.duration);
       source.start(0);
+      if (preview !== null) {
+        this.holdPreview(preview.edge, source, gain);
+      } else {
+        this.cueRingingUntil = Math.max(
+          this.cueRingingUntil,
+          Date.now() + audioBuffer.duration * 1000
+        );
+      }
       return played;
     } catch (e) {
       logger.error(`Failed to play sound ${filename}:`, e);
@@ -798,16 +841,72 @@ export class TimerEngine {
    * the pick had not been saved.
    */
   async previewEndCue(edge: CueEdge): Promise<"muted" | "played" | "stale"> {
+    // One preview at a time, and the old one stops NOW — not once the new
+    // file has loaded, which could be a noticeable wait.
+    this.stopPreview();
     if (!this.plugin.settings.soundEnabled) return "muted";
+    const token = this.previewToken;
     this.wakeAudio();
     const cue = this.endCue(edge);
     if (cue.path !== null) {
       await this.loadCustomCue(cue.path);
       const now = this.endCue(edge);
-      if (now.file !== cue.file || now.path !== cue.path) return "stale";
+      if (token !== this.previewToken || now.file !== cue.file || now.path !== cue.path) {
+        return "stale";
+      }
     }
-    await this.playSound(cue.file, cue.path);
-    return "played";
+    await this.playSound(cue.file, cue.path, { edge, token });
+    return token === this.previewToken ? "played" : "stale";
+  }
+
+  /** Which row's preview is playing, for the settings tab's ▶ / ■. */
+  previewingEdge(): CueEdge | null {
+    return this.preview?.edge ?? null;
+  }
+
+  /** The settings tab's hook for repainting ▶ / ■. One listener; null to clear. */
+  setPreviewListener(listener: (() => void) | null) {
+    this.previewListener = listener;
+  }
+
+  /**
+   * Stop the preview — ■, a new pick, the other row's ▶, closing the settings.
+   * Also cancels one still loading its file. It fades out rather than cutting
+   * off, and hands the music back once the real cues still ringing are done
+   * instead of when the stopped sound would have ended.
+   */
+  stopPreview() {
+    this.previewToken++;
+    const playing = this.preview;
+    if (playing === null) return;
+    this.preview = null;
+    const ctx = this.audioCtx;
+    try {
+      if (ctx) {
+        const t = ctx.currentTime;
+        playing.gain.gain.setValueAtTime(playing.gain.gain.value, t);
+        playing.gain.gain.linearRampToValueAtTime(0, t + PREVIEW_STOP_FADE_S);
+        playing.source.stop(t + PREVIEW_STOP_FADE_S);
+      } else {
+        playing.source.stop();
+      }
+    } catch (e) {
+      // Already ended between the check and the stop: nothing to silence.
+      logger.debug("Preview had already stopped", e);
+    }
+    this.plugin.shortenMusicDuckInOpenViews(Math.max(0, this.cueRingingUntil - Date.now()) / 1000);
+    this.previewListener?.();
+  }
+
+  private holdPreview(edge: CueEdge, source: AudioBufferSourceNode, gain: GainNode) {
+    this.preview = { edge, source, gain };
+    source.onended = () => {
+      // A stopped preview's own `ended` arrives after it was replaced.
+      if (this.preview?.source !== source) return;
+      this.preview = null;
+      this.previewListener?.();
+    };
+    this.previewListener?.();
   }
 
   /**

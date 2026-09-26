@@ -7,6 +7,7 @@ import {
   debounce,
   requestUrl,
   type ButtonComponent,
+  type ExtraButtonComponent,
   type SettingDefinitionItem,
   type SettingControl,
   type SettingGroupItem,
@@ -197,6 +198,8 @@ async function probeMusicLink(target: MusicTarget): Promise<LinkProbeResult | nu
 
 /** Per-edge view state for the two sound rows. Rebuilt whenever the tab renders. */
 interface CueRowUi {
+  /** ▶ — or ■ while this row's preview plays. */
+  playButton: ExtraButtonComponent | null;
   button: ButtonComponent | null;
   statusEl: HTMLElement | null;
   /** Bumped by every pick, render and hide(); a pick whose token moved is stale. */
@@ -281,6 +284,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       ui.token++;
       ui.statusToken++;
     }
+    // A preview belongs to this screen: closing it must not leave a 30-second
+    // sound playing with no ■ left to press.
+    this.plugin.timer.stopPreview();
+    this.plugin.timer.setPreviewListener(null);
     super.hide();
   }
 
@@ -440,8 +447,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   }
 
   private readonly cueRowUi: Record<CueEdge, CueRowUi> = {
-    focus: { button: null, statusEl: null, token: 0, statusToken: 0 },
-    break: { button: null, statusEl: null, token: 0, statusToken: 0 },
+    focus: { playButton: null, button: null, statusEl: null, token: 0, statusToken: 0 },
+    break: { playButton: null, button: null, statusEl: null, token: 0, statusToken: 0 },
   };
 
   /**
@@ -464,16 +471,21 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
   private buildCueRow(setting: Setting, edge: CueEdge): () => void {
     const ui = this.cueRowUi[edge];
-    // setTooltip is the right call here, unlike on the timer's controls:
-    // it sets aria-label, and an icon-only button has no other name.
-    setting.addExtraButton((btn) =>
-      btn
-        .setIcon("play")
-        .setTooltip("Play")
-        .onClick(() => {
-          void this.previewCue(edge);
-        })
-    );
+    // ▶ plays this row's sound; while it plays the same button is ■ and
+    // stops it. setTooltip is the right call here, unlike on the timer's
+    // controls: it sets aria-label, and an icon-only button has no other name.
+    setting.addExtraButton((btn) => {
+      ui.playButton = btn;
+      btn.onClick(() => {
+        if (this.plugin.timer.previewingEdge() === edge) this.plugin.timer.stopPreview();
+        else void this.previewCue(edge);
+      });
+    });
+    this.plugin.timer.setPreviewListener(() => {
+      this.paintPreviewButton("focus");
+      this.paintPreviewButton("break");
+    });
+    this.paintPreviewButton(edge);
     setting.addButton((btn) => {
       ui.button = btn;
       btn.onClick(() => {
@@ -492,6 +504,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     return () => {
       ui.token++;
       ui.statusToken++;
+      ui.playButton = null;
       ui.button = null;
       ui.statusEl = null;
     };
@@ -499,6 +512,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
   private paintCueStatus(edge: CueEdge, message: string): void {
     this.cueRowUi[edge].statusEl?.setText(message);
+  }
+
+  /** ■ while this row's preview plays, ▶ otherwise — asked of the engine, which owns it. */
+  private paintPreviewButton(edge: CueEdge): void {
+    const playing = this.plugin.timer.previewingEdge() === edge;
+    this.cueRowUi[edge].playButton
+      ?.setIcon(playing ? "square" : "play")
+      .setTooltip(playing ? "Stop" : "Play");
   }
 
   /** Name the stored sound on the row's button — from the setting, never from a pick. */
@@ -549,6 +570,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // Still inside the click that chose it: iOS lets only a user gesture start
     // WebAudio, and everything below is past an await.
     this.plugin.timer.wakeAudio();
+    // Choosing another sound silences the one playing at once — not after the
+    // new file has been read and checked, which can take a moment.
+    this.plugin.timer.stopPreview();
     const ui = this.cueRowUi[edge];
     const token = ++ui.token;
     ui.statusToken++;
