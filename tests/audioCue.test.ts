@@ -29,15 +29,25 @@ interface FakeSource {
   start: (n: number) => void;
 }
 
+/**
+ * What the fake decoder returns for bytes read from a (fake) vault file. The
+ * bundled clips never pass through here, so they decode to the default.
+ */
+const vaultDecodes = new WeakMap<ArrayBuffer, number | "bad">();
+
 class FakeAudioContext {
   static lastInstance: FakeAudioContext | null = null;
+  static instances = 0;
   state: string = "running";
   resumeCalls = 0;
   started: number[] = [];
+  /** The `tag` of each buffer started, in order: "bundled" or a vault path. */
+  startedTags: string[] = [];
   destination = {};
 
   constructor() {
     FakeAudioContext.lastInstance = this;
+    FakeAudioContext.instances++;
   }
   resume() {
     this.resumeCalls++;
@@ -47,16 +57,26 @@ class FakeAudioContext {
   close() {
     return Promise.resolve();
   }
-  decodeAudioData(_bytes: ArrayBuffer) {
-    return Promise.resolve({ duration: 2.5 } as unknown as AudioBuffer);
+  decodeAudioData(bytes: ArrayBuffer) {
+    const fromVault = vaultDecodes.get(bytes);
+    if (fromVault === "bad") return Promise.reject(new Error("EncodingError"));
+    if (fromVault !== undefined) {
+      const tag = (bytes as unknown as { tag: string }).tag;
+      return Promise.resolve({ duration: fromVault, tag } as unknown as AudioBuffer);
+    }
+    return Promise.resolve({ duration: 2.5, tag: "bundled" } as unknown as AudioBuffer);
   }
   createBufferSource(): FakeSource {
     const self = this;
-    return {
+    const source: FakeSource = {
       buffer: null,
       connect: () => {},
-      start: (n: number) => self.started.push(n),
+      start: (n: number) => {
+        self.started.push(n);
+        self.startedTags.push((source.buffer as { tag: string }).tag);
+      },
     };
+    return source;
   }
   createGain() {
     return { gain: { value: 0 }, connect: () => {} };
@@ -199,5 +219,495 @@ describe("playSound — the master gates", () => {
 
     expect(FakeAudioContext.lastInstance).toBe(null);
     expect(stub.ducks).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The user's own end-of-session sounds (0.6.7, issue #5). Everything here runs
+// the REAL playSound — the engine tests replace it with a recorder, so the
+// fallback that keeps cueIsAudible honest can only be seen from this file.
+// ---------------------------------------------------------------------------
+
+interface FakeVaultFile {
+  path: string;
+  stat: { mtime: number; size: number };
+  /** Decoded length in seconds, or "bad" for a file the decoder rejects. */
+  seconds: number | "bad";
+}
+
+/** A vault whose reads can be held open, to catch a cue that waits on one. */
+function fakeVault(files: FakeVaultFile[]) {
+  const reads: string[] = [];
+  const failNextRead = new Set<string>();
+  let hold: Promise<void> | null = null;
+  let release: () => void = () => {};
+  return {
+    files,
+    reads,
+    /** The next read of this path throws, as a file iCloud is still fetching does. */
+    failNextRead,
+    holdReads() {
+      hold = new Promise<void>((r) => {
+        release = r;
+      });
+    },
+    releaseReads() {
+      release();
+      hold = null;
+    },
+    getAbstractFileByPath: () => null,
+    getFileByPath: (path: string) => files.find((f) => f.path === path) ?? null,
+    readBinary: async (file: FakeVaultFile) => {
+      reads.push(file.path);
+      if (hold) await hold;
+      if (failNextRead.delete(file.path)) throw new Error("EDEADLK: resource deadlock avoided");
+      const bytes = new ArrayBuffer(8);
+      (bytes as unknown as { tag: string }).tag = file.path;
+      vaultDecodes.set(bytes, file.seconds);
+      return bytes;
+    },
+  };
+}
+
+type Vault = ReturnType<typeof fakeVault>;
+
+function makeCueStub(vault: Vault, overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
+  const stub = makeStub(overrides);
+  (stub.plugin.app as unknown as { vault: Vault }).vault = vault;
+  return stub;
+}
+
+interface CueSeams {
+  playSound: (file: string, path?: string | null) => Promise<string | null>;
+  maybeChimeAtCrossing: () => void;
+  endCueSounded: boolean;
+}
+const seams = (timer: TimerEngine) => timer as unknown as CueSeams;
+
+/** Let every settled promise's continuations run. */
+const flush = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+const GONG: FakeVaultFile = {
+  path: "Sounds/gong.mp3",
+  stat: { mtime: 1, size: 40_000 },
+  seconds: 12,
+};
+const file = (over: Partial<FakeVaultFile>): FakeVaultFile => ({
+  ...GONG,
+  stat: { ...GONG.stat },
+  ...over,
+});
+
+describe("the user's own sounds", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("plays a loaded file instead of the built-in, and dips the music for its length", async () => {
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    expect((await timer.loadCustomCue(GONG.path)).ok).toBe(true);
+    const played = await seams(timer).playSound("singing_bell_short.mp3", GONG.path);
+
+    expect(played).toBe(GONG.path);
+    expect(FakeAudioContext.lastInstance?.startedTags.at(-1)).toBe(GONG.path);
+    expect(stub.ducks.at(-1)).toBe(12);
+  });
+
+  it("never waits on the vault: a file still loading plays the built-in", async () => {
+    // A read from iCloud or a syncing phone can take seconds; a cue that
+    // waited would land on top of whatever the user did next.
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    const played = await seams(timer).playSound("singing_bell_short.mp3", GONG.path);
+    expect(played).toBe("singing_bell_short.mp3");
+    expect(FakeAudioContext.lastInstance?.startedTags).toEqual(["bundled"]);
+    // ...and it started loading the file for next time.
+    expect(vault.reads).toEqual([GONG.path]);
+
+    vault.releaseReads();
+    await flush();
+    expect(await seams(timer).playSound("singing_bell_short.mp3", GONG.path)).toBe(GONG.path);
+  });
+
+  it("keeps a stamped crossing audible when the chosen file is missing", async () => {
+    // The whole reason the fallback lives INSIDE playSound: cueIsAudible
+    // mirrors playSound's two gates, so a crossing is stamped as heard — and a
+    // file that returned silence here would make the following Stop silent too.
+    const vault = fakeVault([]);
+    const stub = makeCueStub(vault, {
+      focusEndSoundEnabled: true,
+      focusEndSound: "file:Sounds/gone.mp3",
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    seams(timer).maybeChimeAtCrossing();
+    await flush();
+
+    expect(seams(timer).endCueSounded).toBe(true);
+    expect(FakeAudioContext.lastInstance?.startedTags).toEqual(["bundled"]);
+  });
+
+  it("plays the built-in when the file cannot be decoded, and remembers that", async () => {
+    const vault = fakeVault([file({ seconds: "bad" })]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "undecodable" });
+    expect(await seams(timer).playSound("ding-sound.mp3", GONG.path)).toBe("ding-sound.mp3");
+    expect(await seams(timer).playSound("ding-sound.mp3", GONG.path)).toBe("ding-sound.mp3");
+    // A bad file is read once, not on every cue.
+    expect(vault.reads).toEqual([GONG.path]);
+  });
+
+  it("refuses an oversize file without reading it", async () => {
+    const vault = fakeVault([file({ stat: { mtime: 1, size: 3 * 1024 * 1024 } })]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "too-large" });
+    expect(vault.reads).toEqual([]);
+  });
+
+  it("refuses a sound longer than 30 seconds", async () => {
+    const vault = fakeVault([
+      file({ seconds: 45 }),
+      file({ path: "Sounds/ok.wav", seconds: 30.2 }),
+    ]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "too-long" });
+    expect((await timer.loadCustomCue("Sounds/ok.wav")).ok).toBe(true);
+  });
+
+  it("reports a missing file without remembering it, so a synced-in file is found", async () => {
+    const vault = fakeVault([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "missing" });
+    vault.files.push(file({}));
+    expect((await timer.loadCustomCue(GONG.path)).ok).toBe(true);
+  });
+
+  it("reads the file again once it has been edited", async () => {
+    const edited = file({});
+    const vault = fakeVault([edited]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    await timer.loadCustomCue(GONG.path);
+
+    edited.stat.mtime = 2;
+    // The old decode no longer matches the file on disk, so the built-in
+    // plays while the new version loads — never the stale sound.
+    expect(await seams(timer).playSound("singing_bell_short.mp3", GONG.path)).toBe(
+      "singing_bell_short.mp3"
+    );
+    await flush();
+    expect(vault.reads).toEqual([GONG.path, GONG.path]);
+    expect(await seams(timer).playSound("singing_bell_short.mp3", GONG.path)).toBe(GONG.path);
+  });
+
+  it("reads a file once when two callers ask for it at the same time", async () => {
+    const vault = fakeVault([file({})]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    await Promise.all([timer.loadCustomCue(GONG.path), timer.loadCustomCue(GONG.path)]);
+    expect(vault.reads).toEqual([GONG.path]);
+  });
+
+  it("keeps only the chosen files, plus the one being checked", async () => {
+    // A decoded 30-second sound is about 11 MB; picking through a folder of
+    // them must not keep every one.
+    const vault = fakeVault([
+      file({ path: "chosen.mp3" }),
+      file({ path: "tried-1.mp3" }),
+      file({ path: "tried-2.mp3" }),
+    ]);
+    const stub = makeCueStub(vault, { focusEndSound: "file:chosen.mp3" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.loadCustomCue("chosen.mp3");
+    await timer.loadCustomCue("tried-1.mp3");
+    await timer.loadCustomCue("tried-2.mp3"); // evicts tried-1, never the chosen one
+    await timer.loadCustomCue("tried-1.mp3");
+    await timer.loadCustomCue("chosen.mp3");
+
+    expect(vault.reads.filter((p) => p === "tried-1.mp3")).toHaveLength(2);
+    expect(vault.reads.filter((p) => p === "chosen.mp3")).toHaveLength(1);
+  });
+
+  it("prepares nothing on the default sounds — no read, no audio context", () => {
+    const vault = fakeVault([file({})]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    timer.prepareEndCues();
+    expect(vault.reads).toEqual([]);
+    expect(FakeAudioContext.instances).toBe(0);
+  });
+
+  it("prepares a chosen file ahead of time, so the first cue is the user's own", async () => {
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault, { breakEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    timer.prepareEndCues();
+    await flush();
+    expect(await seams(timer).playSound("ding-sound.mp3", GONG.path)).toBe(GONG.path);
+  });
+
+  it("decodes a chosen file again as soon as it is edited, not at the next cue", async () => {
+    // Obsidian Sync or an editor rewrote the file: without this, the next cue
+    // would find the old decode stale and play the built-in once.
+    const edited = file({});
+    const vault = fakeVault([edited, file({ path: "Projects/notes.mp3" })]);
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.onFileModify({ path: "Projects/notes.mp3" } as never);
+    expect(vault.reads).toEqual([]); // not a chosen sound: left alone
+    edited.stat.mtime = 5;
+    await timer.onFileModify({ path: GONG.path } as never);
+    await flush();
+    expect(vault.reads).toEqual([GONG.path]);
+    expect(await seams(timer).playSound("singing_bell_short.mp3", GONG.path)).toBe(GONG.path);
+  });
+
+  it("reads a file again after a read that failed, though the file never changed", async () => {
+    // iCloud still downloading an offloaded file, or OneDrive holding it: the
+    // read fails, but mtime and size are the same once it is readable. Cached,
+    // the file was refused until it was edited or Obsidian restarted.
+    const vault = fakeVault([file({})]);
+    vault.failNextRead.add(GONG.path);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "unreadable" });
+    await flush();
+    expect((await timer.loadCustomCue(GONG.path)).ok).toBe(true);
+    expect(vault.reads).toEqual([GONG.path, GONG.path]);
+  });
+
+  it("keeps a file that is still loading when another is checked", async () => {
+    // Two quick picks, one on each row: sweeping the first while it loads
+    // made each pick read and decode its file twice.
+    const vault = fakeVault([file({ path: "a.mp3" }), file({ path: "c.mp3" })]);
+    vault.holdReads();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    const a = timer.loadCustomCue("a.mp3");
+    const c = timer.loadCustomCue("c.mp3");
+    vault.releaseReads();
+    await Promise.all([a, c]);
+    await timer.loadCustomCue("a.mp3");
+    await timer.loadCustomCue("c.mp3");
+    expect(vault.reads).toEqual(["a.mp3", "c.mp3"]);
+  });
+
+  it("lets go of a file the settings no longer name when asked to", async () => {
+    // Switching a row back to a built-in sweeps nothing on its own — only a
+    // load does — so the tab releases after every saved pick.
+    const vault = fakeVault([file({ path: "old.mp3" })]);
+    const stub = makeCueStub(vault, { focusEndSound: "file:old.mp3" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.loadCustomCue("old.mp3");
+
+    timer.releaseUnchosenCues();
+    await timer.loadCustomCue("old.mp3");
+    expect(vault.reads).toEqual(["old.mp3"]); // still chosen: kept
+
+    stub.settings.focusEndSound = "ding";
+    timer.releaseUnchosenCues();
+    await timer.loadCustomCue("old.mp3");
+    expect(vault.reads).toEqual(["old.mp3", "old.mp3"]);
+  });
+
+  it("opens no audio context for a file read that lands after unload", async () => {
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    const load = timer.loadCustomCue(GONG.path);
+    await flush();
+    timer.dispose();
+    vault.releaseReads();
+
+    expect((await load).ok).toBe(false);
+    expect(FakeAudioContext.instances).toBe(0);
+  });
+});
+
+// Each of these rules walks BOTH edges; a version that forgot one edge kept
+// the whole suite green when each was tested on one edge only.
+describe.each([
+  ["focus", "focusEndSound", "breakEndSound"],
+  ["break", "breakEndSound", "focusEndSound"],
+] as const)("the %s edge's file", (_edge, key, otherKey) => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("is decoded ahead of time", async () => {
+    const vault = fakeVault([file({})]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault, { [key]: `file:${GONG.path}` }).plugin as any);
+    timer.prepareEndCues();
+    await flush();
+    expect(vault.reads).toEqual([GONG.path]);
+  });
+
+  it("is decoded again when it is edited", async () => {
+    const edited = file({});
+    const vault = fakeVault([edited]);
+    const stub = makeCueStub(vault, { [key]: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    edited.stat.mtime = 9;
+    await timer.onFileModify({ path: GONG.path } as never);
+    await flush();
+    expect(vault.reads).toEqual([GONG.path]);
+  });
+
+  it("survives the sweep when an unrelated file is checked", async () => {
+    const vault = fakeVault([
+      file({}),
+      file({ path: "other-row.mp3" }),
+      file({ path: "tried.mp3" }),
+    ]);
+    const stub = makeCueStub(vault, {
+      [key]: `file:${GONG.path}`,
+      [otherKey]: "file:other-row.mp3",
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.loadCustomCue(GONG.path);
+    await timer.loadCustomCue("other-row.mp3");
+    await timer.loadCustomCue("tried.mp3");
+    timer.releaseUnchosenCues();
+    await timer.loadCustomCue(GONG.path);
+    await timer.loadCustomCue("other-row.mp3");
+    expect(vault.reads).toEqual([GONG.path, "other-row.mp3", "tried.mp3"]);
+  });
+});
+
+describe("wakeAudio — inside the click", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("creates the context synchronously, so iOS counts the gesture", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    expect(FakeAudioContext.instances).toBe(1);
+  });
+
+  it.each(["suspended", "interrupted"])("resumes a %s context synchronously", (state) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    const ctx = FakeAudioContext.lastInstance!;
+    ctx.state = state;
+    ctx.resumeCalls = 0;
+    timer.wakeAudio();
+    expect(ctx.resumeCalls).toBe(1);
+  });
+
+  it("creates nothing once disposed", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.dispose();
+    timer.wakeAudio();
+    expect(FakeAudioContext.instances).toBe(0);
+  });
+});
+
+describe("previewEndCue — the settings tab's ▶", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("stays silent while Timer sounds is off, and says so", async () => {
+    // The master switch promises "every sound the timer makes".
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault, { soundEnabled: false, focusEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    expect(await timer.previewEndCue("focus")).toBe("muted");
+    expect(FakeAudioContext.instances).toBe(0);
+    expect(vault.reads).toEqual([]);
+  });
+
+  it("waits for the chosen file, so a new pick is heard as itself", async () => {
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault, { breakEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    expect(await timer.previewEndCue("break")).toBe("played");
+    expect(FakeAudioContext.lastInstance?.startedTags).toEqual([GONG.path]);
+  });
+
+  it("plays the EDGE it was asked for", async () => {
+    const vault = fakeVault([file({})]);
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}`, breakEndSound: "drum" });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    await timer.previewEndCue("break");
+    expect(FakeAudioContext.lastInstance?.startedTags).toEqual(["bundled"]);
+    expect(vault.reads).toEqual([]);
+  });
+
+  it("plays nothing when the choice changed while its file loaded", async () => {
+    // A pick made while ▶ waited plays its own sound; the old one after it
+    // would sound as if the pick had not been saved.
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+
+    const preview = timer.previewEndCue("focus");
+    await flush();
+    stub.settings.focusEndSound = "drum";
+    vault.releaseReads();
+    expect(await preview).toBe("stale");
+    expect(FakeAudioContext.lastInstance?.started ?? []).toEqual([]);
+  });
+
+  it("is not the end of a session: the next overtime Stop still rings", async () => {
+    const vault = fakeVault([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+
+    await timer.previewEndCue("focus");
+    expect(seams(timer).endCueSounded).toBe(false);
   });
 });

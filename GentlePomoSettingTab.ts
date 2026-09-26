@@ -1,10 +1,12 @@
 import {
   App,
+  Notice,
   Platform,
   PluginSettingTab,
   Setting,
   debounce,
   requestUrl,
+  type ButtonComponent,
   type SettingDefinitionItem,
   type SettingControl,
   type SettingGroupItem,
@@ -28,6 +30,18 @@ import {
 } from "./taskScope";
 import { SESSION_END_NOTIFICATION_DESC, SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
 import { markDestructive } from "./confirmModal";
+import { CuePickerModal } from "./cuePicker";
+import {
+  CUE_MAX_SECONDS,
+  CUE_SETTING_KEY,
+  cueChoiceValue,
+  cueLabel,
+  describeCueFallback,
+  describeCueRefusal,
+  resolveCue,
+  type CueChoice,
+  type CueEdge,
+} from "./timerCues";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
@@ -68,6 +82,15 @@ const REMOVE_MARKERS_DESC =
 const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
 const REMOVE_ALL_MARKERS_DESC =
   "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
+// The two sound rows (0.6.7). Each says when its sound plays, because the
+// crossing half depends on a toggle in the Audio group while Stop and Skip
+// always use it — so the row is never moot, even with that toggle off.
+export const FOCUS_END_CUE_NAME = "Focus-end sound";
+export const BREAK_END_CUE_NAME = "Break-end sound";
+const FOCUS_END_CUE_DESC = `Rings when focus time is up (if that's turned on under Audio) and when you stop or skip focus. Choose a built-in sound, or an mp3, m4a or wav file of up to ${String(CUE_MAX_SECONDS)} seconds from your vault.`;
+const BREAK_END_CUE_DESC =
+  "Rings when break time is up (if that's turned on under Audio) and when you stop or skip a break.";
+export const CUE_MUTED_NOTICE = "Timer sounds are off.";
 
 // How long to wait after the last keystroke before asking YouTube about a link.
 // Both settings paths commit on every keystroke, so an un-debounced check would
@@ -172,6 +195,20 @@ async function probeMusicLink(target: MusicTarget): Promise<LinkProbeResult | nu
   }
 }
 
+/** Per-edge view state for the two sound rows. Rebuilt whenever the tab renders. */
+interface CueRowUi {
+  button: ButtonComponent | null;
+  statusEl: HTMLElement | null;
+  /** Bumped by every pick, render and hide(); a pick whose token moved is stale. */
+  token: number;
+  /**
+   * The same for the status line alone. Separate so that pressing ▶ — which
+   * re-checks the status — cannot drop a pick still reading its file; a pick
+   * bumps this one too, since it supersedes whatever the line was about to say.
+   */
+  statusToken: number;
+}
+
 /** Per-slot view state for the link rows. Rebuilt whenever the tab renders. */
 interface MusicSlotUi {
   urlInput: TextComponent | null;
@@ -239,6 +276,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   override hide(): void {
     for (const ui of this.musicSlotUi) {
       if (ui) ui.token++;
+    }
+    for (const ui of Object.values(this.cueRowUi)) {
+      ui.token++;
+      ui.statusToken++;
     }
     super.hide();
   }
@@ -396,6 +437,144 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       input.setValue(name);
     }
     void this.commitMusicName(slot, name);
+  }
+
+  private readonly cueRowUi: Record<CueEdge, CueRowUi> = {
+    focus: { button: null, statusEl: null, token: 0, statusToken: 0 },
+    break: { button: null, statusEl: null, token: 0, statusToken: 0 },
+  };
+
+  /**
+   * One sound row (0.6.7): ▶ to listen, and a button naming the sound that
+   * opens the picker. A render row on both settings paths, like the music
+   * links: 1.13's `file` control does not exist below 1.13 (the pre-1.13 path
+   * would draw an empty row), and it could not offer the built-ins anyway.
+   *
+   * Nothing here fans out to open panels: no panel shows the choice, and the
+   * engine reads it when a cue plays. Picking a sound is set once — not a
+   * level and not a mute — so it lives on this surface alone.
+   */
+  private cueRow(edge: CueEdge): SettingRowSpec {
+    return {
+      name: edge === "focus" ? FOCUS_END_CUE_NAME : BREAK_END_CUE_NAME,
+      desc: edge === "focus" ? FOCUS_END_CUE_DESC : BREAK_END_CUE_DESC,
+      render: (setting) => this.buildCueRow(setting, edge),
+    };
+  }
+
+  private buildCueRow(setting: Setting, edge: CueEdge): () => void {
+    const ui = this.cueRowUi[edge];
+    // setTooltip is the right call here, unlike on the timer's controls:
+    // it sets aria-label, and an icon-only button has no other name.
+    setting.addExtraButton((btn) =>
+      btn
+        .setIcon("play")
+        .setTooltip("Play")
+        .onClick(() => {
+          void this.previewCue(edge);
+        })
+    );
+    setting.addButton((btn) => {
+      ui.button = btn;
+      btn.onClick(() => {
+        new CuePickerModal(this.app, (choice) => {
+          void this.pickCue(edge, choice);
+        }).open();
+      });
+    });
+    this.paintCueButton(edge);
+    // Under the description, not in the control column as the music links do
+    // it. That column wraps to give its message a line of its own, and on a
+    // phone — where Obsidian makes a settings button full width — the wrap
+    // also pushed the chooser onto a line below ▶.
+    ui.statusEl = setting.infoEl.createDiv("gp-setting-note");
+    void this.refreshCueStatus(edge);
+    return () => {
+      ui.token++;
+      ui.statusToken++;
+      ui.button = null;
+      ui.statusEl = null;
+    };
+  }
+
+  private paintCueStatus(edge: CueEdge, message: string): void {
+    this.cueRowUi[edge].statusEl?.setText(message);
+  }
+
+  /** Name the stored sound on the row's button — from the setting, never from a pick. */
+  private paintCueButton(edge: CueEdge): void {
+    this.cueRowUi[edge].button?.setButtonText(
+      cueLabel(this.plugin.settings[CUE_SETTING_KEY[edge]], edge)
+    );
+  }
+
+  /**
+   * Say why a saved file plays the built-in instead — missing on this device,
+   * unplayable here, grown past the limits since it was picked — or nothing.
+   * The tab is where this is said, never a Notice when the cue plays: the end
+   * of a session is the one moment the plugin keeps quiet on purpose.
+   */
+  private async refreshCueStatus(edge: CueEdge): Promise<void> {
+    const ui = this.cueRowUi[edge];
+    const token = ++ui.statusToken;
+    const cue = resolveCue(this.plugin.settings[CUE_SETTING_KEY[edge]], edge);
+    if (cue.path === null) {
+      this.paintCueStatus(edge, "");
+      return;
+    }
+    const load = await this.plugin.timer.loadCustomCue(cue.path);
+    if (token !== ui.statusToken) return;
+    this.paintCueStatus(edge, load.ok ? "" : describeCueFallback(load.problem, cue.path, edge));
+  }
+
+  /** ▶. Silent while "Timer sounds" is off, and it says so rather than nothing. */
+  private async previewCue(edge: CueEdge): Promise<void> {
+    // Taken at the click: a pick made while this waits on a file bumps it, and
+    // then owns the status line — its refusal must not be wiped by this.
+    const statusToken = this.cueRowUi[edge].statusToken;
+    const result = await this.plugin.timer.previewEndCue(edge);
+    if (result === "muted") new Notice(CUE_MUTED_NOTICE);
+    if (this.cueRowUi[edge].statusToken !== statusToken) return;
+    // A saved file that could not load just played the built-in; the line says why.
+    void this.refreshCueStatus(edge);
+  }
+
+  /**
+   * A choice from the picker. A file is checked BEFORE it is saved — read,
+   * decoded, measured — and refused with a reason if it cannot play, so
+   * nothing unplayable is ever stored. Then the new sound plays once, the way
+   * a ringtone picker does.
+   */
+  private async pickCue(edge: CueEdge, choice: CueChoice): Promise<void> {
+    // Still inside the click that chose it: iOS lets only a user gesture start
+    // WebAudio, and everything below is past an await.
+    this.plugin.timer.wakeAudio();
+    const ui = this.cueRowUi[edge];
+    const token = ++ui.token;
+    ui.statusToken++;
+    if (choice.kind === "file") {
+      const load = await this.plugin.timer.loadCustomCue(choice.path);
+      // A later pick, a re-render or closing the tab has overtaken this one.
+      if (token !== ui.token) return;
+      if (!load.ok) {
+        this.paintCueStatus(edge, describeCueRefusal(load.problem, choice.path));
+        return;
+      }
+    }
+    this.plugin.settings[CUE_SETTING_KEY[edge]] = cueChoiceValue(choice);
+    // Named now, with the setting, not after the save: a later pick can
+    // overtake this one during the save and stop at its token check, and a
+    // refused one never repaints — so waiting left the button naming a sound
+    // that was no longer stored.
+    this.paintCueButton(edge);
+    await this.plugin.saveSettings();
+    // The file it replaces — or the one refused just before — need not stay
+    // decoded. Run for every saved pick, built-ins included: nothing else
+    // sweeps the cache when a row goes back to a built-in.
+    this.plugin.timer.releaseUnchosenCues();
+    if (token !== ui.token) return;
+    this.paintCueStatus(edge, "");
+    await this.previewCue(edge);
   }
 
   /**
@@ -568,6 +747,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           this.endSummaryRow("break"),
         ],
+      },
+      // New in 0.6.7 (issue #5): WHICH sound marks each end. Its own group,
+      // not rows under each "Play a sound…" toggle: placed there a chooser
+      // reads as that toggle's child and looks inert while it is off, though
+      // Stop and Skip always use it.
+      {
+        heading: "Sounds",
+        rows: [this.cueRow("focus"), this.cueRow("break")],
       },
       // New in 0.6.6, and built on the desktop app only: the mobile apps have
       // no system notifications, and a switch that can do nothing on the

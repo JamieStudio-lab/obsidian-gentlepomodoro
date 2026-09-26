@@ -20,8 +20,38 @@ export class PluginSettingTab {
     this.app = app;
     this.plugin = plugin;
   }
+  hide(): void {}
 }
 export class Modal {}
+
+/**
+ * Enough of the suggest modal for the sound picker to be constructed and
+ * opened. `opened` records the last one opened, so a test can reach its items
+ * and choose one the way a click would.
+ */
+export class FuzzySuggestModal<T> {
+  static opened: FuzzySuggestModal<unknown> | null = null;
+  app: unknown;
+  emptyStateText = "";
+  placeholder = "";
+  constructor(app: unknown) {
+    this.app = app;
+  }
+  setPlaceholder(placeholder: string): void {
+    this.placeholder = placeholder;
+  }
+  open(): void {
+    FuzzySuggestModal.opened = this as FuzzySuggestModal<unknown>;
+  }
+  close(): void {}
+  getItems(): T[] {
+    return [];
+  }
+  getItemText(_item: T): string {
+    return "";
+  }
+  onChooseItem(_item: T, _evt?: unknown): void {}
+}
 export class WorkspaceLeaf {}
 /**
  * Desktop by default, and MUTABLE on purpose: a test that needs the mobile
@@ -29,7 +59,11 @@ export class WorkspaceLeaf {}
  */
 export const Platform = { isDesktopApp: true, isMobile: false, isIosApp: false };
 export class Notice {
-  constructor(_message: string) {}
+  /** Every message shown, in order, so a test can read what the user was told. */
+  static shown: string[] = [];
+  constructor(message: string) {
+    Notice.shown.push(message);
+  }
 }
 
 export function normalizePath(path: string): string {
@@ -59,7 +93,9 @@ export type App = unknown;
  */
 
 export interface RecordedComponent {
-  kind: "toggle" | "text" | "dropdown" | "button";
+  kind: "toggle" | "text" | "dropdown" | "button" | "extraButton";
+  icon?: string;
+  tooltip?: string;
   value?: unknown;
   placeholder?: string;
   buttonText?: string;
@@ -135,6 +171,22 @@ class ButtonStub {
   }
 }
 
+class ExtraButtonStub {
+  constructor(readonly rec: RecordedComponent) {}
+  setIcon(icon: string): this {
+    this.rec.icon = icon;
+    return this;
+  }
+  setTooltip(tooltip: string): this {
+    this.rec.tooltip = tooltip;
+    return this;
+  }
+  onClick(cb: () => void): this {
+    this.rec.click = cb;
+    return this;
+  }
+}
+
 export type TextComponent = TextStub;
 export type ButtonComponent = ButtonStub;
 
@@ -168,6 +220,7 @@ export function stubEl(cls = ""): StubEl {
 
 export class Setting {
   readonly settingEl = stubEl();
+  readonly infoEl = stubEl();
   readonly controlEl = stubEl();
   name = "";
   desc = "";
@@ -212,6 +265,12 @@ export class Setting {
     const rec = component("button");
     this.components.push(rec);
     cb(new ButtonStub(rec));
+    return this;
+  }
+  addExtraButton(cb: (c: ExtraButtonStub) => unknown): this {
+    const rec = component("extraButton");
+    this.components.push(rec);
+    cb(new ExtraButtonStub(rec));
     return this;
   }
 }

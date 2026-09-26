@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Four ambient themes — Classic (day→night gradient), Frosted Glass (drifting colour orbs behind a frosted pane), Frosted Glass 2 (the same idea drawn as real glass, with a lit rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.6 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.7 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -13,7 +13,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - Configurable focus / short break / **long break** durations. Classic Pomodoro: long break every 4 focus sessions (configurable).
 - Overtime tracking — the timer counts up with a subtle glow after the session ends.
 - **Estimated end time** — while a session runs, the timer shows the wall-clock time you'll finish (e.g. `Ends 15:30`, with `(+1 day)` if it crosses midnight): a calm way to know when you're free without watching the countdown. Toggle in settings.
-- Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed.
+- Optional audio cues (war drum on start, bell/ding on finish) — bundled into the plugin, no extra downloads needed. **Choose the end sounds yourself**: any of the three built-ins, or your own mp3, m4a or wav file from the vault (up to 30 seconds).
 - **Notify when time is up** (computers, opt-in) — a silent system notification when focus or break time is up, so you notice even when other windows cover Obsidian. It works with the timer's sounds off. Turning it on shows a sample, which is when your computer may ask to allow notifications from Obsidian.
 - Respects `prefers-reduced-motion`: timer animations soften when the OS requests it.
 
@@ -90,6 +90,8 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Display & behavior**: log folder path, auto-open on startup, and show status bar.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), day/night indicator, and **estimated end time** (shown while a session runs).
 - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute; then **play a sound when focus ends** and **play a sound when a break ends** — each rings once when that session's time is up, whether the timer runs into overtime or starts the next session — with **auto-start the break** and **auto-start the focus**. Each pair carries a line saying what will actually happen with the settings you have. All of these also live in the timer panel and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
+- **Sounds**: **focus-end sound** and **break-end sound** — the singing bell and the ding by default. Pick another built-in sound or your own **mp3, m4a or wav** file from the vault (up to 30 seconds); picking plays it once, and **▶** plays it again. A file that can't be used is refused when you pick it, with the reason. If a chosen file goes missing on a device (not synced yet, deleted, renamed), the built-in sound plays and the row says why. The choice applies when that session's time is up (if its sound is on under **Audio**) and when you stop or skip it. Settings tab only.
+  - **Using your own sound:** first put the file in your vault — drag it into Obsidian's file list, or on a phone attach it to any note — then pick it from the list. Files in hidden folders such as `.obsidian` aren't listed. On your other devices it plays once the file has synced there (Obsidian Sync skips audio unless **Sync audio** is on in its settings); until then the built-in sound plays.
 - **Notifications** (computers only): **notify when time is up** — a silent system notification when focus or break time is up. Also in the timer panel.
 - **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Long break**: duration (default 15m) and frequency (every N focus sessions, default 4).
@@ -104,7 +106,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 - **Audio**: **Timer sounds** with **Timer volume**, and **Music sound** with **Music volume** — two matched pairs. The two switches also appear in the settings tab's **Audio** group; the volumes live here only. The music pair is hidden while **Show music player** is off.
 - **When focus ends** / **When a break ends**: each holds that moment's **Play a sound** and its **Auto-start** toggle, plus a line saying what will actually happen. The buttons stay explicit: **Stop** (finish & next) always switches to the next session **paused**, while **Skip** starts it (when auto-start is on).
 - **Notifications** (computers only): **Notify when time is up** — the same switch as in the settings tab.
-- **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle.
+- **End-of-session sounds**: by default a session that runs out stays silent and the timer counts up — deliberately, so a chime never interrupts focus you want to keep going with. Turn on **Play a sound when a break ends** or **Play a sound when focus ends** to be told anyway. A new install starts with the break chime on and the focus one off; upgrading keeps whatever you hear today. Each applies whether the timer runs into overtime or auto-starts the next session, so auto-start can be silent too. Both sit in the timer panel and in the settings tab's **Audio** group, and follow the master **Sound** toggle. Which sound plays is chosen in the settings tab's **Sounds** group.
 - Full-width **Reset to defaults** button at the bottom.
 
 Layout adapts to narrow sidebars: the timer visual stays sticky at the top, controls keep a comfortable minimum width and the panel scrolls horizontally if needed.
@@ -136,7 +138,7 @@ Each session appends one line to the day's log file:
 
 ## Network use
 
-Timers, logs, and sounds are all local (audio cues are bundled into `main.js`). The optional lofi-music feature is the only part that reaches the network, in two places — both only ever to YouTube, and neither happens until you paste a music link.
+Timers, logs, and sounds are all local (audio cues are bundled into `main.js`, or read from your own vault if you choose a file). The optional lofi-music feature is the only part that reaches the network, in two places — both only ever to YouTube, and neither happens until you paste a music link.
 
 **Playing the audio.** With a music link set and **Show music player** on, the timer panel embeds YouTube's privacy-enhanced player from `www.youtube-nocookie.com` to stream the audio, which loads content from YouTube/Google servers. This happens only while the timer panel is open; clearing the link or turning the toggle off stops it entirely.
 
@@ -165,6 +167,7 @@ CI on every push runs lint, format-check, tests, and build. Release tags push a 
 
 - **Ding sound** — [Universfield](https://pixabay.com/users/universfield-28281460/) via [Pixabay](https://pixabay.com/sound-effects/).
 - **Bell sounds** — [freesound_community](https://pixabay.com/users/freesound_community-46691455/) via [Pixabay](https://pixabay.com/sound-effects/).
+- **War drum** — [freesound_community](https://pixabay.com/users/freesound_community-46691455/) via [Pixabay](https://pixabay.com/sound-effects/).
 - **Pixel City artwork** — drawn by this repository's own script ([art/pixel-city/](art/pixel-city/)), MIT like the rest of the plugin. Palette: [Endesga 32](https://lospec.com/palette-list/endesga-32) by Endesga.
 
 ## AI disclaimer

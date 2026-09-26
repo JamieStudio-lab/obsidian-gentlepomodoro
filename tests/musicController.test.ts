@@ -493,6 +493,58 @@ describe("ducking", () => {
     h.clock.advance(MUSIC_DUCK_DOWN_MS * 4);
     expect(h.volumes()).toEqual([]);
   });
+
+  it("holds the dip until the LONGER of two overlapping cues ends (0.6.7)", () => {
+    // A chosen end sound can run 30 seconds. A Stop followed by Start puts the
+    // two-second drum on top of it, and letting the newer cue set the hold
+    // brought the music back up under a sound still ringing.
+    bootPlaying(h);
+    h.reset();
+    h.controller.duck(30);
+    h.clock.advance(1000);
+    h.controller.duck(2);
+    h.clock.advance(10_000);
+    expect(h.lastVolume()).toBe(Math.round(MUSIC_DUCK_FACTOR * 100));
+    h.clock.advance(25_000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("▶️ pressed under a sound that started while paused rises only to the dip (0.6.7)", () => {
+    // duck() turns a cue away while the music is paused but stamps what it is
+    // owed. Before 0.6.7 only a skip's landing read that stamp back, so ▶️ under
+    // a 30-second end sound faded to full volume over it — and the fade's own
+    // landing then erased the stamp, so the next cue could not extend it.
+    bootPlaying(h);
+    h.controller.pressPause();
+    h.clock.advance(MUSIC_FADE_OUT_MS);
+    h.state(YT_STATE.PAUSED);
+    h.controller.duck(30);
+    h.clock.advance(1000);
+    h.reset();
+    h.controller.pressPlay();
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(Math.round(MUSIC_DUCK_FACTOR * 100));
+    h.controller.duck(2); // the start drum, still inside the long sound
+    h.clock.advance(10_000);
+    expect(h.lastVolume()).toBe(Math.round(MUSIC_DUCK_FACTOR * 100));
+    h.clock.advance(20_000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("▶️ pressed inside a fade-out, under a ringing sound, stays dipped too", () => {
+    // The still-running branch of armFadeIn: the player never stopped, so the
+    // fade eases straight back up — and must stop at the dip, not at full.
+    bootPlaying(h);
+    h.controller.pressPause();
+    h.clock.advance(MUSIC_FADE_OUT_MS / 3);
+    h.controller.duck(30); // turned away by the fade-out, but owed
+    h.controller.pressPlay();
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(Math.round(MUSIC_DUCK_FACTOR * 100));
+    h.clock.advance(30_000);
+    expect(h.lastVolume()).toBe(100);
+  });
 });
 
 describe("volume", () => {

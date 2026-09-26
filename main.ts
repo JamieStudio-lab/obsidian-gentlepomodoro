@@ -253,6 +253,11 @@ export default class GentlePomoPlugin extends Plugin {
     // Defer auto-open until Obsidian has finished initial layout setup.
     this.app.workspace.onLayoutReady(() => {
       this.maybeAutoOpenView();
+      // Decode a chosen end-of-session sound file now, so the first cue after
+      // startup plays it rather than the built-in. After layout-ready because
+      // the vault index is not complete before it. Nothing at all happens on
+      // the default sounds.
+      this.timer.prepareEndCues();
     });
   }
 

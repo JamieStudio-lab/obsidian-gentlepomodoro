@@ -524,14 +524,13 @@ export class MusicController {
       // straight up from rampLevel (0) — and that ramp holds itself while the
       // new item buffers, so the rise is spent on audio rather than on the gap
       // before it.
+      // armFadeIn also hands a cue still ringing its dip back: fadeOut cleared
+      // duckRestoreTimeout, the only thing holding it, and without the owed
+      // hold the music would swell to full volume under a bell that is still
+      // ringing — fade trap 4, via a path that did not exist before skips
+      // faded. That check lives in beginFadeIn since 0.6.7, where every fade-in
+      // passes, rather than here.
       this.armFadeIn();
-      // Hand the cue its dip back. fadeOut cleared duckRestoreTimeout, which was
-      // the only thing holding it, so without this the music swells to full
-      // volume under a bell that is still ringing — fade trap 4, via a path that
-      // did not exist before skips faded. fadePhase is "in" here, which is
-      // exactly the branch duck() is built to take over.
-      const owed = this.duckHoldUntilMs;
-      if (owed !== null && owed > this.host.now()) this.duck((owed - this.host.now()) / 1000);
     }, true);
   }
 
@@ -611,10 +610,30 @@ export class MusicController {
   duck(cueDurationSec: number): void {
     // Stamped before every guard, so a cue that arrives mid-skip (when the
     // "out" guard below turns it away) still records how long the dip owes.
-    this.duckHoldUntilMs = this.host.now() + Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
+    //
+    // The LATER of the two ends, never simply the newest cue's (0.6.7). Before
+    // user-chosen sounds a cue was at most four seconds, so a second, shorter
+    // cue cutting the hold short let the music back up a moment early at worst;
+    // under a 30-second sound followed by the two-second drum, the music would
+    // swell back up under a sound still ringing for most of half a minute.
+    const now = this.host.now();
+    const holdUntil = Math.max(
+      this.duckHoldUntilMs ?? 0,
+      now + Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS)
+    );
+    this.duckHoldUntilMs = holdUntil;
     const playing = this.isAudibleState(this.playerState);
     if (!this.playerReady || !playing || this.fadePhase === "out") return;
+    this.dipUntil(holdUntil);
+  }
 
+  /**
+   * Take the volume down to the ducked level from wherever it is, and bring it
+   * back when `holdUntil` passes. The body of duck() without its guards, so a
+   * fade-in that starts while a cue is still ringing can hand over to it — see
+   * beginFadeIn.
+   */
+  private dipUntil(holdUntil: number): void {
     const base = this.host.musicVolume();
     const target = base * MUSIC_DUCK_FACTOR;
     const from = this.rampLevel ?? base;
@@ -630,8 +649,9 @@ export class MusicController {
       buildVolumeRamp(from, target, rampSteps(MUSIC_DUCK_DOWN_MS, MUSIC_DUCK_STEP_MS)),
       MUSIC_DUCK_STEP_MS
     );
-    // The down-ramp runs under the cue's attack; restore starts when the clip ends.
-    const holdMs = Math.max(cueDurationSec * 1000, MUSIC_DUCK_DOWN_MS);
+    // The down-ramp runs under the cue's attack; restore starts when the last
+    // cue still ringing ends.
+    const holdMs = holdUntil - this.host.now();
     this.duckRestoreTimeout = this.host.setTimeout(() => {
       this.duckRestoreTimeout = null;
       this.restoreDucked();
@@ -780,6 +800,23 @@ export class MusicController {
 
   /** Run the armed fade-in, now that audio is actually flowing. */
   private beginFadeIn(): void {
+    // A cue still ringing owns the level (0.6.7). duck() turns a cue away while
+    // the music is paused or fading out, but it stamps what the dip is owed —
+    // and a chosen end sound can ring for 30 seconds, so pressing ▶️ under it,
+    // or a skip landing mid-cue, would otherwise rise to full volume over a
+    // sound that is still playing, and the fade's landing would then erase the
+    // stamp. Rise only as far as the ducked level, and restore when the cue
+    // ends. Every fade-in comes through here — ▶️, the arm backstop, ⏸→▶️
+    // inside a fade-out, a skip's landing, a media-key resume, a volume change
+    // re-aiming a running fade — so the rule has one home. It calls dipUntil
+    // rather than duck(): on the ▶️ path handleState has not yet advanced
+    // playerState, so duck()'s "is it playing" guard would still see the
+    // PAUSED it is leaving and turn the dip away.
+    const owed = this.duckHoldUntilMs;
+    if (owed !== null && owed > this.host.now()) {
+      this.dipUntil(owed);
+      return;
+    }
     const from = this.rampLevel ?? 0;
     this.clearRampTimers(); // drops the arm backstop; the fade is under way
     this.fadePhase = "in";

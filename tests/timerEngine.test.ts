@@ -1247,3 +1247,112 @@ describe("TimerEngine — end-time wake-up", () => {
     expect(notified(stub.calls)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 0.6.7 — which sound marks each end (issue #5). The recorder captures BOTH
+// arguments: the bundled sound and the user's file preferred over it. What
+// happens when the file cannot play is audioCue.test.ts's job, against the
+// real playSound; here the question is only which choice each moment reads.
+// ---------------------------------------------------------------------------
+describe("TimerEngine — the chosen end sounds", () => {
+  const BELL = "singing_bell_short.mp3";
+  const DING = "ding-sound.mp3";
+  const DRUM = "war-drum_short.mp3";
+  const GONG = "Sounds/gong.mp3";
+
+  const recordChoices = (timer: TimerEngine) => {
+    const played: [string, string | null][] = [];
+    (timer as unknown as { playSound: (f: string, p?: string | null) => Promise<null> }).playSound =
+      async (f, p = null) => {
+        played.push([f, p]);
+        return null;
+      };
+    return played;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rings the focus choice when FOCUS runs out — read from the ending mode", () => {
+    const stub = makePluginStub({ focusMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.focusEndSoundEnabled = true;
+    stub.settings.focusEndSound = `file:${GONG}`;
+    stub.settings.breakEndSound = "drum";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordChoices(timer);
+
+    timer.start();
+    vi.advanceTimersByTime(61_000);
+
+    expect(played).toEqual([
+      [DRUM, null], // the start drum is not choosable, whatever the end sounds are
+      [BELL, GONG],
+    ]);
+    timer.pause();
+  });
+
+  it("rings the break choice when a break runs out and focus auto-starts", async () => {
+    const stub = makePluginStub({ breakMinutes: 1 });
+    stub.settings.soundEnabled = true;
+    stub.settings.breakEndSoundEnabled = true;
+    stub.settings.autoStartFocus = true;
+    stub.settings.focusEndSound = "ding";
+    stub.settings.breakEndSound = `file:${GONG}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordChoices(timer);
+
+    timer.switchMode("break");
+    timer.start();
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    // The cue belongs to the break that ENDED, though the focus session it
+    // auto-started is already running by the time anything is awaited.
+    expect(played[0]).toEqual([DING, GONG]);
+    expect(timer.getState().mode).toBe("focus");
+    timer.pause();
+  });
+
+  it("uses the break choice when you stop a LONG break too", async () => {
+    const stub = makePluginStub({ longBreakMinutes: 15 });
+    stub.settings.soundEnabled = true;
+    // Unlike both defaults and unlike the focus choice, so reading the wrong
+    // setting for a long break cannot pass by coincidence.
+    stub.settings.breakEndSound = "drum";
+    stub.settings.focusEndSound = `file:${GONG}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordChoices(timer);
+
+    timer.switchMode("break", false, true);
+    expect(timer.getState().breakType).toBe("long");
+    timer.start();
+    vi.advanceTimersByTime(60_000);
+    await timer.finish();
+
+    expect(played).toEqual([[DRUM, null]]);
+  });
+
+  it("uses the focus choice when you skip focus, and the defaults change nothing", async () => {
+    const stub = makePluginStub({ focusMinutes: 25 });
+    stub.settings.soundEnabled = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    const played = recordChoices(timer);
+
+    timer.start();
+    vi.advanceTimersByTime(60_000);
+    await timer.skip();
+
+    expect(played).toEqual([
+      [DRUM, null],
+      [BELL, null], // today's sound, on the default settings
+    ]);
+  });
+});

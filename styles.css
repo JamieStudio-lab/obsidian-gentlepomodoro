@@ -4303,3 +4303,23 @@ body.is-tablet .gp-timer-time {
     text-align: left;
   }
 }
+
+/* ===== Settings-tab sound rows (0.6.7) ===== */
+
+/* Why a chosen sound file plays the built-in instead, or why a pick was
+   refused. Under the row's description rather than in its control column as
+   .gp-setting-error is: these rows carry two controls, ▶ and the chooser, and
+   the column's wrap — which gives an error its own line — also pushed the
+   chooser below ▶ on a phone, where Obsidian makes a settings button full
+   width. */
+.gp-setting-note {
+  margin-top: var(--gp-space-2);
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.35;
+}
+
+/* No message, no gap. */
+.gp-setting-note:empty {
+  display: none;
+}

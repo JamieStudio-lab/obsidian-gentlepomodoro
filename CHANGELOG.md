@@ -4,6 +4,46 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] — 2026-09-25
+
+### Added
+
+- **Choose the sound for the end of focus and the end of a break.** A new
+  **Sounds** group in the settings tab has a row for each. Pick one of the
+  three built-in sounds (singing bell, ding, war drum) or your own **mp3, m4a
+  or wav** file from the vault, up to 30 seconds long. Picking a sound plays it
+  once, and **▶** plays it again. The chosen sound is used wherever that
+  session ends with a sound: when its time is up (if that sound is turned on
+  under **Audio**), and when you stop or skip it. Nothing changes unless you
+  choose: the defaults are the sounds you hear today. Asked for in
+  [issue #5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5).
+  - To use your own sound, put the file anywhere in your vault first — drag
+    it into Obsidian's file list, or on a phone attach it to a note — and it
+    appears in the list.
+  - A file that can't be used is refused when you pick it, with the reason
+    (too long, too large, or a format this device can't play), and nothing is
+    saved. A file that could not be read — for example one iCloud has not
+    downloaded yet — is tried again next time rather than remembered as
+    broken.
+  - If a chosen file is later missing on a device — still syncing, deleted,
+    renamed or moved — the built-in sound plays instead, and the row in the
+    settings tab says why. Nothing pops up when the session ends.
+  - ▶ stays silent while **Timer sounds** is off, and says so.
+  - The file is read ahead of time, so the sound plays on time even from a
+    slow or syncing vault.
+- Credits in the README for the war drum sound (freesound_community via
+  Pixabay).
+
+### Changed
+
+- **Lofi music stays turned down until every sound has finished.** Two cases
+  brought it back up too early: when two sounds overlapped, it came back up
+  when the newer one ended even if the first was still playing; and pressing
+  ▶ on the music while a sound was playing faded it straight up to full
+  volume. It now waits for the last sound to end. With the built-in sounds
+  this was a moment at most; with a chosen sound of up to 30 seconds it would
+  have been most of one.
+
 ## [0.6.6] — 2026-09-25
 
 ### Added
