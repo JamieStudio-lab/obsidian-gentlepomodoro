@@ -1580,6 +1580,105 @@ describe("the Sounds group", () => {
     expect(timer.listener).toBe(null);
   });
 
+  it("stops a playing preview when Timer sounds is switched off", async () => {
+    // "Every sound the timer makes" — and the preview is the one that can stop.
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    await c.tab.setControlValue("soundEnabled", true);
+    expect(asked).not.toContain("stopPreview");
+    await c.tab.setControlValue("soundEnabled", false);
+    expect(asked).toContain("stopPreview");
+  });
+
+  it("keeps a refusal when ▶ was pressed WHILE the pick was reading", async () => {
+    // Round one covered ▶ pressed before a pick; this is ▶ pressed during
+    // one, whose preview lands after the refusal is on screen.
+    const c = makeTab({ focusEndSound: "file:Sounds/saved.mp3" });
+    let refuse: () => void = () => {};
+    const asked = withTimer(c, (path) =>
+      path === "long.mp3"
+        ? new Promise<Load>((r) => {
+            refuse = () => r({ ok: false, problem: "too-long" });
+          })
+        : Promise.resolve({ ok: true, buffer: {} })
+    );
+    let finishPreview: () => void = () => {};
+    (
+      c.tab as unknown as { plugin: { timer: { previewEndCue: () => Promise<string> } } }
+    ).plugin.timer.previewEndCue = () => {
+      asked.push("preview");
+      return new Promise<string>((r) => {
+        finishPreview = () => r("played");
+      });
+    };
+    c.tab.display();
+    await flush();
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "long.mp3",
+    });
+    componentOf(c.el, FOCUS_END_CUE_NAME).click?.(); // ▶ while long.mp3 is read
+    refuse();
+    await flush();
+    finishPreview();
+    await flush();
+
+    expect(statusOf(rowFor(c.el, FOCUS_END_CUE_NAME))).toBe(
+      "Longer than 30 seconds. Pick a shorter sound."
+    );
+  });
+
+  it("lets go of an overtaken pick's file once it lands", async () => {
+    // The engine holds a pick's file until the pick decides; a pick that is
+    // overtaken (or whose tab closed) has to say so, or it stays decoded.
+    const c = makeTab();
+    let land: () => void = () => {};
+    const asked = withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = () => r({ ok: true, buffer: {} });
+        })
+    );
+    (
+      c.tab as unknown as { plugin: { timer: Record<string, unknown> } }
+    ).plugin.timer.releaseUnchosenCues = () => asked.push("release");
+    c.tab.display();
+    await flush();
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.wav",
+    });
+    c.tab.hide();
+    asked.length = 0;
+    land();
+    await flush();
+    expect(asked).toEqual(["release"]);
+  });
+
+  it("checks a picked file AS a pick, so the engine holds it until the save", async () => {
+    const c = makeTab();
+    const seen: unknown[][] = [];
+    withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (c.tab as unknown as { plugin: { timer: Record<string, unknown> } }).plugin.timer;
+    timer.loadCustomCue = (...args: unknown[]) => {
+      seen.push(args);
+      return Promise.resolve({ ok: true, buffer: {} });
+    };
+    c.tab.display();
+    await flush();
+    await pick(c, FOCUS_END_CUE_NAME, { kind: "file", path: "Sounds/gong.mp3" });
+    expect(seen).toContainEqual(["Sounds/gong.mp3", true]);
+  });
+
   it("drops a pick that lands after the tab was closed", async () => {
     const c = makeTab();
     let land: (l: Load) => void = () => {};

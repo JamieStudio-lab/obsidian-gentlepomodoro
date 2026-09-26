@@ -35,6 +35,8 @@ export type CueLoad = { ok: true; buffer: AudioBuffer } | { ok: false; problem: 
 interface CustomCueEntry {
   /** The file's mtime and size when it was read — an edit makes a new version. */
   version: string;
+  /** When the read began, so a read that never finishes can be retried. */
+  startedAt: number;
   result: Promise<CueLoad>;
   /** Filled in when `result` lands; a cue only ever plays a settled entry. */
   settled: CueLoad | null;
@@ -43,6 +45,12 @@ interface CustomCueEntry {
 const fileVersion = (file: TFile): string => `${String(file.stat.mtime)}|${String(file.stat.size)}`;
 
 const END_CUE_EDGES: readonly CueEdge[] = ["focus", "break"];
+
+// How long a file read may stay unfinished before the next caller starts a
+// fresh one instead of joining it. A read of a 2 MB file takes well under a
+// second; one still going after this is an iCloud download that stalled, and
+// joining it would leave a later pick of that file doing nothing at all.
+const CUE_LOAD_STALE_MS = 15_000;
 
 // How long a stopped preview takes to fall silent. Stopping a sound dead
 // mid-waveform clicks; this is short enough to read as "stopped at once".
@@ -719,28 +727,50 @@ export class TimerEngine {
    * picked and asks it why a saved one plays the built-in instead.
    *
    * Two callers asking for the same version share one read (the entry holds
-   * the promise). A MISSING file is not cached: finding that out is a lookup,
-   * and a file still syncing should be found by the next cue rather than
-   * remembered as gone. Nor is a failed READ — see below.
+   * the promise), unless it has been going for CUE_LOAD_STALE_MS. A MISSING
+   * file is not cached: finding that out is a lookup, and a file still
+   * syncing should be found by the next cue rather than remembered as gone.
+   * Nor is a failed READ — see below. `forPick` is the settings tab checking
+   * a file before saving it: that file is not named by any setting yet.
    */
-  loadCustomCue(path: string): Promise<CueLoad> {
+  loadCustomCue(path: string, forPick = false): Promise<CueLoad> {
     const file = this.plugin.app.vault.getFileByPath(path);
     if (file === null) return Promise.resolve({ ok: false, problem: "missing" });
     const version = fileVersion(file);
     const cached = this.customCues.get(path);
-    if (cached !== undefined && cached.version === version) return cached.result;
+    if (
+      cached !== undefined &&
+      cached.version === version &&
+      (cached.settled !== null || Date.now() - cached.startedAt < CUE_LOAD_STALE_MS)
+    ) {
+      return cached.result;
+    }
 
-    const entry: CustomCueEntry = { version, result: this.decodeCustomCue(file), settled: null };
+    const entry: CustomCueEntry = {
+      version,
+      startedAt: Date.now(),
+      result: this.decodeCustomCue(file),
+      settled: null,
+    };
     void entry.result.then((load) => {
       entry.settled = load;
+      // Replaced meanwhile — by an edit, or by a retry of a stalled read.
+      if (this.customCues.get(path) !== entry) return;
       // A read that failed says nothing about the file — iCloud still
       // downloading an offloaded one, OneDrive or an antivirus holding it —
       // and its mtime and size do not change when it becomes readable. Cached,
       // it would be refused, and every cue would play the built-in, until the
       // file was edited or Obsidian restarted. Forget it, as for a missing file.
-      if (!load.ok && load.problem === "unreadable" && this.customCues.get(path) === entry) {
+      if (!load.ok && load.problem === "unreadable") {
         this.customCues.delete(path);
+        return;
       }
+      // Nobody names this file any more — the row moved to another sound
+      // while it decoded (at startup, after an edit). Nothing else would
+      // sweep it once the rows are on built-ins, so let go of it now. A
+      // PICK's file is not named until the pick saves it, so a pick keeps
+      // it and releases it itself on every other way out.
+      if (!forPick && !this.isEndCueFile(path)) this.customCues.delete(path);
     });
     this.customCues.set(path, entry);
     this.evictCustomCues(path);
@@ -891,8 +921,9 @@ export class TimerEngine {
         playing.source.stop();
       }
     } catch (e) {
-      // Already ended between the check and the stop: nothing to silence.
-      logger.debug("Preview had already stopped", e);
+      // stop() on a source that has already ended is a no-op by the spec, so
+      // this is only for the unexpected — a context closed under us.
+      logger.debug("Could not stop the preview", e);
     }
     this.plugin.shortenMusicDuckInOpenViews(Math.max(0, this.cueRingingUntil - Date.now()) / 1000);
     this.previewListener?.();

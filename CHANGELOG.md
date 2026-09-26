@@ -29,8 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     renamed or moved — the built-in sound plays instead, and the row in the
     settings tab says why. Nothing pops up when the session ends.
   - While a sound plays, ▶ turns into ■ to stop it. Only one plays at a
-    time: picking another sound, pressing the other row's ▶ or closing the
-    settings stops it straight away, and lofi music turned down for it comes
+    time: picking another sound, pressing the other row's ▶, switching
+    **Timer sounds** off or closing the settings stops it straight away, and lofi music turned down for it comes
     back up.
   - ▶ stays silent while **Timer sounds** is off, and says so.
   - The file is read ahead of time, so the sound plays on time even from a
@@ -40,13 +40,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- **Lofi music stays turned down until every sound has finished.** Two cases
-  brought it back up too early: when two sounds overlapped, it came back up
-  when the newer one ended even if the first was still playing; and pressing
-  ▶ on the music while a sound was playing faded it straight up to full
-  volume. It now waits for the last sound to end. With the built-in sounds
-  this was a moment at most; with a chosen sound of up to 30 seconds it would
-  have been most of one.
+- **Lofi music stays turned down until every sound has finished.** Before, it
+  could come back up while a sound was still playing: when a second, shorter
+  sound ended first, or when you pressed ▶, switched station, or paused and
+  resumed the music during a sound. With the built-in sounds this was a moment
+  at most; with a chosen sound of up to 30 seconds it would have been most of
+  one.
 
 ## [0.6.6] — 2026-09-25
 

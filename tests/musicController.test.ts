@@ -574,6 +574,103 @@ describe("ducking", () => {
     expect(h.lastVolume()).toBe(100);
   });
 
+  // Round two (0.6.7): the owed dip used to be erased by every teardown and
+  // every internal landing, so each of these came back to full volume under
+  // a long sound still ringing.
+  const DIPPED = Math.round(MUSIC_DUCK_FACTOR * 100);
+
+  it("keeps the dip across ⏭ to another station while a long sound rings", () => {
+    bootPlaying(h);
+    h.controller.duck(30);
+    h.clock.advance(1000);
+    const snap = h.controller.snapshotHandOff();
+    h.controller.destroy();
+    h.controller.build("https://embed2", PLAN, URL_B);
+    h.controller.armHandOff(snap);
+    h.fireLoad();
+    h.clock.advance(MUSIC_LISTENING_DELAY_MS);
+    h.ready();
+    h.state(YT_STATE.BUFFERING);
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(DIPPED);
+    h.clock.advance(30_000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("keeps the dip when ▶️ is pressed on a freshly built player", () => {
+    // A station picked (or the loop toggled) rebuilds the frame; ▶️ after it.
+    bootPlaying(h);
+    h.controller.duck(30);
+    h.controller.destroy();
+    boot(h, PLAN, URL_B);
+    h.controller.pressPlay();
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(DIPPED);
+  });
+
+  it("keeps the dip when ▶️ is pressed again after a ▶️ that never started", () => {
+    // The arm backstop stands the first press down through postVolume.
+    bootPlaying(h);
+    h.controller.pressPause();
+    h.clock.advance(MUSIC_FADE_OUT_MS);
+    h.state(YT_STATE.PAUSED);
+    h.controller.duck(30);
+    h.controller.pressPlay(); // playVideo dropped: no state ever comes
+    h.clock.advance(MUSIC_FADE_ARM_TIMEOUT_MS + 10);
+    h.controller.pressPlay();
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(DIPPED);
+  });
+
+  it("moves a pending restore to a later cue turned away mid-dip", () => {
+    // A playlist's gap between items turns the second cue away while the
+    // first cue's dip is still holding the level down.
+    bootPlaying(h, LIST_PLAN);
+    h.controller.duck(4);
+    h.clock.advance(1000);
+    h.state(YT_STATE.ENDED);
+    h.state(YT_STATE.UNSTARTED);
+    h.controller.duck(30);
+    h.state(YT_STATE.BUFFERING);
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(5000);
+    expect(h.lastVolume()).toBe(DIPPED);
+    h.clock.advance(26_000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("comes back at the dip when media keys resume under a ringing sound", () => {
+    // Paused from outside (no ⏸ fade, so the volume is not parked), a cue
+    // turned away, then resumed without ▶️.
+    bootPlaying(h);
+    h.state(YT_STATE.PAUSED);
+    h.controller.duck(30);
+    h.clock.advance(5000);
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_DUCK_DOWN_MS * 2);
+    expect(h.lastVolume()).toBe(DIPPED);
+    h.clock.advance(26_000);
+    expect(h.lastVolume()).toBe(100);
+  });
+
+  it("parks at silence before a buffering resume, so a late fade rises from it", () => {
+    // The sound may end while the player buffers; the fade that follows must
+    // start from silence, not drop to it from full volume first.
+    bootPlaying(h);
+    h.state(YT_STATE.PAUSED);
+    h.controller.duck(2);
+    h.reset();
+    h.state(YT_STATE.BUFFERING);
+    expect(h.volumes()).toEqual([0]);
+    h.clock.advance(3000); // the sound has ended
+    h.state(YT_STATE.PLAYING);
+    h.clock.advance(MUSIC_FADE_IN_MS * 2);
+    expect(h.lastVolume()).toBe(100);
+  });
+
   it("▶️ pressed inside a fade-out, under a ringing sound, stays dipped too", () => {
     // The still-running branch of armFadeIn: the player never stopped, so the
     // fade eases straight back up — and must stop at the dip, not at full.

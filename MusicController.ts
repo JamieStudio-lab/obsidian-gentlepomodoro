@@ -155,7 +155,12 @@ export class MusicController {
   // simply sitting at the user's volume" marker.
   private rampInterval: number | null = null;
   private duckRestoreTimeout: number | null = null;
-  /** When an in-flight duck is owed until, so a skip's fade can restore it. */
+  /**
+   * When the last cue still ringing ends — wall-clock, and never reset: it is
+   * a promise to the SOUND, not state of this frame or this ramp, so it lapses
+   * on its own and only shortenDuck lowers it. Every fade-in and every resume
+   * without ▶️ checks it (beginFadeIn, handleState). See cancelRamps.
+   */
   private duckHoldUntilMs: number | null = null;
   private fadeArmTimeout: number | null = null; // "playback never started" backstop
   private rampLevel: number | null = null;
@@ -623,7 +628,14 @@ export class MusicController {
     );
     this.duckHoldUntilMs = holdUntil;
     const playing = this.isAudibleState(this.playerState);
-    if (!this.playerReady || !playing || this.fadePhase === "out") return;
+    if (!this.playerReady || !playing || this.fadePhase === "out") {
+      // Turned away — but a dip still holding the level down for an earlier
+      // cue must now last until this one ends too. Otherwise its restore
+      // brings the music up under this sound: a playlist's gap between items,
+      // or an external pause, is enough to turn this cue away mid-dip.
+      if (this.duckRestoreTimeout !== null) this.scheduleRestore(holdUntil);
+      return;
+    }
     this.dipUntil(holdUntil);
   }
 
@@ -646,13 +658,24 @@ export class MusicController {
     // A live dip is waiting on its restore: move it. With none — the music is
     // paused, so only the stamp is owed, or the restore is already rising —
     // the stamp is all there is to change.
-    if (this.duckRestoreTimeout !== null) {
-      this.host.clearTimeout(this.duckRestoreTimeout);
-      this.duckRestoreTimeout = this.host.setTimeout(() => {
+    if (this.duckRestoreTimeout !== null) this.scheduleRestore(until);
+  }
+
+  /** Bring the ducked music back up at `until`, replacing any restore already set. */
+  private scheduleRestore(until: number): void {
+    if (this.duckRestoreTimeout !== null) this.host.clearTimeout(this.duckRestoreTimeout);
+    this.duckRestoreTimeout = this.host.setTimeout(
+      () => {
         this.duckRestoreTimeout = null;
         this.restoreDucked();
-      }, until - now);
-    }
+      },
+      Math.max(0, until - this.host.now())
+    );
+  }
+
+  /** A cue is still ringing that the music has not been given its dip for. */
+  private dipOwed(): boolean {
+    return this.duckHoldUntilMs !== null && this.duckHoldUntilMs > this.host.now();
   }
 
   /**
@@ -679,11 +702,7 @@ export class MusicController {
     );
     // The down-ramp runs under the cue's attack; restore starts when the last
     // cue still ringing ends.
-    const holdMs = holdUntil - this.host.now();
-    this.duckRestoreTimeout = this.host.setTimeout(() => {
-      this.duckRestoreTimeout = null;
-      this.restoreDucked();
-    }, holdMs);
+    this.scheduleRestore(holdUntil);
   }
 
   /* ===== Internals: playback ===== */
@@ -841,7 +860,7 @@ export class MusicController {
     // playerState, so duck()'s "is it playing" guard would still see the
     // PAUSED it is leaving and turn the dip away.
     const owed = this.duckHoldUntilMs;
-    if (owed !== null && owed > this.host.now()) {
+    if (owed !== null && this.dipOwed()) {
       this.dipUntil(owed);
       return;
     }
@@ -970,10 +989,17 @@ export class MusicController {
     this.clearRampTimers();
     this.rampLevel = null;
     this.fadePhase = null;
-    // Deliberately here and not in clearRampTimers: a skip clears the timers
-    // and must still owe the rest of the dip, whereas a teardown or an explicit
-    // volume change ends the duck outright.
-    this.duckHoldUntilMs = null;
+    // duckHoldUntilMs is deliberately NOT reset here (0.6.7). Before
+    // user-chosen sounds it was, on the reasoning that a teardown or an
+    // explicit volume change ends the duck — true when a cue lasted four
+    // seconds. But everything runs through here: a teardown, a rebuilt
+    // frame's `ready`, the arm backstop's stand-down, every restore and
+    // fade-in landing. Each erased the promise to a sound still ringing, so ⏭,
+    // a station pick then ▶️, or a failed ▶️ then another, brought the music up
+    // to full under a 30-second end sound. It lapses on its own when that
+    // sound ends. An explicit volume change still wins over the dip in
+    // progress — this cancels it — but a later fade-in under the same sound
+    // dips again, which is what the sound is owed.
   }
 
   private clearRampTimers(): void {
@@ -1063,8 +1089,14 @@ export class MusicController {
         !this.isAudibleState(this.playerState) &&
         this.rampInterval === null &&
         this.duckRestoreTimeout === null &&
-        this.rampLevel !== null
+        (this.rampLevel !== null || this.dipOwed())
       ) {
+        // Also taken with the volume NOT parked when a cue is still ringing
+        // (0.6.7): one turned away while the player was halted — media keys,
+        // an external play, a playlist's gap between items — must bring the
+        // music back at the dip, not at full volume. beginFadeIn does the
+        // dipping; the BUFFERING re-arm below hands over to it.
+        //
         // The player left a halted state while the volume was parked below the
         // setting with no ramp left to lift it — a landed ⏸/⏹ fade leaves the
         // embed at 0, and hardware media keys can resume it without going
@@ -1080,6 +1112,13 @@ export class MusicController {
         } else {
           // BUFFERING: audio hasn't started — re-arm instead of fading through
           // the silence, and the existing armed machinery finishes the job.
+          if (this.rampLevel === null) {
+            // Not parked — the dip-owed case. Park now, as ▶️ does, so a fade
+            // that follows (the sound may end while this buffers) rises from
+            // silence instead of dropping to it first.
+            this.rampLevel = 0;
+            this.postToPlayer(buildPlayerCommand("setVolume", [0]));
+          }
           this.fadePhase = "armed";
           this.scheduleFadeArmBackstop();
         }

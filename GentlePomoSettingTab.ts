@@ -202,7 +202,10 @@ interface CueRowUi {
   playButton: ExtraButtonComponent | null;
   button: ButtonComponent | null;
   statusEl: HTMLElement | null;
-  /** Bumped by every pick, render and hide(); a pick whose token moved is stale. */
+  /**
+   * Bumped by every pick, by the row's teardown (1.13 calls it before a
+   * re-render) and by hide(); a pick whose token moved is stale.
+   */
   token: number;
   /**
    * The same for the status line alone. Separate so that pressing ▶ — which
@@ -577,10 +580,18 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     const token = ++ui.token;
     ui.statusToken++;
     if (choice.kind === "file") {
-      const load = await this.plugin.timer.loadCustomCue(choice.path);
+      const load = await this.plugin.timer.loadCustomCue(choice.path, true);
       // A later pick, a re-render or closing the tab has overtaken this one.
-      if (token !== ui.token) return;
+      // Its file was held for it — a pick's load keeps an unchosen file until
+      // the pick decides — so let go of it, or it stays decoded all session.
+      if (token !== ui.token) {
+        this.plugin.timer.releaseUnchosenCues();
+        return;
+      }
       if (!load.ok) {
+        // Moved as the outcome is painted, so a ▶ clicked while this pick
+        // was reading its file skips its own refresh instead of wiping this.
+        ui.statusToken++;
         this.paintCueStatus(edge, describeCueRefusal(load.problem, choice.path));
         return;
       }
@@ -597,6 +608,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // sweeps the cache when a row goes back to a built-in.
     this.plugin.timer.releaseUnchosenCues();
     if (token !== ui.token) return;
+    ui.statusToken++;
     this.paintCueStatus(edge, "");
     await this.previewCue(edge);
   }
@@ -1078,6 +1090,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         // The master gate: it changes what every summary line in this group
         // says, so it refreshes them exactly like the two chimes do.
         settings.soundEnabled = Boolean(value);
+        // "Every sound the timer makes": a preview playing two rows below
+        // this switch is one of them, and it is the one sound that CAN stop.
+        if (!settings.soundEnabled) this.plugin.timer.stopPreview();
         await this.plugin.saveSettings();
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();

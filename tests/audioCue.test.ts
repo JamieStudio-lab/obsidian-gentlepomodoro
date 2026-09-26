@@ -340,7 +340,7 @@ describe("the user's own sounds", () => {
 
   it("plays a loaded file instead of the built-in, and dips the music for its length", async () => {
     const vault = fakeVault([file({})]);
-    const stub = makeCueStub(vault);
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}` });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
     expect((await timer.loadCustomCue(GONG.path)).ok).toBe(true);
@@ -357,7 +357,9 @@ describe("the user's own sounds", () => {
     const vault = fakeVault([file({})]);
     vault.holdReads();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    const timer = new TimerEngine(
+      makeCueStub(vault, { focusEndSound: `file:${GONG.path}` }).plugin as any
+    );
 
     const played = await seams(timer).playSound("singing_bell_short.mp3", GONG.path);
     expect(played).toBe("singing_bell_short.mp3");
@@ -392,7 +394,9 @@ describe("the user's own sounds", () => {
   it("plays the built-in when the file cannot be decoded, and remembers that", async () => {
     const vault = fakeVault([file({ seconds: "bad" })]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    const timer = new TimerEngine(
+      makeCueStub(vault, { breakEndSound: `file:${GONG.path}` }).plugin as any
+    );
 
     expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "undecodable" });
     expect(await seams(timer).playSound("ding-sound.mp3", GONG.path)).toBe("ding-sound.mp3");
@@ -436,7 +440,9 @@ describe("the user's own sounds", () => {
     const edited = file({});
     const vault = fakeVault([edited]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    const timer = new TimerEngine(
+      makeCueStub(vault, { focusEndSound: `file:${GONG.path}` }).plugin as any
+    );
     await timer.loadCustomCue(GONG.path);
 
     edited.stat.mtime = 2;
@@ -471,10 +477,12 @@ describe("the user's own sounds", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
 
+    // The tried files are picks being checked — held until their pick decides,
+    // so it is the sweep on the NEXT load that has to let go of them.
     await timer.loadCustomCue("chosen.mp3");
-    await timer.loadCustomCue("tried-1.mp3");
-    await timer.loadCustomCue("tried-2.mp3"); // evicts tried-1, never the chosen one
-    await timer.loadCustomCue("tried-1.mp3");
+    await timer.loadCustomCue("tried-1.mp3", true);
+    await timer.loadCustomCue("tried-2.mp3", true); // evicts tried-1, never the chosen one
+    await timer.loadCustomCue("tried-1.mp3", true);
     await timer.loadCustomCue("chosen.mp3");
 
     expect(vault.reads.filter((p) => p === "tried-1.mp3")).toHaveLength(2);
@@ -526,8 +534,11 @@ describe("the user's own sounds", () => {
     // the file was refused until it was edited or Obsidian restarted.
     const vault = fakeVault([file({})]);
     vault.failNextRead.add(GONG.path);
+    // Named by a setting, so only the read-failure rule can let it go.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    const timer = new TimerEngine(
+      makeCueStub(vault, { focusEndSound: `file:${GONG.path}` }).plugin as any
+    );
 
     expect(await timer.loadCustomCue(GONG.path)).toEqual({ ok: false, problem: "unreadable" });
     await flush();
@@ -543,12 +554,13 @@ describe("the user's own sounds", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(makeCueStub(vault).plugin as any);
 
-    const a = timer.loadCustomCue("a.mp3");
-    const c = timer.loadCustomCue("c.mp3");
+    // Two picks: neither file is named by a setting until its pick saves.
+    const a = timer.loadCustomCue("a.mp3", true);
+    const c = timer.loadCustomCue("c.mp3", true);
     vault.releaseReads();
     await Promise.all([a, c]);
-    await timer.loadCustomCue("a.mp3");
-    await timer.loadCustomCue("c.mp3");
+    await timer.loadCustomCue("a.mp3", true);
+    await timer.loadCustomCue("c.mp3", true);
     expect(vault.reads).toEqual(["a.mp3", "c.mp3"]);
   });
 
@@ -569,6 +581,63 @@ describe("the user's own sounds", () => {
     timer.releaseUnchosenCues();
     await timer.loadCustomCue("old.mp3");
     expect(vault.reads).toEqual(["old.mp3", "old.mp3"]);
+  });
+
+  it("lets go of a file the row moved away from while it was decoding", async () => {
+    // Decoded at startup (or after an edit) for a row that is switched to a
+    // built-in before the read lands: nothing else would ever sweep it once
+    // both rows are on built-ins, so it would stay decoded all session.
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    const stub = makeCueStub(vault, { focusEndSound: `file:${GONG.path}` });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.prepareEndCues();
+    stub.settings.focusEndSound = "drum";
+    timer.releaseUnchosenCues(); // what the tab does after the save: keeps it, still loading
+    vault.releaseReads();
+    await flush();
+
+    stub.settings.focusEndSound = `file:${GONG.path}`;
+    await timer.loadCustomCue(GONG.path);
+    expect(vault.reads).toEqual([GONG.path, GONG.path]); // it was let go
+  });
+
+  it("keeps a PICK's file after it loads, though no setting names it yet", async () => {
+    // Otherwise every pick would read its file twice: once to check it, and
+    // again for the preview right after it is saved.
+    const vault = fakeVault([file({})]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    await timer.loadCustomCue(GONG.path, true);
+    await flush();
+    await timer.loadCustomCue(GONG.path, true);
+    expect(vault.reads).toEqual([GONG.path]);
+  });
+
+  it("starts a fresh read when one has hung, instead of joining it forever", async () => {
+    // A stalled iCloud read never settles; joining it made a later pick of
+    // that file do nothing at all — no sound, no refusal, no status.
+    const vault = fakeVault([file({})]);
+    vault.holdReads();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(vault).plugin as any);
+    const realNow = Date.now;
+    let now = realNow();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      void timer.loadCustomCue(GONG.path, true);
+      now += 5_000;
+      void timer.loadCustomCue(GONG.path, true); // still young: joined
+      expect(vault.reads).toEqual([GONG.path]);
+      now += 11_000;
+      void timer.loadCustomCue(GONG.path, true); // 16 s and nothing: retried
+      await flush();
+      expect(vault.reads).toEqual([GONG.path, GONG.path]);
+    } finally {
+      clock.mockRestore();
+      vault.releaseReads();
+    }
   });
 
   it("opens no audio context for a file read that lands after unload", async () => {
