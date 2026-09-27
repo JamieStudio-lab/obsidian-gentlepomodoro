@@ -218,14 +218,15 @@ describe("the two settings paths cannot drift", () => {
       "Display & behavior",
       "Timer appearance",
       "Audio",
-      // 0.6.7: which sound marks each end.
-      "Sounds",
+      // 0.6.7: one group per moment, as in the timer panel's gear.
+      "When focus ends",
+      "When a break ends",
       // Desktop only — the mock's Platform is the desktop app by default.
       "Notifications",
       "Music",
       "Long break",
       "Daily focus goal",
-      "Task selector",
+      "Task picker",
       "Task integration",
     ]);
   });
@@ -234,7 +235,7 @@ describe("the two settings paths cannot drift", () => {
     ctx.tab.display();
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
-      // The Audio group's outcome lines are text, not controls — they carry no
+      // The moment groups' outcome lines are text, not controls — they carry no
       // component by design and identify themselves with their own class.
       if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
@@ -275,7 +276,7 @@ describe("controls are wired through setControlValue", () => {
 
   it("routes the status-bar toggle to its own setter rather than the raw field", () => {
     ctx.tab.display();
-    componentOf(ctx.el, "Show status bar").change?.(false as never);
+    componentOf(ctx.el, "Show in status bar").change?.(false as never);
     expect(ctx.calls.map((c) => c.method)).toContain("setStatusBarVisibility");
   });
 
@@ -321,7 +322,7 @@ describe("controls are wired through setControlValue", () => {
     seeded.tab.display();
     for (const [name, expected] of [
       ["Long break duration (minutes)", 15],
-      ["Long break frequency", 4],
+      ["Focus sessions before a long break", 4],
     ] as const) {
       componentOf(seeded.el, name).change?.("" as never);
     }
@@ -427,21 +428,22 @@ describe("music link rows", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 0.6.3 — the Audio group. Four INDEPENDENT rows: two chimes and the two
-// auto-start toggles that moved here from the timer panel. Nothing is
+// 0.6.3 — the end-of-session rows. Four INDEPENDENT switches: two sounds and
+// the two auto-start toggles that moved here from the timer panel. Nothing is
 // conditional, which is the point — an earlier cut hid each chime while its
 // auto-start was on, and a control vanishing because you turned something ON
-// reads backwards.
+// reads backwards. Since 0.6.7 they sit in one group per moment rather than
+// under Audio.
 // ---------------------------------------------------------------------------
-describe("Audio group", () => {
+describe("the end-of-session switches", () => {
   const names = (el: { settings: Setting[] }) =>
     el.settings.filter((s) => !s.heading).map((s) => s.name);
 
   const AUDIO_ROWS = [
     MASTER_SOUND_LABEL,
-    "Play a sound when focus ends",
+    "Play it when focus time is up",
     AUTO_START_BREAK_LABEL,
-    "Play a sound when a break ends",
+    "Play it when break time is up",
     AUTO_START_FOCUS_LABEL,
   ];
 
@@ -532,6 +534,27 @@ describe("Audio group", () => {
     expect(names).toContain(AUTO_START_BREAK_LABEL);
     expect(names).toContain(AUTO_START_FOCUS_LABEL);
     expect(names).toContain(MASTER_SOUND_LABEL);
+  });
+
+  it("groups the end of a session by moment, with the panel's headings in its order", () => {
+    // 0.6.7: the tab had "Audio" and "Sounds" side by side — two headings for
+    // one idea — with the auto-starts under the first and the sound choosers
+    // under the second. It now uses the gear's own headings. The panel cannot
+    // be imported, so its section() calls are read as text, comments stripped.
+    const shared = ["Audio", "When focus ends", "When a break ends", "Notifications"];
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const panelSections = [...view.matchAll(/\bsection\("([^"]+)"\)/g)].map((m) => m[1]);
+    expect(panelSections.filter((h) => shared.includes(h))).toEqual(shared);
+
+    const c = makeTab();
+    c.tab.display();
+    const tabHeadings = c.el.settings.filter((s) => s.heading).map((s) => s.name);
+    expect(tabHeadings.filter((h) => shared.includes(h))).toEqual(shared);
+    // Adjacent, too: nothing may be filed between the moments and the mutes.
+    const at = tabHeadings.indexOf("Audio");
+    expect(tabHeadings.slice(at, at + shared.length)).toEqual(shared);
   });
 
   it("re-arms the panel's row registries BEFORE any row registers", () => {
@@ -654,17 +677,12 @@ describe("the audio mixer across the two surfaces", () => {
   it("carries both mutes and neither volume", () => {
     // The split is a decision, not an oversight: a level is something you move
     // WHILE LISTENING, which is a timer-panel gesture, and both volumes have
-    // been panel-only since 0.1.2. The mutes are policy and belong here. Order
-    // is asserted too — the two empty names are the outcome lines, text rows.
+    // been panel-only since 0.1.2. The mutes are policy and belong here — and,
+    // since 0.6.7, nothing else: the end-of-session rows moved to one group
+    // per moment.
     expect(audioGroup(ctx.tab).items.map((i) => i.name)).toEqual([
       MASTER_SOUND_LABEL,
       MUSIC_SOUND_LABEL,
-      "Play a sound when focus ends",
-      AUTO_START_BREAK_LABEL,
-      "",
-      "Play a sound when a break ends",
-      AUTO_START_FOCUS_LABEL,
-      "",
     ]);
   });
 
@@ -820,7 +838,7 @@ describe("Task source (issue #4)", () => {
     // has to meet the decision before the field it decides about.
     const c = makeTab();
     const rows = declarativeRows(c.tab)
-      .filter((r) => r.heading === "Task selector")
+      .filter((r) => r.heading === "Task picker")
       .map((r) => r.name);
     expect(rows.indexOf(TASK_SOURCE_SETTING_NAME)).toBeLessThan(rows.indexOf("Tasks folder path"));
   });
@@ -849,7 +867,7 @@ describe("Task source (issue #4)", () => {
   });
 
   it("NEVER unlinks the current task when the source changes", async () => {
-    // The maintainer's second requirement on issue #4. "Show task selector"
+    // The maintainer's second requirement on issue #4. "Show task picker"
     // right beside it DOES unlink on the way off, so this is a real
     // neighbouring behaviour to be told apart, not a hypothetical.
     for (const source of TASK_SOURCE_ORDER) {
@@ -921,7 +939,7 @@ describe("the panel's feature-switch sections", () => {
   };
 
   it("gates the task-source row on the picker's own switch", () => {
-    // Turning "Show task selector" off hides the picker AND unlinks the task,
+    // Turning "Show task picker" off hides the picker AND unlinks the task,
     // so where that picker looks is then a setting for something absent.
     const block = gatedBlocks(view()).showTaskSelector;
     expect(block, "no onlyWhen block for showTaskSelector").toBeDefined();
@@ -971,7 +989,7 @@ describe("the panel's feature-switch sections", () => {
     const c = makeTab();
     c.tab.display();
     const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
-    expect(names).toContain("Show task selector");
+    expect(names).toContain("Show task picker");
     expect(names).toContain("Show music player");
     expect(names).toContain(TASK_SOURCE_SETTING_NAME);
     expect(names).toContain(MUSIC_SOUND_LABEL);
@@ -1221,7 +1239,7 @@ describe("the Notifications switch", () => {
 // saved, that the row says why a saved file plays the built-in instead, and
 // that ▶ honours the master switch.
 // ---------------------------------------------------------------------------
-describe("the Sounds group", () => {
+describe("the sound rows", () => {
   type Load = { ok: true; buffer: unknown } | { ok: false; problem: string };
 
   /** Swap in a timer that records what the rows ask of it. */
@@ -1277,18 +1295,41 @@ describe("the Sounds group", () => {
     FuzzySuggestModal.opened = null;
   });
 
-  it("sits right after Audio, as render rows on both paths", () => {
+  it("opens each moment's group, above its switch, as render rows on both paths", () => {
+    // First, not under the switch: below it the chooser read as the switch's
+    // child and looked inert while it was off, though Stop and Skip always
+    // play it. The switch's own name ("Play it when…") leans on this order.
     const c = makeTab();
-    const declared = declarativeRows(c.tab).filter((r) => r.heading === "Sounds");
-    expect(declared.map((r) => r.name)).toEqual([FOCUS_END_CUE_NAME, BREAK_END_CUE_NAME]);
-    const group = c.tab
+    const rows = declarativeRows(c.tab);
+    const group = (heading: string) => rows.filter((r) => r.heading === heading).map((r) => r.name);
+    expect(group("When focus ends").slice(0, 2)).toEqual([
+      FOCUS_END_CUE_NAME,
+      "Play it when focus time is up",
+    ]);
+    expect(group("When a break ends").slice(0, 2)).toEqual([
+      BREAK_END_CUE_NAME,
+      "Play it when break time is up",
+    ]);
+    const cueItems = c.tab
       .getSettingDefinitions()
-      .find((g) => (g as { heading?: string }).heading === "Sounds") as unknown as {
-      items: Record<string, unknown>[];
-    };
+      .flatMap((g) => (g as unknown as { items: Record<string, unknown>[] }).items)
+      .filter((item) => item.name === FOCUS_END_CUE_NAME || item.name === BREAK_END_CUE_NAME);
+    expect(cueItems).toHaveLength(2);
     // Not 1.13's `file` control: below 1.13 that renders as an empty row, and
     // it could not offer the built-ins anyway.
-    for (const item of group.items) expect(typeof item.render).toBe("function");
+    for (const item of cueItems) expect(typeof item.render).toBe("function");
+  });
+
+  it("describes the switch that sits BELOW it, since the order depends on it", () => {
+    const c = makeTab();
+    const desc = (name: string) => declarativeRows(c.tab).find((r) => r.name === name)?.desc;
+    for (const name of [FOCUS_END_CUE_NAME, BREAK_END_CUE_NAME]) {
+      expect(desc(name), name).toContain("switch below");
+      expect(desc(name), name).toContain("stop or skip");
+      // "under Audio" was true until the rows moved; it would now send the
+      // reader to a group that no longer holds the switch.
+      expect(desc(name), name).not.toContain("Audio");
+    }
   });
 
   it("draws ▶ and a button naming the stored sound", () => {

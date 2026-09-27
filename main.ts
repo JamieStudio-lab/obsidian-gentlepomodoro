@@ -160,7 +160,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.addCommand({
       id: "show-status-bar",
-      name: "Show status bar",
+      name: "Show in status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return !this.settings.showInStatusBar;
         void this.setStatusBarVisibility(true);
@@ -170,7 +170,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.addCommand({
       id: "hide-status-bar",
-      name: "Hide status bar",
+      name: "Hide from status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return this.settings.showInStatusBar;
         void this.setStatusBarVisibility(false);

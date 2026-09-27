@@ -8,13 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- **Choose the sound for the end of focus and the end of a break.** A new
-  **Sounds** group in the settings tab has a row for each. Pick one of the
+- **Choose the sound for the end of focus and the end of a break.** Each
+  has a row at the top of its own group in the settings tab. Pick one of the
   three built-in sounds (singing bell, ding, war drum) or your own **mp3, m4a
   or wav** file from the vault, up to 30 seconds long. Picking a sound plays it
   once, and **▶** plays it again. The chosen sound is used wherever that
-  session ends with a sound: when its time is up (if that sound is turned on
-  under **Audio**), and when you stop or skip it. Nothing changes unless you
+  session ends with a sound: when its time is up (if the switch below it is
+  on), and when you stop or skip it. Nothing changes unless you
   choose: the defaults are the sounds you hear today. Asked for in
   [issue #5](https://github.com/JamieStudio-lab/obsidian-gentlepomodoro/issues/5).
   - To use your own sound, put the file anywhere in your vault first — drag
@@ -40,6 +40,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- **The settings tab groups the end of a session by moment**, with the same
+  headings as the timer panel: **Audio** now holds just the two sound
+  switches, and **When focus ends** and **When a break ends** each hold that
+  moment's sound, its switch, its auto-start and the line saying what will
+  happen. The switches are renamed **Play it when focus time is up** and
+  **Play it when break time is up**, since the sound they play now sits right
+  above them. Nothing about how they work changes.
+- **Clearer setting names.** In the settings tab: **Show in status bar**
+  (was "Show status bar", which sounded like it hid Obsidian's whole status
+  bar — the two commands follow, as **Show in status bar** and **Hide from
+  status bar**; hotkeys you set keep working), **Show day/night indicator**,
+  **Focus sessions before a long break** (was "Long break frequency"),
+  **Show a notice when you reach the goal** (was "Goal-hit notice"), **Count
+  pomodoros on the task** (was "Increment task pomodoro count on finish"),
+  and **Task picker** / **Show task picker**, so the settings no longer call
+  one thing both a selector and a picker. **Auto-start the focus** is now
+  **Auto-start focus**, in the timer panel too.
+- **Clearer setting descriptions.** The music link name no longer mentions a
+  button that has not existed since 0.5.7, the status bar and daily goal rows
+  say what they show and where, and the lookahead options read "3 days"
+  rather than "3 Days".
 - **Lofi music stays turned down until every sound has finished.** Before, it
   could come back up while a sound was still playing: when a second, shorter
   sound ended first, or when you pressed ▶, switched station, or paused and

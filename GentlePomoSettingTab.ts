@@ -70,7 +70,7 @@ const MUSIC_URL_DESC =
 const MUSIC_URL_EXTRA_DESC =
   "Optional. Fill this in to switch between links from the timer panel; leave it empty and the slot is unused.";
 const MUSIC_NAME_DESC =
-  "Optional short name for this link's button in the timer panel, e.g. Lofi or Rain. Leave empty to use the number.";
+  "Optional short name shown in the timer panel, e.g. Lofi or Rain. Filled in from the video's title when you paste a link into an empty slot; leave it empty to show the link's number.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -84,13 +84,13 @@ const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
 const REMOVE_ALL_MARKERS_DESC =
   "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
 // The two sound rows (0.6.7). Each says when its sound plays, because the
-// crossing half depends on a toggle in the Audio group while Stop and Skip
-// always use it — so the row is never moot, even with that toggle off.
+// time-is-up half depends on the switch below it while Stop and Skip always
+// use it — so the row is never moot, even with that switch off.
 export const FOCUS_END_CUE_NAME = "Focus-end sound";
 export const BREAK_END_CUE_NAME = "Break-end sound";
-const FOCUS_END_CUE_DESC = `Rings when focus time is up (if that's turned on under Audio) and when you stop or skip focus. Choose a built-in sound, or an mp3, m4a or wav file of up to ${String(CUE_MAX_SECONDS)} seconds from your vault.`;
+const FOCUS_END_CUE_DESC = `Plays when you stop or skip focus, and when focus time is up if the switch below is on. Choose a built-in sound, or an mp3, m4a or wav file of up to ${String(CUE_MAX_SECONDS)} seconds from your vault.`;
 const BREAK_END_CUE_DESC =
-  "Rings when break time is up (if that's turned on under Audio) and when you stop or skip a break.";
+  "Plays when you stop or skip a break, and when break time is up if the switch below is on.";
 export const CUE_MUTED_NOTICE = "Timer sounds are off.";
 
 // How long to wait after the last keystroke before asking YouTube about a link.
@@ -229,7 +229,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
 
   /**
-   * The Audio group's outcome lines, kept so they can be rewritten in place when
+   * The two moment groups' outcome lines, kept so they can be rewritten in place when
    * one of the four settings they describe is written. Repopulated by each
    * render; entries from a previous render are simply overwritten, and a stale
    * detached node would only be written to, never shown.
@@ -614,10 +614,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   }
 
   /**
-   * The live outcome line under each pair of Audio rows — the same sentence the
-   * timer panel shows, for the same reason: "Play a sound when focus ends" does not say
-   * whether it still applies when the break starts on its own, and that question
-   * should not need an experiment.
+   * The live outcome line closing each moment's group — the same sentence the
+   * timer panel shows, for the same reason: "Play it when focus time is up" does
+   * not say whether it still applies when the break starts on its own, and that
+   * question should not need an experiment.
    *
    * It is a `render` row rather than a `desc` string because a description is
    * baked in at definition time. `getSettingDefinitions()` runs on every
@@ -686,12 +686,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           {
             name: "Auto-open on startup",
-            desc: "Open the view in the right panel when Obsidian starts.",
+            desc: "Open the timer panel in the right sidebar when Obsidian starts.",
             control: { type: "toggle", key: "autoOpenOnStartup" },
           },
           {
-            name: "Show status bar",
-            desc: "Show the status bar indicator.",
+            name: "Show in status bar",
+            desc: "Show the timer and today's focus total in the status bar at the bottom of the window. Phones and tablets have no status bar.",
             control: { type: "toggle", key: "showInStatusBar" },
           },
         ],
@@ -709,7 +709,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             },
           },
           {
-            name: "Day/night indicator",
+            name: "Show day/night indicator",
             desc: "Show a subtle sun/moon indicator above the timer.",
             control: { type: "toggle", key: "showDayNightIndicator" },
           },
@@ -721,19 +721,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        // New in 0.6.3, and it now holds EVERY audio setting the timer panel's
-        // gear holds: the mixer (two switches and two levels) and the
-        // end-of-session rows (the two sounds and the two auto-starts, which
-        // were gear-panel-only before). Neither surface is a subset of the
-        // other any more, which is the point — a setting reachable from only
-        // one of two screens is a setting people cannot find.
+        // The two switches, and nothing else. From 0.6.3 this group also held
+        // the four end-of-session rows, and 0.6.7 first put the sound choosers
+        // in a separate "Sounds" group after it — two headings that mean the
+        // same thing, two auto-starts filed under a heading about sound, and
+        // "what happens when focus ends?" answered in two places. The tab now
+        // groups by MOMENT, with the headings the timer panel's gear uses, in
+        // the panel's order (a test holds the two lists together).
         //
-        // The four end-of-session rows are fully INDEPENDENT: the sound governs
-        // the auto-start path too, so no row is ever moot and none is hidden.
+        // A mute is policy, so both switches are on both surfaces; a level is
+        // moved while listening, so both volumes stay in the timer panel.
         heading: "Audio",
         rows: [
           {
-            // The master gate for everything else in this group, and until
+            // The master gate for every timer sound on this page, and until
             // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
             // read "Rings when focus time is up" here with no way to see why
             // it did not, and no control on this screen to change it.
@@ -760,46 +761,59 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
             control: { type: "toggle", key: "musicSoundEnabled" },
           },
+        ],
+      },
+      // The end of each session, one group per moment. The four switches are
+      // fully INDEPENDENT: the sound governs the auto-start path too, so no
+      // row is ever moot and none is hidden.
+      //
+      // The sound chooser comes FIRST. Below its switch it read as that
+      // switch's child, and looked inert while the switch was off, though Stop
+      // and Skip always play it; above it, the switch reads as one more
+      // occasion for the sound just chosen — hence "Play it when…". The panel
+      // keeps "Play a sound": it has no chooser for the "it" to point at.
+      {
+        heading: "When focus ends",
+        rows: [
+          this.cueRow("focus"),
           {
-            name: "Play a sound when focus ends",
+            name: "Play it when focus time is up",
             desc: "Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
             name: AUTO_START_BREAK_LABEL,
-            desc: "When focus time is up, begin the break without waiting. Silent unless the sound above is on too.",
+            desc: "When focus time is up, begin the break without waiting. Silent unless the switch above is on too.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           this.endSummaryRow("focus"),
+        ],
+      },
+      {
+        heading: "When a break ends",
+        rows: [
+          this.cueRow("break"),
           {
-            name: "Play a sound when a break ends",
+            name: "Play it when break time is up",
             desc: "So a five-minute break doesn't quietly become twenty.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
             name: AUTO_START_FOCUS_LABEL,
-            desc: "When break time is up, begin focusing without waiting. Silent unless the sound above is on too.",
+            desc: "When break time is up, begin focusing without waiting. Silent unless the switch above is on too.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
           this.endSummaryRow("break"),
         ],
-      },
-      // New in 0.6.7 (issue #5): WHICH sound marks each end. Its own group,
-      // not rows under each "Play a sound…" toggle: placed there a chooser
-      // reads as that toggle's child and looks inert while it is off, though
-      // Stop and Skip always use it.
-      {
-        heading: "Sounds",
-        rows: [this.cueRow("focus"), this.cueRow("break")],
       },
       // New in 0.6.6, and built on the desktop app only: the mobile apps have
       // no system notifications, and a switch that can do nothing on the
       // device in your hand is a switch that lies. The value itself still
       // syncs, so a phone never overwrites the choice made on a computer.
       //
-      // Its own group rather than a row in Audio: it is the one end-of-session
-      // signal that is NOT a sound — it exists for people who keep the sound
-      // off — and filing it under Audio would say the opposite.
+      // Its own group rather than a row under either moment: it is one switch
+      // for both ends, and the one end-of-session signal that is NOT a sound —
+      // it exists for people who keep the sound off.
       ...(Platform.isDesktopApp
         ? [
             {
@@ -849,8 +863,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "number", key: "longBreakMinutes", min: 1 },
           },
           {
-            name: "Long break frequency",
-            desc: "Number of focus sessions before each long break (classic technique uses 4).",
+            name: "Focus sessions before a long break",
+            desc: "After this many focus sessions, the next break is a long one. The classic technique uses 4.",
             control: { type: "number", key: "longBreakEvery", min: 1 },
           },
         ],
@@ -860,18 +874,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         rows: [
           {
             name: "Daily focus goal (minutes)",
-            desc: "Set to 0 to disable. The status bar shows today's progress against this goal.",
+            desc: "Set to 0 to turn it off. Today's progress shows in the status bar, or in the timer panel on phones and tablets.",
             control: { type: "number", key: "dailyFocusGoalMinutes", min: 0 },
           },
           {
-            name: "Goal-hit notice",
+            // "Show a…", not "Notice when…": read alone, as settings search
+            // shows it, a leading "Notice" is a verb.
+            name: "Show a notice when you reach the goal",
             desc: "Show a one-time notice when today's focus first crosses the daily goal.",
             control: { type: "toggle", key: "goalNoticeEnabled" },
           },
         ],
       },
       {
-        heading: "Task selector",
+        heading: "Task picker",
         rows: [
           {
             // First in the group, above the folder path it governs: choosing
@@ -892,26 +908,26 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           {
             name: "Tasks folder path",
-            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
+            desc: "Folder to search for tasks, e.g. projects/active. Leave empty to search the whole vault.",
             control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
           },
           {
-            name: "Show task selector",
+            name: "Show task picker",
             desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
             control: { type: "toggle", key: "showTaskSelector" },
           },
           {
             name: "Task lookahead window",
-            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
+            desc: "How many days ahead the task picker shows scheduled/due tasks. Overdue tasks always appear.",
             control: {
               type: "dropdown",
               key: "taskSelectorDays",
               options: {
-                "3": "3 Days",
-                "5": "5 Days",
-                "7": "7 Days",
-                "14": "14 Days",
-                "30": "30 Days",
+                "3": "3 days",
+                "5": "5 days",
+                "7": "7 days",
+                "14": "14 days",
+                "30": "30 days",
               },
             },
           },
@@ -921,7 +937,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         heading: "Task integration",
         rows: [
           {
-            name: "Increment task pomodoro count on finish",
+            name: "Count pomodoros on the task",
             desc: POMO_COUNT_TOGGLE_DESC,
             control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
           },
