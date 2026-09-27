@@ -1,10 +1,13 @@
 import {
   App,
+  Notice,
   Platform,
   PluginSettingTab,
   Setting,
   debounce,
   requestUrl,
+  type ButtonComponent,
+  type ExtraButtonComponent,
   type SettingDefinitionItem,
   type SettingControl,
   type SettingGroupItem,
@@ -28,6 +31,18 @@ import {
 } from "./taskScope";
 import { SESSION_END_NOTIFICATION_DESC, SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
 import { markDestructive } from "./confirmModal";
+import { CuePickerModal } from "./cuePicker";
+import {
+  CUE_MAX_SECONDS,
+  CUE_SETTING_KEY,
+  cueChoiceValue,
+  cueLabel,
+  describeCueFallback,
+  describeCueRefusal,
+  resolveCue,
+  type CueChoice,
+  type CueEdge,
+} from "./timerCues";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
 import type { GentlePomoSettings } from "./types";
@@ -55,7 +70,7 @@ const MUSIC_URL_DESC =
 const MUSIC_URL_EXTRA_DESC =
   "Optional. Fill this in to switch between links from the timer panel; leave it empty and the slot is unused.";
 const MUSIC_NAME_DESC =
-  "Optional short name for this link's button in the timer panel, e.g. Lofi or Rain. Leave empty to use the number.";
+  "Optional short name shown in the timer panel, e.g. Lofi or Rain. Filled in from the video's title when you paste a link into an empty slot; leave it empty to show the link's number.";
 const CHECK_MARKERS_NAME = "Check for misplaced pomodoro count markers";
 const CHECK_MARKERS_DESC =
   "Counts markers misplaced by versions before 0.5.1, changing nothing. Affected files are listed in the developer console.";
@@ -68,6 +83,15 @@ const REMOVE_MARKERS_DESC =
 const REMOVE_ALL_MARKERS_NAME = "Remove all pomodoro count markers";
 const REMOVE_ALL_MARKERS_DESC =
   "Risky — deletes every 🍅 marker the counter has written, losing all counts, and cannot be undone. Back up your vault first. Asks for confirmation.";
+// The two sound rows (0.6.7). Each says when its sound plays, because the
+// time-is-up half depends on the switch below it while Stop and Skip always
+// use it — so the row is never moot, even with that switch off.
+export const FOCUS_END_CUE_NAME = "Focus-end sound";
+export const BREAK_END_CUE_NAME = "Break-end sound";
+const FOCUS_END_CUE_DESC = `Plays when you stop or skip focus, and when focus time is up if the switch below is on. Choose a built-in sound, or an mp3, m4a or wav file of up to ${String(CUE_MAX_SECONDS)} seconds from your vault.`;
+const BREAK_END_CUE_DESC =
+  "Plays when you stop or skip a break, and when break time is up if the switch below is on.";
+export const CUE_MUTED_NOTICE = "Timer sounds are off.";
 
 // How long to wait after the last keystroke before asking YouTube about a link.
 // Both settings paths commit on every keystroke, so an un-debounced check would
@@ -172,6 +196,25 @@ async function probeMusicLink(target: MusicTarget): Promise<LinkProbeResult | nu
   }
 }
 
+/** Per-edge view state for the two sound rows. Rebuilt whenever the tab renders. */
+interface CueRowUi {
+  /** ▶ — or ■ while this row's preview plays. */
+  playButton: ExtraButtonComponent | null;
+  button: ButtonComponent | null;
+  statusEl: HTMLElement | null;
+  /**
+   * Bumped by every pick, by the row's teardown (1.13 calls it before a
+   * re-render) and by hide(); a pick whose token moved is stale.
+   */
+  token: number;
+  /**
+   * The same for the status line alone. Separate so that pressing ▶ — which
+   * re-checks the status — cannot drop a pick still reading its file; a pick
+   * bumps this one too, since it supersedes whatever the line was about to say.
+   */
+  statusToken: number;
+}
+
 /** Per-slot view state for the link rows. Rebuilt whenever the tab renders. */
 interface MusicSlotUi {
   urlInput: TextComponent | null;
@@ -186,7 +229,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
 
   /**
-   * The Audio group's outcome lines, kept so they can be rewritten in place when
+   * The two moment groups' outcome lines, kept so they can be rewritten in place when
    * one of the four settings they describe is written. Repopulated by each
    * render; entries from a previous render are simply overwritten, and a stale
    * detached node would only be written to, never shown.
@@ -240,6 +283,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     for (const ui of this.musicSlotUi) {
       if (ui) ui.token++;
     }
+    for (const ui of Object.values(this.cueRowUi)) {
+      ui.token++;
+      ui.statusToken++;
+    }
+    // A preview belongs to this screen: closing it must not leave a 30-second
+    // sound playing with no ■ left to press.
+    this.plugin.timer.stopPreview();
+    this.plugin.timer.setPreviewListener(null);
     super.hide();
   }
 
@@ -398,11 +449,175 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     void this.commitMusicName(slot, name);
   }
 
+  private readonly cueRowUi: Record<CueEdge, CueRowUi> = {
+    focus: { playButton: null, button: null, statusEl: null, token: 0, statusToken: 0 },
+    break: { playButton: null, button: null, statusEl: null, token: 0, statusToken: 0 },
+  };
+
   /**
-   * The live outcome line under each pair of Audio rows — the same sentence the
-   * timer panel shows, for the same reason: "Play a sound when focus ends" does not say
-   * whether it still applies when the break starts on its own, and that question
-   * should not need an experiment.
+   * One sound row (0.6.7): ▶ to listen, and a button naming the sound that
+   * opens the picker. A render row on both settings paths, like the music
+   * links: 1.13's `file` control does not exist below 1.13 (the pre-1.13 path
+   * would draw an empty row), and it could not offer the built-ins anyway.
+   *
+   * Nothing here fans out to open panels: no panel shows the choice, and the
+   * engine reads it when a cue plays. Picking a sound is set once — not a
+   * level and not a mute — so it lives on this surface alone.
+   */
+  private cueRow(edge: CueEdge): SettingRowSpec {
+    return {
+      name: edge === "focus" ? FOCUS_END_CUE_NAME : BREAK_END_CUE_NAME,
+      desc: edge === "focus" ? FOCUS_END_CUE_DESC : BREAK_END_CUE_DESC,
+      render: (setting) => this.buildCueRow(setting, edge),
+    };
+  }
+
+  private buildCueRow(setting: Setting, edge: CueEdge): () => void {
+    const ui = this.cueRowUi[edge];
+    // ▶ plays this row's sound; while it plays the same button is ■ and
+    // stops it. setTooltip is the right call here, unlike on the timer's
+    // controls: it sets aria-label, and an icon-only button has no other name.
+    setting.addExtraButton((btn) => {
+      ui.playButton = btn;
+      btn.onClick(() => {
+        if (this.plugin.timer.previewingEdge() === edge) this.plugin.timer.stopPreview();
+        else void this.previewCue(edge);
+      });
+    });
+    this.plugin.timer.setPreviewListener(() => {
+      this.paintPreviewButton("focus");
+      this.paintPreviewButton("break");
+    });
+    this.paintPreviewButton(edge);
+    setting.addButton((btn) => {
+      ui.button = btn;
+      btn.onClick(() => {
+        new CuePickerModal(this.app, (choice) => {
+          void this.pickCue(edge, choice);
+        }).open();
+      });
+    });
+    this.paintCueButton(edge);
+    // Under the description, not in the control column as the music links do
+    // it. That column wraps to give its message a line of its own, and on a
+    // phone — where Obsidian makes a settings button full width — the wrap
+    // also pushed the chooser onto a line below ▶.
+    ui.statusEl = setting.infoEl.createDiv("gp-setting-note");
+    void this.refreshCueStatus(edge);
+    return () => {
+      ui.token++;
+      ui.statusToken++;
+      ui.playButton = null;
+      ui.button = null;
+      ui.statusEl = null;
+    };
+  }
+
+  private paintCueStatus(edge: CueEdge, message: string): void {
+    this.cueRowUi[edge].statusEl?.setText(message);
+  }
+
+  /** ■ while this row's preview plays, ▶ otherwise — asked of the engine, which owns it. */
+  private paintPreviewButton(edge: CueEdge): void {
+    const playing = this.plugin.timer.previewingEdge() === edge;
+    this.cueRowUi[edge].playButton
+      ?.setIcon(playing ? "square" : "play")
+      .setTooltip(playing ? "Stop" : "Play");
+  }
+
+  /** Name the stored sound on the row's button — from the setting, never from a pick. */
+  private paintCueButton(edge: CueEdge): void {
+    this.cueRowUi[edge].button?.setButtonText(
+      cueLabel(this.plugin.settings[CUE_SETTING_KEY[edge]], edge)
+    );
+  }
+
+  /**
+   * Say why a saved file plays the built-in instead — missing on this device,
+   * unplayable here, grown past the limits since it was picked — or nothing.
+   * The tab is where this is said, never a Notice when the cue plays: the end
+   * of a session is the one moment the plugin keeps quiet on purpose.
+   */
+  private async refreshCueStatus(edge: CueEdge): Promise<void> {
+    const ui = this.cueRowUi[edge];
+    const token = ++ui.statusToken;
+    const cue = resolveCue(this.plugin.settings[CUE_SETTING_KEY[edge]], edge);
+    if (cue.path === null) {
+      this.paintCueStatus(edge, "");
+      return;
+    }
+    const load = await this.plugin.timer.loadCustomCue(cue.path);
+    if (token !== ui.statusToken) return;
+    this.paintCueStatus(edge, load.ok ? "" : describeCueFallback(load.problem, cue.path, edge));
+  }
+
+  /** ▶. Silent while "Timer sounds" is off, and it says so rather than nothing. */
+  private async previewCue(edge: CueEdge): Promise<void> {
+    // Taken at the click: a pick made while this waits on a file bumps it, and
+    // then owns the status line — its refusal must not be wiped by this.
+    const statusToken = this.cueRowUi[edge].statusToken;
+    const result = await this.plugin.timer.previewEndCue(edge);
+    if (result === "muted") new Notice(CUE_MUTED_NOTICE);
+    if (this.cueRowUi[edge].statusToken !== statusToken) return;
+    // A saved file that could not load just played the built-in; the line says why.
+    void this.refreshCueStatus(edge);
+  }
+
+  /**
+   * A choice from the picker. A file is checked BEFORE it is saved — read,
+   * decoded, measured — and refused with a reason if it cannot play, so
+   * nothing unplayable is ever stored. Then the new sound plays once, the way
+   * a ringtone picker does.
+   */
+  private async pickCue(edge: CueEdge, choice: CueChoice): Promise<void> {
+    // Still inside the click that chose it: iOS lets only a user gesture start
+    // WebAudio, and everything below is past an await.
+    this.plugin.timer.wakeAudio();
+    // Choosing another sound silences the one playing at once — not after the
+    // new file has been read and checked, which can take a moment.
+    this.plugin.timer.stopPreview();
+    const ui = this.cueRowUi[edge];
+    const token = ++ui.token;
+    ui.statusToken++;
+    if (choice.kind === "file") {
+      const load = await this.plugin.timer.loadCustomCue(choice.path, true);
+      // A later pick, a re-render or closing the tab has overtaken this one.
+      // Its file was held for it — a pick's load keeps an unchosen file until
+      // the pick decides — so let go of it, or it stays decoded all session.
+      if (token !== ui.token) {
+        this.plugin.timer.releaseUnchosenCues();
+        return;
+      }
+      if (!load.ok) {
+        // Moved as the outcome is painted, so a ▶ clicked while this pick
+        // was reading its file skips its own refresh instead of wiping this.
+        ui.statusToken++;
+        this.paintCueStatus(edge, describeCueRefusal(load.problem, choice.path));
+        return;
+      }
+    }
+    this.plugin.settings[CUE_SETTING_KEY[edge]] = cueChoiceValue(choice);
+    // Named now, with the setting, not after the save: a later pick can
+    // overtake this one during the save and stop at its token check, and a
+    // refused one never repaints — so waiting left the button naming a sound
+    // that was no longer stored.
+    this.paintCueButton(edge);
+    await this.plugin.saveSettings();
+    // The file it replaces — or the one refused just before — need not stay
+    // decoded. Run for every saved pick, built-ins included: nothing else
+    // sweeps the cache when a row goes back to a built-in.
+    this.plugin.timer.releaseUnchosenCues();
+    if (token !== ui.token) return;
+    ui.statusToken++;
+    this.paintCueStatus(edge, "");
+    await this.previewCue(edge);
+  }
+
+  /**
+   * The live outcome line closing each moment's group — the same sentence the
+   * timer panel shows, for the same reason: "Play it when focus time is up" does
+   * not say whether it still applies when the break starts on its own, and that
+   * question should not need an experiment.
    *
    * It is a `render` row rather than a `desc` string because a description is
    * baked in at definition time. `getSettingDefinitions()` runs on every
@@ -471,12 +686,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           {
             name: "Auto-open on startup",
-            desc: "Open the view in the right panel when Obsidian starts.",
+            desc: "Open the timer panel in the right sidebar when Obsidian starts.",
             control: { type: "toggle", key: "autoOpenOnStartup" },
           },
           {
-            name: "Show status bar",
-            desc: "Show the status bar indicator.",
+            name: "Show in status bar",
+            desc: "Show the timer and today's focus total in the status bar at the bottom of the window. Phones and tablets have no status bar.",
             control: { type: "toggle", key: "showInStatusBar" },
           },
         ],
@@ -494,7 +709,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             },
           },
           {
-            name: "Day/night indicator",
+            name: "Show day/night indicator",
             desc: "Show a subtle sun/moon indicator above the timer.",
             control: { type: "toggle", key: "showDayNightIndicator" },
           },
@@ -506,19 +721,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
-        // New in 0.6.3, and it now holds EVERY audio setting the timer panel's
-        // gear holds: the mixer (two switches and two levels) and the
-        // end-of-session rows (the two sounds and the two auto-starts, which
-        // were gear-panel-only before). Neither surface is a subset of the
-        // other any more, which is the point — a setting reachable from only
-        // one of two screens is a setting people cannot find.
+        // The two switches, and nothing else. From 0.6.3 this group also held
+        // the four end-of-session rows, and 0.6.7 first put the sound choosers
+        // in a separate "Sounds" group after it — two headings that mean the
+        // same thing, two auto-starts filed under a heading about sound, and
+        // "what happens when focus ends?" answered in two places. The tab now
+        // groups by MOMENT, with the headings the timer panel's gear uses, in
+        // the panel's order (a test holds the two lists together).
         //
-        // The four end-of-session rows are fully INDEPENDENT: the sound governs
-        // the auto-start path too, so no row is ever moot and none is hidden.
+        // A mute is policy, so both switches are on both surfaces; a level is
+        // moved while listening, so both volumes stay in the timer panel.
         heading: "Audio",
         rows: [
           {
-            // The master gate for everything else in this group, and until
+            // The master gate for every timer sound on this page, and until
             // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
             // read "Rings when focus time is up" here with no way to see why
             // it did not, and no control on this screen to change it.
@@ -545,25 +761,46 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
             control: { type: "toggle", key: "musicSoundEnabled" },
           },
+        ],
+      },
+      // The end of each session, one group per moment. The four switches are
+      // fully INDEPENDENT: the sound governs the auto-start path too, so no
+      // row is ever moot and none is hidden.
+      //
+      // The sound chooser comes FIRST. Below its switch it read as that
+      // switch's child, and looked inert while the switch was off, though Stop
+      // and Skip always play it; above it, the switch reads as one more
+      // occasion for the sound just chosen — hence "Play it when…". The panel
+      // keeps "Play a sound": it has no chooser for the "it" to point at.
+      {
+        heading: "When focus ends",
+        rows: [
+          this.cueRow("focus"),
           {
-            name: "Play a sound when focus ends",
+            name: "Play it when focus time is up",
             desc: "Off by default, so a session you want to keep going with is never interrupted.",
             control: { type: "toggle", key: "focusEndSoundEnabled" },
           },
           {
             name: AUTO_START_BREAK_LABEL,
-            desc: "When focus time is up, begin the break without waiting. Silent unless the sound above is on too.",
+            desc: "When focus time is up, begin the break without waiting. Silent unless the switch above is on too.",
             control: { type: "toggle", key: "autoStartBreak" },
           },
           this.endSummaryRow("focus"),
+        ],
+      },
+      {
+        heading: "When a break ends",
+        rows: [
+          this.cueRow("break"),
           {
-            name: "Play a sound when a break ends",
+            name: "Play it when break time is up",
             desc: "So a five-minute break doesn't quietly become twenty.",
             control: { type: "toggle", key: "breakEndSoundEnabled" },
           },
           {
             name: AUTO_START_FOCUS_LABEL,
-            desc: "When break time is up, begin focusing without waiting. Silent unless the sound above is on too.",
+            desc: "When break time is up, begin focusing without waiting. Silent unless the switch above is on too.",
             control: { type: "toggle", key: "autoStartFocus" },
           },
           this.endSummaryRow("break"),
@@ -574,9 +811,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       // device in your hand is a switch that lies. The value itself still
       // syncs, so a phone never overwrites the choice made on a computer.
       //
-      // Its own group rather than a row in Audio: it is the one end-of-session
-      // signal that is NOT a sound — it exists for people who keep the sound
-      // off — and filing it under Audio would say the opposite.
+      // Its own group rather than a row under either moment: it is one switch
+      // for both ends, and the one end-of-session signal that is NOT a sound —
+      // it exists for people who keep the sound off.
       ...(Platform.isDesktopApp
         ? [
             {
@@ -626,8 +863,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             control: { type: "number", key: "longBreakMinutes", min: 1 },
           },
           {
-            name: "Long break frequency",
-            desc: "Number of focus sessions before each long break (classic technique uses 4).",
+            name: "Focus sessions before a long break",
+            desc: "After this many focus sessions, the next break is a long one. The classic technique uses 4.",
             control: { type: "number", key: "longBreakEvery", min: 1 },
           },
         ],
@@ -637,18 +874,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         rows: [
           {
             name: "Daily focus goal (minutes)",
-            desc: "Set to 0 to disable. The status bar shows today's progress against this goal.",
+            desc: "Set to 0 to turn it off. Today's progress shows in the status bar, or in the timer panel on phones and tablets.",
             control: { type: "number", key: "dailyFocusGoalMinutes", min: 0 },
           },
           {
-            name: "Goal-hit notice",
+            // "Show a…", not "Notice when…": read alone, as settings search
+            // shows it, a leading "Notice" is a verb.
+            name: "Show a notice when you reach the goal",
             desc: "Show a one-time notice when today's focus first crosses the daily goal.",
             control: { type: "toggle", key: "goalNoticeEnabled" },
           },
         ],
       },
       {
-        heading: "Task selector",
+        heading: "Task picker",
         rows: [
           {
             // First in the group, above the folder path it governs: choosing
@@ -669,26 +908,26 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
           {
             name: "Tasks folder path",
-            desc: "Folder to search for tasks (e.g., 'daily notes'). Leave empty to search the entire vault.",
+            desc: "Folder to search for tasks, e.g. projects/active. Leave empty to search the whole vault.",
             control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
           },
           {
-            name: "Show task selector",
+            name: "Show task picker",
             desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
             control: { type: "toggle", key: "showTaskSelector" },
           },
           {
             name: "Task lookahead window",
-            desc: "How many days ahead the task selector shows scheduled/due tasks. Overdue tasks always appear.",
+            desc: "How many days ahead the task picker shows scheduled/due tasks. Overdue tasks always appear.",
             control: {
               type: "dropdown",
               key: "taskSelectorDays",
               options: {
-                "3": "3 Days",
-                "5": "5 Days",
-                "7": "7 Days",
-                "14": "14 Days",
-                "30": "30 Days",
+                "3": "3 days",
+                "5": "5 days",
+                "7": "7 days",
+                "14": "14 days",
+                "30": "30 days",
               },
             },
           },
@@ -698,7 +937,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         heading: "Task integration",
         rows: [
           {
-            name: "Increment task pomodoro count on finish",
+            name: "Count pomodoros on the task",
             desc: POMO_COUNT_TOGGLE_DESC,
             control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
           },
@@ -867,6 +1106,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         // The master gate: it changes what every summary line in this group
         // says, so it refreshes them exactly like the two chimes do.
         settings.soundEnabled = Boolean(value);
+        // "Every sound the timer makes": a preview playing two rows below
+        // this switch is one of them, and it is the one sound that CAN stop.
+        if (!settings.soundEnabled) this.plugin.timer.stopPreview();
         await this.plugin.saveSettings();
         this.refreshEndSummaries();
         this.applySettingsToOpenViews();

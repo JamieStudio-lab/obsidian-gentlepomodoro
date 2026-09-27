@@ -28,13 +28,15 @@
  *
  * Shared because they are identical, and identical because they can be: each
  * says what it does without needing context from around it. The two CHIME
- * per-edge labels are deliberately NOT shared — the panel says "Play a sound"
- * under a section heading that already names the moment, while the tab has no
- * heading doing that and must spell out "Play a sound when focus ends". Sharing
- * that has to differ per surface would be worse than duplicating one.
+ * per-edge labels are deliberately NOT shared — the panel says "Play a sound",
+ * while the tab (since 0.6.7) says "Play it when focus time is up", the "it"
+ * being the sound chooser directly above, which the panel does not have.
+ * Sharing a label that has to differ per surface would be worse than
+ * duplicating one.
  *
  * "Auto-start" rather than "Start": the earlier "Start the break" read as
- * though pressing it might begin one immediately.
+ * though pressing it might begin one immediately. "Auto-start focus", not
+ * "…the focus" (0.6.7): focus is an activity, not a thing you start.
  */
 /**
  * The master sound switch, shared verbatim by both surfaces for the same reason
@@ -51,7 +53,7 @@
 export const MASTER_SOUND_LABEL = "Timer sounds";
 
 export const AUTO_START_BREAK_LABEL = "Auto-start the break";
-export const AUTO_START_FOCUS_LABEL = "Auto-start the focus";
+export const AUTO_START_FOCUS_LABEL = "Auto-start focus";
 
 /**
  * The three mixer labels, shared for the same reason and by the same test.

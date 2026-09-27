@@ -5,8 +5,19 @@ import { resolve } from "node:path";
 // is a vitest resolution rule, so `tsc` would type these against the real
 // package (which has no recording stubs). Vitest points the alias at this very
 // file, so it is the same module instance the tab constructs.
-import { Platform, Setting, type RecordedComponent } from "../__mocks__/obsidian";
-import { GentlePomoSettingTab } from "../GentlePomoSettingTab";
+import {
+  FuzzySuggestModal,
+  Notice,
+  Platform,
+  Setting,
+  type RecordedComponent,
+} from "../__mocks__/obsidian";
+import {
+  BREAK_END_CUE_NAME,
+  CUE_MUTED_NOTICE,
+  FOCUS_END_CUE_NAME,
+  GentlePomoSettingTab,
+} from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
 import {
   AUTO_START_BREAK_LABEL,
@@ -54,7 +65,14 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
   const plugin = {
     settings,
     app: {},
-    timer: { currentTaskName: "No task", setTask: () => undefined },
+    timer: {
+      currentTaskName: "No task",
+      setTask: () => undefined,
+      // The Sounds rows' ▶ / ■ reads and hooks these on every render.
+      previewingEdge: () => null,
+      setPreviewListener: () => undefined,
+      stopPreview: () => undefined,
+    },
     saveSettings: () => {
       calls.push({ method: "saveSettings", args: [] });
       return Promise.resolve();
@@ -200,12 +218,15 @@ describe("the two settings paths cannot drift", () => {
       "Display & behavior",
       "Timer appearance",
       "Audio",
+      // 0.6.7: one group per moment, as in the timer panel's gear.
+      "When focus ends",
+      "When a break ends",
       // Desktop only — the mock's Platform is the desktop app by default.
       "Notifications",
       "Music",
       "Long break",
       "Daily focus goal",
-      "Task selector",
+      "Task picker",
       "Task integration",
     ]);
   });
@@ -214,7 +235,7 @@ describe("the two settings paths cannot drift", () => {
     ctx.tab.display();
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
-      // The Audio group's outcome lines are text, not controls — they carry no
+      // The moment groups' outcome lines are text, not controls — they carry no
       // component by design and identify themselves with their own class.
       if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
@@ -255,7 +276,7 @@ describe("controls are wired through setControlValue", () => {
 
   it("routes the status-bar toggle to its own setter rather than the raw field", () => {
     ctx.tab.display();
-    componentOf(ctx.el, "Show status bar").change?.(false as never);
+    componentOf(ctx.el, "Show in status bar").change?.(false as never);
     expect(ctx.calls.map((c) => c.method)).toContain("setStatusBarVisibility");
   });
 
@@ -301,7 +322,7 @@ describe("controls are wired through setControlValue", () => {
     seeded.tab.display();
     for (const [name, expected] of [
       ["Long break duration (minutes)", 15],
-      ["Long break frequency", 4],
+      ["Focus sessions before a long break", 4],
     ] as const) {
       componentOf(seeded.el, name).change?.("" as never);
     }
@@ -407,21 +428,22 @@ describe("music link rows", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 0.6.3 — the Audio group. Four INDEPENDENT rows: two chimes and the two
-// auto-start toggles that moved here from the timer panel. Nothing is
+// 0.6.3 — the end-of-session rows. Four INDEPENDENT switches: two sounds and
+// the two auto-start toggles that moved here from the timer panel. Nothing is
 // conditional, which is the point — an earlier cut hid each chime while its
 // auto-start was on, and a control vanishing because you turned something ON
-// reads backwards.
+// reads backwards. Since 0.6.7 they sit in one group per moment rather than
+// under Audio.
 // ---------------------------------------------------------------------------
-describe("Audio group", () => {
+describe("the end-of-session switches", () => {
   const names = (el: { settings: Setting[] }) =>
     el.settings.filter((s) => !s.heading).map((s) => s.name);
 
   const AUDIO_ROWS = [
     MASTER_SOUND_LABEL,
-    "Play a sound when focus ends",
+    "Play it when focus time is up",
     AUTO_START_BREAK_LABEL,
-    "Play a sound when a break ends",
+    "Play it when break time is up",
     AUTO_START_FOCUS_LABEL,
   ];
 
@@ -512,6 +534,27 @@ describe("Audio group", () => {
     expect(names).toContain(AUTO_START_BREAK_LABEL);
     expect(names).toContain(AUTO_START_FOCUS_LABEL);
     expect(names).toContain(MASTER_SOUND_LABEL);
+  });
+
+  it("groups the end of a session by moment, with the panel's headings in its order", () => {
+    // 0.6.7: the tab had "Audio" and "Sounds" side by side — two headings for
+    // one idea — with the auto-starts under the first and the sound choosers
+    // under the second. It now uses the gear's own headings. The panel cannot
+    // be imported, so its section() calls are read as text, comments stripped.
+    const shared = ["Audio", "When focus ends", "When a break ends", "Notifications"];
+    const view = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    const panelSections = [...view.matchAll(/\bsection\("([^"]+)"\)/g)].map((m) => m[1]);
+    expect(panelSections.filter((h) => shared.includes(h))).toEqual(shared);
+
+    const c = makeTab();
+    c.tab.display();
+    const tabHeadings = c.el.settings.filter((s) => s.heading).map((s) => s.name);
+    expect(tabHeadings.filter((h) => shared.includes(h))).toEqual(shared);
+    // Adjacent, too: nothing may be filed between the moments and the mutes.
+    const at = tabHeadings.indexOf("Audio");
+    expect(tabHeadings.slice(at, at + shared.length)).toEqual(shared);
   });
 
   it("re-arms the panel's row registries BEFORE any row registers", () => {
@@ -634,17 +677,12 @@ describe("the audio mixer across the two surfaces", () => {
   it("carries both mutes and neither volume", () => {
     // The split is a decision, not an oversight: a level is something you move
     // WHILE LISTENING, which is a timer-panel gesture, and both volumes have
-    // been panel-only since 0.1.2. The mutes are policy and belong here. Order
-    // is asserted too — the two empty names are the outcome lines, text rows.
+    // been panel-only since 0.1.2. The mutes are policy and belong here — and,
+    // since 0.6.7, nothing else: the end-of-session rows moved to one group
+    // per moment.
     expect(audioGroup(ctx.tab).items.map((i) => i.name)).toEqual([
       MASTER_SOUND_LABEL,
       MUSIC_SOUND_LABEL,
-      "Play a sound when focus ends",
-      AUTO_START_BREAK_LABEL,
-      "",
-      "Play a sound when a break ends",
-      AUTO_START_FOCUS_LABEL,
-      "",
     ]);
   });
 
@@ -800,7 +838,7 @@ describe("Task source (issue #4)", () => {
     // has to meet the decision before the field it decides about.
     const c = makeTab();
     const rows = declarativeRows(c.tab)
-      .filter((r) => r.heading === "Task selector")
+      .filter((r) => r.heading === "Task picker")
       .map((r) => r.name);
     expect(rows.indexOf(TASK_SOURCE_SETTING_NAME)).toBeLessThan(rows.indexOf("Tasks folder path"));
   });
@@ -829,7 +867,7 @@ describe("Task source (issue #4)", () => {
   });
 
   it("NEVER unlinks the current task when the source changes", async () => {
-    // The maintainer's second requirement on issue #4. "Show task selector"
+    // The maintainer's second requirement on issue #4. "Show task picker"
     // right beside it DOES unlink on the way off, so this is a real
     // neighbouring behaviour to be told apart, not a hypothetical.
     for (const source of TASK_SOURCE_ORDER) {
@@ -901,7 +939,7 @@ describe("the panel's feature-switch sections", () => {
   };
 
   it("gates the task-source row on the picker's own switch", () => {
-    // Turning "Show task selector" off hides the picker AND unlinks the task,
+    // Turning "Show task picker" off hides the picker AND unlinks the task,
     // so where that picker looks is then a setting for something absent.
     const block = gatedBlocks(view()).showTaskSelector;
     expect(block, "no onlyWhen block for showTaskSelector").toBeDefined();
@@ -951,7 +989,7 @@ describe("the panel's feature-switch sections", () => {
     const c = makeTab();
     c.tab.display();
     const names = c.el.settings.filter((s) => !s.heading).map((s) => s.name);
-    expect(names).toContain("Show task selector");
+    expect(names).toContain("Show task picker");
     expect(names).toContain("Show music player");
     expect(names).toContain(TASK_SOURCE_SETTING_NAME);
     expect(names).toContain(MUSIC_SOUND_LABEL);
@@ -1192,5 +1230,519 @@ describe("the Notifications switch", () => {
     expect(reset).toMatch(
       /if \(Platform\.isDesktopApp\) \{\s*settings\.sessionEndNotification = DEFAULT_SETTINGS\.sessionEndNotification;/
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0.6.7 — the two sound rows (issue #5). They are render rows, so they own
+// their reads and writes; what matters is that a file is checked BEFORE it is
+// saved, that the row says why a saved file plays the built-in instead, and
+// that ▶ honours the master switch.
+// ---------------------------------------------------------------------------
+describe("the sound rows", () => {
+  type Load = { ok: true; buffer: unknown } | { ok: false; problem: string };
+
+  /** Swap in a timer that records what the rows ask of it. */
+  function withTimer(c: ReturnType<typeof makeTab>, load: (path: string) => Promise<Load>) {
+    const asked: string[] = [];
+    const timer = {
+      currentTaskName: "No task",
+      setTask: () => undefined,
+      previewing: null as string | null,
+      listener: null as (() => void) | null,
+      previewingEdge: () => timer.previewing,
+      setPreviewListener: (l: (() => void) | null) => {
+        timer.listener = l;
+      },
+      stopPreview: () => {
+        asked.push("stopPreview");
+        timer.previewing = null;
+        timer.listener?.();
+      },
+      wakeAudio: () => asked.push("wakeAudio"),
+      loadCustomCue: (path: string) => {
+        asked.push(`load:${path}`);
+        return load(path);
+      },
+      previewEndCue: (edge: string) => {
+        asked.push(`preview:${edge}`);
+        return Promise.resolve(c.settings.soundEnabled ? "played" : "muted");
+      },
+      releaseUnchosenCues: () => undefined,
+    };
+    (c.tab as unknown as { plugin: { timer: unknown } }).plugin.timer = timer;
+    return asked;
+  }
+
+  const flush = async () => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+
+  const statusOf = (s: Setting) =>
+    s.infoEl.children.find((child) => child.classes.includes("gp-setting-note"))?.text;
+
+  /** Click the row's chooser, then pick from the list the way a click would. */
+  async function pick(c: ReturnType<typeof makeTab>, rowName: string, choice: unknown) {
+    const chooser = rowFor(c.el, rowName).components.find((x) => x.kind === "button");
+    chooser?.click?.();
+    const modal = FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void };
+    modal.onChooseItem(choice);
+    await flush();
+  }
+
+  beforeEach(() => {
+    Notice.shown.length = 0;
+    FuzzySuggestModal.opened = null;
+  });
+
+  it("opens each moment's group, above its switch, as render rows on both paths", () => {
+    // First, not under the switch: below it the chooser read as the switch's
+    // child and looked inert while it was off, though Stop and Skip always
+    // play it. The switch's own name ("Play it when…") leans on this order.
+    const c = makeTab();
+    const rows = declarativeRows(c.tab);
+    const group = (heading: string) => rows.filter((r) => r.heading === heading).map((r) => r.name);
+    expect(group("When focus ends").slice(0, 2)).toEqual([
+      FOCUS_END_CUE_NAME,
+      "Play it when focus time is up",
+    ]);
+    expect(group("When a break ends").slice(0, 2)).toEqual([
+      BREAK_END_CUE_NAME,
+      "Play it when break time is up",
+    ]);
+    const cueItems = c.tab
+      .getSettingDefinitions()
+      .flatMap((g) => (g as unknown as { items: Record<string, unknown>[] }).items)
+      .filter((item) => item.name === FOCUS_END_CUE_NAME || item.name === BREAK_END_CUE_NAME);
+    expect(cueItems).toHaveLength(2);
+    // Not 1.13's `file` control: below 1.13 that renders as an empty row, and
+    // it could not offer the built-ins anyway.
+    for (const item of cueItems) expect(typeof item.render).toBe("function");
+  });
+
+  it("describes the switch that sits BELOW it, since the order depends on it", () => {
+    const c = makeTab();
+    const desc = (name: string) => declarativeRows(c.tab).find((r) => r.name === name)?.desc;
+    for (const name of [FOCUS_END_CUE_NAME, BREAK_END_CUE_NAME]) {
+      expect(desc(name), name).toContain("switch below");
+      expect(desc(name), name).toContain("stop or skip");
+      // "under Audio" was true until the rows moved; it would now send the
+      // reader to a group that no longer holds the switch.
+      expect(desc(name), name).not.toContain("Audio");
+    }
+  });
+
+  it("draws ▶ and a button naming the stored sound", () => {
+    const c = makeTab({ focusEndSound: "drum", breakEndSound: "file:Sounds/Chimes/gong.m4a" });
+    withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    c.tab.display();
+
+    const focus = rowFor(c.el, FOCUS_END_CUE_NAME).components;
+    expect(focus.map((x) => x.kind)).toEqual(["extraButton", "button"]);
+    expect(focus[0].tooltip).toBe("Play");
+    expect(focus[1].buttonText).toBe("War drum");
+    expect(componentOf(c.el, BREAK_END_CUE_NAME).kind).toBe("extraButton");
+    expect(
+      rowFor(c.el, BREAK_END_CUE_NAME).components.find((x) => x.kind === "button")?.buttonText
+    ).toBe("gong.m4a");
+  });
+
+  it("puts the status under the description, leaving the two controls one line", () => {
+    // In the control column the wrap that gives a message its own line also
+    // pushed the full-width phone button below ▶ (Obsidian's app.css makes a
+    // settings button 100% wide under 400px). The music link rows can use that
+    // column; these, with two controls, cannot.
+    const c = makeTab();
+    withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    c.tab.display();
+    for (const name of [FOCUS_END_CUE_NAME, BREAK_END_CUE_NAME]) {
+      const row = rowFor(c.el, name);
+      expect(row.settingEl.classes).not.toContain("gp-setting-with-error");
+      expect(row.controlEl.children).toEqual([]);
+      expect(statusOf(row)).toBe("");
+    }
+  });
+
+  it("says why a saved file plays the built-in instead", async () => {
+    const c = makeTab({ focusEndSound: "file:Sounds/gone.mp3" });
+    withTimer(c, () => Promise.resolve({ ok: false, problem: "missing" }));
+    c.tab.display();
+    await flush();
+
+    expect(statusOf(rowFor(c.el, FOCUS_END_CUE_NAME))).toBe(
+      "Not found on this device. Singing bell plays instead."
+    );
+    // A built-in has nothing to explain, and reads no file to find that out.
+    expect(statusOf(rowFor(c.el, BREAK_END_CUE_NAME))).toBe("");
+  });
+
+  it("refuses a file that cannot play WITHOUT saving it, and says why", async () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: false, problem: "too-long" }));
+    c.tab.display();
+    await flush();
+    c.calls.length = 0;
+
+    await pick(c, BREAK_END_CUE_NAME, { kind: "file", path: "long.mp3" });
+
+    expect(c.settings.breakEndSound).toBe("ding");
+    expect(c.calls.filter((x) => x.method === "saveSettings")).toHaveLength(0);
+    expect(asked).not.toContain("preview:break");
+    expect(statusOf(rowFor(c.el, BREAK_END_CUE_NAME))).toBe(
+      "Longer than 30 seconds. Pick a shorter sound."
+    );
+  });
+
+  it("saves a file that plays, names it on the button, and plays it once", async () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    c.tab.display();
+    await flush();
+
+    await pick(c, FOCUS_END_CUE_NAME, { kind: "file", path: "Sounds/gong.mp3" });
+
+    expect(c.settings.focusEndSound).toBe("file:Sounds/gong.mp3");
+    expect(c.settings.breakEndSound).toBe("ding"); // the other edge is untouched
+    expect(
+      rowFor(c.el, FOCUS_END_CUE_NAME).components.find((x) => x.kind === "button")?.buttonText
+    ).toBe("gong.mp3");
+    expect(asked).toContain("preview:focus");
+  });
+
+  it("wakes the audio inside the click, before anything is awaited", async () => {
+    // iOS lets only a user gesture start WebAudio; after the file read the
+    // gesture no longer counts, and the pick would play into a parked context.
+    // So the wake must already have happened when the click handler RETURNS —
+    // checked before anything is flushed, or a wake one await later would pass.
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    c.tab.display();
+    await flush();
+    asked.length = 0;
+
+    const chooser = rowFor(c.el, FOCUS_END_CUE_NAME).components.find((x) => x.kind === "button");
+    chooser?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/gong.mp3",
+    });
+    expect(asked).toEqual(["wakeAudio", "stopPreview", "load:Sounds/gong.mp3"]);
+    await flush();
+  });
+
+  it("saves a built-in straight away", async () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.reject(new Error("no file should be read")));
+    c.tab.display();
+    await flush();
+
+    await pick(c, BREAK_END_CUE_NAME, { kind: "builtin", id: "bell" });
+
+    expect(c.settings.breakEndSound).toBe("bell");
+    expect(asked.filter((a) => a.startsWith("load:"))).toEqual([]);
+    expect(asked).toContain("preview:break");
+  });
+
+  it("does not lose a pick still reading its file when ▶ is pressed", async () => {
+    // ▶ re-checks the status line. Sharing the pick's staleness token, that
+    // check silently dropped a pick whose file was still loading.
+    const c = makeTab();
+    let land: (l: Load) => void = () => {};
+    withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = r;
+        })
+    );
+    c.tab.display();
+    await flush();
+
+    const chooser = rowFor(c.el, FOCUS_END_CUE_NAME).components.find((x) => x.kind === "button");
+    chooser?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    componentOf(c.el, FOCUS_END_CUE_NAME).click?.(); // ▶ while the read is out
+    land({ ok: true, buffer: {} });
+    await flush();
+
+    expect(c.settings.focusEndSound).toBe("file:Sounds/slow.mp3");
+  });
+
+  it("▶ says the timer sounds are off rather than doing nothing", async () => {
+    const c = makeTab({ soundEnabled: false });
+    withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    c.tab.display();
+
+    componentOf(c.el, FOCUS_END_CUE_NAME).click?.();
+    await flush();
+    expect(Notice.shown).toEqual([CUE_MUTED_NOTICE]);
+    expect(CUE_MUTED_NOTICE).toBe("Timer sounds are off.");
+  });
+
+  it("names the saved sound when a later pick is refused mid-save", async () => {
+    // A built-in pick writes the setting and waits on the save; a file picked
+    // in that window is refused. The button must name what IS stored.
+    const c = makeTab();
+    withTimer(c, () => Promise.resolve({ ok: false, problem: "too-long" }));
+    let saved: () => void = () => {};
+    (c.tab as unknown as { plugin: { saveSettings: () => Promise<void> } }).plugin.saveSettings =
+      () =>
+        new Promise<void>((r) => {
+          saved = r;
+        });
+    c.tab.display();
+    await flush();
+
+    const chooser = () =>
+      rowFor(c.el, FOCUS_END_CUE_NAME).components.find((x) => x.kind === "button");
+    const choose = (x: unknown) =>
+      (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem(
+        x
+      );
+    chooser()?.click?.();
+    choose({ kind: "builtin", id: "drum" });
+    chooser()?.click?.();
+    choose({ kind: "file", path: "long.mp3" });
+    await flush();
+    saved();
+    await flush();
+
+    expect(c.settings.focusEndSound).toBe("drum");
+    expect(chooser()?.buttonText).toBe("War drum");
+  });
+
+  it("keeps a refusal on screen when a ▶ pressed earlier finishes after it", async () => {
+    // ▶ waits on the saved file; a pick refused in the meantime owns the line.
+    const c = makeTab({ focusEndSound: "file:Sounds/saved.mp3" });
+    const asked = withTimer(c, (path) =>
+      Promise.resolve(
+        path === "big.wav" ? { ok: false, problem: "too-large" } : { ok: true, buffer: {} }
+      )
+    );
+    let finishPreview: () => void = () => {};
+    (
+      c.tab as unknown as { plugin: { timer: { previewEndCue: () => Promise<string> } } }
+    ).plugin.timer.previewEndCue = () => {
+      asked.push("preview");
+      return new Promise<string>((r) => {
+        finishPreview = () => r("played");
+      });
+    };
+    c.tab.display();
+    await flush();
+
+    componentOf(c.el, FOCUS_END_CUE_NAME).click?.(); // ▶, still waiting
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "big.wav",
+    });
+    await flush();
+    finishPreview();
+    await flush();
+
+    expect(statusOf(rowFor(c.el, FOCUS_END_CUE_NAME))).toBe(
+      "Larger than 12 MB. Pick a smaller file."
+    );
+  });
+
+  it("lets go of the old file once a pick is saved, built-ins included", async () => {
+    const c = makeTab({ focusEndSound: "file:Sounds/old.mp3" });
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    (
+      c.tab as unknown as { plugin: { timer: Record<string, unknown> } }
+    ).plugin.timer.releaseUnchosenCues = () => asked.push(`release:${c.settings.focusEndSound}`);
+    c.tab.display();
+    await flush();
+
+    await pick(c, FOCUS_END_CUE_NAME, { kind: "builtin", id: "ding" });
+    // Released AFTER the setting moved, or the old file would still be "chosen".
+    expect(asked).toContain("release:ding");
+  });
+
+  it("turns ▶ into ■ while that row's preview plays, and ■ stops it", () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (
+      c.tab as unknown as {
+        plugin: { timer: { previewing: string | null; listener: (() => void) | null } };
+      }
+    ).plugin.timer;
+    c.tab.display();
+    const play = () => componentOf(c.el, FOCUS_END_CUE_NAME);
+    const other = () => componentOf(c.el, BREAK_END_CUE_NAME);
+    expect([play().icon, play().tooltip]).toEqual(["play", "Play"]);
+
+    // The engine reports the focus preview playing.
+    timer.previewing = "focus";
+    timer.listener?.();
+    expect([play().icon, play().tooltip]).toEqual(["square", "Stop"]);
+    expect(other().icon).toBe("play"); // only the row that is playing
+
+    play().click?.();
+    expect(asked.filter((a) => a === "stopPreview")).toHaveLength(1);
+    expect(asked.filter((a) => a.startsWith("preview:"))).toEqual([]);
+    expect(play().icon).toBe("play");
+  });
+
+  it("stops the playing preview the moment another sound is picked", async () => {
+    // Not after the new file is read and checked: that can take a moment,
+    // and the old sound played on under the choice that replaced it.
+    const c = makeTab();
+    const asked = withTimer(c, () => new Promise<Load>(() => {})); // never lands
+    c.tab.display();
+    await flush();
+    asked.length = 0;
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    expect(asked).toContain("stopPreview");
+  });
+
+  it("stops the preview, and lets go of the engine, when the settings close", () => {
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (c.tab as unknown as { plugin: { timer: { listener: unknown } } }).plugin.timer;
+    c.tab.display();
+    expect(timer.listener).not.toBe(null);
+
+    c.tab.hide();
+    expect(asked).toContain("stopPreview");
+    expect(timer.listener).toBe(null);
+  });
+
+  it("stops a playing preview when Timer sounds is switched off", async () => {
+    // "Every sound the timer makes" — and the preview is the one that can stop.
+    const c = makeTab();
+    const asked = withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    await c.tab.setControlValue("soundEnabled", true);
+    expect(asked).not.toContain("stopPreview");
+    await c.tab.setControlValue("soundEnabled", false);
+    expect(asked).toContain("stopPreview");
+  });
+
+  it("keeps a refusal when ▶ was pressed WHILE the pick was reading", async () => {
+    // Round one covered ▶ pressed before a pick; this is ▶ pressed during
+    // one, whose preview lands after the refusal is on screen.
+    const c = makeTab({ focusEndSound: "file:Sounds/saved.mp3" });
+    let refuse: () => void = () => {};
+    const asked = withTimer(c, (path) =>
+      path === "long.mp3"
+        ? new Promise<Load>((r) => {
+            refuse = () => r({ ok: false, problem: "too-long" });
+          })
+        : Promise.resolve({ ok: true, buffer: {} })
+    );
+    let finishPreview: () => void = () => {};
+    (
+      c.tab as unknown as { plugin: { timer: { previewEndCue: () => Promise<string> } } }
+    ).plugin.timer.previewEndCue = () => {
+      asked.push("preview");
+      return new Promise<string>((r) => {
+        finishPreview = () => r("played");
+      });
+    };
+    c.tab.display();
+    await flush();
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "long.mp3",
+    });
+    componentOf(c.el, FOCUS_END_CUE_NAME).click?.(); // ▶ while long.mp3 is read
+    refuse();
+    await flush();
+    finishPreview();
+    await flush();
+
+    expect(statusOf(rowFor(c.el, FOCUS_END_CUE_NAME))).toBe(
+      "Longer than 30 seconds. Pick a shorter sound."
+    );
+  });
+
+  it("lets go of an overtaken pick's file once it lands", async () => {
+    // The engine holds a pick's file until the pick decides; a pick that is
+    // overtaken (or whose tab closed) has to say so, or it stays decoded.
+    const c = makeTab();
+    let land: () => void = () => {};
+    const asked = withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = () => r({ ok: true, buffer: {} });
+        })
+    );
+    (
+      c.tab as unknown as { plugin: { timer: Record<string, unknown> } }
+    ).plugin.timer.releaseUnchosenCues = () => asked.push("release");
+    c.tab.display();
+    await flush();
+
+    rowFor(c.el, FOCUS_END_CUE_NAME)
+      .components.find((x) => x.kind === "button")
+      ?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (y: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.wav",
+    });
+    c.tab.hide();
+    asked.length = 0;
+    land();
+    await flush();
+    expect(asked).toEqual(["release"]);
+  });
+
+  it("checks a picked file AS a pick, so the engine holds it until the save", async () => {
+    const c = makeTab();
+    const seen: unknown[][] = [];
+    withTimer(c, () => Promise.resolve({ ok: true, buffer: {} }));
+    const timer = (c.tab as unknown as { plugin: { timer: Record<string, unknown> } }).plugin.timer;
+    timer.loadCustomCue = (...args: unknown[]) => {
+      seen.push(args);
+      return Promise.resolve({ ok: true, buffer: {} });
+    };
+    c.tab.display();
+    await flush();
+    await pick(c, FOCUS_END_CUE_NAME, { kind: "file", path: "Sounds/gong.mp3" });
+    expect(seen).toContainEqual(["Sounds/gong.mp3", true]);
+  });
+
+  it("drops a pick that lands after the tab was closed", async () => {
+    const c = makeTab();
+    let land: (l: Load) => void = () => {};
+    withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = r;
+        })
+    );
+    c.tab.display();
+    await flush();
+
+    const chooser = rowFor(c.el, FOCUS_END_CUE_NAME).components.find((x) => x.kind === "button");
+    chooser?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    c.tab.hide();
+    land({ ok: true, buffer: {} });
+    await flush();
+
+    expect(c.settings.focusEndSound).toBe("bell");
   });
 });

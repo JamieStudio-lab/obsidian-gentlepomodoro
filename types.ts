@@ -41,6 +41,14 @@ export interface GentlePomoSettings {
   // edge where a chime would interrupt a session someone wants to keep going.
   focusEndSoundEnabled: boolean;
   breakEndSoundEnabled: boolean;
+  // WHICH sound marks each end (0.6.7): "bell" | "ding" | "drum", or
+  // "file:<vault path>" for the user's own mp3/m4a/wav. Plain strings rather
+  // than a union because coerceToDefaults keeps any string — timerCues.ts's
+  // resolveCue is the reader, and it falls back to today's sound for anything
+  // it does not recognise. Played at the crossing (when the toggle above says
+  // so), on the auto-start path, and by Stop and Skip.
+  focusEndSound: string;
+  breakEndSound: string;
   // Opt-in SILENT system notification when focus or break time is up (0.6.6),
   // for a user whose Obsidian is covered by other windows. Desktop only; one
   // switch for both edges. Independent of every sound setting on purpose — it

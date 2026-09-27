@@ -160,7 +160,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.addCommand({
       id: "show-status-bar",
-      name: "Show status bar",
+      name: "Show in status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return !this.settings.showInStatusBar;
         void this.setStatusBarVisibility(true);
@@ -170,7 +170,7 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.addCommand({
       id: "hide-status-bar",
-      name: "Hide status bar",
+      name: "Hide from status bar",
       checkCallback: (checking: boolean) => {
         if (checking) return this.settings.showInStatusBar;
         void this.setStatusBarVisibility(false);
@@ -253,6 +253,11 @@ export default class GentlePomoPlugin extends Plugin {
     // Defer auto-open until Obsidian has finished initial layout setup.
     this.app.workspace.onLayoutReady(() => {
       this.maybeAutoOpenView();
+      // Decode a chosen end-of-session sound file now, so the first cue after
+      // startup plays it rather than the built-in. After layout-ready because
+      // the vault index is not complete before it. Nothing at all happens on
+      // the default sounds.
+      this.timer.prepareEndCues();
     });
   }
 
@@ -748,6 +753,16 @@ export default class GentlePomoPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
       if (leaf.view instanceof GentlePomoView) {
         leaf.view.duckMusic(cueDurationSec);
+      }
+    }
+  }
+
+  /** A previewed sound stopped before its end: let the music come back once
+   *  the real cues still ringing (`owedSec`) are done. Called by TimerEngine. */
+  shortenMusicDuckInOpenViews(owedSec: number): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+      if (leaf.view instanceof GentlePomoView) {
+        leaf.view.shortenMusicDuck(owedSec);
       }
     }
   }

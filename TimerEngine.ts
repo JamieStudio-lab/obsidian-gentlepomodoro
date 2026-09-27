@@ -11,6 +11,15 @@ import {
   normalizeTaskText,
 } from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
+import {
+  CUE_SETTING_KEY,
+  checkCueDuration,
+  checkCueFileSize,
+  resolveCue,
+  type CueEdge,
+  type CueProblem,
+  type ResolvedCue,
+} from "./timerCues";
 
 declare const moment: MomentFactory;
 
@@ -18,6 +27,41 @@ const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 
 // Local-timezone YYYY-MM-DD; matches the format LogManager uses for daily log filenames.
 const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
+
+/** How loading one of the user's sound files ended. */
+export type CueLoad = { ok: true; buffer: AudioBuffer } | { ok: false; problem: CueProblem };
+
+/** One decoded (or failed) version of a user's sound file. */
+interface CustomCueEntry {
+  /** The file's mtime and size when it was read — an edit makes a new version. */
+  version: string;
+  /** When the read began, so a read that never finishes can be retried. */
+  startedAt: number;
+  result: Promise<CueLoad>;
+  /** Filled in when `result` lands; a cue only ever plays a settled entry. */
+  settled: CueLoad | null;
+}
+
+const fileVersion = (file: TFile): string => `${String(file.stat.mtime)}|${String(file.stat.size)}`;
+
+const END_CUE_EDGES: readonly CueEdge[] = ["focus", "break"];
+
+// How long a file read may stay unfinished before the next caller starts a
+// fresh one instead of joining it. A read of a 2 MB file takes well under a
+// second; one still going after this is an iCloud download that stalled, and
+// joining it would leave a later pick of that file doing nothing at all.
+const CUE_LOAD_STALE_MS = 15_000;
+
+// How long a stopped preview takes to fall silent. Stopping a sound dead
+// mid-waveform clicks; this is short enough to read as "stopped at once".
+const PREVIEW_STOP_FADE_S = 0.08;
+
+/** The settings tab's preview while it plays: the one sound that can be stopped. */
+interface PlayingPreview {
+  edge: CueEdge;
+  source: AudioBufferSourceNode;
+  gain: GainNode;
+}
 
 export class TimerEngine {
   private state: TimerState;
@@ -35,6 +79,28 @@ export class TimerEngine {
   // Decoded audio cache keyed by filename — decode each bundled asset once and
   // reuse its (immutable) AudioBuffer via a fresh BufferSource per play.
   private audioBuffers: Map<string, AudioBuffer> = new Map();
+
+  // The user's own end-of-session sounds (0.6.7), keyed by vault path. Kept
+  // apart from audioBuffers so a vault file can never share a slot with a
+  // bundled one. Holds the two chosen files, plus any file still being
+  // checked or one checked since the last pick — see evictCustomCues. A
+  // failure that comes from the file itself (too large, too long, not
+  // decodable) is cached too, under the same version, so a file that cannot
+  // play is not read again on every cue; a failed READ is not (loadCustomCue).
+  private customCues: Map<string, CustomCueEntry> = new Map();
+
+  // The settings tab's preview (0.6.7) — the ONE sound the plugin can stop.
+  // Real cues stay fire-and-forget on purpose (two may overlap, as they always
+  // have); a preview is something the user starts, and a 30-second file they
+  // cannot stop, or that plays on under the next one they try, is a bug.
+  // `previewToken` is bumped by every stop and every new preview, so one still
+  // loading its file never starts after it was stopped or replaced.
+  private preview: PlayingPreview | null = null;
+  private previewToken = 0;
+  private previewListener: (() => void) | null = null;
+  // When the last REAL cue still ringing ends, so a stopped preview can hand
+  // the music back without cutting a real cue's dip short.
+  private cueRingingUntil = 0;
 
   // Track the target end time (timestamp)
   private targetTime: number | null = null;
@@ -105,6 +171,11 @@ export class TimerEngine {
    * completed (only while not currently running).
    */
   async onFileModify(file: TAbstractFile) {
+    // A chosen sound file changed — edited, or updated by sync. Decode the new
+    // version now, so the next cue plays it rather than the built-in while it
+    // loads. Before the task checks, which return early when no task is linked.
+    if (this.isEndCueFile(file.path)) void this.loadCustomCue(file.path);
+
     // 1. Basic checks
     if (this.currentTaskName === NO_TASK_LABEL || !this.currentTaskPath) return;
 
@@ -248,12 +319,24 @@ export class TimerEngine {
   }
 
   /**
-   * The end-of-session cue for the mode that is ENDING: singing bell after a
-   * focus session, ding after a break. The choice was written out three times
-   * before 0.6.3; it lives here now so the crossing, Stop and Skip cannot drift.
+   * The end-of-session cue for the mode that is ENDING — the user's choice for
+   * that edge (0.6.7), by default the singing bell after focus and the ding
+   * after a break. The choice was written out three times before 0.6.3; it
+   * lives here so the crossing, Stop and Skip cannot drift. Resolved before
+   * anything is awaited: every caller is about to switch the mode.
    */
   private playEndCue() {
-    void this.playSound(this.state.mode === "focus" ? "singing_bell_short.mp3" : "ding-sound.mp3");
+    const cue = this.endCue(this.state.mode === "focus" ? "focus" : "break");
+    void this.playSound(cue.file, cue.path);
+  }
+
+  /** The sound an edge plays, read from the live settings. */
+  private endCue(edge: CueEdge): ResolvedCue {
+    return resolveCue(this.plugin.settings[CUE_SETTING_KEY[edge]], edge);
+  }
+
+  private isEndCueFile(path: string): boolean {
+    return END_CUE_EDGES.some((edge) => this.endCue(edge).path === path);
   }
 
   /**
@@ -476,6 +559,9 @@ export class TimerEngine {
 
   /** Lazily create (once) and return the shared AudioContext, or null if unsupported. */
   private getAudioContext(): AudioContext | null {
+    // A disposed engine has closed its context; a late file decode or preview
+    // must not open a new one that nothing would ever close.
+    if (this.disposed) return null;
     if (this.audioCtx) return this.audioCtx;
 
     const AudioContextCtor =
@@ -501,26 +587,53 @@ export class TimerEngine {
       this.audioCtx = null;
     }
     this.audioBuffers.clear();
+    this.customCues.clear();
+    // Closing the context above silences a preview too; drop the bookkeeping.
+    this.preview = null;
+    this.previewToken++;
+    this.previewListener = null;
   }
 
-  private async playSound(filename: string) {
-    if (!this.plugin.settings.soundEnabled) return;
+  /**
+   * Play one cue. `filename` is a bundled sound; `customPath`, when given, is
+   * the user's own file (0.6.7), which plays INSTEAD — but only when it is
+   * already decoded and still the same version of the file. Otherwise the
+   * bundled sound plays, and the file is loaded for next time.
+   *
+   * Two rules hold this together:
+   * - A cue never waits on the vault. A file on iCloud or a syncing phone can
+   *   take seconds to read, and a late cue lands on top of whatever the user
+   *   did next.
+   * - A choice of sound adds no early return. cueIsAudible() mirrors the two
+   *   gates below so that `endCueSounded` records an audible EVENT; a missing
+   *   or unplayable file that returned here instead of falling back would turn
+   *   a stamped crossing into silence, and the Stop after it would be silent
+   *   too.
+   *
+   * Returns what played — the vault path or the bundled filename — or null.
+   */
+  private async playSound(
+    filename: string,
+    customPath: string | null = null,
+    preview: { edge: CueEdge; token: number } | null = null
+  ) {
+    if (!this.plugin.settings.soundEnabled) return null;
     // Volume 0 is not reachable from the segmented control (0.3 / 0.7 / 1.0) but
     // is from a hand-edited data.json. Returning here rather than playing silence
     // keeps two things honest: the cue does not dip the lofi music for four
     // seconds for nothing, and `endCueSounded` is not stamped for a cue nobody
     // heard — which would silence the following Stop.
-    if (this.plugin.settings.soundVolume <= 0) return;
+    if (this.plugin.settings.soundVolume <= 0) return null;
 
     const dataUrl = AUDIO_URLS[filename];
     if (!dataUrl) {
       logger.debug(`Sound file not bundled: ${filename}`);
-      return;
+      return null;
     }
 
     try {
       const ctx = this.getAudioContext();
-      if (!ctx) return;
+      if (!ctx) return null;
 
       // A context created off a user gesture starts suspended; resume so a
       // timer-triggered completion sound is actually audible. "interrupted" is
@@ -531,22 +644,20 @@ export class TimerEngine {
       // path instead of a rejected resume.
       if (ctx.state === "suspended" || ctx.state === "interrupted") await ctx.resume();
 
-      // Decode each bundled asset once, then reuse its AudioBuffer.
-      let audioBuffer = this.audioBuffers.get(filename);
-      if (!audioBuffer) {
-        // Strip the `data:audio/...;base64,` prefix and decode to bytes.
-        // Avoids fetch() (restricted by obsidianmd lint config) and the network round-trip.
-        const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
-        const binary = window.atob(base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
-        }
-        // decodeAudioData detaches `bytes.buffer`; harmless since we cache the
-        // resulting AudioBuffer and never touch the raw bytes again.
-        audioBuffer = await ctx.decodeAudioData(bytes.buffer);
-        this.audioBuffers.set(filename, audioBuffer);
+      let played = filename;
+      let audioBuffer: AudioBuffer | null = null;
+      if (customPath !== null) {
+        audioBuffer = this.readyCustomCue(customPath);
+        if (audioBuffer === null) void this.loadCustomCue(customPath);
+        else played = customPath;
       }
+      audioBuffer ??= await this.bundledBuffer(ctx, filename, dataUrl);
+      // An unload can land during the resume or the decode above, and a
+      // disabled plugin must not ring or dip the music.
+      if (this.disposed) return null;
+      // A preview stopped or replaced while it loaded. Previews only: a real
+      // cue has no such return, or cueIsAudible would stop being honest.
+      if (preview !== null && preview.token !== this.previewToken) return null;
 
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -560,9 +671,273 @@ export class TimerEngine {
       // (view-side; no-op when nothing is playing).
       this.plugin.duckMusicInOpenViews(audioBuffer.duration);
       source.start(0);
+      if (preview !== null) {
+        this.holdPreview(preview.edge, source, gain);
+      } else {
+        this.cueRingingUntil = Math.max(
+          this.cueRingingUntil,
+          Date.now() + audioBuffer.duration * 1000
+        );
+      }
+      return played;
     } catch (e) {
       logger.error(`Failed to play sound ${filename}:`, e);
+      return null;
     }
+  }
+
+  /** Decode each bundled asset once, then reuse its AudioBuffer. */
+  private async bundledBuffer(
+    ctx: AudioContext,
+    filename: string,
+    dataUrl: string
+  ): Promise<AudioBuffer> {
+    const cached = this.audioBuffers.get(filename);
+    if (cached) return cached;
+    // Strip the `data:audio/...;base64,` prefix and decode to bytes.
+    // Avoids fetch() (restricted by obsidianmd lint config) and the network round-trip.
+    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    const binary = window.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    // decodeAudioData detaches `bytes.buffer`; harmless since we cache the
+    // resulting AudioBuffer and never touch the raw bytes again.
+    const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+    this.audioBuffers.set(filename, audioBuffer);
+    return audioBuffer;
+  }
+
+  /**
+   * The decoded sound for a user's file, if it is ready AND still the version
+   * on disk. Synchronous on purpose — see playSound: a cue never waits.
+   */
+  private readyCustomCue(path: string): AudioBuffer | null {
+    const entry = this.customCues.get(path);
+    if (!entry || !entry.settled || !entry.settled.ok) return null;
+    const file = this.plugin.app.vault.getFileByPath(path);
+    if (file === null || fileVersion(file) !== entry.version) return null;
+    return entry.settled.buffer;
+  }
+
+  /**
+   * Read and decode one of the user's sound files, once per version of it.
+   * Public for the settings tab, which checks a file with this as it is
+   * picked and asks it why a saved one plays the built-in instead.
+   *
+   * Two callers asking for the same version share one read (the entry holds
+   * the promise), unless it has been going for CUE_LOAD_STALE_MS. A MISSING
+   * file is not cached: finding that out is a lookup, and a file still
+   * syncing should be found by the next cue rather than remembered as gone.
+   * Nor is a failed READ — see below. `forPick` is the settings tab checking
+   * a file before saving it: that file is not named by any setting yet.
+   */
+  loadCustomCue(path: string, forPick = false): Promise<CueLoad> {
+    const file = this.plugin.app.vault.getFileByPath(path);
+    if (file === null) return Promise.resolve({ ok: false, problem: "missing" });
+    const version = fileVersion(file);
+    const cached = this.customCues.get(path);
+    if (
+      cached !== undefined &&
+      cached.version === version &&
+      (cached.settled !== null || Date.now() - cached.startedAt < CUE_LOAD_STALE_MS)
+    ) {
+      return cached.result;
+    }
+
+    const entry: CustomCueEntry = {
+      version,
+      startedAt: Date.now(),
+      result: this.decodeCustomCue(file),
+      settled: null,
+    };
+    void entry.result.then((load) => {
+      entry.settled = load;
+      // Replaced meanwhile — by an edit, or by a retry of a stalled read.
+      if (this.customCues.get(path) !== entry) return;
+      // A read that failed says nothing about the file — iCloud still
+      // downloading an offloaded one, OneDrive or an antivirus holding it —
+      // and its mtime and size do not change when it becomes readable. Cached,
+      // it would be refused, and every cue would play the built-in, until the
+      // file was edited or Obsidian restarted. Forget it, as for a missing file.
+      if (!load.ok && load.problem === "unreadable") {
+        this.customCues.delete(path);
+        return;
+      }
+      // Nobody names this file any more — the row moved to another sound
+      // while it decoded (at startup, after an edit). Nothing else would
+      // sweep it once the rows are on built-ins, so let go of it now. A
+      // PICK's file is not named until the pick saves it, so a pick keeps
+      // it and releases it itself on every other way out.
+      if (!forPick && !this.isEndCueFile(path)) this.customCues.delete(path);
+    });
+    this.customCues.set(path, entry);
+    this.evictCustomCues(path);
+    return entry.result;
+  }
+
+  private async decodeCustomCue(file: TFile): Promise<CueLoad> {
+    // Checked BEFORE the read. The whole file is decoded before its length is
+    // known, so its size is the only guard on memory — a long file at a low
+    // bitrate decodes to far more than its size suggests.
+    const sizeProblem = checkCueFileSize(file.path, file.stat.size);
+    if (sizeProblem !== null) return { ok: false, problem: sizeProblem };
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await this.plugin.app.vault.readBinary(file);
+    } catch (e) {
+      logger.warn(`Could not read sound file ${file.path}`, e);
+      return { ok: false, problem: "unreadable" };
+    }
+    const ctx = this.getAudioContext();
+    if (!ctx) return { ok: false, problem: "undecodable" };
+    let buffer: AudioBuffer;
+    try {
+      buffer = await ctx.decodeAudioData(bytes);
+    } catch (e) {
+      logger.warn(`Could not decode sound file ${file.path}`, e);
+      return { ok: false, problem: "undecodable" };
+    }
+    const lengthProblem = checkCueDuration(buffer.duration);
+    if (lengthProblem !== null) return { ok: false, problem: lengthProblem };
+    return { ok: true, buffer };
+  }
+
+  /**
+   * Drop every file no setting names any more, keeping `keep` — the file being
+   * checked right now, which is not saved until the check passes — and any
+   * file still loading, which is a pick in progress on one row or the other.
+   * Evicting that one made each of two quick picks on the two rows read and
+   * decode its file twice. A decoded 30-second sound is about 11 MB.
+   */
+  private evictCustomCues(keep: string | null) {
+    const wanted = new Set<string>();
+    if (keep !== null) wanted.add(keep);
+    for (const edge of END_CUE_EDGES) {
+      const path = this.endCue(edge).path;
+      if (path !== null) wanted.add(path);
+    }
+    for (const [path, entry] of this.customCues) {
+      if (!wanted.has(path) && entry.settled !== null) this.customCues.delete(path);
+    }
+  }
+
+  /**
+   * Let go of every decoded file no setting names — called by the settings tab
+   * once a pick is saved. Loading a file is the only other time the cache is
+   * swept, so switching a row back to a built-in would otherwise keep the old
+   * file decoded in memory for the rest of the session.
+   */
+  releaseUnchosenCues() {
+    this.evictCustomCues(null);
+  }
+
+  /**
+   * Decode the chosen files ahead of time, so the first cue after startup
+   * plays the user's own sound. With the default sounds this does nothing at
+   * all — no file is read and no audio context is created.
+   */
+  prepareEndCues() {
+    for (const edge of END_CUE_EDGES) {
+      const path = this.endCue(edge).path;
+      if (path !== null) void this.loadCustomCue(path);
+    }
+  }
+
+  /**
+   * Wake the audio context from inside a click. iOS lets only a user gesture
+   * start WebAudio, and every caller is about to await a file read, after
+   * which the gesture no longer counts. Harmless everywhere else.
+   */
+  wakeAudio() {
+    const ctx = this.getAudioContext();
+    if (ctx && (ctx.state === "suspended" || ctx.state === "interrupted")) {
+      void ctx.resume().catch(() => {});
+    }
+  }
+
+  /**
+   * Play an edge's sound now: the settings tab's ▶, and a sound just picked.
+   *
+   * Obeys "Timer sounds" — that switch promises every sound the timer makes —
+   * and says so, so the tab can tell the user why nothing played. Unlike a
+   * real cue it WAITS for the user's file to load: hearing the built-in right
+   * after picking a file would read as the pick having failed. It never
+   * touches `endCueSounded`; a preview is not the end of a session.
+   *
+   * "stale" when the choice changed while the file loaded: a pick made in the
+   * meantime plays its own sound, and playing the old one after it would say
+   * the pick had not been saved.
+   */
+  async previewEndCue(edge: CueEdge): Promise<"muted" | "played" | "stale"> {
+    // One preview at a time, and the old one stops NOW — not once the new
+    // file has loaded, which could be a noticeable wait.
+    this.stopPreview();
+    if (!this.plugin.settings.soundEnabled) return "muted";
+    const token = this.previewToken;
+    this.wakeAudio();
+    const cue = this.endCue(edge);
+    if (cue.path !== null) {
+      await this.loadCustomCue(cue.path);
+      const now = this.endCue(edge);
+      if (token !== this.previewToken || now.file !== cue.file || now.path !== cue.path) {
+        return "stale";
+      }
+    }
+    await this.playSound(cue.file, cue.path, { edge, token });
+    return token === this.previewToken ? "played" : "stale";
+  }
+
+  /** Which row's preview is playing, for the settings tab's ▶ / ■. */
+  previewingEdge(): CueEdge | null {
+    return this.preview?.edge ?? null;
+  }
+
+  /** The settings tab's hook for repainting ▶ / ■. One listener; null to clear. */
+  setPreviewListener(listener: (() => void) | null) {
+    this.previewListener = listener;
+  }
+
+  /**
+   * Stop the preview — ■, a new pick, the other row's ▶, closing the settings.
+   * Also cancels one still loading its file. It fades out rather than cutting
+   * off, and hands the music back once the real cues still ringing are done
+   * instead of when the stopped sound would have ended.
+   */
+  stopPreview() {
+    this.previewToken++;
+    const playing = this.preview;
+    if (playing === null) return;
+    this.preview = null;
+    const ctx = this.audioCtx;
+    try {
+      if (ctx) {
+        const t = ctx.currentTime;
+        playing.gain.gain.setValueAtTime(playing.gain.gain.value, t);
+        playing.gain.gain.linearRampToValueAtTime(0, t + PREVIEW_STOP_FADE_S);
+        playing.source.stop(t + PREVIEW_STOP_FADE_S);
+      } else {
+        playing.source.stop();
+      }
+    } catch (e) {
+      // stop() on a source that has already ended is a no-op by the spec, so
+      // this is only for the unexpected — a context closed under us.
+      logger.debug("Could not stop the preview", e);
+    }
+    this.plugin.shortenMusicDuckInOpenViews(Math.max(0, this.cueRingingUntil - Date.now()) / 1000);
+    this.previewListener?.();
+  }
+
+  private holdPreview(edge: CueEdge, source: AudioBufferSourceNode, gain: GainNode) {
+    this.preview = { edge, source, gain };
+    source.onended = () => {
+      // A stopped preview's own `ended` arrives after it was replaced.
+      if (this.preview?.source !== source) return;
+      this.preview = null;
+      this.previewListener?.();
+    };
+    this.previewListener?.();
   }
 
   /**

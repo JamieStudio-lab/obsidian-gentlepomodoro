@@ -144,6 +144,10 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   // fresh install only (read.kind === "fresh") and persists it once.
   focusEndSoundEnabled: false,
   breakEndSoundEnabled: false,
+  // Today's sounds, so the Object.assign merge gives an upgrading user exactly
+  // what they heard before. Kept in step with DEFAULT_END_CUE in timerCues.ts.
+  focusEndSound: "bell",
+  breakEndSound: "ding",
   // Off for everyone, new installs included: an interruption at the end of a
   // session is something to ask for, never something to find turned on.
   sessionEndNotification: false,
