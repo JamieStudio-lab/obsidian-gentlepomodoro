@@ -4,6 +4,28 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] — 2026-09-27
+
+### Changed
+
+- **The task picker no longer looks at every file in your vault to find your
+  tasks.** Prompted by an Obsidian plugin-review recommendation about vault
+  access, not a bug — nothing you see changes: the same tasks, in the same
+  order, and the same log edits. Opening the picker now walks only the tasks
+  folder (and its subfolders); with **Current note** or **Open notes** it
+  looks those notes up directly, and so does your linked task's own note. An
+  empty tasks folder path still means "the whole vault", same as before.
+  Renaming a linked task, and the `Refresh log task names by ID` command, now
+  rewrite task names by walking only the log folder instead of the whole
+  vault.
+- Two things still list the whole vault, on purpose: the **sound picker**
+  (so it can offer every mp3, m4a and wav file to choose from — it still
+  reads only the file you pick) and the **🍅 Check / Repair / Remove /
+  Remove all** actions (the counter can write into any note, so they scan
+  every note, only when you press one of them).
+- The README has a new **Files the plugin reads** section spelling all of
+  this out, right before Network use.
+
 ## [0.6.7] — 2026-09-27
 
 ### Added

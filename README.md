@@ -2,7 +2,7 @@
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Four ambient themes — Classic (day→night gradient), Frosted Glass (drifting colour orbs behind a frosted pane), Frosted Glass 2 (the same idea drawn as real glass, with a lit rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 
-> **v0.6.7 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.6.8 (beta).** Available in the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -139,6 +139,18 @@ Each session appends one line to the day's log file:
 
 - **[Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks)** — the task picker reads its emoji-marker format.
 - **[Dataview](https://github.com/blacksmithgu/obsidian-dataview)** — daily log lines use inline fields, ready to query.
+
+## Files the plugin reads
+
+What the plugin reads and writes in your vault, and when:
+
+- **Task picker** — when you open it, reads the notes that **Where to find tasks** points at: the tasks folder and its subfolders (or the whole vault if that field is empty), the current note, or your open notes; plus the note that holds your linked task.
+- **Linked task** — reads that task's note to keep its name up to date and to unlink it when you tick it off; with the opt-in 🍅 counter on, edits only that task's line.
+- **Daily logs** — writes one log file a day in your log folder and reads today's for the daily goal; renaming a linked task, or the `Refresh log task names by ID` command, rewrites task names inside the logs in that folder.
+- **Sound picker** — lists the vault's mp3, m4a and wav files when you open it, and reads only the file you pick.
+- **🍅 Check / Repair / Remove** — scan every note, only when you press them.
+
+Nothing here leaves your device. The only network use is YouTube, described below.
 
 ## Network use
 

@@ -3,7 +3,6 @@ import {
   TASK_LINE_REGEX,
   normalizeTaskText,
   normalizeTaskTextForDisplay,
-  isPathInFolder,
   findTaskNameByIdInContent,
   parsePomodoroCount,
   incrementPomodoroCount,
@@ -59,30 +58,6 @@ describe("normalizeTaskTextForDisplay", () => {
   it("matches normalizeTaskText output when no priority icon is present", () => {
     const input = "Write docs ⏳ 2025-12-23";
     expect(normalizeTaskTextForDisplay(input)).toBe("Write docs");
-  });
-});
-
-describe("isPathInFolder", () => {
-  it("returns true for any path when folder is empty (whole-vault scope)", () => {
-    expect(isPathInFolder("Notes/a.md", "")).toBe(true);
-    expect(isPathInFolder("anywhere.md", "")).toBe(true);
-  });
-
-  it("returns true when path is inside the folder", () => {
-    expect(isPathInFolder("Projects/A.md", "Projects")).toBe(true);
-    expect(isPathInFolder("Projects/sub/A.md", "Projects")).toBe(true);
-  });
-
-  it("handles trailing slashes on the folder", () => {
-    expect(isPathInFolder("Projects/A.md", "Projects/")).toBe(true);
-  });
-
-  it("returns false when path is outside the folder", () => {
-    expect(isPathInFolder("Notes/A.md", "Projects")).toBe(false);
-  });
-
-  it("does not match a prefix that isn't a folder boundary", () => {
-    expect(isPathInFolder("ProjectsArchive/A.md", "Projects")).toBe(false);
   });
 });
 

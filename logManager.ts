@@ -2,7 +2,7 @@ import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
 import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
-import { findTaskNameById, findTaskNameByIdInContent, isPathInFolder } from "./taskLoader";
+import { filesInFolder, findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -206,9 +206,7 @@ export class LogManager {
     if (!folderPath || !taskId) return;
 
     const app = this.plugin.app;
-    const files = app.vault
-      .getFiles()
-      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
+    const files = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
 
     if (files.length === 0) return;
 
@@ -243,9 +241,7 @@ export class LogManager {
     }
 
     const app = this.plugin.app;
-    const logFiles = app.vault
-      .getFiles()
-      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
+    const logFiles = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
 
     if (logFiles.length === 0) {
       new Notice("Gentle pomodoro: no log files found.");

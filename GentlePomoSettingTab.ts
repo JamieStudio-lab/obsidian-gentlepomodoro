@@ -1028,10 +1028,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       //
       // DELIBERATELY NOT DEBOUNCED, though both settings paths commit per
       // keystroke and this therefore reloads an open picker per character.
-      // Measured before deciding, because it looks alarming: every
-      // intermediate path fails isPathInFolder's boundary check, so those
-      // reloads match zero files and read nothing at all. Only the EMPTY
-      // string scans the vault — one scan, in a state the plugin fully
+      // Measured before deciding, because it looks alarming: most half-typed
+      // paths name no folder, and filesInFolder looks a folder up by its exact
+      // path, so such a reload is one failed lookup that reads nothing. A
+      // prefix that IS a folder ("Projects" on the way to "Projects/Research")
+      // reads that folder, as the setting would if you stopped there. Only the
+      // EMPTY string scans the vault — one scan, in a state the plugin fully
       // supports (nobody with a folder set stops there), served by
       // cachedRead from memory. Adding the link check's debounce-and-token
       // machinery here would buy nothing and is itself a source of staleness
