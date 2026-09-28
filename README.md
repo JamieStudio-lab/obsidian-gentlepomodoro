@@ -31,7 +31,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 ### 📊 Daily focus goal
 
 - Set a daily focus target (default 2h, set to 0 to disable).
-- Status bar shows progress: `Today 1h 12m / 2h 0m`. Turns green when the goal is met.
+- The status bar shows progress as a thin ring that fills toward the goal and changes when the goal is met. Hover for `Today: 1h 12m of 2h 0m`, or turn on the text in settings.
 - One-time "goal hit" notice each day. Resets automatically at local midnight.
 
 ### 📝 Dataview-friendly daily logs
@@ -42,8 +42,12 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 
 ### 🧭 Status bar
 
-- Compact mode/time indicator with today's total focus.
-- Click the dot to open the timer; click the label to toggle the time-left display.
+- A small mark shows at a glance whether the timer is **idle, running, paused, or its time is up** — the end of a session is silent by design, so a glance at the corner is the gentle way to know. Beside it: Focus, Break or Long break.
+- A thin **ring** around the mark fills toward today's focus goal.
+- **Click it** (or right-click) for a menu: Start / Pause / Resume, Finish & next, Skip to next, Open timer, and which time to show.
+- **Time**: hidden by default, like the timer panel's countdown. Or show minutes left (`12m`), a clock (`12:34`), or the end time (`Ends 15:30`).
+- **Hover** for everything else: time left and end time, the linked task, and today's focus against your goal.
+- Computers only — Obsidian has no status bar on phones and tablets.
 
 ### 🎵 Lofi study music
 
@@ -87,7 +91,8 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 **Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
 
-- **Display & behavior**: log folder path, auto-open on startup, and **show in status bar**.
+- **Display & behavior**: log folder path and auto-open on startup.
+- **Status bar** (computers only): **show in status bar**, **time in status bar** (hidden, minutes left, clock or end time — also in the status bar's own menu), and **show today's total as text** beside the goal ring.
 - **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), **show day/night indicator**, and **estimated end time** (shown while a session runs).
 - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute. Both also live in the timer panel, and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
 - **When focus ends** and **When a break ends** — the same headings as the timer panel. Each group has:

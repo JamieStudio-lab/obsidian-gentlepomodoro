@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.6.8] — 2026-09-27
 
+### Added
+
+- **A redesigned status bar you can use without opening the panel.**
+  - **Click it for a menu** (right-click works too): Start, Pause or Resume,
+    Finish & next, Skip to next, Open timer, and which time to show. Before,
+    the dot opened the panel and the word toggled the clock, and nothing said
+    so. If the session ends while the menu is open, the menu closes by itself,
+    so a late click can't act on the next session.
+  - **Idle, running, paused and time's up now look different** at a glance,
+    by shape rather than colour: a hollow circle when idle, a dot while
+    running, two bars when paused, and a small badge on the dot once time is
+    up, when the words also brighten. Time's up matters most: the end of a
+    session is silent by design, so a glance at the corner is how you learn
+    it — softly, with no blinking.
+  - **Break is readable on a dark status bar.** The old navy dot nearly
+    vanished there; breaks now use a light steel blue.
+  - **Today's goal is a thin ring** around the mark, filling as you focus and
+    closing in soft green when the goal is met. The `Today 1h 24m / 4h 0m` text is now off by
+    default; turn it back on under **Settings → Status bar → Show today's
+    total as text**, or hover to see it.
+  - **Choose the time it shows:** hidden (the default, like the timer
+    panel's countdown), minutes left (`12m`), a clock (`12:34`) or the end
+    time (`Ends 15:30`). If you had the clock showing, it stays on.
+  - **Hover for the details:** time left and the end time, the linked task,
+    and today's focus against your goal.
+  - It says **Long break** during a long break.
+  - The digits no longer shift the status bar sideways every second in clock
+    mode, and it gets Obsidian's own hover highlight.
+- The status bar settings have their own **Status bar** group (computers
+  only — Obsidian has no status bar on phones and tablets).
+
+### Fixed
+
+- **Keyboard focus rings now show in the timer panel.** From 0.6.1 the
+  panel's own focus ring never appeared — its colour was looked up where
+  Obsidian's theme colours are not defined — so tabbing through the panel
+  showed Obsidian's grey halo at best. Now each control gets a thin
+  accent-coloured ring when you reach it with the keyboard, drawn inside the
+  control wherever the panel would otherwise cut its edge off. Clicking the
+  **Where to find tasks** dropdown with the mouse leaves no ring behind.
+- **Stop and Skip can no longer end the same session twice.** Pressing Stop
+  or Skip (from the panel, a command or the status bar) while a session was
+  already ending — including in the moment right after a session ends by
+  itself and the next one is about to start — could log it twice, add two 🍅
+  to the task and throw away the session that had just started. A second
+  press now does nothing.
+- **A long break keeps its own length.** Resetting a long break put the
+  short break's length on the clock while it still said "Long break"; a long
+  break that came up paused logged the short break's minutes as `Scheduled::`
+  once you started it; and changing **Break (m)** in the timer panel, or its
+  **Reset to defaults**, resized a long break too. A long break now always
+  uses **Long break duration** — changing it in the settings now also
+  updates a long break that is already on the clock — and **Break (m)**
+  changes only the regular break.
+
 ### Changed
 
 - **The task picker no longer looks at every file in your vault to find your

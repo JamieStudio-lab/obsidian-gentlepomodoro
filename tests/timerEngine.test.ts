@@ -203,6 +203,98 @@ describe("TimerEngine — long break after N pomodoros", () => {
   });
 });
 
+// reset(), start() and updateDuration() used to treat every break as a short
+// one. A long break then reset to the short one's length while still labelled
+// "Long break", one that came up paused (Stop always switches paused; Skip
+// never leads to a long break) logged the short one's minutes as Scheduled::
+// once started, and the panel's "Break (m)" row resized it.
+describe("TimerEngine — a long break keeps its own length", () => {
+  const TODAY = "2025-05-18"; // matches the moment stub in beforeAll
+
+  // Stop a focus session so its break comes up paused — long on the 4th of the day.
+  async function pausedBreak(long: boolean) {
+    const stub = makePluginStub({
+      breakMinutes: 5,
+      longBreakMinutes: 15,
+      longBreakEvery: 4,
+      sessionsSinceLongBreak: long ? 3 : 1,
+      sessionCounterDate: TODAY,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    await timer.finish();
+    expect(timer.getState().breakType).toBe(long ? "long" : "short");
+    expect(timer.getState().isRunning).toBe(false);
+    return { stub, timer };
+  }
+
+  it("reset during a long break goes back to longBreakMinutes", async () => {
+    const { timer } = await pausedBreak(true);
+    timer.addMinutes(-3); // so a reset that did nothing would also fail
+    timer.reset();
+
+    const s = timer.getState();
+    expect(s.breakType).toBe("long");
+    expect(s.totalMs).toBe(15 * ONE_MINUTE_MS);
+    expect(s.remainingMs).toBe(15 * ONE_MINUTE_MS);
+  });
+
+  it("starting a paused long break logs longBreakMinutes as scheduled", async () => {
+    const { stub, timer } = await pausedBreak(true);
+    // Take the clock off the setting, so logging "whatever is on the clock"
+    // cannot pass for logging the long break's length.
+    timer.addMinutes(-5);
+    stub.calls.length = 0;
+    timer.start();
+    timer.pause(); // stop the interval
+
+    const started = stub.calls.filter((c) => c.name === "startSession");
+    expect(started).toHaveLength(1);
+    const [mode, , minutes, , , breakType] = started[0].args;
+    expect(mode).toBe("break");
+    expect(minutes).toBe(15);
+    expect(breakType).toBe("long");
+  });
+
+  it("the panel's Break (m) leaves a long break alone; its own setting moves it", async () => {
+    const { stub, timer } = await pausedBreak(true);
+    stub.settings.breakMinutes = 8;
+    timer.updateDuration("breakMinutes");
+    expect(timer.getState().totalMs).toBe(15 * ONE_MINUTE_MS);
+    expect(timer.getState().remainingMs).toBe(15 * ONE_MINUTE_MS);
+
+    stub.settings.longBreakMinutes = 20;
+    timer.updateDuration("longBreakMinutes");
+    expect(timer.getState().totalMs).toBe(20 * ONE_MINUTE_MS);
+    expect(timer.getState().remainingMs).toBe(20 * ONE_MINUTE_MS);
+  });
+
+  it("a short break still resets to, follows and logs breakMinutes", async () => {
+    const { stub, timer } = await pausedBreak(false);
+    timer.addMinutes(-3);
+    timer.reset();
+    expect(timer.getState().totalMs).toBe(5 * ONE_MINUTE_MS);
+    expect(timer.getState().remainingMs).toBe(5 * ONE_MINUTE_MS);
+
+    stub.settings.longBreakMinutes = 20;
+    timer.updateDuration("longBreakMinutes");
+    expect(timer.getState().totalMs).toBe(5 * ONE_MINUTE_MS);
+    stub.settings.breakMinutes = 8;
+    timer.updateDuration("breakMinutes");
+    expect(timer.getState().totalMs).toBe(8 * ONE_MINUTE_MS);
+    expect(timer.getState().remainingMs).toBe(8 * ONE_MINUTE_MS);
+
+    timer.addMinutes(-2); // the clock off the setting, as above
+    stub.calls.length = 0;
+    timer.start();
+    timer.pause();
+    const started = stub.calls.filter((c) => c.name === "startSession");
+    expect(started).toHaveLength(1);
+    expect(started[0].args[2]).toBe(8);
+    expect(started[0].args[5]).toBe("short");
+  });
+});
+
 describe("TimerEngine — natural completion (auto-start)", () => {
   const TODAY = "2025-05-18"; // matches the moment stub in beforeAll
 
@@ -522,6 +614,171 @@ describe("TimerEngine — start / pause / reset", () => {
   });
 });
 
+describe("TimerEngine — session counter (the status bar menu's guard)", () => {
+  let stub: ReturnType<typeof makePluginStub>;
+  let timer: TimerEngine;
+
+  beforeEach(() => {
+    stub = makePluginStub();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    timer = new TimerEngine(stub.plugin as any);
+  });
+
+  it("moves when a session starts to end and again when the next begins, by Stop or by Skip", async () => {
+    const first = timer.session;
+    timer.start();
+    const ending = timer.finish();
+    // Already moved, before any vault write lands: a menu clicked in that
+    // window must not act on the session that is ending.
+    expect(timer.session).toBe(first + 1);
+    await ending;
+    expect(timer.session).toBe(first + 2);
+    await timer.skip();
+    expect(timer.session).toBe(first + 4);
+  });
+
+  it("moves at the auto-start crossing on the frozen 00:00 emit, before the writes", () => {
+    vi.useFakeTimers();
+    try {
+      stub.settings.autoStartBreak = true;
+      const seen: number[] = [];
+      timer.onChange(() => seen.push(timer.session));
+      const first = timer.session;
+      timer.start();
+      vi.advanceTimersByTime(25 * ONE_MINUTE_MS + 100);
+      // The emit that freezes 00:00 already carries the moved session.
+      expect(seen).toContain(first + 1);
+    } finally {
+      timer.pause();
+      vi.useRealTimers();
+    }
+  });
+
+  it("moves between two sessions of the same mode", () => {
+    const first = timer.session;
+    timer.switchMode("break", true);
+    timer.switchMode("focus", true);
+    timer.switchMode("focus", true);
+    expect(timer.session).toBe(first + 3);
+    timer.pause();
+  });
+
+  it("stays put for anything that keeps the same session", () => {
+    const first = timer.session;
+    timer.start();
+    timer.pause();
+    timer.addMinutes(5);
+    timer.reset();
+    timer.start();
+    timer.pause();
+    expect(timer.session).toBe(first);
+  });
+});
+
+describe("TimerEngine — one end at a time", () => {
+  // finish(), skip() and the auto-start crossing all await vault writes before
+  // the next session exists. A second end arriving in that window — the
+  // panel's Stop, a palette command, the status bar menu — used to log the
+  // session twice, bump the task's count twice, move the long-break counter
+  // twice and throw the new session away.
+  function heldEndSession() {
+    const stub = makePluginStub({ sessionCounterDate: "2025-05-18", sessionsSinceLongBreak: 0 });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let ends = 0;
+    stub.plugin.logManager.endSession = async () => {
+      ends++;
+      await held;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    return { stub, timer, release: () => release(), ends: () => ends };
+  }
+
+  it("ignores Finish & next while a Finish is still writing", async () => {
+    const { stub, timer, release, ends } = heldEndSession();
+    timer.start();
+    const first = timer.finish();
+    const second = timer.finish();
+    release();
+    await Promise.all([first, second]);
+    expect(ends()).toBe(1);
+    expect(stub.settings.sessionsSinceLongBreak).toBe(1);
+    expect(timer.getState().mode).toBe("break");
+  });
+
+  it("ignores Skip while a Finish is still writing, and Finish while a Skip is", async () => {
+    const a = heldEndSession();
+    a.timer.start();
+    const finish = a.timer.finish();
+    const skip = a.timer.skip();
+    a.release();
+    await Promise.all([finish, skip]);
+    expect(a.ends()).toBe(1);
+    expect(a.timer.getState().mode).toBe("break");
+
+    const b = heldEndSession();
+    b.timer.start();
+    const skip2 = b.timer.skip();
+    const finish2 = b.timer.finish();
+    b.release();
+    await Promise.all([skip2, finish2]);
+    expect(b.ends()).toBe(1);
+    expect(b.timer.getState().mode).toBe("break");
+  });
+
+  it("ignores a Stop while the auto-start crossing is still writing", async () => {
+    vi.useFakeTimers();
+    const { stub, timer, release, ends } = heldEndSession();
+    try {
+      stub.settings.autoStartBreak = true;
+      timer.start();
+      vi.advanceTimersByTime(25 * ONE_MINUTE_MS + 100);
+      expect(ends()).toBe(1);
+      const stop = timer.finish();
+      release();
+      await stop;
+      await vi.runOnlyPendingTimersAsync();
+      expect(ends()).toBe(1);
+      // The auto-started break survives the ignored Stop.
+      expect(timer.getState().mode).toBe("break");
+      expect(timer.getState().isRunning).toBe(true);
+      expect(stub.settings.sessionsSinceLongBreak).toBe(1);
+    } finally {
+      timer.pause();
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets the next end through once the first is done", async () => {
+    const { timer, release, ends } = heldEndSession();
+    release();
+    timer.start();
+    await timer.finish();
+    await timer.skip();
+    expect(ends()).toBe(2);
+    expect(timer.getState().mode).toBe("focus");
+  });
+
+  it("lets the next end through even when the first one throws", async () => {
+    const stub = makePluginStub();
+    let calls = 0;
+    stub.plugin.logManager.endSession = async () => {
+      calls++;
+      if (calls === 1) throw new Error("disk full");
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.start();
+    await expect(timer.finish()).rejects.toThrow("disk full");
+    await timer.finish();
+    expect(calls).toBe(2);
+    expect(timer.getState().mode).toBe("break");
+  });
+});
+
 describe("TimerEngine — addMinutes clamping", () => {
   it("adds time to both totalMs and remainingMs", () => {
     const stub = makePluginStub({ focusMinutes: 25 });
@@ -551,7 +808,8 @@ describe("TimerEngine — updateDuration", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const timer = new TimerEngine(stub.plugin as any);
 
-    timer.updateDuration("focus", 40);
+    stub.settings.focusMinutes = 40;
+    timer.updateDuration("focusMinutes");
     const s = timer.getState();
     expect(s.totalMs).toBe(40 * ONE_MINUTE_MS);
     expect(s.remainingMs).toBe(40 * ONE_MINUTE_MS);
@@ -563,9 +821,38 @@ describe("TimerEngine — updateDuration", () => {
     const timer = new TimerEngine(stub.plugin as any);
 
     const before = timer.getState();
-    timer.updateDuration("break", 10);
+    stub.settings.breakMinutes = 10;
+    timer.updateDuration("breakMinutes");
     const after = timer.getState();
     expect(after.totalMs).toBe(before.totalMs); // still focus mode
+    expect(after.remainingMs).toBe(before.remainingMs);
+  });
+
+  it("moves only the total of a session already under way, and tells the listeners", () => {
+    vi.useFakeTimers();
+    try {
+      const stub = makePluginStub({ focusMinutes: 25 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const timer = new TimerEngine(stub.plugin as any);
+      timer.start();
+      vi.advanceTimersByTime(60_000);
+      timer.pause();
+      const remaining = timer.getState().remainingMs;
+      expect(remaining).toBeLessThan(25 * ONE_MINUTE_MS);
+
+      let emitted = 0;
+      timer.onChange(() => emitted++);
+      emitted = 0; // onChange replays the current state once on subscribe
+      stub.settings.focusMinutes = 30;
+      timer.updateDuration("focusMinutes");
+
+      const s = timer.getState();
+      expect(s.totalMs).toBe(30 * ONE_MINUTE_MS);
+      expect(s.remainingMs, "time already spent is kept").toBe(remaining);
+      expect(emitted).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

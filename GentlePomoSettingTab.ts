@@ -14,6 +14,7 @@ import {
   type TextComponent,
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
+import { STATUS_BAR_TIMES, resolveStatusBarTime } from "./statusBar";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
@@ -689,13 +690,40 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             desc: "Open the timer panel in the right sidebar when Obsidian starts.",
             control: { type: "toggle", key: "autoOpenOnStartup" },
           },
-          {
-            name: "Show in status bar",
-            desc: "Show the timer and today's focus total in the status bar at the bottom of the window. Phones and tablets have no status bar.",
-            control: { type: "toggle", key: "showInStatusBar" },
-          },
         ],
       },
+      // Its own group from 0.6.8, when the status bar gained a time choice and
+      // a text option, and — like Notifications — built on the desktop app
+      // only: the mobile apps have no status bar, so these rows could do
+      // nothing on the device in your hand. The values still sync.
+      ...(Platform.isDesktopApp
+        ? [
+            {
+              heading: "Status bar",
+              rows: [
+                {
+                  name: "Show in status bar",
+                  desc: "Show the timer and today's goal ring in the status bar at the bottom of the window. Click it for timer controls; hover for the details.",
+                  control: { type: "toggle", key: "showInStatusBar" },
+                } satisfies SettingRowSpec,
+                {
+                  name: "Time in status bar",
+                  desc: "What the status bar shows beside Focus or Break. Hidden keeps the countdown out of sight, like the timer panel does; hover to see it.",
+                  control: {
+                    type: "dropdown",
+                    key: "statusBarTime",
+                    options: { ...STATUS_BAR_TIMES },
+                  },
+                } satisfies SettingRowSpec,
+                {
+                  name: "Show today's total as text",
+                  desc: 'Show today\'s focus time as text beside the ring, for example "Today 1h 24m / 4h 0m".',
+                  control: { type: "toggle", key: "statusBarShowTotal" },
+                } satisfies SettingRowSpec,
+              ],
+            },
+          ]
+        : []),
       {
         heading: "Timer appearance",
         rows: [
@@ -1013,6 +1041,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // to the default theme); read raw here, the dropdown beside it would show
     // no selection at all.
     if (key === "theme") return resolveTheme(this.plugin.settings.theme);
+    // Same again: any string survives the load, and an unknown one would show
+    // an empty dropdown while the status bar quietly showed no time.
+    if (key === "statusBarTime") return resolveStatusBarTime(this.plugin.settings.statusBarTime);
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -1074,12 +1105,27 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       }
       case "logFolderPath":
         settings.logFolderPath = String(value);
-        break;
+        await this.plugin.saveSettings();
+        // Today's total, the goal ring and the panels' goal line all come from
+        // the log folder, and nothing else would re-read it while idle.
+        this.plugin.logFolderChanged();
+        return;
       case "autoOpenOnStartup":
         settings.autoOpenOnStartup = Boolean(value);
         break;
       case "showInStatusBar":
         await this.plugin.setStatusBarVisibility(Boolean(value));
+        return;
+      // The status bar paints on timer emits and when a logged total lands;
+      // the timer is silent while idle — which is when someone is in this
+      // tab — so both repaint it themselves.
+      case "statusBarTime":
+        await this.plugin.setStatusBarTime(value);
+        return;
+      case "statusBarShowTotal":
+        settings.statusBarShowTotal = Boolean(value);
+        await this.plugin.saveSettings();
+        this.plugin.refreshStatusBar();
         return;
       case "showDayNightIndicator":
         settings.showDayNightIndicator = Boolean(value);
@@ -1194,7 +1240,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const n = numericSetting(value);
         if (n === null || n <= 0) return;
         settings.longBreakMinutes = Math.floor(n);
-        break;
+        await this.plugin.saveSettings();
+        // A long break already on the clock follows its own length, as a
+        // regular break follows the panel's "Break (m)". Without this the
+        // clock kept the old length while start() logged the new one.
+        this.plugin.timer.updateDuration("longBreakMinutes");
+        return;
       }
       case "longBreakEvery": {
         const n = numericSetting(value);
@@ -1206,7 +1257,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const n = numericSetting(value);
         if (n === null || n < 0) return;
         settings.dailyFocusGoalMinutes = Math.floor(n);
-        break;
+        await this.plugin.saveSettings();
+        // The ring, its tooltip and the panel's goal line all read this, and
+        // the timer emits nothing while idle — which is when this tab is open.
+        this.plugin.refreshGoalDisplays();
+        return;
       }
       case "goalNoticeEnabled":
         settings.goalNoticeEnabled = Boolean(value);

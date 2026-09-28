@@ -123,33 +123,49 @@
      at computed-value time and the timer's depth silently disappears. */
   /* --- Focus -----------------------------------------------------------
      One ring, two application modes. The OUTWARD offset is the default; the
-     INSET one is mandatory rather than stylistic for rows inside a scrolling
-     list, because .gp-task-list is overflow-y: auto with a max-height, so an
-     outward ring on the first or last visible row is clipped by the scroll
-     container. Normalising every ring to +1px would silently delete the
-     focus indicator at exactly the two rows most likely to have it. */
+     INSET one is mandatory rather than stylistic for anything inside a box
+     that clips its overflow: the task and station lists (they scroll), the
+     animated button pairs and the video row (overflow: hidden, exactly as
+     tall as their buttons), and the settings panel (it scrolls, so it clips
+     sideways too). An outward ring there loses whole edges. These rings
+     rendered for the first time in 0.6.8 — see the body block below — so no
+     one had seen the clipping before. */
   /* Width and colour stay SEPARATE rather than becoming one `outline`
      shorthand: the toggle draws its ring as a box-shadow, and box-shadow has
      no `solid` keyword — a shared shorthand there is invalid at
      computed-value time, so the property is dropped and the ring silently
      disappears. */
   --gp-focus-ring-width: 2px;
-  --gp-focus-ring-color: var(--interactive-accent);
+  /* --gp-focus-ring-color: declared on body, below — it reads Obsidian. */
   --gp-focus-ring-offset: 1px;
   --gp-focus-ring-offset-inset: -2px;
 
-  --gp-rule: 1px solid var(--background-modifier-border);
-  --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
-  --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
+  /* --gp-elev-rest / --gp-elev-lift: declared on .gp-timer-shape, where the
+     theme's --gp-shadow-rgb resolves (see the note there). */
 
   /* --- Mode identity ---------------------------------------------------
-     Duplicated byte-for-byte across a component boundary no scope can span:
-     the timer's gradient layers live in the view, the matching status-bar
-     dot is created by addStatusBarItem() and can never be reached by a
-     .gp-root- or .gp-theme-* selector. Theme-INDEPENDENT by design — this is
-     mode identity, not artwork. */
+     The Classic theme's day and night layers. Until 0.6.8 the status-bar dot
+     wore the same two gradients; it now has its own accents (below), because
+     the break gradient's navy vanished on a dark status bar. Theme-
+     INDEPENDENT by design — this is mode identity, not artwork. */
   --gp-mode-focus-gradient: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
   --gp-mode-break-gradient: linear-gradient(135deg, #243949 0%, #517fa4 100%);
+
+  /* --- Status bar (0.6.8) ----------------------------------------------
+     The two accents BEFORE they lean toward the bar's text colour (see
+     .gp-status). Chosen so that on Obsidian's default themes the result lands
+     on #d9773a / #4a78a0 (light) and #f0a46e / #86acd2 (dark). Blue leans
+     further: a mid-tone coloured bar swallows a steel blue, and the break
+     shade has the headroom to lean; a fifth is the most orange can lean and
+     still reach #d9773a. Dark values are restated on .theme-dark .gp-status. */
+  --gp-status-focus: #f87e32;
+  --gp-status-break: #3894e4;
+  --gp-status-lean-focus: 20%;
+  --gp-status-lean-break: 50%;
+  --gp-status-track-alpha: 0.24;
+  /* The goal arc while nothing is running: full colour in the corner means a
+     session is actually running. */
+  --gp-status-rest-alpha: 0.7;
 
   /* --- Structural constants --------------------------------------------
      Not scale steps. Each is a solved equation with its own failure mode,
@@ -218,6 +234,21 @@
   --gp-control-gap: 12px;
   --gp-icon-btn-size: 42px;
   --gp-icon-svg-size: 20px;
+}
+
+/* The one semantic token that READS Obsidian's palette. It cannot live on
+   :root: Obsidian declares --interactive-accent on <body>, and a custom
+   property resolves its var()s where it is declared — so on :root (<html>)
+   it resolved to nothing. The ring colour moved into this token in 0.6.1,
+   and from then until 0.6.8 no focus ring the panel drew ever showed; the
+   shared ring (0.6.1) and the dropdown's (0.6.4) never rendered once, and
+   buttons showed Obsidian's grey halo instead. <body> is also an ancestor of
+   all four surfaces that render outside .gp-root (see DESIGN.md, Token
+   layers), which is why this is body and not .gp-root.
+   tests/designTokens.test.ts forbids a :root token that reads anything not
+   itself declared on :root. */
+body {
+  --gp-focus-ring-color: var(--interactive-accent);
 }
 
 /* Enforce the minimum height on the leaf-content itself (not .gp-root)
@@ -325,7 +356,14 @@
      pale base over it. */
   background-color: var(--gp-shape-base, #1e1e1e);
 
-  /* CHANGED: Use dynamic shadow color matching the timer theme */
+  /* The resting and lifted drop shadows. Declared HERE, not on :root: they
+     read the theme's --gp-shadow-rgb, which each theme declares on its
+     .gp-theme-<id> root, and a custom property resolves its var()s where it
+     is declared — on :root they froze to the black fallback, so a theme's
+     shadow colour could never reach the shadow (hidden only because every
+     theme declares 0, 0, 0). Both pulse keyframes read them on this element. */
+  --gp-elev-rest: 0 10px 30px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.4);
+  --gp-elev-lift: 0 15px 40px -10px rgba(var(--gp-shadow-rgb, 0, 0, 0), 0.5);
   box-shadow: var(--gp-elev-rest);
 
   /* CHANGED: Added box-shadow to transition list. */
@@ -752,7 +790,13 @@
   align-items: center;
   justify-content: center;
   border-radius: var(--gp-radius-lg);
-  border: var(--gp-rule);
+  /* No border, on purpose. Until 0.5.8 this was a 1px border; 0.6.0 moved it
+     into a :root token that read Obsidian's palette and so resolved to
+     nothing, and the button has been borderless — edged only by Obsidian's
+     own input shadow — ever since. Every look since (0.6.6's task-button
+     padding included) was tuned and approved that way, so 0.6.8 fixed the
+     token and kept the look rather than bring back 2px of height. */
+  border: none;
   background: var(--interactive-normal);
   cursor: pointer;
   /* Make transition faster for a snappier feel */
@@ -822,6 +866,22 @@
 .gp-task-item:focus-visible {
   outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
   outline-offset: var(--gp-focus-ring-offset);
+  /* Obsidian's `button:focus-visible` swaps the button's resting edge for a
+     3px grey halo; under this ring it showed as a grey band between the
+     control and the accent. Put the resting edge back instead. */
+  box-shadow: var(--input-shadow);
+}
+
+/* Inside a box that clips its overflow, draw the ring inward (see the Focus
+   tokens): the Stop/Reset and −/+ pairs and the video row are exactly as tall
+   as their buttons with overflow: hidden, the settings panel scrolls (so it
+   clips sideways too), and the task list scrolls. Each selector out-ranks
+   the shared rule above (the task row ties it and wins on order). */
+.gp-animated-wrapper .gp-btn:focus-visible,
+.gp-music-video-row .gp-btn:focus-visible,
+.gp-settings-panel .gp-reset-button:focus-visible,
+.gp-task-item:focus-visible {
+  outline-offset: var(--gp-focus-ring-offset-inset);
 }
 
 .gp-btn-full {
@@ -984,8 +1044,16 @@
    "focused" rather than "highlighted". */
 .gp-settings-select.dropdown:focus {
   box-shadow: var(--input-shadow);
+}
+
+/* The ring itself, for keyboard focus only. A clicked <select> matches
+   :focus-visible in Chromium, so the view marks pointer focus with Obsidian's
+   own `mouse-focus` class and this rule skips it — without that, the ring
+   stayed on as an accent band across the column after every mouse choice,
+   the 0.6.4 complaint in a new colour. Inset: the panel clips sideways. */
+.gp-settings-select.dropdown:focus-visible:not(.mouse-focus) {
   outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
-  outline-offset: var(--gp-focus-ring-offset);
+  outline-offset: var(--gp-focus-ring-offset-inset);
 }
 
 /* --- Section header inside the in-view settings panel --- */
@@ -1079,8 +1147,10 @@
 
 .gp-toggle input:focus-visible + .gp-toggle-slider {
   /* A ring drawn as a shadow, because the visible control is the slider and
-     the focusable element is the visually-hidden checkbox behind it. */
-  box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color);
+     the focusable element is the visually-hidden checkbox behind it. Inset,
+     because the toggles sit at the right edge of the settings panel, which
+     clips sideways. */
+  box-shadow: inset 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color);
 }
 
 /* --- Segmented control (Low / Mid / High volume) --- */
@@ -1119,9 +1189,12 @@
   color: var(--text-on-accent);
 }
 
+/* Inset, and without Obsidian's grey halo — see the shared ring rule. The
+   segmented rows live in the settings panel, which clips sideways. */
 .gp-segmented-btn:focus-visible {
   outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
-  outline-offset: var(--gp-focus-ring-offset);
+  outline-offset: var(--gp-focus-ring-offset-inset);
+  box-shadow: var(--input-shadow);
 }
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
@@ -1134,7 +1207,8 @@
   width: 100%;
   height: var(--gp-control-h);
   background: transparent;
-  border: var(--gp-rule);
+  /* Borderless since 0.6.0, kept so in 0.6.8 — see .gp-btn. */
+  border: none;
   color: var(--text-muted);
   font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-medium);
@@ -1155,73 +1229,256 @@
   }
 }
 
-/* Status bar indicator */
+/* ===== Status bar (0.6.8) =====
+   Built by addStatusBarItem() in main.ts, outside .gp-root, so nothing here
+   can be scoped to a theme. Chosen from a design round in Obsidian's own
+   app.css (light and dark, every timer state, true size).
+
+   Mostly monochrome, like Obsidian's own items. The STATE is the glyph's
+   shape — hollow circle idle, disc running, two bars paused, and a small
+   badge at the top right once time is up — so it reads without colour. The
+   mode colour is only an accent: the running disc, the badge and the goal
+   ring's fill. Everything else is drawn in the item's own text colour
+   (currentColor), so a theme that colours its status bar carries through —
+   except in time's up, when the words take the page's normal text colour,
+   exactly as Obsidian's own hover does.
+
+   The glyph's DOM is built once (buildStatusGlyph in icons.ts); every change
+   is these rules reading the item's classes (statusBarClasses in
+   statusBar.ts) and --gp-goal, which main.ts publishes. */
+
+.theme-dark .gp-status {
+  --gp-status-focus: #ffa05d;
+  /* The old navy dot vanished on a dark bar; a light steel does not. */
+  --gp-status-break: #59a5f1;
+  --gp-status-track-alpha: 0.28;
+  /* Dimmed orange on a dark bar turns brown; rest a smaller step down. */
+  --gp-status-rest-alpha: 0.8;
+}
+
 .gp-status {
-  display: flex;
-  align-items: center;
   gap: var(--gp-space-2);
-  cursor: pointer;
+  /* Declared on the item, not :root: Obsidian resolves its palette on
+     <body>, and a custom property resolves its var()s where it is declared,
+     so at :root these would read nothing. */
+  /* Goal met stays up for the rest of the day: the success green, a step
+     softened toward the bar so it is not the loudest thing in the corner. */
+  --gp-status-met: color-mix(
+    in srgb,
+    var(--color-green, #08b94e) 78%,
+    var(--status-bar-background, var(--background-secondary))
+  );
+  /* Each accent leans part of the way toward the bar's own text colour,
+     which a theme always keeps readable on its bar: on a coloured or
+     low-contrast bar the accents move toward contrast with it. */
+  --gp-status-bar-ink: var(--status-bar-text-color, var(--text-muted));
+  --gp-status-mode: color-mix(
+    in srgb,
+    var(--gp-status-focus) calc(100% - var(--gp-status-lean-focus)),
+    var(--gp-status-bar-ink)
+  );
 }
 
-.gp-status-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: var(--gp-radius-pill);
-  background: var(--text-muted);
-  opacity: 0.8;
-  transition:
-    background-color var(--gp-dur-fast) ease,
-    transform var(--gp-dur-instant) ease;
+.gp-status.gp-mode-break {
+  --gp-status-mode: color-mix(
+    in srgb,
+    var(--gp-status-break) calc(100% - var(--gp-status-lean-break)),
+    var(--gp-status-bar-ink)
+  );
 }
 
-.gp-status-dot.gp-mode-focus {
-  background: var(--gp-mode-focus-gradient);
-}
+/* ---- Glyph ---- */
 
-.gp-status-dot.gp-mode-break {
-  background: var(--gp-mode-break-gradient);
-}
-
-.gp-status-dot.gp-running {
-  transform: scale(1.2);
-}
-
-.gp-status-label {
+.gp-status .gp-status-glyph {
   display: inline-flex;
-  align-items: center;
-  gap: var(--gp-space-2);
-  font-size: var(--gp-text-micro);
-  opacity: 0.8;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  /* A 14px glyph in a 12px line: take no extra height from the bar. */
+  margin-block: -1px;
 }
 
-.gp-status-time {
-  max-width: 0;
-  opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transform: translateY(-2px);
+.gp-status .gp-status-svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  overflow: visible;
+}
+
+.gp-status .gp-status-track,
+.gp-status .gp-status-goal {
+  fill: none;
+  stroke-width: 1.4;
   transition:
-    max-width 0.25s ease,
+    opacity var(--gp-dur-fast) ease,
+    stroke var(--gp-dur-fast) ease,
+    stroke-dasharray var(--gp-dur-open) ease;
+}
+
+/* The empty part of the ring: the bar's own text colour, faint. */
+.gp-status .gp-status-track {
+  stroke: currentColor;
+  opacity: var(--gp-status-track-alpha);
+}
+
+/* pathLength="100" on the circle makes the dash a plain percentage. */
+.gp-status .gp-status-goal {
+  stroke: var(--gp-status-mode);
+  stroke-dasharray: calc(var(--gp-goal, 0) * 100) 100;
+  transform: rotate(-90deg);
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+
+.gp-status.gp-state-idle:not(.gp-goal-met) .gp-status-goal,
+.gp-status.gp-state-paused:not(.gp-goal-met) .gp-status-goal {
+  opacity: var(--gp-status-rest-alpha);
+}
+
+.gp-status:not(.gp-goal-on) .gp-status-track,
+.gp-status:not(.gp-goal-on) .gp-status-goal {
+  opacity: 0;
+}
+
+/* Goal met: the ring closes, in the softened success colour. */
+.gp-status.gp-goal-met .gp-status-goal {
+  stroke: var(--gp-status-met);
+  stroke-dasharray: 100 0;
+}
+
+.gp-status.gp-goal-met .gp-status-track {
+  opacity: 0;
+}
+
+/* ---- State shapes ---- */
+
+.gp-status .gp-status-core {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+  transition: transform var(--gp-dur-fast) ease;
+}
+
+/* No ring around it: let the shape fill the box. */
+.gp-status:not(.gp-goal-on) .gp-status-core {
+  transform: scale(1.45);
+}
+
+.gp-status .gp-status-idle,
+.gp-status .gp-status-disc,
+.gp-status .gp-status-bars {
+  opacity: 0;
+  transition: opacity var(--gp-dur-fast) ease;
+}
+
+.gp-status .gp-status-idle {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+
+.gp-status .gp-status-disc {
+  fill: var(--gp-status-mode);
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  transition:
     opacity var(--gp-dur-fast) ease,
     transform var(--gp-dur-fast) ease;
 }
 
-.gp-status.gp-show-time .gp-status-time {
-  max-width: 64px;
-  opacity: 0.9;
-  transform: translateY(0);
+/* Time's up: the disc swells a little, so the whole glyph reads heavier —
+   not when there is no ring, where the shape is already at full size. */
+.gp-status.gp-goal-on.gp-state-overtime .gp-status-disc {
+  transform: scale(1.18);
 }
 
-.gp-status-focus-total {
-  font-size: var(--gp-text-micro);
-  opacity: 0.65;
-  margin-left: var(--gp-space-2);
+/* Pause bars: the text colour with a hint of the mode, so paused differs
+   from idle by a touch of colour as well as by shape. */
+.gp-status .gp-status-bar {
+  fill: color-mix(in srgb, var(--gp-status-mode) 20%, currentColor);
 }
 
-.gp-status-focus-total.gp-status-goal-met {
-  color: var(--text-success, var(--color-green, #4ade80));
+.gp-status.gp-state-idle .gp-status-idle,
+.gp-status.gp-state-running .gp-status-disc,
+.gp-status.gp-state-paused .gp-status-bars {
   opacity: 1;
-  font-weight: var(--gp-weight-strong);
+}
+
+/* Time's up: the badge rises at the top right, and the mask opens a gap
+   around it so it sits in front of the ring rather than on it. The gap is a
+   MASK, not a disc painted in the bar's colour: it is see-through, so it
+   matches the bar, the hover tint or any theme's item background without
+   knowing its colour. */
+.gp-status .gp-status-gap,
+.gp-status .gp-status-badge {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  transform: scale(0.4);
+  transition:
+    opacity var(--gp-dur-fast) ease,
+    transform var(--gp-dur-fast) ease;
+}
+
+.gp-status.gp-state-overtime .gp-status-gap,
+.gp-status.gp-state-overtime .gp-status-badge {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Never brighter than the running disc: the same colour, and still. It must
+   stay still — a moving dot in the corner is the nag this plugin avoids. */
+.gp-status .gp-status-badge {
+  fill: var(--gp-status-mode);
+}
+
+/* ---- Text ---- */
+
+.gp-status .gp-status-mode,
+.gp-status .gp-status-time,
+.gp-status .gp-status-total {
+  white-space: nowrap;
+}
+
+/* Fixed-width digits: in clock mode the item changes every second, and
+   proportional digits shifted every item to its left sideways with it. */
+.gp-status .gp-status-time,
+.gp-status .gp-status-total {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Empty spans take no room, so the gap never doubles. */
+.gp-status .gp-status-time:empty,
+.gp-status .gp-status-total:empty,
+.gp-status.gp-time-hidden .gp-status-time {
+  display: none;
+}
+
+/* The total stays muted even when the goal is met: the green ring alone
+   says "done". */
+.gp-status .gp-status-total {
+  margin-inline-start: var(--gp-space-2);
+  opacity: 0.75;
+}
+
+/* Time's up: the words step up from muted to the page's normal text colour
+   (--text-normal, what Obsidian's own hover uses — not the bar's ink),
+   quietly. This is the cue that survives a theme whose bar colour swallows
+   the mode tints. */
+.gp-status.gp-state-overtime {
+  color: var(--text-normal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gp-status .gp-status-track,
+  .gp-status .gp-status-goal,
+  .gp-status .gp-status-core,
+  .gp-status .gp-status-idle,
+  .gp-status .gp-status-disc,
+  .gp-status .gp-status-bars,
+  .gp-status .gp-status-gap,
+  .gp-status .gp-status-badge {
+    transition: none;
+  }
 }
 
 /* Disabled State for Buttons */
@@ -1271,7 +1528,6 @@
   margin-top: var(--gp-space-5);
   margin-bottom: var(--gp-space-2);
   padding-left: var(--gp-space-4);
-  border-bottom: var(--gp-rule);
   padding-bottom: var(--gp-space-1);
 }
 
@@ -3926,8 +4182,8 @@
 
 /* Inset, and not by preference: .gp-task-list is overflow-y: auto with a
    max-height, so an outward ring on the first or last visible row is clipped
-   by the scroll container. Ties with the shared .gp-task-item rule above and
-   wins on source order. */
+   by the scroll container. The task rows got the same treatment in 0.6.8
+   (the inset rule beside the shared ring), when these rings first rendered. */
 .gp-station-item:focus-visible {
   outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
   outline-offset: var(--gp-focus-ring-offset-inset);
