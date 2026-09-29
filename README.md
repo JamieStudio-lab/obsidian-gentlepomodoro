@@ -1,4 +1,4 @@
-# Gentle Pomodoro
+<p align="center"><img src=".github/banner.png" alt="Gentle Pomodoro — Focus gently. Work deeply." width="830"></p>
 
 A visually soothing, task-integrated Pomodoro timer for your daily focus work. Four ambient themes — Classic (day→night gradient), Frosted Glass (drifting colour orbs behind a frosted pane), Frosted Glass 2 (the same idea drawn as real glass, with a lit rim) or Pixel City (a pixel-art city whose windows light up as night falls) — instead of a ticking clock, task linking with the Tasks plugin, and Dataview-friendly daily logs.
 

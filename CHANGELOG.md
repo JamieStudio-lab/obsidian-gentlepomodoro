@@ -80,6 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   every note, only when you press one of them).
 - The README has a new **Files the plugin reads** section spelling all of
   this out, right before Network use.
+- The README now opens with a banner in place of the plain title.
 
 ## [0.6.7] — 2026-09-27
 
