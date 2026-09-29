@@ -1,14 +1,37 @@
 // Minimal stubs for the parts of the Obsidian API exercised by unit tests.
 // Only what the units under test actually import — extend as needed.
 
-export class TFile {
+export class TAbstractFile {
   path: string = "";
+  parent: TFolder | null = null;
+}
+
+export class TFile extends TAbstractFile {
   extension: string = "";
   basename: string = "";
 }
 
-export class TAbstractFile {
-  path: string = "";
+export class TFolder extends TAbstractFile {
+  children: TAbstractFile[] = [];
+}
+
+export class Vault {
+  /**
+   * Obsidian's own walk, copied from app.js (1.7.7 and 1.13.7 read alike): a
+   * stack, each folder's children pushed in order and popped from the END, so
+   * a folder's LAST child is visited first. `getFiles()` is this walk from the
+   * root, which is why tests/fakeVault.ts builds its getFiles on it — the order
+   * the plugin sees in tests is then the order Obsidian really gives.
+   */
+  static recurseChildren(root: TFolder, cb: (file: TAbstractFile) => unknown): void {
+    let stack: TAbstractFile[] = [root];
+    while (stack.length > 0) {
+      const next = stack.pop();
+      if (!next) continue;
+      cb(next);
+      if (next instanceof TFolder) stack = stack.concat(next.children);
+    }
+  }
 }
 
 export class Plugin {}
@@ -66,8 +89,18 @@ export class Notice {
   }
 }
 
+/**
+ * Obsidian's own, copied from app.js (1.7.7 and 1.13.7 read alike): collapse
+ * runs of slashes and backslashes, trim slashes at both ends ("" becomes "/"),
+ * turn the two no-break spaces into spaces, then NFC. Exact rather than close,
+ * because the folder settings go through it and a simpler stand-in hides the
+ * inputs (a leading slash, a no-break space, a decomposed accent) on which the
+ * real one decides which folder is meant.
+ */
 export function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\/+/g, "/");
+  let normalized = path.replace(/([\\/])+/g, "/").replace(/(^\/+|\/+$)/g, "");
+  if (normalized === "") normalized = "/";
+  return normalized.replace(/\u00A0|\u202F/g, " ").normalize("NFC");
 }
 
 export function setIcon(_el: HTMLElement, _icon: string): void {}

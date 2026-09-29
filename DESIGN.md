@@ -19,7 +19,8 @@ The plugin draws two kinds of thing, and they get opposite treatment.
 | Follows user theme? | Always                                                         | No — that is what the theme picker is for   |
 
 **Chrome inherits, artwork declares.** There are 54 `var()` references to 17 Obsidian variables in
-the file today and they are all correct; do not re-mint them as `--gp-*`. Conversely, nothing inside
+the file today; do not re-mint them as `--gp-*`. Read them where Obsidian declares them, though:
+see the next section, and the body block that closed a hole the focus ring had from 0.6.1 to 0.6.8. Conversely, nothing inside
 `.gp-timer-visual` may read `--text-*` or `--background-*` — with one scoped exception, made in
 0.6.5 and pinned by a test: the **Frosted Glass 2** rim's **shade** reads `--background-primary`,
 once per mode, into `--gp-lg-env`. A glass edge reflects the room it sits in, so its dark side is
@@ -39,13 +40,29 @@ classic + light Obsidian + focus overtime uncovered, where the grey lands on the
 about 2.34:1. Every one of those rules exists once per theme id: that is what one chrome token on
 the artwork costs, multiplied by the number of themes.
 
-Also delete rules that merely restate an Obsidian default rather than adding one: `.gp-status-label`
-re-states `--status-bar-font-size`, and two `line-height: 1.3` declarations re-state the inherited
-`--line-height-tight`.
+Also delete rules that merely restate an Obsidian default rather than adding one: two
+`line-height: 1.3` declarations re-state the inherited `--line-height-tight`. The status bar item
+(0.6.8) sets no `display`, `cursor` or font size of its own for the same reason — Obsidian's
+`.status-bar-item.mod-clickable` already gives it all three, plus the hover background.
 
 ## Token layers
 
-Declared on `:root`, **never on `.gp-root`.** Four plugin surfaces render outside the view
+Declared on `:root`, **never on `.gp-root`** — except a token that READS something declared lower
+down, which goes where that thing resolves. A custom property resolves its `var()`s where it is
+DECLARED, so a `:root` token that reads Obsidian's palette (declared on `<body>`), a theme's slot
+(declared on `.gp-theme-<id>`) or the status bar's accents (declared on `.gp-status`) resolves to
+nothing, or to its fallback, and every rule using it is silently dropped. Three holes of exactly this
+shape were found in 0.6.8: `--gp-rule` (0.6.0) dropped the borders of the task button, the Reset
+button and the task-group headers; `--gp-focus-ring-color` (0.6.1) dropped every focus ring the panel
+draws — the shared ring and the dropdown's never rendered once, and buttons showed Obsidian's grey
+halo instead; and `--gp-elev-rest` / `--gp-elev-lift` froze a theme's `--gp-shadow-rgb` to black.
+All invisible, because nothing errors and every tidy-up that "verified" the tokens resolved them as
+text. The ring colour now sits in a `body` block and the elevations on `.gp-timer-shape`.
+**The borders were deliberately NOT brought back:** every look since 0.6.0 — 0.6.6's task-button
+padding included — was tuned and approved without them, and a border adds 2px to each button, so
+`.gp-btn` and `.gp-reset-button` say `border: none` and `--gp-rule` is gone. Bringing them back is a
+design decision, not a fix. `tests/designTokens.test.ts` forbids a `:root` token that reads anything
+not itself declared on `:root`. Four plugin surfaces render outside the view
 container and a `.gp-root`-scoped block misses all four — invisibly, because the timer panel, where
 anyone would look to check, is fine:
 
@@ -59,8 +76,8 @@ anyone would look to check, is fine:
 **Layer 1 — primitives.** Raw scale values with no meaning attached: `--gp-space-*`, `--gp-text-*`,
 `--gp-radius-*`, `--gp-dur-*`, `--gp-ease-*`, `--gp-weight-*`, `--gp-opacity-*`.
 
-**Layer 2 — semantic.** What components consume: the ink set, the focus ring, `--gp-rule`, the
-elevations, the mode gradients.
+**Layer 2 — semantic.** What components consume: the ink set, the focus ring, the elevations, the
+mode gradients.
 
 **Layer 3 — component constants.** Values that must **not** be rounded onto a scale, because each
 is a solved equation with a failure mode. `--gp-control-column` (260px) is a _budget_: five music
@@ -197,7 +214,8 @@ it jump there instantly rather than not move.
 All have `overflow: hidden`, so raising a font-size, adding a settings row or localising a string
 clips content with no error and no scrollbar: `.gp-end-time.gp-visible` 2.5em,
 `.gp-state-overtime .gp-total-time` 2.5em, `.gp-task-list.gp-visible` 250px,
-`.gp-settings-panel.gp-visible` 320px, `.gp-status-time` 64px, the caption words 7em.
+`.gp-settings-panel.gp-visible` 320px, the caption words 7em. (The status bar's time had a 64px cap
+until 0.6.8; the time now shows or hides by a class, with no reveal to cap.)
 
 Related: `.gp-settings-panel`'s collapsed `border-top/bottom: 1px solid transparent` must
 stay. Border _colour_ is animatable while _adding_ a border is not, and those 2px of reserved border
@@ -233,20 +251,26 @@ non-literal value passes.
 
 ### 8. Five values are duplicated across the CSS/TS boundary.
 
-Three of the five are test-held (the fade and the leaf selector by `designTokens`, the plate
-selectors by `pixelCityArt`); the status-dot gradients and the mode classes are held by comments
+Four of the five are test-held (the fade and the leaf selector by `designTokens`, the plate
+selectors by `pixelCityArt`, the status bar by `statusBar`); the mode classes are held by comments
 only. Change them together:
 
-| CSS                                           | TypeScript                                                                    |
-| --------------------------------------------- | ----------------------------------------------------------------------------- |
-| `--gp-name-fade: 0.28s`                       | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                                   |
-| `[data-type="gentle-pomo-view"]`              | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                                        |
-| `.gp-layer-day` / `.gp-layer-night` gradients | the same two on `.gp-status-dot`                                              |
-| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar                  |
-| `.gp-pixel-city-*` selectors                  | `PIXEL_CITY_LAYERS` in pixelCityArt.ts (held by `tests/pixelCityArt.test.ts`) |
+| CSS                                           | TypeScript                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--gp-name-fade: 0.28s`                       | `CAPTION_NAME_FADE_MS = 280` (constants.ts)                                                                                                                  |
+| `[data-type="gentle-pomo-view"]`              | `VIEW_TYPE_GENTLE_POMO` (constants.ts)                                                                                                                       |
+| the status bar block's state and part classes | `statusBarClasses` in statusBar.ts and `buildStatusGlyph` in icons.ts (held by `tests/statusBar.test.ts`: the parts both ways, the state classes CSS → code) |
+| `gp-mode-focus` / `gp-mode-break`             | applied in two unrelated DOM trees — view **and** status bar                                                                                                 |
+| `.gp-pixel-city-*` selectors                  | `PIXEL_CITY_LAYERS` in pixelCityArt.ts (held by `tests/pixelCityArt.test.ts`)                                                                                |
 
-The mode-class row is why the mode gradients must reach `:root`: the status bar is created by
-`addStatusBarItem()` and can never be reached by a `.gp-root`- or `.gp-theme-*`-scoped rule.
+The status bar is created by `addStatusBarItem()` and can never be reached by a `.gp-root`- or
+`.gp-theme-*`-scoped rule. Its two base accents live on `:root`; the three tokens that read
+Obsidian's palette (`--gp-status-met`, `--gp-status-bar-ink`, `--gp-status-mode`) are declared on
+`.gp-status` itself. That is not a style choice: Obsidian resolves its palette on `<body>`, and a
+custom property resolves its `var()`s where it is DECLARED, so on `:root` they read nothing and fall
+back — the 0.6.8 design round hit exactly this, and the goal ring vanished. Until 0.6.8 the status
+dot also repeated the Classic theme's two mode gradients; it has its own accents now, because the
+break gradient's navy disappeared on a dark status bar.
 
 ### 9. Product decisions that look like accessibility defects and are not.
 

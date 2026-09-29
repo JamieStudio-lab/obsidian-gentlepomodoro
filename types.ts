@@ -22,6 +22,18 @@ export interface GentlePomoSettings {
 
   // Status bar / display
   showInStatusBar: boolean;
+  // Which time the status bar shows beside the mode (0.6.8): "hidden" |
+  // "minutes" | "clock" | "end". A plain string for the reason the sound
+  // choices are: coerceToDefaults keeps any string, so statusBar.ts's
+  // resolveStatusBarTime is the reader and falls back to hidden.
+  statusBarTime: string;
+  // Today's focus total as text beside the goal ring ("Today 1h 24m / 4h 0m").
+  // Off by default from 0.6.8: the ring carries the progress, the hover the
+  // numbers.
+  statusBarShowTotal: boolean;
+  // Legacy (<= 0.6.7): the click-to-show clock. Read once to seed
+  // statusBarTime, then kept in step with it (true unless hidden) so a
+  // rollback to 0.6.7 still finds the clock the way it was left.
   showStatusBarTimeLeft: boolean;
   showDayNightIndicator: boolean;
   // Show the projected wall-clock end time on the timer while a session runs.

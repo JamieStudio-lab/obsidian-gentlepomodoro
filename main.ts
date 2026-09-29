@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Menu, Notice, Platform, Plugin, WorkspaceLeaf, normalizePath, setTooltip } from "obsidian";
 import { DEFAULT_THEME } from "./themes";
 
 import { confirmAction } from "./confirmModal";
@@ -15,6 +15,7 @@ import { LogManager, shouldFireGoalNotice } from "./logManager";
 import { SettingsStore, coerceToDefaults, deriveEndChimes } from "./settingsStore";
 import { logger } from "./logger";
 import {
+  linkedTaskDisplayName,
   removeAllPomodoroMarkersInVault,
   removeMisplacedPomodoroMarkersInVault,
   repairPomodoroMarkersInVault,
@@ -28,8 +29,26 @@ import {
   DEFAULT_SETTINGS,
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
+  NO_TASK_LABEL,
   VIEW_TYPE_GENTLE_POMO,
 } from "./constants";
+import { formatEndTime } from "./endTime";
+import { buildStatusGlyph } from "./icons";
+import {
+  deriveStatusBarTime,
+  goalFraction,
+  isOvertime,
+  isTimerAction,
+  resolveStatusBarTime,
+  statusBarClasses,
+  statusBarPhase,
+  statusMenuEntries,
+  statusMenuKey,
+  statusModeLabel,
+  statusTimeText,
+  statusTooltip,
+  type StatusMenuAction,
+} from "./statusBar";
 import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./types";
 import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
@@ -45,12 +64,19 @@ export default class GentlePomoPlugin extends Plugin {
   timer!: TimerEngine;
   logManager!: LogManager;
   private statusBarEl: HTMLElement | null = null;
-  private statusDot: HTMLElement | null = null;
-  private statusLabel: HTMLElement | null = null;
   private statusModeEl: HTMLElement | null = null;
   private statusTimeEl: HTMLElement | null = null;
-  private statusFocusTotal: HTMLElement | null = null;
-  private lastStatusRender: { second: number; mode: PomoMode; running: boolean } | null = null;
+  private statusTotalEl: HTMLElement | null = null;
+  /** Everything the item's paint depends on that changes between ticks. The
+   *  engine emits 20 times a second; the item repaints when this moves. */
+  private lastStatusKey: string | null = null;
+  private lastStatusTooltip: string | null = null;
+  /** The ring's last written value, rounded — see updateStatusBar. */
+  private lastStatusGoal: string | null = null;
+  /** The status bar's menu while it is open, and the session and phase its
+   *  timer entries were chosen for (statusMenuKey). */
+  private statusMenu: Menu | null = null;
+  private statusMenuFor: string | null = null;
   /** Today's logged focus total, TTL- and date-stamped. */
   private readonly focusTotals = new FocusTotalTracker(this.createFocusTotalHost());
   /** Reads and writes data.json, and reports when either fails. */
@@ -461,6 +487,9 @@ export default class GentlePomoPlugin extends Plugin {
     // today. The rule lives in settingsStore so it can be tested, and returns
     // only the keys the user has no stored choice for.
     const chimes = deriveEndChimes(read, loaded);
+    // 0.6.8's time display. Read off the legacy click-to-show switch before the
+    // merge, which would otherwise fill in the default and hide the question.
+    const statusBarTime = deriveStatusBarTime(loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
     if (deriveTaskSelector) {
       this.settings.showTaskSelector = this.settings.tasksPath.trim() !== "";
@@ -472,6 +501,10 @@ export default class GentlePomoPlugin extends Plugin {
     }
     if (chimes.breakEndSoundEnabled !== undefined) {
       this.settings.breakEndSoundEnabled = chimes.breakEndSoundEnabled;
+      migrated = true;
+    }
+    if (statusBarTime !== undefined) {
+      this.settings.statusBarTime = statusBarTime;
       migrated = true;
     }
     // Music stations. musicUrl keeps its pre-0.5.7 meaning as slot 1, so the
@@ -617,28 +650,31 @@ export default class GentlePomoPlugin extends Plugin {
 
   private createStatusBar() {
     if (this.statusBarEl) return;
-    this.statusBarEl = this.addStatusBarItem();
-    this.statusBarEl.addClass("gp-status");
+    const item = this.addStatusBarItem();
+    this.statusBarEl = item;
+    // mod-clickable is Obsidian's own: the pointer and the hover background
+    // its other clickable status bar items get.
+    item.addClasses(["gp-status", "mod-clickable"]);
+    buildStatusGlyph(item.createSpan({ cls: "gp-status-glyph", attr: { "aria-hidden": "true" } }));
+    this.statusModeEl = item.createSpan({ cls: "gp-status-mode" });
+    this.statusTimeEl = item.createSpan({ cls: "gp-status-time" });
+    this.statusTotalEl = item.createSpan({ cls: "gp-status-total" });
 
-    this.statusDot = this.statusBarEl.createDiv("gp-status-dot");
-    this.statusLabel = this.statusBarEl.createSpan({ cls: "gp-status-label" });
-    this.statusModeEl = this.statusLabel.createSpan({ cls: "gp-status-mode" });
-    this.statusTimeEl = this.statusLabel.createSpan({ cls: "gp-status-time" });
-    this.statusFocusTotal = this.statusBarEl.createSpan({ cls: "gp-status-focus-total" });
-
-    this.registerDomEvent(this.statusDot, "click", (evt) => {
+    // One target, one action. Until 0.6.8 the dot opened the panel and the
+    // word toggled the clock, and nothing on screen said either; now the whole
+    // item opens a menu that names everything it can do. Right-click opens the
+    // same menu, since that is where people look for one.
+    this.registerDomEvent(item, "click", (evt) => {
       evt.preventDefault();
-      void this.activateView();
+      this.openStatusMenu(evt);
     });
-
-    this.registerDomEvent(this.statusLabel, "click", async (evt) => {
+    this.registerDomEvent(item, "contextmenu", (evt) => {
       evt.preventDefault();
-      this.settings.showStatusBarTimeLeft = !this.settings.showStatusBarTimeLeft;
-      await this.saveSettings();
-      this.updateStatusBar(this.timer.getState(), true);
+      this.openStatusMenu(evt);
     });
 
     this.statusTimerListener = (state) => {
+      this.closeStaleStatusMenu(state);
       this.updateStatusBar(state);
     };
     this.timer.onChange(this.statusTimerListener);
@@ -653,58 +689,207 @@ export default class GentlePomoPlugin extends Plugin {
     if (this.statusBarEl) {
       this.statusBarEl.remove();
     }
+    this.statusMenu?.hide();
     this.statusBarEl = null;
-    this.statusDot = null;
-    this.statusLabel = null;
     this.statusModeEl = null;
     this.statusTimeEl = null;
-    this.statusFocusTotal = null;
+    this.statusTotalEl = null;
+    this.lastStatusKey = null;
+    this.lastStatusTooltip = null;
+    this.lastStatusGoal = null;
+  }
+
+  /** The status bar item's menu, built fresh on every click from the timer's
+   *  state at that moment (statusMenuEntries owns what it offers). */
+  private openStatusMenu(evt: MouseEvent): void {
+    this.statusMenu?.hide();
+    // Always Obsidian's own DOM menu, never the operating system's. On macOS
+    // Obsidian uses native menus by default, and a native popup cannot be
+    // closed from code: Menu.hide() only tidies up the plugin side, so a menu
+    // over a session that has ended stayed on screen with every timer entry
+    // silently dead. The DOM menu also shows the entry icons, which a native
+    // one drops.
+    const menu = new Menu().setUseNativeMenu(false);
+    const state = this.timer.getState();
+    const builtFor = statusMenuKey(this.timer.session, state);
+    this.statusMenu = menu;
+    this.statusMenuFor = builtFor;
+    menu.onHide(() => {
+      if (this.statusMenu === menu) {
+        this.statusMenu = null;
+        this.statusMenuFor = null;
+      }
+    });
+    const time = resolveStatusBarTime(this.settings.statusBarTime);
+    for (const entry of statusMenuEntries(state, time)) {
+      if (entry === null) {
+        menu.addSeparator();
+        continue;
+      }
+      menu.addItem((item) => {
+        item.setTitle(entry.title).setIcon(entry.icon);
+        if (entry.checked !== undefined) item.setChecked(entry.checked);
+        item.onClick(() => {
+          void this.runStatusMenuAction(entry.action, builtFor);
+        });
+      });
+    }
+    menu.showAtMouseEvent(evt);
+  }
+
+  /** Close the menu once the timer has moved to another session or phase:
+   *  its timer entries were chosen for the one that is gone. */
+  private closeStaleStatusMenu(state: TimerState): void {
+    if (!this.statusMenu) return;
+    if (statusMenuKey(this.timer.session, state) !== this.statusMenuFor) this.statusMenu.hide();
+  }
+
+  private async runStatusMenuAction(action: StatusMenuAction, builtFor: string): Promise<void> {
+    // The menu closes when the timer moves on (closeStaleStatusMenu), but a
+    // click can still land in between. A timer action chosen for a session
+    // that is gone does nothing: before this, a menu left open across a zero
+    // crossing that auto-started the next session finished THAT session —
+    // logged it, bumped the task's 🍅 and moved the long-break count.
+    if (
+      isTimerAction(action) &&
+      statusMenuKey(this.timer.session, this.timer.getState()) !== builtFor
+    ) {
+      return;
+    }
+    switch (action) {
+      case "start":
+      case "resume":
+        this.timer.start();
+        return;
+      case "pause":
+        this.timer.pause();
+        return;
+      case "finish":
+        // Offered only once a session has begun — the same rule as the "Finish
+        // & next" command. The session check above already holds the phase
+        // the menu was built for; this states the rule where it applies.
+        if (statusBarPhase(this.timer.getState()) === "idle") return;
+        await this.timer.finish();
+        return;
+      case "skip":
+        await this.timer.skip();
+        return;
+      case "open":
+        await this.activateView();
+        return;
+      default:
+        await this.setStatusBarTime(action.slice("time:".length));
+    }
+  }
+
+  /** Choose what time the status bar shows. Shared by the menu and the
+   *  settings tab so both write the legacy field the same way. */
+  async setStatusBarTime(value: unknown): Promise<void> {
+    const time = resolveStatusBarTime(value);
+    this.settings.statusBarTime = time;
+    // Kept in step for a rollback: 0.6.7 reads only this, and shows the clock
+    // when it is on.
+    this.settings.showStatusBarTimeLeft = time !== "hidden";
+    await this.saveSettings();
+    this.refreshStatusBar();
+  }
+
+  /** Repaint the status bar now, for a settings change the timer cannot see —
+   *  the engine emits nothing while idle. */
+  refreshStatusBar(): void {
+    this.updateStatusBar(this.timer.getState(), true);
+  }
+
+  /** The log folder moved: today's total must be read from the new one, and
+   *  everything that shows it repainted — the timer is silent while idle. */
+  logFolderChanged(): void {
+    this.logManager.invalidateTodayTotal();
+    this.refreshGoalDisplays();
+  }
+
+  /** Repaint everything that shows today's goal — the status bar and every
+   *  open panel's goal line — for a goal changed in the settings tab while
+   *  the timer is idle and emitting nothing. */
+  refreshGoalDisplays(): void {
+    const state = this.timer.getState();
+    this.updateStatusBar(state, true);
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
+      if (leaf.view instanceof GentlePomoView) this.refreshViewGoalProgress(leaf.view, state);
+    }
   }
 
   private updateStatusBar(state: TimerState, force = false): void {
-    if (
-      !this.statusBarEl ||
-      !this.statusDot ||
-      !this.statusLabel ||
-      !this.statusModeEl ||
-      !this.statusTimeEl ||
-      !this.statusFocusTotal
-    ) {
-      return;
-    }
+    const item = this.statusBarEl;
+    if (!item || !this.statusModeEl || !this.statusTimeEl || !this.statusTotalEl) return;
 
-    const absSeconds = Math.ceil(Math.abs(state.remainingMs) / 1000);
-    const modeLabel = state.mode === "focus" ? "Focus" : "Break";
-    const timeText = this.formatSeconds(absSeconds, state.remainingMs < 0);
-    const showTimeLeft = this.settings.showStatusBarTimeLeft;
+    const time = resolveStatusBarTime(this.settings.statusBarTime);
+    const goalMinutes = this.settings.dailyFocusGoalMinutes;
+    const showTotal = this.settings.statusBarShowTotal;
+    // The displayed second (the clock's own rounding), plus the phase and
+    // overtime outright: a pause and a Reset inside the same second, or the
+    // tick that crosses zero, change what is shown without changing the
+    // second. The live focus seconds move with the second; a logged total
+    // that lands arrives with force=true.
+    const second = Math.ceil(Math.abs(state.remainingMs) / 1000);
+    const key = [
+      second,
+      statusBarPhase(state),
+      isOvertime(state),
+      state.mode,
+      state.breakType,
+      state.isRunning,
+      state.totalMs,
+      state.taskName,
+      time,
+      showTotal,
+      goalMinutes,
+    ].join("\n");
+    if (!force && key === this.lastStatusKey) return;
+    this.lastStatusKey = key;
 
-    if (
-      !force &&
-      this.lastStatusRender &&
-      this.lastStatusRender.second === absSeconds &&
-      this.lastStatusRender.mode === state.mode &&
-      this.lastStatusRender.running === state.isRunning
-    ) {
-      return;
-    }
-
-    this.lastStatusRender = {
-      second: absSeconds,
-      mode: state.mode,
-      running: state.isRunning,
-    };
-
-    this.statusDot.toggleClass("gp-mode-focus", state.mode === "focus");
-    this.statusDot.toggleClass("gp-mode-break", state.mode === "break");
-    this.statusDot.toggleClass("gp-running", state.isRunning);
-
-    this.statusBarEl.toggleClass("gp-show-time", showTimeLeft);
-    this.statusModeEl.setText(modeLabel);
-    this.statusTimeEl.setText(timeText);
-
+    const focusSeconds = this.currentFocusSeconds(state);
     const { text: totalText, met: goalMet } = this.focusGoalText(state);
-    this.statusFocusTotal.setText(totalText);
-    this.statusFocusTotal.toggleClass("gp-status-goal-met", goalMet);
+    const look = {
+      phase: statusBarPhase(state),
+      overtime: isOvertime(state),
+      goalOn: goalMinutes > 0,
+      goalMet,
+      time,
+      showTotal,
+    };
+    for (const [cls, on] of statusBarClasses(state, look)) item.toggleClass(cls, on);
+    // A custom property with a computed value: the one style write the lint
+    // rule allows, and the ring's only input. Rounded to a hundredth and
+    // written only when that changes: live focus moves the fraction every
+    // second, by a fraction of a pixel, and each write restarted the ring's
+    // 300ms transition.
+    const goal = (Math.round(goalFraction(focusSeconds, goalMinutes) * 100) / 100).toString();
+    if (goal !== this.lastStatusGoal) {
+      this.lastStatusGoal = goal;
+      item.style.setProperty("--gp-goal", goal);
+    }
+
+    const now = Date.now();
+    const formatEnd = (endMs: number): string => formatEndTime(moment, endMs);
+    this.statusModeEl.setText(statusModeLabel(state));
+    this.statusTimeEl.setText(statusTimeText(state, time, now, formatEnd));
+    this.statusTotalEl.setText(showTotal ? totalText : "");
+
+    const tooltip = statusTooltip({
+      state,
+      nowMs: now,
+      formatEnd,
+      taskName: state.taskName !== NO_TASK_LABEL ? linkedTaskDisplayName(state.taskName) : null,
+      todayText: formatHoursMinutes(focusSeconds),
+      goalText: goalMinutes > 0 ? formatHoursMinutes(goalMinutes * 60) : null,
+      goalMet,
+    });
+    // Obsidian's tooltip reads aria-label, so this is also the item's
+    // accessible name — the whole state in words, which the colours cannot be.
+    if (tooltip !== this.lastStatusTooltip) {
+      this.lastStatusTooltip = tooltip;
+      setTooltip(item, tooltip, { placement: "top" });
+    }
 
     // Mirror the same goal progress into the view (which surfaces it on mobile,
     // where Obsidian hides the status bar). The view also pushes this from its own
@@ -715,11 +900,6 @@ export default class GentlePomoPlugin extends Plugin {
         leaf.view.setGoalProgress(totalText, goalMet);
       }
     }
-
-    this.statusBarEl.setAttribute(
-      "aria-label",
-      showTimeLeft ? `${modeLabel} ${timeText}` : `${modeLabel} (time hidden)`
-    );
 
     void this.maybeRefreshFocusTotal();
   }
@@ -918,12 +1098,5 @@ export default class GentlePomoPlugin extends Plugin {
   /** Read the logged total if the cache is due, then repaint and check the goal. */
   private maybeRefreshFocusTotal(): Promise<void> {
     return this.focusTotals.refresh();
-  }
-
-  private formatSeconds(totalSeconds: number, overtime = false): string {
-    const m = Math.floor(totalSeconds / 60);
-    const s = totalSeconds % 60;
-    const timeText = `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-    return overtime ? `+${timeText}` : timeText;
   }
 }

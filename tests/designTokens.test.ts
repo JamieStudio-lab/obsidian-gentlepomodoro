@@ -121,11 +121,12 @@ const expectFixture = (name: string, actual: string): void => {
 };
 
 /**
- * Published from TypeScript onto `.gp-timer-visual`, so they are read in CSS
- * and never declared there. GentlePomoView sets all three; see the sky-phase
- * block in its timer listener.
+ * Published from TypeScript, so they are read in CSS and never declared there.
+ * GentlePomoView sets the first three on `.gp-timer-visual` (see the sky-phase
+ * block in its timer listener); main.ts sets `--gp-goal` on the status bar
+ * item (updateStatusBar) — today's goal as 0..1, the ring's only input.
  */
-const PUBLISHED_FROM_TS = ["--gp-progress", "--gp-dusk-opacity", "--gp-night-opacity"];
+const PUBLISHED_FROM_TS = ["--gp-progress", "--gp-dusk-opacity", "--gp-night-opacity", "--gp-goal"];
 
 describe("token hygiene", () => {
   it("declares every custom property it reads", () => {
@@ -138,11 +139,53 @@ describe("token hygiene", () => {
     expect(dead, "declared but never read — delete it or wire it up").toEqual([]);
   });
 
-  it("keeps the three TypeScript-published variables un-declared in CSS", () => {
-    // If one of these ever gains a CSS declaration it would mask the value the
-    // view is publishing, and the timer would stop tracking the session.
+  it("never declares on :root a token that reads anything not itself on :root", () => {
+    // A custom property resolves its var()s where it is DECLARED. Obsidian
+    // declares its palette on <body>, the themes declare theirs on
+    // .gp-theme-<id>, the status bar declares its own on .gp-status — so a
+    // :root token reading any of them resolves to nothing (or to its fallback)
+    // and every rule using it is silently dropped. That is how the focus
+    // rings went missing from 0.6.1 to 0.6.8, how three borders went in 0.6.0,
+    // and why a theme's --gp-shadow-rgb never reached the drop shadow. Every
+    // :root block in the file is checked, and an alias of a body token (one
+    // step removed) is caught too.
+    const code = stripComments(css);
+    const rootBlocks = [...code.matchAll(/(^|\n)\s*:root\s*\{([^}]*)\}/g)].map((m) => m[2]);
+    expect(rootBlocks.length).toBeGreaterThan(0);
+    const onRoot = new Set(
+      rootBlocks.flatMap((b) => [...b.matchAll(/(--gp-[a-z0-9-]+)\s*:/g)].map((m) => m[1]))
+    );
+    const offenders: string[] = [];
+    for (const block of rootBlocks) {
+      for (const m of block.matchAll(/(--gp-[a-z0-9-]+)\s*:([^;]*);/g)) {
+        const reads = [...m[2].matchAll(/var\(\s*(--[a-z0-9-]+)/g)].map((r) => r[1]);
+        if (reads.some((r) => !onRoot.has(r))) offenders.push(m[1]);
+      }
+    }
+    expect(offenders, "declare these where what they read resolves").toEqual([]);
+  });
+
+  it("gives the ring colour a body block that resolves it", () => {
+    const body = stripComments(tokenBlock.slice(tokenBlock.search(/^body \{/m)));
+    expect(body).toMatch(/--gp-focus-ring-color:\s*var\(--interactive-accent\);/);
+  });
+
+  it("declares the drop shadows where the theme's shadow colour resolves", () => {
+    const shape = stripComments(css.slice(css.indexOf("\n.gp-timer-shape {")));
+    const body = shape.slice(0, shape.indexOf("}"));
+    expect(body).toContain("--gp-elev-rest:");
+    expect(body).toContain("--gp-elev-lift:");
+  });
+
+  it("keeps the TypeScript-published variables un-declared in CSS", () => {
+    // If one of these ever gains a CSS declaration it would mask the value
+    // TypeScript is publishing: the timer would stop tracking the session, or
+    // the goal ring would stop filling.
     for (const name of PUBLISHED_FROM_TS) {
-      expect(declared.has(name), `${name} must come from GentlePomoView, not CSS`).toBe(false);
+      expect(
+        declared.has(name),
+        `${name} is published from TypeScript (GentlePomoView or main.ts), not declared in CSS`
+      ).toBe(false);
     }
   });
 });
@@ -382,22 +425,73 @@ describe("focus rings", () => {
     // narrowing to keyboard focus does not remove it. On the panel's
     // full-width dropdown that halo is a light band across the whole 260px
     // column, which reads as a selection that got stuck rather than as focus.
-    expect(rules).toContain(".gp-settings-select.dropdown:focus");
-    const rule = rules.slice(rules.indexOf(".gp-settings-select.dropdown:focus"));
-    const body = rule.slice(0, rule.indexOf("}"));
-    expect(body).toContain("--gp-focus-ring-width");
-    expect(body).toContain("--gp-focus-ring-color");
+    const code = stripComments(rules);
+    const focus = code.slice(code.indexOf(".gp-settings-select.dropdown:focus {"));
+    const focusBody = focus.slice(0, focus.indexOf("}"));
     // The halo has to be overwritten, not merely outlined over.
-    expect(body).toContain("box-shadow:");
-    expect(body).not.toContain("--background-modifier-border-focus");
+    expect(focusBody).toContain("box-shadow:");
+    expect(focusBody).not.toContain("--background-modifier-border-focus");
+    // And the ring itself shows for keyboard focus only (0.6.8): a clicked
+    // select matches :focus-visible too, so pointer focus is marked and skipped.
+    const ring = code.slice(
+      code.indexOf(".gp-settings-select.dropdown:focus-visible:not(.mouse-focus) {")
+    );
+    const ringBody = ring.slice(0, ring.indexOf("}"));
+    expect(ringBody).toContain("--gp-focus-ring-width");
+    expect(ringBody).toContain("--gp-focus-ring-color");
+    expect(ringBody).toContain("--gp-focus-ring-offset-inset");
+    const view = readFileSync(resolve(root, "GentlePomoView.ts"), "utf8");
+    expect(view).toContain(
+      'this.registerDomEvent(select, "mousedown", () => select.addClass("mouse-focus"));'
+    );
+    expect(view).toContain(
+      'this.registerDomEvent(select, "keydown", () => select.removeClass("mouse-focus"));'
+    );
+    expect(view).toContain(
+      'this.registerDomEvent(select, "blur", () => select.removeClass("mouse-focus"));'
+    );
+  });
+
+  it("draws the ring inward wherever a box clips it", () => {
+    // These rings first rendered in 0.6.8; outward, they lost whole edges in
+    // the animated button pairs, the video row, the settings panel and the
+    // task list.
+    const code = stripComments(rules);
+    const inset = code.slice(code.indexOf(".gp-animated-wrapper .gp-btn:focus-visible,"));
+    const head = inset.slice(0, inset.indexOf("{"));
+    const body = inset.slice(inset.indexOf("{"), inset.indexOf("}"));
+    for (const sel of [
+      ".gp-animated-wrapper .gp-btn:focus-visible",
+      ".gp-music-video-row .gp-btn:focus-visible",
+      ".gp-settings-panel .gp-reset-button:focus-visible",
+      ".gp-task-item:focus-visible",
+    ]) {
+      expect(head, sel).toContain(sel);
+    }
+    expect(body).toContain("outline-offset: var(--gp-focus-ring-offset-inset)");
+    // The task row ties the shared rule on specificity, so it must come after.
+    expect(code.indexOf(".gp-animated-wrapper .gp-btn:focus-visible,")).toBeGreaterThan(
+      code.indexOf(".gp-reset-button:focus-visible,\n.gp-task-item:focus-visible {")
+    );
+    const seg = code.slice(code.indexOf(".gp-segmented-btn:focus-visible {"));
+    expect(seg.slice(0, seg.indexOf("}"))).toContain("--gp-focus-ring-offset-inset");
+  });
+
+  it("puts the resting edge back instead of Obsidian's grey halo under the ring", () => {
+    const code = stripComments(rules);
+    for (const start of [".gp-task-item:focus-visible {", ".gp-segmented-btn:focus-visible {"]) {
+      const rule = code.slice(code.indexOf(start));
+      expect(rule.slice(0, rule.indexOf("}")), start).toContain("box-shadow: var(--input-shadow)");
+    }
   });
 
   // box-shadow has no `solid` keyword, so a shared `outline` shorthand is
   // invalid there at computed-value time and the property is dropped —
   // the toggle's ring disappears with nothing to show for it.
   it("keeps the ring's width and colour separate, never one shorthand", () => {
+    // Inset since 0.6.8: the toggles sit at the settings panel's clipped edge.
     expect(rules).toContain(
-      "box-shadow: 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color)"
+      "box-shadow: inset 0 0 0 var(--gp-focus-ring-width) var(--gp-focus-ring-color)"
     );
     expect(tokenBlock).not.toMatch(/--gp-focus-ring:\s/);
   });
@@ -523,6 +617,20 @@ describe("raw values outside the scale", () => {
             "--gp-lg-deep-2",
             "--gp-lg-deep-3",
             "--gp-glow-color",
+            // The drop shadows, declared on .gp-timer-shape because they read
+            // the theme's --gp-shadow-rgb, which only resolves inside the theme.
+            "--gp-elev-rest",
+            "--gp-elev-lift",
+            // The status bar's dark accents (restated on .theme-dark
+            // .gp-status) and the three it derives from Obsidian's palette,
+            // declared on the item because that palette resolves on <body>.
+            "--gp-status-focus",
+            "--gp-status-break",
+            "--gp-status-track-alpha",
+            "--gp-status-rest-alpha",
+            "--gp-status-met",
+            "--gp-status-bar-ink",
+            "--gp-status-mode",
             "--gp-caption-fade",
             "--gp-caption-delay",
             "--gp-name-fade",

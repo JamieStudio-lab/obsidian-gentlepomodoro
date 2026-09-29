@@ -1,5 +1,5 @@
-import { TFile, normalizePath } from "obsidian";
-import type { App } from "obsidian";
+import { TFile, TFolder, Vault, normalizePath } from "obsidian";
+import type { App, TAbstractFile } from "obsidian";
 import type { TaskItem } from "./types";
 import type { TaskScope } from "./taskScope";
 import type { MomentFactory } from "./momentTypes";
@@ -369,13 +369,92 @@ export function removeAllPomodoroMarkersInVault(app: App): Promise<PomodoroMarke
   return processPomodoroMarkersInVault(app, removeAnyPomodoroMarker, true);
 }
 
-export function isPathInFolder(filePath: string, folderPath: string): boolean {
-  if (!folderPath) return true;
+/**
+ * The files a folder setting means — the path itself when it names a file,
+ * otherwise everything below that folder, subfolders included, and never a
+ * sibling that only starts with the same letters (`Logs-old` for `Logs`) —
+ * found by walking that one folder. Until 0.6.8 this was a filter over every
+ * file in the vault (`isPathInFolder`); tests/fileAccess.test.ts keeps that
+ * filter, verbatim, as the oracle this walk must agree with, order included.
+ *
+ * The same files in the same order, and that follows from what Obsidian does
+ * rather than from care taken here (read out of app.js, 1.7.7 and 1.13.7):
+ *
+ * - every vault path is already `normalizePath`'d, so the files the old filter
+ *   accepted are exactly the subtree of the one folder the setting names;
+ * - `Vault.getFiles()` IS `Vault.recurseChildren` from the root, a stack walk
+ *   that visits each folder's subtree in one unbroken run — so walking the
+ *   folder alone yields that run exactly as the full list held it.
+ *
+ * `"/"` finds nothing, as the filter did: it keys to `""`, and the vault keys
+ * its root as `"/"`. An EMPTY `folderPath` is the caller's to decide — the old
+ * filter read it as the whole vault and this returns nothing — so neither
+ * caller passes one: loadTasks lists the vault itself, the logs return early.
+ */
+export function filesInFolder(app: App, folderPath: string): TFile[] {
+  const key = normalizePath(folderPath).replace(/\/+$/, "");
+  // The one key the lookup cannot see. Obsidian's file map is a plain object,
+  // and assigning it "__proto__" replaces the object's prototype instead of
+  // adding a key — yet the folder is still in the tree, so getFiles() found it.
+  const target =
+    key === "__proto__"
+      ? (app.vault.getRoot().children.find((item) => item.path === key) ?? null)
+      : app.vault.getAbstractFileByPath(key);
+  if (target instanceof TFile) return [target];
+  if (!(target instanceof TFolder)) return [];
 
-  const normalizedFolder = normalizePath(folderPath).replace(/\/+$/, "");
-  const normalizedPath = normalizePath(filePath);
+  const files: TFile[] = [];
+  Vault.recurseChildren(target, (item) => {
+    if (item instanceof TFile) files.push(item);
+  });
+  return files;
+}
 
-  return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
+/** The markdown file at exactly this vault path, if there is one. */
+function markdownFileAt(app: App, path: string): TFile | undefined {
+  const file = app.vault.getAbstractFileByPath(path);
+  return file instanceof TFile && file.extension === "md" ? file : undefined;
+}
+
+/**
+ * Which of two files `Vault.getFiles()` lists first, worked out from where they
+ * sit instead of by listing the vault. That walk pushes a folder's children in
+ * order and pops them from the END, so where the two paths part ways, the one
+ * further down that folder's children comes first.
+ *
+ * Only a tie in loadTasks' sort can see this order: `localeCompare` returns 0
+ * for distinct paths that differ by an invisible character (a zero-width
+ * space, a soft hyphen, an emoji's variation selector), and the stable sort
+ * then keeps the order the files were read in.
+ */
+function compareVaultOrder(a: TAbstractFile, b: TAbstractFile): number {
+  const lineage = (file: TAbstractFile) => {
+    const chain: TAbstractFile[] = [];
+    for (let at: TAbstractFile | null = file; at; at = at.parent) chain.unshift(at);
+    return chain;
+  };
+  const left = lineage(a);
+  const right = lineage(b);
+
+  let split = 0;
+  while (split < left.length && split < right.length && left[split] === right[split]) split++;
+  const folder = left[split - 1];
+  if (split === left.length || split === right.length || !(folder instanceof TFolder)) return 0;
+
+  return folder.children.indexOf(right[split]) - folder.children.indexOf(left[split]);
+}
+
+/**
+ * The named notes that exist and are markdown, each once, in the order
+ * `Vault.getFiles()` would have listed them. Looked up by path, one at a time.
+ */
+function markdownNotesAt(app: App, paths: string[]): TFile[] {
+  const found: TFile[] = [];
+  for (const path of new Set(paths)) {
+    const file = markdownFileAt(app, path);
+    if (file) found.push(file);
+  }
+  return found.sort(compareVaultOrder);
 }
 
 export function findTaskNameByIdInContent(content: string, taskId: string): string | null {
@@ -414,20 +493,22 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
   const { scope, limitDays = 3, includeUndated = false, pin = null } = options;
   const tasks: TaskItem[] = [];
 
-  const markdown = app.vault.getFiles().filter((f) => f.extension === "md");
+  // Only what the scope names is listed. An EMPTY tasks path is the one case
+  // that lists the whole vault, because that is what it means: it is the
+  // documented way to have the picker look everywhere.
   const inScope =
-    scope.kind === "folder"
-      ? markdown.filter((f) => isPathInFolder(f.path, scope.tasksPath))
-      : markdown.filter((f) => scope.paths.includes(f.path));
+    scope.kind === "notes"
+      ? markdownNotesAt(app, scope.paths)
+      : (scope.tasksPath ? filesInFolder(app, scope.tasksPath) : app.vault.getFiles()).filter(
+          (f) => f.extension === "md"
+        );
 
   // The pin's own note is read even when the scope excludes it — but ONLY the
   // pinned line is taken from it, or choosing "Current note" would quietly drag
   // in every other task from wherever the linked one happens to live.
   const files = [...inScope];
   const pinFile =
-    pin && !inScope.some((f) => f.path === pin.path)
-      ? markdown.find((f) => f.path === pin.path)
-      : undefined;
+    pin && !inScope.some((f) => f.path === pin.path) ? markdownFileAt(app, pin.path) : undefined;
   if (pinFile) files.push(pinFile);
 
   const limitDate = moment().add(limitDays, "days").endOf("day");

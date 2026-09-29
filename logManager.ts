@@ -2,7 +2,7 @@ import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
 import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
-import { findTaskNameById, findTaskNameByIdInContent, isPathInFolder } from "./taskLoader";
+import { filesInFolder, findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -206,9 +206,7 @@ export class LogManager {
     if (!folderPath || !taskId) return;
 
     const app = this.plugin.app;
-    const files = app.vault
-      .getFiles()
-      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
+    const files = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
 
     if (files.length === 0) return;
 
@@ -243,9 +241,7 @@ export class LogManager {
     }
 
     const app = this.plugin.app;
-    const logFiles = app.vault
-      .getFiles()
-      .filter((f) => f.extension === "md" && isPathInFolder(f.path, folderPath));
+    const logFiles = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
 
     if (logFiles.length === 0) {
       new Notice("Gentle pomodoro: no log files found.");
@@ -387,9 +383,18 @@ export class LogManager {
       // TTL, so the next emit's refetch reads the fresh file immediately and
       // the goal notice (which fires from that refetch's landing) arrives with
       // the end-of-session bell instead of up to a TTL later.
-      this.focusTotalCacheAt = 0;
-      this.plugin.invalidateFocusTotalCache();
+      this.invalidateTodayTotal();
     }
+  }
+
+  /** Forget today's focus total, here and in the plugin's tracker, so the next
+   *  read goes to the file. After a session is written, and when the log
+   *  folder changes (0.6.8) — the cache is keyed on the date alone, so it
+   *  would otherwise keep serving the old folder's total until its TTL ran
+   *  out. */
+  invalidateTodayTotal(): void {
+    this.focusTotalCacheAt = 0;
+    this.plugin.invalidateFocusTotalCache();
   }
 
   /** Create the log folder if missing, tolerating a sync race that creates it first. */

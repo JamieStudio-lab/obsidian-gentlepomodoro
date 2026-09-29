@@ -66,6 +66,7 @@ import {
 } from "./icons";
 import { MusicController, type MusicHost } from "./MusicController";
 import type { MomentFactory } from "./momentTypes";
+import { formatEndTime } from "./endTime";
 import {
   parseYouTubeUrl,
   buildEmbedUrl,
@@ -1160,12 +1161,12 @@ export class GentlePomoView extends ItemView {
     // "you'll finish at 15:30", the calm counterpart to the hidden countdown.
     // Driven from here (not just the tick listener, which calls applySettings) so
     // toggling the setting updates open views at once; the lastEndText guard keeps
-    // the DOM write to ~once/minute. See formatEndTime for the day-rollover suffix.
+    // the DOM write to ~once/minute. See endTime.ts for the day-rollover suffix.
     if (this.endTimeLabel) {
       const showEnd = this.plugin.settings.showEndTime && state.isRunning && state.remainingMs > 0;
       this.endTimeLabel.toggleClass("gp-visible", showEnd);
       if (showEnd) {
-        const endText = this.formatEndTime(Date.now() + state.remainingMs);
+        const endText = formatEndTime(moment, Date.now() + state.remainingMs);
         if (endText !== this.lastEndText) {
           this.lastEndText = endText;
           this.endTimeLabel.setText(endText);
@@ -1520,24 +1521,6 @@ export class GentlePomoView extends ItemView {
     };
   }
 
-  /**
-   * Format a projected end timestamp as a localized wall-clock time — "Ends
-   * 15:30" (or "Ends 3:30 PM" per locale, via moment's LT). When the session
-   * finishes on a later calendar day than now (a late start plus a long
-   * session), append "(+1 day)" — or "(+N days)" in the extreme. The delta is
-   * measured on local-midnight boundaries (startOf("day")), so it counts
-   * calendar days and stays correct across DST rather than counting 24h chunks.
-   */
-  private formatEndTime(endMs: number): string {
-    const end = moment(endMs);
-    const time = end.format("LT");
-    // startOf mutates `end` in place; it isn't read again after this.
-    const dayDelta = end.startOf("day").diff(moment().startOf("day"), "days");
-    if (dayDelta <= 0) return `Ends ${time}`;
-    const suffix = dayDelta === 1 ? "+1 day" : `+${dayDelta} days`;
-    return `Ends ${time} (${suffix})`;
-  }
-
   /** Re-render the task picker. Sources tasks via taskLoader so regex parsing stays centralized. */
   async loadTasks() {
     const generation = ++this.taskLoadGeneration;
@@ -1758,7 +1741,11 @@ export class GentlePomoView extends ItemView {
       async (v) => {
         settings.focusMinutes = v;
         await this.plugin.saveSettings();
-        this.timer.updateDuration("focus", v);
+        this.timer.updateDuration("focusMinutes");
+        // A second open panel re-seeds only from this: the engine emits
+        // only for the session this setting times, and not at all while
+        // a different one is on the clock.
+        this.plugin.applySettingsToOpenViews();
       }
     );
     numberRow(
@@ -1767,7 +1754,9 @@ export class GentlePomoView extends ItemView {
       async (v) => {
         settings.breakMinutes = v;
         await this.plugin.saveSettings();
-        this.timer.updateDuration("break", v);
+        this.timer.updateDuration("breakMinutes");
+        // See Focus (m): the other open panels re-seed from this.
+        this.plugin.applySettingsToOpenViews();
       }
     );
 
@@ -1801,6 +1790,16 @@ export class GentlePomoView extends ItemView {
       this.registerDomEvent(select, "change", () => {
         void onChange(select.value as T);
       });
+
+      // Obsidian's own trick for its dropdowns, which this select is not: a
+      // clicked <select> matches :focus-visible in Chromium, so the focus
+      // ring would stay on as an accent band across the column after every
+      // mouse choice. `mouse-focus` marks focus that came from the pointer
+      // (app.css already quiets `.dropdown.mouse-focus:focus-visible`, and
+      // the plugin's ring rule excludes it); a key press hands the ring back.
+      this.registerDomEvent(select, "mousedown", () => select.addClass("mouse-focus"));
+      this.registerDomEvent(select, "keydown", () => select.removeClass("mouse-focus"));
+      this.registerDomEvent(select, "blur", () => select.removeClass("mouse-focus"));
 
       // Re-seeded like every other shared control, so a change made in the
       // settings tab moves it. A <select> has no caret to write over, so unlike
@@ -2032,8 +2031,8 @@ export class GentlePomoView extends ItemView {
         settings.sessionEndNotification = DEFAULT_SETTINGS.sessionEndNotification;
       }
       await this.plugin.saveSettings();
-      this.timer.updateDuration("focus", settings.focusMinutes);
-      this.timer.updateDuration("break", settings.breakMinutes);
+      this.timer.updateDuration("focusMinutes");
+      this.timer.updateDuration("breakMinutes");
       this.music.applyVolume();
       this.renderSettingsPanel();
       // Reset writes shared settings, so other open panels and the settings tab

@@ -28,6 +28,9 @@ const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 // Local-timezone YYYY-MM-DD; matches the format LogManager uses for daily log filenames.
 const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
+/** The settings that hold a session's length — see durationSetting(). */
+export type DurationSetting = "focusMinutes" | "breakMinutes" | "longBreakMinutes";
+
 /** How loading one of the user's sound files ended. */
 export type CueLoad = { ok: true; buffer: AudioBuffer } | { ok: false; problem: CueProblem };
 
@@ -135,6 +138,41 @@ export class TimerEngine {
   // cannot reopen the hole by forgetting a check. Nothing restarts a disposed
   // engine on purpose: onload() constructs a new one every time.
   private disposed = false;
+
+  // Counts sessions: bumped when the engine COMMITS to ending one (the
+  // crossing with auto-start on, Stop, Skip — see beginEnding) and again when
+  // switchMode() puts the next one on the clock. The status bar's menu (0.6.8)
+  // records it when it opens, so a choice made after the timer has moved on
+  // does nothing, rather than landing on a session the menu never showed. The
+  // bump at the START of an end is what covers the crossing: the next session
+  // only arrives after handleFinished's vault writes, and a menu clicked in
+  // that window used to end the same session a second time. Two sessions of
+  // one mode can follow each other (two quick skips), which is why this is a
+  // counter and not the mode.
+  private sessionSerial = 0;
+
+  // True from the moment an end begins until switchMode() replaces the
+  // session (or the end fails before it). finish(), skip() and the auto-start
+  // crossing all await vault writes before the next session exists, and a
+  // second end arriving in that window — the panel's Stop, a palette command,
+  // the status bar menu — used to log the session twice, bump the task's 🍅
+  // twice, move the long-break count twice and throw the new session away.
+  private ending = false;
+
+  /** Which session is on the clock. Moves when one starts ending and when the
+   *  next begins; never while a session merely runs, pauses or resumes. */
+  get session(): number {
+    return this.sessionSerial;
+  }
+
+  /** Claim the end of the current session. False when an end is already in
+   *  flight — the caller must then do nothing at all. */
+  private beginEnding(): boolean {
+    if (this.ending) return false;
+    this.ending = true;
+    this.sessionSerial += 1;
+    return true;
+  }
 
   // Track current task name for logging
   public currentTaskName: string = NO_TASK_LABEL;
@@ -303,6 +341,10 @@ export class TimerEngine {
       if (autoStart) {
         this.state.remainingMs = 0; // freeze display at 00:00
         this.clearLoop(); // stop ticking; completeNaturally restarts the loop
+        // A Stop or Skip already ending this session got here first; the
+        // tick cannot normally run then (both clear the loop), but the end is
+        // theirs either way.
+        if (!this.beginEnding()) return;
         this.emit();
         void this.completeNaturally();
         return;
@@ -420,9 +462,13 @@ export class TimerEngine {
    * later Stop is stopping something else entirely.
    */
   private async completeNaturally() {
-    if (this.endChimeWanted()) this.playEndCue();
-    // Natural completion only fires when the toggle is on → auto-start the next.
-    await this.handleFinished(true);
+    try {
+      if (this.endChimeWanted()) this.playEndCue();
+      // Natural completion only fires when the toggle is on → auto-start the next.
+      await this.handleFinished(true);
+    } finally {
+      this.ending = false;
+    }
   }
 
   private async handleFinished(autoStartNext: boolean) {
@@ -941,28 +987,40 @@ export class TimerEngine {
   }
 
   /**
+   * Which setting holds a session's length: a long break reads
+   * `longBreakMinutes`, any other break `breakMinutes`. The one place this
+   * rule lives. reset(), start() and updateDuration() each used to decide it
+   * from the mode alone, so a long break was handled as a short one: reset
+   * put the short length on the clock (still labelled "Long break"), a paused
+   * long break once started logged the short length as `Scheduled::`, and the
+   * panel's "Break (m)" row resized a long break on the clock.
+   */
+  private durationSetting(mode: PomoMode, breakType: TimerState["breakType"]): DurationSetting {
+    if (mode === "focus") return "focusMinutes";
+    return breakType === "long" ? "longBreakMinutes" : "breakMinutes";
+  }
+
+  /** The configured length of a session, in minutes. */
+  private sessionMinutes(mode: PomoMode, breakType: TimerState["breakType"]): number {
+    return this.plugin.settings[this.durationSetting(mode, breakType)];
+  }
+
+  /**
    * Transition to the given mode. When entering break, `isLongBreak` selects
    * `longBreakMinutes` over `breakMinutes` and records the type on the state
    * so the log line can include it.
    */
   switchMode(mode: PomoMode, autoStart = false, isLongBreak = false) {
-    let minutes: number;
-    let breakType: "short" | "long" | null;
-    if (mode === "focus") {
-      minutes = this.plugin.settings.focusMinutes;
-      breakType = null;
-    } else if (isLongBreak) {
-      minutes = this.plugin.settings.longBreakMinutes;
-      breakType = "long";
-    } else {
-      minutes = this.plugin.settings.breakMinutes;
-      breakType = "short";
-    }
+    const breakType: TimerState["breakType"] =
+      mode === "focus" ? null : isLongBreak ? "long" : "short";
+    const minutes = this.sessionMinutes(mode, breakType);
 
     const total = minutes * ONE_MINUTE_MS;
 
     // A new session has its own end to announce.
     this.endCueSounded = false;
+    this.sessionSerial += 1;
+    this.ending = false;
 
     this.state = {
       mode,
@@ -1001,10 +1059,7 @@ export class TimerEngine {
     this.state.isRunning = true;
 
     // Start or Resume Logging
-    const minutes =
-      this.state.mode === "focus"
-        ? this.plugin.settings.focusMinutes
-        : this.plugin.settings.breakMinutes;
+    const minutes = this.sessionMinutes(this.state.mode, this.state.breakType);
     this.plugin.logManager.startSession(
       this.state.mode,
       this.currentTaskName,
@@ -1045,6 +1100,15 @@ export class TimerEngine {
    * the auto-start toggle is on — that's what Skip / natural completion are for.
    */
   async finish() {
+    if (!this.beginEnding()) return;
+    try {
+      await this.finishClaimed();
+    } finally {
+      this.ending = false;
+    }
+  }
+
+  private async finishClaimed() {
     // Stop the tick FIRST. handleFinished() below awaits four vault round trips
     // before switchMode() replaces the state, and the 50ms loop keeps running
     // through all of them — so a Stop pressed a few hundred ms before zero used
@@ -1062,6 +1126,15 @@ export class TimerEngine {
 
   /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
   async skip() {
+    if (!this.beginEnding()) return;
+    try {
+      await this.skipClaimed();
+    } finally {
+      this.ending = false;
+    }
+  }
+
+  private async skipClaimed() {
     // Stop the tick first — same reason as finish(): the awaits below outlast
     // the crossing, and a second cue would fire from the tick mid-skip.
     this.clearLoop();
@@ -1097,10 +1170,7 @@ export class TimerEngine {
   }
 
   reset() {
-    const minutes =
-      this.state.mode === "focus"
-        ? this.plugin.settings.focusMinutes
-        : this.plugin.settings.breakMinutes;
+    const minutes = this.sessionMinutes(this.state.mode, this.state.breakType);
     const total = minutes * ONE_MINUTE_MS;
 
     this.state.remainingMs = total;
@@ -1153,15 +1223,18 @@ export class TimerEngine {
     this.emit();
   }
 
-  /** Change a mode's configured duration; takes effect immediately only if that mode is fresh-stopped. */
-  updateDuration(mode: PomoMode, minutes: number) {
-    if (this.state.mode === mode) {
-      const newTotal = minutes * ONE_MINUTE_MS;
-      if (!this.state.isRunning && this.state.remainingMs === this.state.totalMs) {
-        this.state.remainingMs = newTotal;
-      }
-      this.state.totalMs = newTotal;
-      this.emit();
+  /**
+   * A length setting changed (write it first). Only the session that reads
+   * that setting follows it — so "Break (m)" leaves a long break alone — and
+   * its remaining time moves only if it is fresh-stopped.
+   */
+  updateDuration(setting: DurationSetting) {
+    if (this.durationSetting(this.state.mode, this.state.breakType) !== setting) return;
+    const newTotal = this.plugin.settings[setting] * ONE_MINUTE_MS;
+    if (!this.state.isRunning && this.state.remainingMs === this.state.totalMs) {
+      this.state.remainingMs = newTotal;
     }
+    this.state.totalMs = newTotal;
+    this.emit();
   }
 }

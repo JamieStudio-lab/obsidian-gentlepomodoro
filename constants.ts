@@ -131,6 +131,8 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   autoStartFocus: false,
   autoOpenOnStartup: true,
   showInStatusBar: true,
+  statusBarTime: "hidden",
+  statusBarShowTotal: false,
   showStatusBarTimeLeft: false,
   showDayNightIndicator: true,
   showEndTime: true,

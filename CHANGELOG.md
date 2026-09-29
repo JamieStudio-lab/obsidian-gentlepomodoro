@@ -4,6 +4,84 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] — 2026-09-29
+
+### Added
+
+- **A redesigned status bar you can use without opening the panel.**
+  - **Click it for a menu** (right-click works too): Start, Pause or Resume,
+    Finish & next, Skip to next, Open timer, and which time to show. Before,
+    the dot opened the panel and the word toggled the clock, and nothing said
+    so. If the session ends while the menu is open, the menu closes by itself,
+    so a late click can't act on the next session.
+  - **Idle, running, paused and time's up now look different** at a glance,
+    by shape rather than colour: a hollow circle when idle, a dot while
+    running, two bars when paused, and a small badge on the dot once time is
+    up, when the words also brighten. Time's up matters most: the end of a
+    session is silent by design, so a glance at the corner is how you learn
+    it — softly, with no blinking.
+  - **Break is readable on a dark status bar.** The old navy dot nearly
+    vanished there; breaks now use a light steel blue.
+  - **Today's goal is a thin ring** around the mark, filling as you focus and
+    closing in soft green when the goal is met. The `Today 1h 24m / 4h 0m` text is now off by
+    default; turn it back on under **Settings → Status bar → Show today's
+    total as text**, or hover to see it.
+  - **Choose the time it shows:** hidden (the default, like the timer
+    panel's countdown), minutes left (`12m`), a clock (`12:34`) or the end
+    time (`Ends 15:30`). If you had the clock showing, it stays on.
+  - **Hover for the details:** time left and the end time, the linked task,
+    and today's focus against your goal.
+  - It says **Long break** during a long break.
+  - The digits no longer shift the status bar sideways every second in clock
+    mode, and it gets Obsidian's own hover highlight.
+- The status bar settings have their own **Status bar** group (computers
+  only — Obsidian has no status bar on phones and tablets).
+
+### Fixed
+
+- **Keyboard focus rings now show in the timer panel.** From 0.6.1 the
+  panel's own focus ring never appeared — its colour was looked up where
+  Obsidian's theme colours are not defined — so tabbing through the panel
+  showed Obsidian's grey halo at best. Now each control gets a thin
+  accent-coloured ring when you reach it with the keyboard, drawn inside the
+  control wherever the panel would otherwise cut its edge off. Clicking the
+  **Where to find tasks** dropdown with the mouse leaves no ring behind.
+- **Stop and Skip can no longer end the same session twice.** Pressing Stop
+  or Skip (from the panel, a command or the status bar) while a session was
+  already ending — including in the moment right after a session ends by
+  itself and the next one is about to start — could log it twice, add two 🍅
+  to the task and throw away the session that had just started. A second
+  press now does nothing.
+- **A long break keeps its own length.** Resetting a long break put the
+  short break's length on the clock while it still said "Long break"; a long
+  break that came up paused logged the short break's minutes as `Scheduled::`
+  once you started it; and changing **Break (m)** in the timer panel, or its
+  **Reset to defaults**, resized a long break too. A long break now always
+  uses **Long break duration** — changing it in the settings now also
+  updates a long break that is already on the clock — and **Break (m)**
+  changes only the regular break.
+
+### Changed
+
+- **The task picker no longer looks at every file in your vault to find your
+  tasks.** Prompted by an Obsidian plugin-review recommendation about vault
+  access, not a bug — nothing you see changes: the same tasks, in the same
+  order, and the same log edits. Opening the picker now walks only the tasks
+  folder (and its subfolders); with **Current note** or **Open notes** it
+  looks those notes up directly, and so does your linked task's own note. An
+  empty tasks folder path still means "the whole vault", same as before.
+  Renaming a linked task, and the `Refresh log task names by ID` command, now
+  rewrite task names by walking only the log folder instead of the whole
+  vault.
+- Two things still list the whole vault, on purpose: the **sound picker**
+  (so it can offer every mp3, m4a and wav file to choose from — it still
+  reads only the file you pick) and the **🍅 Check / Repair / Remove /
+  Remove all** actions (the counter can write into any note, so they scan
+  every note, only when you press one of them).
+- The README has a new **Files the plugin reads** section spelling all of
+  this out, right before Network use.
+- The README now opens with a banner in place of the plain title.
+
 ## [0.6.7] — 2026-09-27
 
 ### Added

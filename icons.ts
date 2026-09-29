@@ -179,3 +179,85 @@ export function buildMusicIcon(icon: MusicIcon): SVGSVGElement {
   }
   return svg;
 }
+
+/** Mask ids must be unique in the document; the status bar can be rebuilt
+ *  (hidden and shown again) within one session. */
+let statusGlyphSeq = 0;
+
+function svgPart(
+  tag: "svg" | "defs" | "mask" | "g" | "circle" | "rect",
+  cls: string,
+  attrs: Record<string, string | number>
+): SVGElement {
+  const el = createSvgEl(tag);
+  if (cls) el.setAttribute("class", cls);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  return el;
+}
+
+/**
+ * The status bar's glyph (0.6.8). Built ONCE per item and never rebuilt:
+ * every state it shows comes from the item's classes and `--gp-goal` in
+ * styles.css, so a tick never touches this DOM.
+ *
+ * The state is its shape — a hollow circle idle, a disc running, two bars
+ * paused, and a small badge at the top right once time is up — inside a thin
+ * ring for today's goal. All the shapes are always present; CSS shows one state
+ * shape, plus the badge once time is up.
+ *
+ * The badge's gap is a MASK rather than a disc painted in the bar's colour, so
+ * whatever is behind the item (a gradient bar, the hover tint, a theme's item
+ * background) shows through it unchanged. The goal circle carries
+ * `pathLength="100"`, so the fill's dash is simply `--gp-goal * 100`.
+ */
+export function buildStatusGlyph(glyph: HTMLElement): void {
+  const svg = svgPart("svg", "gp-status-svg", {
+    viewBox: "0 0 14 14",
+    width: 14,
+    height: 14,
+    focusable: "false",
+  });
+
+  statusGlyphSeq += 1;
+  const maskId = `gp-status-gap-${String(statusGlyphSeq)}`;
+  const defs = svgPart("defs", "", {});
+  const mask = svgPart("mask", "", {
+    id: maskId,
+    maskUnits: "userSpaceOnUse",
+    x: -2,
+    y: -2,
+    width: 18,
+    height: 18,
+  });
+  // White keeps, black removes: the circle is the gap around the badge.
+  mask.appendChild(svgPart("rect", "", { x: -2, y: -2, width: 18, height: 18, fill: "white" }));
+  mask.appendChild(
+    svgPart("circle", "gp-status-gap", { cx: 11.3, cy: 2.7, r: 3.3, fill: "black" })
+  );
+  defs.appendChild(mask);
+  svg.appendChild(defs);
+
+  // Everything the badge sits in front of.
+  const body = svgPart("g", "", { mask: `url(#${maskId})` });
+  body.appendChild(svgPart("circle", "gp-status-track", { cx: 7, cy: 7, r: 6 }));
+  body.appendChild(svgPart("circle", "gp-status-goal", { cx: 7, cy: 7, r: 6, pathLength: 100 }));
+
+  // The state shapes, grouped so they can grow when there is no ring.
+  const core = svgPart("g", "gp-status-core", {});
+  core.appendChild(svgPart("circle", "gp-status-idle", { cx: 7, cy: 7, r: 2.6 }));
+  core.appendChild(svgPart("circle", "gp-status-disc", { cx: 7, cy: 7, r: 3 }));
+  const bars = svgPart("g", "gp-status-bars", {});
+  for (const x of [4.6, 7.6]) {
+    bars.appendChild(
+      svgPart("rect", "gp-status-bar", { x, y: 4.4, width: 1.8, height: 5.2, rx: 0.6 })
+    );
+  }
+  core.appendChild(bars);
+  body.appendChild(core);
+  svg.appendChild(body);
+
+  // Time's up: the badge, in front of the ring and outside the mask.
+  svg.appendChild(svgPart("circle", "gp-status-badge", { cx: 11.3, cy: 2.7, r: 2.6 }));
+
+  glyph.appendChild(svg);
+}

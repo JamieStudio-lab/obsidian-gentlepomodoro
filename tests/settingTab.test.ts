@@ -72,6 +72,8 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
       previewingEdge: () => null,
       setPreviewListener: () => undefined,
       stopPreview: () => undefined,
+      updateDuration: (setting: unknown) =>
+        calls.push({ method: "updateDuration", args: [setting] }),
     },
     saveSettings: () => {
       calls.push({ method: "saveSettings", args: [] });
@@ -81,6 +83,13 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
       calls.push({ method: "setStatusBarVisibility", args: [v] });
       return Promise.resolve();
     },
+    setStatusBarTime: (v: unknown) => {
+      calls.push({ method: "setStatusBarTime", args: [v] });
+      return Promise.resolve();
+    },
+    refreshStatusBar: () => calls.push({ method: "refreshStatusBar", args: [] }),
+    refreshGoalDisplays: () => calls.push({ method: "refreshGoalDisplays", args: [] }),
+    logFolderChanged: () => calls.push({ method: "logFolderChanged", args: [] }),
     clearAllMusicPositions: () => calls.push({ method: "clearAllMusicPositions", args: [] }),
     previewSessionEndNotification: () =>
       calls.push({ method: "previewSessionEndNotification", args: [] }),
@@ -216,6 +225,8 @@ describe("the two settings paths cannot drift", () => {
     const headings = ctx.el.settings.filter((s) => s.heading).map((s) => s.name);
     expect(headings).toEqual([
       "Display & behavior",
+      // Desktop only (0.6.8) — phones and tablets have no status bar.
+      "Status bar",
       "Timer appearance",
       "Audio",
       // 0.6.7: one group per moment, as in the timer panel's gear.
@@ -298,6 +309,23 @@ describe("controls are wired through setControlValue", () => {
     expect(ctx.settings.longBreakMinutes).toBe(before);
     componentOf(ctx.el, "Long break duration (minutes)").change?.("25" as never);
     expect(ctx.settings.longBreakMinutes).toBe(25);
+  });
+
+  it("puts a new long break length on a long break already on the clock", async () => {
+    // The engine decides whether the session on the clock is a long break;
+    // the tab only has to tell it, after the save, and only for a value it
+    // stored. Before 0.6.8 it never did, so the clock kept the old length
+    // while start() logged the new one as Scheduled::.
+    await ctx.tab.setControlValue("longBreakMinutes", "0");
+    expect(ctx.calls.map((c) => c.method)).not.toContain("updateDuration");
+
+    await ctx.tab.setControlValue("longBreakMinutes", "20");
+    expect(ctx.settings.longBreakMinutes).toBe(20);
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.indexOf("saveSettings")).toBeLessThan(methods.indexOf("updateDuration"));
+    expect(ctx.calls.find((c) => c.method === "updateDuration")?.args).toEqual([
+      "longBreakMinutes",
+    ]);
   });
 
   it("does not persist a blank number box as zero", () => {
@@ -715,6 +743,39 @@ describe("the audio mixer across the two surfaces", () => {
     await c.tab.setControlValue("musicSoundEnabled", false);
     expect(c.settings.musicSoundEnabled).toBe(false);
     expect(c.calls.some((call) => call.method === "applySettings")).toBe(true);
+  });
+});
+
+describe("the timer panel's length rows", () => {
+  // Read as text, like the segmented rows below: nothing can import the view.
+  const numberCalls = (src: string) => {
+    const out: string[] = [];
+    const opener = /\n([ \t]*)numberRow\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = opener.exec(src)) !== null) {
+      const rest = src.slice(opener.lastIndex);
+      out.push(rest.slice(0, rest.indexOf(`\n${match[1]});`)));
+    }
+    return out;
+  };
+
+  it("tell the engine which setting changed, then fan out to the other panels", () => {
+    const calls = numberCalls(
+      codeOnly(readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8"))
+    );
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      const key = /settings\.(\w+) = v;/.exec(call)?.[1];
+      expect(key, "each row writes one setting").toBeDefined();
+      // The key the engine hears must be the one the row wrote: it is how the
+      // engine tells "Break (m)" from a long break's own length.
+      const told = call.indexOf(`this.timer.updateDuration("${key}");`);
+      expect(told, `${key} must reach the engine by its own name`).toBeGreaterThan(-1);
+      // The engine emits only for the session this setting times, so a
+      // second open panel's row re-seeds from nothing else.
+      const fanOut = call.indexOf("this.plugin.applySettingsToOpenViews();");
+      expect(fanOut, `${key} must fan out`).toBeGreaterThan(told);
+    }
   });
 });
 
@@ -1744,5 +1805,99 @@ describe("the sound rows", () => {
     await flush();
 
     expect(c.settings.focusEndSound).toBe("bell");
+  });
+});
+
+describe("the status bar group (0.6.8)", () => {
+  const names = (el: { settings: Setting[] }) => el.settings.map((s) => s.name);
+
+  it("holds the three status bar rows, on both render paths", () => {
+    const c = makeTab();
+    const declared = declarativeRows(c.tab).filter((r) => r.heading === "Status bar");
+    expect(declared.map((r) => r.name)).toEqual([
+      "Show in status bar",
+      "Time in status bar",
+      "Show today's total as text",
+    ]);
+    c.tab.display();
+    const all = names(c.el);
+    const at = all.indexOf("Status bar");
+    expect(all.slice(at, at + 4)).toEqual([
+      "Status bar",
+      "Show in status bar",
+      "Time in status bar",
+      "Show today's total as text",
+    ]);
+  });
+
+  it("is not built on the mobile apps, heading included", () => {
+    Platform.isDesktopApp = false;
+    try {
+      const c = makeTab();
+      expect(declarativeRows(c.tab).map((r) => r.heading)).not.toContain("Status bar");
+      c.tab.display();
+      for (const name of [
+        "Status bar",
+        "Show in status bar",
+        "Time in status bar",
+        "Show today's total as text",
+      ]) {
+        expect(names(c.el)).not.toContain(name);
+      }
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("offers the four time displays, hidden first", () => {
+    ctx.tab.display();
+    const component = componentOf(ctx.el, "Time in status bar");
+    expect(component.options).toEqual([
+      { value: "hidden", label: "Hidden" },
+      { value: "minutes", label: "Minutes left" },
+      { value: "clock", label: "Clock" },
+      { value: "end", label: "End time" },
+    ]);
+    expect(component.value).toBe("hidden");
+  });
+
+  it("shows a stored value it does not know as hidden, not as an empty dropdown", () => {
+    const c = makeTab({ statusBarTime: "sundial" });
+    expect(c.tab.getControlValue("statusBarTime")).toBe("hidden");
+  });
+
+  it("routes the time choice through the plugin, which repaints and keeps the legacy field", async () => {
+    await ctx.tab.setControlValue("statusBarTime", "minutes");
+    expect(ctx.calls).toContainEqual({ method: "setStatusBarTime", args: ["minutes"] });
+  });
+
+  it("repaints the goal ring and the panels' goal line when the daily goal changes", async () => {
+    // goalMinutes is in the status bar's repaint key, but the timer emits
+    // nothing while idle, so without this the ring kept the old goal.
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "90");
+    expect(ctx.settings.dailyFocusGoalMinutes).toBe(90);
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.indexOf("refreshGoalDisplays")).toBeGreaterThan(methods.indexOf("saveSettings"));
+    expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("re-reads today's total from a new log folder, after saving", async () => {
+    // The total's cache is keyed on the date alone, so it kept serving the old
+    // folder's number; and nothing repaints while idle.
+    await ctx.tab.setControlValue("logFolderPath", "logs/elsewhere");
+    expect(ctx.settings.logFolderPath).toBe("logs/elsewhere");
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("logFolderChanged")).toBeGreaterThan(methods.indexOf("saveSettings"));
+  });
+
+  it("repaints the status bar when the total-as-text switch moves", async () => {
+    // The timer is silent while idle, which is exactly when someone is in this
+    // tab, so without the repaint the bar keeps its old text until a session.
+    await ctx.tab.setControlValue("statusBarShowTotal", true);
+    expect(ctx.settings.statusBarShowTotal).toBe(true);
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("refreshStatusBar")).toBeGreaterThan(methods.indexOf("saveSettings"));
   });
 });

@@ -13,6 +13,7 @@ import {
   removeMisplacedPomodoroMarkersInVault,
 } from "../taskLoader";
 import type { TaskScope } from "../taskScope";
+import { fakeVault } from "./fakeVault";
 
 /**
  * BASELINE LOCKS for loadTasks / groupTasksByDate.
@@ -50,16 +51,7 @@ const folder = (tasksPath: string): TaskScope => ({ kind: "folder", tasksPath })
 
 /** Build an App stub whose vault serves the given path → content map. */
 function fakeApp(files: Record<string, string>): App {
-  const list = Object.keys(files).map((path) => ({
-    path,
-    extension: path.slice(path.lastIndexOf(".") + 1),
-  }));
-  return {
-    vault: {
-      getFiles: () => list,
-      cachedRead: (file: { path: string }) => Promise.resolve(files[file.path]),
-    },
-  } as unknown as App;
+  return { vault: fakeVault(files) } as unknown as App;
 }
 
 describe("loadTasks — pre-0.6.4 behaviour (folder scope)", () => {
@@ -620,10 +612,13 @@ describe("the marker sweep cannot be re-narrowed to a folder", () => {
   it("does not scope the walker by folder, in any parameter shape", () => {
     const walker = bodyOf(loader, "async function processPomodoroMarkersInVault(");
     expect(walker).not.toContain("tasksPath");
-    // The folder test itself must not reappear inside the sweep. It is still
-    // exported and still used — the folder TASK SCOPE needs it — so its mere
-    // presence in the file proves nothing.
+    // No folder route may reappear inside the sweep: not the pre-0.6.8 filter
+    // (gone from the source, and the likeliest thing to be pasted back), and
+    // not the walk 0.6.8 gave the task scope and the logs, which is exported
+    // and in use — so its mere presence in the file proves nothing.
     expect(walker).not.toContain("isPathInFolder");
+    expect(walker).not.toContain("filesInFolder");
+    expect(walker).not.toContain("recurseChildren");
   });
 
   it("gives every exported wrapper a signature with no room for a folder", () => {
