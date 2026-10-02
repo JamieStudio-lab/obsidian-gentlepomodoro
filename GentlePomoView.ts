@@ -49,7 +49,7 @@ import {
   loadTasks as fetchTasks,
   groupTasksByDate,
   linkedTaskDisplayName,
-  taskMatchKey,
+  taskLineKey,
 } from "./taskLoader";
 import {
   TASK_SOURCE_ORDER,
@@ -1619,13 +1619,14 @@ export class GentlePomoView extends ItemView {
   /**
    * Is this picker row the linked task? By its 🆔 when the linked task has one
    * — another task whose text differs only by its fields is another task —
-   * else by its line text through taskMatchKey, as TimerEngine matches it.
+   * else by its line text, count left out (taskLineKey): the list may hold
+   * the line from before or after a count the timer has followed.
    */
   private isLinkedRow(task: TaskItem): boolean {
     if (task.path !== this.timer.currentTaskPath) return false;
     const id = this.timer.currentTaskId;
     if (id) return task.taskId === id;
-    return taskMatchKey(task.text) === taskMatchKey(this.timer.currentTaskLineText);
+    return taskLineKey(task.text) === taskLineKey(this.timer.currentTaskLineText);
   }
 
   /**

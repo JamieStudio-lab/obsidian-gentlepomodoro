@@ -878,6 +878,102 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 2 ⏳ 2026-10-01\n");
   });
 
+  it("keeps counting when the same task is picked again while its session is being logged", async () => {
+    // The pick hands the engine the line as the list read it, count and all;
+    // the session's own count then moves the line on.
+    const line = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, stub, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    const endSession = stub.plugin.logManager.endSession;
+    stub.plugin.logManager.endSession = async () => {
+      await Promise.resolve();
+      timer.setTask("Write docs 🍅 1", PATH, undefined, "Write docs 🍅 1 ⏳ 2026-10-01");
+    };
+    await focusSession(timer);
+    stub.plugin.logManager.endSession = endSession;
+
+    await focusSession(timer);
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 4 ⏳ 2026-10-01\n");
+  });
+
+  it("finds the line again after its count was removed and it was picked again", async () => {
+    const line = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    vault.contents[PATH] = `${line}\n`; // Remove all, or by hand
+    link(timer, line);
+    await focusSession(timer);
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 1 ⏳ 2026-10-01\n");
+
+    vault.contents[PATH] = "- [x] Write docs 🍅 1 ⏳ 2026-10-01 ✅ 2026-10-02\n";
+    const file = vault.getAbstractFileByPath(PATH);
+    if (!file) throw new Error("fixture note missing");
+    await timer.onFileModify(file);
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("keeps counting when a row from a list opened sessions ago is picked", async () => {
+    const line = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    const row = "Write docs 🍅 1 ⏳ 2026-10-01"; // the list is opened now…
+    await focusSession(timer); // …and stays open through another count
+    timer.setTask("Write docs 🍅 1", PATH, undefined, row);
+
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 3 ⏳ 2026-10-01\n");
+  });
+
+  it("counts and unlinks its own ticked line before another that differs only by the count", async () => {
+    // The linked task was ticked during the session; another open task reads
+    // the same once the count is left out. The exact line is the linked one.
+    const other = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${other}\n- [ ] Write docs 🍅 1 ⏳ 2026-10-01\n`);
+    link(timer, "- [ ] Write docs 🍅 1 ⏳ 2026-10-01");
+    vault.contents[PATH] = `${other}\n- [x] Write docs 🍅 1 ⏳ 2026-10-01 ✅ 2026-10-02\n`;
+
+    await timer.finish();
+
+    expect(vault.contents[PATH]).toBe(
+      `${other}\n- [x] Write docs 🍅 2 ⏳ 2026-10-01 ✅ 2026-10-02\n`
+    );
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("unlinks a task ticked after a count it did not make", async () => {
+    // A count from another device arrives by sync; the timer never followed
+    // it, so only the count-free key still finds the line once it is ticked.
+    const line = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    vault.contents[PATH] = "- [x] Write docs 🍅 3 ⏳ 2026-10-01 ✅ 2026-10-02\n";
+
+    const file = vault.getAbstractFileByPath(PATH);
+    if (!file) throw new Error("fixture note missing");
+    await timer.onFileModify(file);
+
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("counts the task picked, not another with the same name picked before it", async () => {
+    // The names match (the date is cut out of both); the lines do not.
+    const a = "- [ ] Submit report 📅 2026-10-01 to Alice";
+    const b = "- [ ] Submit report 📅 2026-10-08 to Alice";
+    const { vault, timer } = counting(`${a}\n${b}\n`);
+    link(timer, a);
+    link(timer, b);
+
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(`${a}\n- [ ] Submit report 🍅 1 📅 2026-10-08 to Alice\n`);
+  });
+
   it("keeps counting a recurrence with a comma after Tasks moved the tag in front of it", async () => {
     const line = "- [ ] Gym 🔁 every week on Monday, Friday 📅 2026-10-05 #health";
     const { vault, timer } = counting(`${line}\n`);
@@ -977,7 +1073,7 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(view).toContain("if (task.path !== this.timer.currentTaskPath) return false;");
     expect(view).toContain("if (id) return task.taskId === id;");
     expect(view).toContain(
-      "return taskMatchKey(task.text) === taskMatchKey(this.timer.currentTaskLineText);"
+      "return taskLineKey(task.text) === taskLineKey(this.timer.currentTaskLineText);"
     );
     expect(view).not.toMatch(/cleanText(?::| ===) this\.timer\.currentTaskName\b/);
   });

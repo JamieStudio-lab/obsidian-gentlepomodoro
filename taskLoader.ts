@@ -16,7 +16,7 @@ export interface TaskPin {
   path: string;
   /**
    * TimerEngine's `currentTaskLineText` — the linked line's raw text, 🍅 count
-   * included. Compared through taskMatchKey.
+   * included. Compared through taskLineKey (count left out).
    */
   lineText: string;
   /** The linked task's 🆔, when it has one: then the pin is matched by it. */
@@ -82,13 +82,14 @@ const LEGACY_FIELD_EMOJI_REGEX = /[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬
 // Trailing Obsidian block reference (`^block-id`) — must stay at the very end.
 const BLOCK_ID_REGEX = /\s+\^[A-Za-z0-9-]+\s*$/;
 
-// What may stand behind the counter's marker. A tag is anything the Tasks
-// plugin's own tag pattern takes (`#[^ !@#$%^&*(),.?":{}|<>]+`) — emoji
-// included, so `#🍅` and `#✅done` are tags, and `#paper📅 2026-10-01` is still
-// a tag and a date by backtracking; a field is a whole Tasks 8.3 field, symbol
-// and value, as its parser takes it off the end of the line; another marker
-// is transparent, so two counter markers on one line are both seen.
-const MARKER_TAG = '#[^\\s!@#$%^&*(),.?":{}|<>]+';
+// What may stand behind the counter's marker. A tag is exactly what the Tasks
+// plugin's own tag pattern takes (`#[^ !@#$%^&*(),.?":{}|<>]+`: only a plain
+// space ends one, and emoji are allowed, so `#🍅` and `#✅done` are tags and
+// `#paper📅 2026-10-01` is a tag and a date by backtracking); a field is a
+// whole Tasks 8.3 field, symbol and value, as its parser takes it off the end
+// of the line; another marker is transparent, so two counter markers on one
+// line are both seen.
+const MARKER_TAG = '#[^ !@#$%^&*(),.?":{}|<>]+';
 const MARKER_FIELD =
   "(?:[🔺⏫🔼🔽⏬]\\uFE0F?" +
   "|[🛫➕⏳⌛📅📆🗓✅❌]\\uFE0F?\\s*\\d{4}-\\d{2}-\\d{2}" +
@@ -102,39 +103,103 @@ const OTHER_MARKER = POMO_MARKER_REGEX.source.replace("(\\d+)", "\\d+");
 //   a block reference (after a space, as Obsidian and Tasks require) or the
 //   end of the line. That is every place the ≤0.5.0 append bug left a marker
 //   and every place Tasks moves one when it rewrites the line.
-// - CANONICAL_TAIL_REGEX: tags or markers, then a field emoji — the spot the
-//   counter writes to, in front of the line's FIRST field emoji. Only when no
-//   field emoji stands before the marker — on the 0.6.8 list, which is where
-//   the counter wrote until now (isCounterMarker): that emoji may be
-//   one in the task text ("Add 🔺 watchlist"), where a genuine field cannot
-//   be required behind it, but a `🍅 N` typed after an emoji in the text
-//   ("Fix ❌ login, then 🍅 2 ✅ tests") must not pass on the emoji alone.
+// - CANONICAL_TAIL_REGEX: tags or markers, then a space and a field emoji —
+//   the spot the counter writes to, in front of the line's FIRST field emoji.
+//   Only when no field emoji stands before the marker — on the 0.6.8 list,
+//   which is where the counter wrote until now (isCounterMarker): that emoji
+//   may be one in the task text ("Add 🔺 watchlist"), where a genuine field
+//   cannot be required behind it, but a `🍅 N` typed after an emoji in the
+//   text ("Fix ❌ login, then 🍅 2 ✅ tests") must not pass on the emoji alone.
+//   The space is load-bearing: the counter always writes one, and without it
+//   a tag such as `#work🔥` gave up its 🔥 as "the field emoji". Other
+//   markers are passed over, so taking one out never turns a `🍅 N` beside it
+//   into a count. One shape is lost: a `🍅 2` typed glued onto a field emoji
+//   (`🍅 2🔁`) is the user's, until the counter writes in front of that emoji
+//   — the space it adds makes theirs a count.
 const MARKER_TAIL_REGEX = new RegExp(
   `^(?:\\s+${MARKER_TAG}|\\s*${MARKER_FIELD}|\\s+${OTHER_MARKER})*(?:\\s+\\^[A-Za-z0-9-]+)?\\s*$`,
   "u"
 );
-const WHOLE_FIELD_REGEX = new RegExp(MARKER_FIELD, "u");
-const WHOLE_FIELD_HERE_REGEX = new RegExp(`^${MARKER_FIELD}`, "u");
+const CANONICAL_TAIL_REGEX = new RegExp(
+  `^(?:\\s+${MARKER_TAG}|\\s+${OTHER_MARKER})*\\s+[${FIELD_EMOJI}]`,
+  "u"
+);
+
+// The Tasks plugin's own reading of a task's text — 8.3's deserializer, read
+// out of its bundle. Up to 21 passes over the END of the text; each pass tries
+// these in this order, taking each off the end and trimming; a pass that takes
+// nothing ends it. A tag is kept (and put back after the description), a field
+// is not. The order matters: a tag is tried before 🆔 and ⛔, so `#x⛔y` at the
+// end is a tag, while a date is tried before a tag, so `#paper📅 2026-09-30` is
+// a tag and a date.
+const TASKS_READING_STEPS: { tag: boolean; at: RegExp }[] = [
+  { tag: false, at: /(?:🔺|⏫|🔼|🔽|⏬)\uFE0F?$/u },
+  { tag: false, at: /✅\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /❌\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /(?:📅|📆|🗓)\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /(?:⏳|⌛)\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /🛫\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /➕\uFE0F? *\d{4}-\d{2}-\d{2}$/u },
+  { tag: false, at: /🔁\uFE0F? *[a-zA-Z0-9, !]+$/u },
+  { tag: false, at: /🏁\uFE0F? *[a-zA-Z]+$/u },
+  { tag: true, at: /(?:^|\s)#[^ !@#$%^&*(),.?":{}|<>]+$/u },
+  { tag: false, at: /🆔\uFE0F? *[a-zA-Z0-9_-]+$/u },
+  { tag: false, at: /⛔\uFE0F? *[a-zA-Z0-9_-]+(?: *, *[a-zA-Z0-9_-]+ *)*$/u },
+];
+// Tasks takes a block link off first.
+const TASKS_BLOCK_LINK_REGEX = /\s\^[A-Za-z0-9-]+\s*$/u;
+
+interface TasksReading {
+  /** What is left once the fields and tags are taken off the end. */
+  description: string;
+  /** The tags taken, in the order they stand on the line. */
+  tags: string[];
+  /** Where each field taken off begins, as an index into the text read. */
+  fieldStarts: number[];
+}
+
+/** How the Tasks plugin reads `text` (see TASKS_READING_STEPS). */
+function tasksReading(text: string): TasksReading {
+  const block = TASKS_BLOCK_LINK_REGEX.exec(text);
+  // Every step cuts from the end, so `rest` is always a prefix of `text` and
+  // an index into it is an index into `text`.
+  let rest = (block ? text.slice(0, block.index) : text).trimEnd();
+  const tags: string[] = [];
+  const fieldStarts: number[] = [];
+  for (let pass = 0; pass <= 20; pass++) {
+    let took = false;
+    for (const step of TASKS_READING_STEPS) {
+      const found = step.at.exec(rest);
+      if (!found) continue;
+      if (step.tag) tags.unshift(found[0].trim());
+      else fieldStarts.push(found.index);
+      rest = rest.slice(0, found.index).trimEnd();
+      took = true;
+    }
+    if (!took) break;
+  }
+  return { description: rest, tags, fieldStarts };
+}
 
 /**
  * Index of the first match of `fieldEmoji` in `text` that is not part of a
- * tag, or -1. A field emoji inside a tag (`#✅done`, `#📅meeting`) is the
- * tag's, and writing the marker in front of it split the tag in two — unless
- * a whole field starts there: `#paper📅 2026-09-30` is a tag and a date to the
- * Tasks plugin, and the marker belongs before the date.
+ * tag, or -1. A field emoji inside a tag (`#✅done`, `#⏫`, `#x⛔y`) is the
+ * tag's — writing the marker in front of it split the tag, and could hand the
+ * task a priority, an ID or a dependency it did not have — unless the Tasks
+ * plugin itself reads a field starting there: `#paper📅 2026-09-30` is a tag
+ * and a date to it, and the marker belongs before the date.
  */
 function firstFieldEmoji(text: string, fieldEmoji: RegExp): number {
+  let reading: TasksReading | undefined;
   for (const match of text.matchAll(new RegExp(fieldEmoji.source, "gu"))) {
     const index = match.index ?? 0;
     const word = /\S*$/u.exec(text.slice(0, index))?.[0] ?? "";
-    if (!word.startsWith("#") || WHOLE_FIELD_HERE_REGEX.test(text.slice(index))) return index;
+    if (!word.startsWith("#")) return index;
+    reading ??= tasksReading(text);
+    if (reading.fieldStarts.includes(index)) return index;
   }
   return -1;
 }
-const CANONICAL_TAIL_REGEX = new RegExp(
-  `^(?:\\s+${MARKER_TAG}|\\s+${OTHER_MARKER})*\\s*[${FIELD_EMOJI}]`,
-  "u"
-);
 const PRIORITY_REGEX = /[🔺🔽🔥⏫⏬🔼]\uFE0F?/gu;
 const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 
@@ -156,29 +221,16 @@ export function normalizeTaskText(text: string): string {
   return text.replace(CLEANUP_REGEX, "").trim();
 }
 
-// The Tasks plugin's own fields, each as it takes one off the END of a line
-// (8.3, read out of its bundle: symbol, optional U+FE0F, the value, `$`).
-const TRAILING_FIELD_REGEXES = [
-  /[🔺⏫🔼🔽⏬]\uFE0F?\s*$/u,
-  /[🛫➕⏳⌛📅📆🗓✅❌]\uFE0F?\s*\d{4}-\d{2}-\d{2}\s*$/u,
-  /🔁\uFE0F?\s*[a-zA-Z0-9, !]+$/u,
-  /🏁\uFE0F?\s*[a-zA-Z]+\s*$/u,
-  /🆔\uFE0F?\s*[a-zA-Z0-9_-]+\s*$/u,
-  /⛔\uFE0F?\s*[a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*\s*$/u,
-];
-const TRAILING_TAG_REGEX = /(?:^|\s)(#[^\s!@#$%^&*(),.?":{}|<>]+)\s*$/u;
-const TRAILING_BLOCK_LINK_REGEX = /\s\^[A-Za-z0-9-]+\s*$/u;
-
 /**
  * The form a task line is compared in when a task with no 🆔 is matched by its
- * text — TimerEngine's `currentTaskLineText` against a note's lines, and the
- * picker's tick and "Linked task" pin. Takes the line's RAW text (after the
- * checkbox), never the logged name, and is comparison only.
+ * text — TimerEngine's `currentTaskLineText` against a note's lines. Takes the
+ * line's RAW text (after the checkbox), never the logged name, and is
+ * comparison only.
  *
- * It is the Tasks plugin's own reading of the line: fields come off the END,
- * one by one, and tags among them are kept and put back after the rest. That
- * is what survives Tasks rewriting the line — when it ticks it, edits it or
- * starts the next recurrence it moves those tags in front of the fields,
+ * It is the Tasks plugin's own reading of the line (tasksReading): fields
+ * come off the END, tags among them are kept and put back after the rest.
+ * That is what survives Tasks rewriting the line — when it ticks it, edits it
+ * or starts the next recurrence it moves those tags in front of the fields,
  * writes the fields in its own order and 🗓 back as 📅 — while text that only
  * looks like a field inside the user's words ("Fix ⛔ login page", "Refund ❌
  * 2026-09-30 order") stays, so two different tasks are not made one. Keyed on
@@ -187,28 +239,25 @@ const TRAILING_BLOCK_LINK_REGEX = /\s\^[A-Za-z0-9-]+\s*$/u;
  * stood (a priority takes the word after it, a recurrence stops at a comma).
  */
 export function taskMatchKey(lineText: string): string {
-  let text = lineText.replace(TRAILING_BLOCK_LINK_REGEX, "");
-  const tags: string[] = [];
-  for (let found = true; found; ) {
-    found = false;
-    for (const field of TRAILING_FIELD_REGEXES) {
-      if (field.test(text)) {
-        text = text.replace(field, "");
-        found = true;
-      }
-    }
-    const tag = text.match(TRAILING_TAG_REGEX);
-    if (tag?.index !== undefined) {
-      tags.unshift(tag[1]);
-      text = text.slice(0, tag.index);
-      found = true;
-    }
-  }
-  return [text, ...tags]
+  const { description, tags } = tasksReading(lineText);
+  return [description, ...tags]
     .join(" ")
     .replace(VARIATION_SELECTOR_REGEX, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * taskMatchKey without the counter's markers: the same for every count of a
+ * line, so a task is still found when the text the timer holds for it is
+ * older or newer than the line — a picker list opened before a count, a count
+ * removed by hand or by Remove all, a pick while a session was being logged.
+ * The timer tries the exact key first and this second; the picker's tick and
+ * pin use this. A `🍅 N` the user typed is not the counter's and stays in it,
+ * so "Buy 🍅 2 kg" and "Buy kg" are still two tasks.
+ */
+export function taskLineKey(lineText: string): string {
+  return taskMatchKey(removeAnyPomodoroMarker(lineText));
 }
 
 export function normalizeTaskTextForDisplay(text: string): string {
@@ -229,12 +278,11 @@ export function normalizeTaskTextForDisplay(text: string): string {
 /**
  * The name the "Current task" button shows for the linked task.
  *
- * The timer holds a task by its normalizeTaskText form, and that form keeps
- * `#tags` on purpose: it is the key the picker, the 🆔 name refresh, the
- * completion unlink and the 🍅 counter all compare against (all but the
- * refresh through TimerEngine's `currentTaskLineText`, which starts as this
- * name and follows each count), and it is the name written into the daily
- * log, where a Dataview query may read a tag straight off the line. So the
+ * The timer names a task by its normalizeTaskText form, and that form keeps
+ * `#tags` on purpose: it is the name written into the daily log, where a
+ * Dataview query may read a tag straight off the line, and the name the 🆔
+ * rename rule compares. (Finding the task's line is another matter: by its
+ * 🆔, or by its raw line text through taskMatchKey and taskLineKey.) So the
  * button derives a display form here rather than the timer storing a
  * different name. It is the cleanup the picker's rows get, so
  * the two read alike; only the row adds a priority icon, which the timer's
@@ -270,10 +318,10 @@ function isCounterMarker(line: string, match: RegExpMatchArray): boolean {
   if (index > 0 && !/\s/u.test(line[index - 1])) return false;
   const tail = line.slice(index + match[0].length);
   if (MARKER_TAIL_REGEX.test(tail)) return true;
-  return (
-    firstFieldEmoji(line.slice(0, index), LEGACY_FIELD_EMOJI_REGEX) === -1 &&
-    CANONICAL_TAIL_REGEX.test(tail)
-  );
+  // Read on the whole line: whether an emoji inside a tag is a field depends
+  // on what follows it.
+  const firstField = firstFieldEmoji(line, LEGACY_FIELD_EMOJI_REGEX);
+  return (firstField === -1 || firstField > index) && CANONICAL_TAIL_REGEX.test(tail);
 }
 
 /**
@@ -298,11 +346,13 @@ function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): strin
 }
 
 /**
- * The counter's markers in a *harmful* position — after the line's first
- * whole Tasks field (the ≤0.5.0 append bug, which hides every field from the
- * Tasks plugin; also where 0.5.1–0.6.8 left a marker behind an ⌛ 📆 or 🗓
- * date) or after a trailing `^block-id` (which breaks the block reference). A
- * field emoji that is only text ("🗓️ Plan …") does not start the fields.
+ * The counter's markers in a *harmful* position: where they stop the Tasks
+ * plugin reading the line's fields — inside or after the fields it reads once
+ * the markers are taken out (the ≤0.5.0 append bug, which hides every field;
+ * also where 0.5.1–0.6.8 left a marker behind an ⌛ 📆 or 🗓 date) — or after a
+ * trailing `^block-id` (which breaks the block reference). A field emoji that
+ * is only text ("🗓️ Plan …", "Add 🔺 watchlist …"), or one inside a tag, does
+ * not start the fields, because Tasks does not read it as one.
  *
  * Deliberately conservative: only the counter's markers (isCounterMarker) can
  * be misplaced, so a `🍅 N` the user typed is never moved or deleted — not one
@@ -311,13 +361,16 @@ function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): strin
  * could not fix the line for the Tasks plugin, which stops at the words.
  */
 function misplacedCounterMarkers(line: string, markers: RegExpMatchArray[]): RegExpMatchArray[] {
-  const meta = line.match(WHOLE_FIELD_REGEX);
-  const block = removePomodoroMarkers(line, markers).match(BLOCK_ID_REGEX);
+  const stripped = removePomodoroMarkers(line, markers);
+  const fieldStarts = tasksReading(stripped).fieldStarts;
+  const fieldsAt = fieldStarts.length > 0 ? Math.min(...fieldStarts) : -1;
+  const block = stripped.match(BLOCK_ID_REGEX);
   const blockAt = block ? line.lastIndexOf(block[0].trim()) : -1;
-  return markers.filter((match) => {
+  return markers.filter((match, i) => {
     const index = match.index ?? 0;
-    const afterFields = meta?.index !== undefined && index > meta.index;
-    return afterFields || (blockAt !== -1 && index > blockAt);
+    // Where the marker stands once the markers are out, in `stripped`.
+    const at = removePomodoroMarkers(line.slice(0, index), markers.slice(0, i)).trimEnd().length;
+    return (fieldsAt !== -1 && at > fieldsAt) || (blockAt !== -1 && index > blockAt);
   });
 }
 
@@ -775,7 +828,7 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
   const pinFile =
     pin && !inScope.some((f) => f.path === pin.path) ? markdownFileAt(app, pin.path) : undefined;
   if (pinFile) files.push(pinFile);
-  const pinKey = pin ? taskMatchKey(pin.lineText) : null;
+  const pinKey = pin ? taskLineKey(pin.lineText) : null;
 
   const limitDate = moment().add(limitDays, "days").endOf("day");
 
@@ -803,7 +856,7 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
       const isPin =
         pin !== null &&
         file.path === pin.path &&
-        (pin.taskId ? taskId === pin.taskId : taskMatchKey(originalText) === pinKey);
+        (pin.taskId ? taskId === pin.taskId : taskLineKey(originalText) === pinKey);
 
       if (pinOnly && !isPin) continue;
 

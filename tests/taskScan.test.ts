@@ -454,6 +454,17 @@ describe("loadTasks — the pinned (linked) task", () => {
     expect(tasks.filter((t) => t.pinned).map((t) => t.taskId)).toEqual(["r1"]);
   });
 
+  it("still pins the linked line after a count the timer has not seen", async () => {
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task 🍅 2 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.find((t) => t.pinned)?.cleanText).toBe("The linked task 🍅 2");
+  });
+
   it("still finds the linked line after the Tasks plugin rewrote it", async () => {
     // Linked as "- [ ] The linked task 📅 2026-09-05 #work ⛔ abc". Tasks then
     // moved the tag and the ⛔ in front of the date when it rewrote the line.

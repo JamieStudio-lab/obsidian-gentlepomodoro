@@ -58,7 +58,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   plugin has cancelled (`[-]`) or marked in progress (`[/]`).
 - A line with two counter markers (after a sync merge, or an edit) is settled
   in one run: the count is the first one's, the counter and **Repair** leave
-  one marker, and **Remove** and **Remove all** delete them all. The
+  one marker, **Remove** deletes the misplaced ones (a correctly placed one
+  stays), and **Remove all** deletes them all. The
   confirmation dialogs now count markers rather than lines, so their numbers
   are exact, and a second run finds nothing.
 - **A task without a 🆔 is still recognised after the Tasks plugin rewrites its
@@ -69,8 +70,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   together with another task that differs only in its fields.
 - Picking or clearing a task while a session is ending no longer gives that
   session's 🍅 to the new task, or loses it; a session counts the task it was
-  for. Picking the already linked task again from a list opened before a
-  count no longer stops the counting.
+  for. Picking the already linked task again — from a list opened before a
+  count, or after you removed its count — no longer stops the counting.
 
 ### Changed
 

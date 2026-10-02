@@ -9,6 +9,7 @@ import {
   findTaskTextById,
   incrementPomodoroCount,
   taskNameAfterEdit,
+  taskLineKey,
   taskMatchKey,
 } from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
@@ -80,28 +81,42 @@ interface TaskLink {
  * Index of a linked task's line in a note's lines, or -1.
  *
  * By 🆔 when the task has one. Without one, by its line text (TimerEngine's
- * `currentTaskLineText`), compared through taskMatchKey so a line the Tasks
- * plugin has rewritten still matches — and an OPEN line wins over a done one:
- * a recurring task leaves done copies behind with the same text, and with the
- * Tasks setting "next recurrence appears on the line below" they sit above the
- * open one. A done line is the answer only when no open line matches, i.e. the
- * task was ticked during the session, which still earns its 🍅 (handleFinished
- * counts before it unlinks).
+ * `currentTaskLineText`): first by taskMatchKey, the text exactly as the timer
+ * last knew it, then by taskLineKey, the same without the counter's markers,
+ * for when that text is older or newer than the line (a list opened before a
+ * count, a count removed, a pick while a session was being logged). Both read
+ * the line as the Tasks plugin does, so a line it rewrote still matches.
+ *
+ * Within each, an OPEN line wins over a done one: a recurring task leaves done
+ * copies behind with the same text, and with the Tasks setting "next
+ * recurrence appears on the line below" they sit above the open one. A done
+ * line is the answer only when no open line matches, i.e. the task was ticked
+ * during the session, which still earns its 🍅 (handleFinished counts before it
+ * unlinks). An exact done line wins over a count-free open one: that is the
+ * linked task, ticked; the other is another task differing only in its count.
  */
 function linkedLineIndex(lines: string[], taskId: string | undefined, lineText: string): number {
   if (taskId) {
     return lines.findIndex((line) => line.match(TASK_ID_REGEX)?.[1] === taskId);
   }
 
-  const key = taskMatchKey(lineText);
-  let done = -1;
-  for (let i = 0; i < lines.length; i++) {
+  const exact = taskMatchKey(lineText);
+  const loose = taskLineKey(lineText);
+  let best = -1;
+  let bestRank = Infinity;
+  for (let i = 0; i < lines.length && bestRank > 0; i++) {
     const taskMatch = lines[i].match(TASK_LINE_REGEX);
-    if (!taskMatch || taskMatchKey(taskMatch[2]) !== key) continue;
-    if (taskMatch[1] === " ") return i;
-    if (done === -1) done = i;
+    if (!taskMatch) continue;
+    const tier =
+      taskMatchKey(taskMatch[2]) === exact ? 0 : taskLineKey(taskMatch[2]) === loose ? 2 : -1;
+    if (tier === -1) continue;
+    const rank = tier + (taskMatch[1] === " " ? 0 : 1);
+    if (rank < bestRank) {
+      best = i;
+      bestRank = rank;
+    }
   }
-  return done;
+  return best;
 }
 
 export class TimerEngine {
@@ -249,18 +264,13 @@ export class TimerEngine {
   /**
    * Update the active task and notify LogManager so future log lines reflect
    * the change. `lineText` is the line's raw text after the checkbox, which a
-   * task with no 🆔 is matched by; it defaults to the name. Linking the task
-   * that is already linked keeps the line text the engine has followed: a
-   * picker loaded before a count still offers the old text, and taking it
-   * again stopped the counting it had just been fixed to do.
+   * task with no 🆔 is found by; it defaults to the name. It may be older than
+   * the line — a picker list opened before a count still offers the old text —
+   * which is why linkedLineIndex falls back to the count-free key.
    */
   setTask(name: string, path?: string, taskId?: string, lineText: string = name) {
-    const sameTask =
-      name === this.currentTaskName &&
-      path === this.currentTaskPath &&
-      taskId === this.currentTaskId;
     this.currentTaskName = name;
-    if (!sameTask) this.currentTaskLineText = lineText;
+    this.currentTaskLineText = lineText;
     this.currentTaskPath = path;
     this.currentTaskId = taskId;
     this.state.taskName = name;
@@ -276,8 +286,9 @@ export class TimerEngine {
    * The refresh is how a rename reaches the log: the timer takes the new name
    * and every past log line with the ID is rewritten to it. The 🍅 counter's
    * count is not a rename (`taskNameAfterEdit`) — taken as one, every count
-   * rewrote the task's whole history (to 0.6.8). It only moves the line text
-   * the picker matches the line by.
+   * rewrote the task's whole history (to 0.6.8). It only moves
+   * `currentTaskLineText`, kept current although a 🆔 task is found by its ID
+   * everywhere (the counter, the unlink, the picker's tick and pin).
    */
   async onFileModify(file: TAbstractFile) {
     // A chosen sound file changed — edited, or updated by sync. Decode the new
@@ -660,7 +671,12 @@ export class TimerEngine {
 
       let foundIncomplete = false;
       let foundComplete = false;
-      const linkedKey = taskMatchKey(link.lineText);
+      // A task with no 🆔: as linkedLineIndex finds it — lines matching the
+      // exact text decide, and only when there are none, the count-free ones.
+      const exactKey = taskMatchKey(link.lineText);
+      const looseKey = taskLineKey(link.lineText);
+      const exact = { open: false, done: false };
+      const loose = { open: false, done: false };
 
       for (const line of lines) {
         // If current task has ID, match by ID
@@ -679,16 +695,22 @@ export class TimerEngine {
           continue;
         }
 
-        // Fallback: match by normalized text — as the 🍅 counter last left it,
-        // not as it was linked, or the first count hides the line from here.
         const taskMatch = line.match(TASK_LINE_REGEX);
-        if (taskMatch && taskMatchKey(taskMatch[2]) === linkedKey) {
-          if (taskMatch[1] === " ") {
-            foundIncomplete = true;
-            break;
-          }
-          foundComplete = true;
-        }
+        if (!taskMatch) continue;
+        const tier =
+          taskMatchKey(taskMatch[2]) === exactKey
+            ? exact
+            : taskLineKey(taskMatch[2]) === looseKey
+              ? loose
+              : null;
+        if (tier && taskMatch[1] === " ") tier.open = true;
+        else if (tier) tier.done = true;
+      }
+
+      if (!this.currentTaskId) {
+        const tier = exact.open || exact.done ? exact : loose;
+        foundIncomplete = tier.open;
+        foundComplete = tier.done;
       }
 
       if (!foundIncomplete && foundComplete) {

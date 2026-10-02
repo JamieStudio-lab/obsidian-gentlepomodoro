@@ -953,7 +953,13 @@ describe("the 🍅 readers agree with each other on generated lines", () => {
         // A `^id` after a space is a block reference only at the line's end;
         // mid-line, the markers behind it decide what it is. Real notes have
         // one only at the end (added below), so mid-line `^` stays glued.
-        const glue = j === 0 || piece.startsWith("^") || next(5) === 0;
+        // A `🍅 N` glued onto a field emoji is the one shape the counter's
+        // own write can turn into a count (CANONICAL_TAIL_REGEX), so it is
+        // left to the targeted tests rather than to the invariants here.
+        const afterMarker = /🍅\s*\d+(?:\s*\([^)]*\))?$/u.test(text);
+        const fieldEmoji = /^[⏳⌛📅📆🗓🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]/u.test(piece);
+        const glue =
+          j === 0 || piece.startsWith("^") || (next(5) === 0 && !(afterMarker && fieldEmoji));
         text += (glue ? "" : " ") + piece;
       }
       if (next(6) === 0) text += " ^blk1";
@@ -1069,6 +1075,52 @@ describe("which 🍅 is the counter's — review round 2", () => {
     );
   });
 
+  it.each([
+    ["a priority", "- [ ] Call Bob #⏫ 📅 2026-10-02", "- [ ] Call Bob #⏫ 🍅 1 📅 2026-10-02"],
+    ["a ⛔", "- [ ] Plan launch #x⛔y ⏳ 2026-10-01", "- [ ] Plan launch #x⛔y 🍅 1 ⏳ 2026-10-01"],
+    ["an 🆔", "- [ ] Write #🆔draft ⏳ 2026-10-01", "- [ ] Write #🆔draft 🍅 1 ⏳ 2026-10-01"],
+    ["a 🔁", "- [ ] Water #daily🔁 ⏳ 2026-10-01", "- [ ] Water #daily🔁 🍅 1 ⏳ 2026-10-01"],
+  ])(
+    "never writes into a tag with %s in it — Tasks reads the tag, not a field",
+    (_l, line, after) => {
+      // Written in front of the emoji, the split handed the task a priority, a
+      // dependency or an ID it did not have.
+      expect(incrementPomodoroCount(line)).toBe(after);
+      expect(repairPomodoroMarkerPlacement(after)).toBe(after);
+    }
+  );
+
+  it("never takes a typed 🍅 in front of a tag with a field emoji in it as the count", () => {
+    for (const line of [
+      "- [ ] Read 🍅 3 #work🔥 notes",
+      "- [ ] Practice 🍅 2 #habit🔥 daily ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] Read 🍅 3 #work🔥 notes")).toBe(
+      "- [ ] Read 🍅 3 #work🔥 notes 🍅 1"
+    );
+  });
+
+  it("leaves two markers alone when both stand in front of the fields", () => {
+    const line = "- [ ] Task 🍅 2 🍅 3 📅 2026-10-01";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+    expect(repairPomodoroMarkersInContent(line).markersChanged).toBe(0);
+  });
+
+  it("calls a marker misplaced only where it stops Tasks reading the fields", () => {
+    // Behind an emoji in the text, the fields Tasks reads are still behind it.
+    for (const line of [
+      "- [ ] Add 🔺 watchlist 🍅 2 ⏳ 2026-10-01",
+      "- [ ] Write #🔺urgent 🍅 3 ⏳ 2026-10-01",
+      "- [ ] Write ⏳ 2026-10-01 words 🍅 3",
+    ]) {
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+    }
+  });
+
   it("repairs a marker 0.6.8 left behind a real 📆 date", () => {
     expect(repairPomodoroMarkerPlacement("- [ ] Write docs 📆 2026-10-05 🍅 3 🆔 abc123")).toBe(
       "- [ ] Write docs 🍅 3 📆 2026-10-05 🆔 abc123"
@@ -1127,5 +1179,18 @@ describe("taskMatchKey — a task's text as the Tasks plugin reads it", () => {
     ["the count", "Write docs 🍅 1 ⏳ 2026-10-01", "Write docs 🍅 2 ⏳ 2026-10-01"],
   ])("tells two tasks apart — %s", (_label, a, b) => {
     expect(taskMatchKey(a)).not.toBe(taskMatchKey(b));
+  });
+});
+
+describe("taskMatchKey reads tags as Tasks does", () => {
+  it("keeps a tag with a no-break space in it whole, as Tasks does", () => {
+    expect(taskMatchKey("Write docs ⏫ #a\u00a0b 📅 2026-10-01")).toBe(
+      taskMatchKey("Write docs #a\u00a0b ⏫ 📅 2026-10-01 ✅ 2026-10-02")
+    );
+  });
+
+  it("takes a tag before an 🆔 or ⛔ at the end, as Tasks does", () => {
+    expect(taskMatchKey("Plan launch #x⛔y ⏳ 2026-10-01")).toBe("Plan launch #x⛔y");
+    expect(taskMatchKey("Write #paper📅 2026-09-30")).toBe("Write #paper");
   });
 });

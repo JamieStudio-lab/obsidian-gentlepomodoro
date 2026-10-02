@@ -345,7 +345,7 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Repair misplaced pomodoro markers?",
-        body: `Move ${scan.markersAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields? Their counts are kept.`,
+        body: `Move ${scan.markersAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields? Their counts are kept — a line with two markers keeps the first one's.`,
         ctaText: `Repair ${scan.markersAffected} marker(s)`,
       });
       if (!confirmed) return;

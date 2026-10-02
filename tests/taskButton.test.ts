@@ -97,9 +97,8 @@ describe("linkedTaskDisplayName", () => {
 
 describe("the timer's own name keeps its tags", () => {
   // The display fix must never move into normalizeTaskText. That form is the
-  // key the picker, the 🆔 refresh, the completion unlink and the 🍅 counter
-  // compare against, and the name written into `Task:: [[path|name]]` — a
-  // Dataview query can read the tag straight off the log line.
+  // name written into `Task:: [[path|name]]` — a Dataview query can read the
+  // tag straight off the log line — and the name the 🆔 rename rule compares.
   it("normalizeTaskText still returns the #tag", () => {
     expect(normalizeTaskText(textOf(LINES[2]))).toBe(
       "Register for CPR/AED and First Aid Training at Recwell #task/other/xx"
@@ -108,8 +107,8 @@ describe("the timer's own name keeps its tags", () => {
 
   it("and it is the name the view links, not the row's display text", () => {
     // The likeliest regression of all: "fixing" the button by linking the
-    // display form. That strips the tag from the key and from the log line,
-    // and every other test here would still pass.
+    // display form. That strips the tag from the log line, and every other
+    // test here would still pass.
     expect(code).toContain(
       "this.timer.setTask(task.cleanText, task.path, task.taskId, task.text);"
     );
