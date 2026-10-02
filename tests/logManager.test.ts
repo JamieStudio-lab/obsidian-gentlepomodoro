@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TFile } from "obsidian";
+// The recording Notice, imported from the mock by path so `tsc` sees its
+// `shown` list (tests/settingTab.test.ts explains why this is the same module).
+import { Notice } from "../__mocks__/obsidian";
 import {
   effectiveFocusBaseSeconds,
   formatLogLine,
@@ -10,6 +13,7 @@ import {
 } from "../logManager";
 import type GentlePomoPlugin from "../main";
 import type { MomentLike } from "../momentTypes";
+import { fakeVault } from "./fakeVault";
 
 // Minimal moment-like stub that supports the two methods formatLogLine uses.
 class TestMoment implements MomentLike {
@@ -474,5 +478,46 @@ describe("LogManager.writeLog — daily-log write robustness", () => {
     };
 
     await expect(runBreakSession(vault)).resolves.toBeUndefined();
+  });
+});
+
+describe("LogManager.refreshLoggedTaskNamesById", () => {
+  // The command re-reads each logged task with a 🆔 from its line, so renames
+  // reach old logs. The line also carries the 🍅 counter's count, which is not
+  // a rename: up to 0.6.8 the command wrote the current count into every line.
+  const line = (name: string, id: string) =>
+    `- 🍅 Focus | Task:: [[Projects/Docs.md|${name}]] | ID:: ${id} | Start:: 2026-09-30 09:00:00 | ` +
+    "End:: 2026-09-30 09:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | " +
+    "Status:: finished | Type:: focus";
+
+  it("renames a line whose task was renamed, and leaves one that differs only by the count", async () => {
+    const before = [
+      line("Write docs", "abc123"),
+      line("Write docs 🍅 4", "abc123"),
+      line("Old name", "abc123"),
+      line("Read paper", "def456"),
+    ].join("\n");
+    const vault = fakeVault({
+      "Projects/Docs.md":
+        "- [ ] Write docs 🍅 9 🆔 abc123 ⏳ 2026-10-01\n- [ ] Read paper 🆔 def456\n",
+      "Logs/2026-09-30-gentle-pomodoro-log.md": before,
+    });
+    const plugin = {
+      settings: { logFolderPath: "Logs" },
+      app: { vault },
+    } as unknown as GentlePomoPlugin;
+    Notice.shown.length = 0;
+
+    await new LogManager(plugin).refreshLoggedTaskNamesById();
+
+    expect(vault.contents["Logs/2026-09-30-gentle-pomodoro-log.md"]).toBe(
+      [
+        line("Write docs", "abc123"),
+        line("Write docs 🍅 4", "abc123"),
+        line("Write docs 🍅 9", "abc123"),
+        line("Read paper", "def456"),
+      ].join("\n")
+    );
+    expect(Notice.shown).toEqual(["[GentlePomo] Updated 1 log line(s) across 1 file(s)."]);
   });
 });

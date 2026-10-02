@@ -6,9 +6,11 @@ import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
 import { logger } from "./logger";
 import {
   TASK_LINE_REGEX,
-  findTaskNameById,
+  findTaskTextById,
   incrementPomodoroCount,
   normalizeTaskText,
+  taskLineName,
+  taskNameAfterEdit,
 } from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
 import {
@@ -185,10 +187,11 @@ export class TimerEngine {
    * 🆔 is found by. It starts as the linked name and follows every count this
    * engine writes ("Write docs" → "Write docs 🍅 1"), because that write
    * changes the very text the line is matched on — matching on the linked name
-   * found the line once and never again. A match key only, never logged or
-   * shown: the log, the status bar and the "Current task" button keep
-   * `currentTaskName`, the name the task was linked by, so counting can never
-   * rename a task in anyone's log.
+   * found the line once and never again. For a task with a 🆔 it also follows
+   * whatever `onFileModify` reads off the line, a count made elsewhere
+   * included. A match key only, never logged or shown: the log, the status bar
+   * and the "Current task" button keep `currentTaskName`, the name the task
+   * was linked by, so counting can never rename a task in anyone's log.
    */
   public currentTaskLineText: string = NO_TASK_LABEL;
 
@@ -220,6 +223,12 @@ export class TimerEngine {
    * Reaction to vault file changes. If the modified file holds the active task,
    * refreshes the task name (when ID is known) and auto-unlinks if it's now
    * completed (only while not currently running).
+   *
+   * The refresh is how a rename reaches the log: the timer takes the new name
+   * and every past log line with the ID is rewritten to it. The 🍅 counter's
+   * count is not a rename (`taskNameAfterEdit`) — taken as one, every count
+   * rewrote the task's whole history (to 0.6.8). It only moves the line text
+   * the picker matches the line by.
    */
   async onFileModify(file: TAbstractFile) {
     // A chosen sound file changed — edited, or updated by sync. Decode the new
@@ -234,19 +243,19 @@ export class TimerEngine {
     if (file.path !== this.currentTaskPath) return;
 
     // 3. Refresh task name by ID (if available)
-    if (this.currentTaskId) {
-      const latestName = await findTaskNameById(
-        this.plugin.app,
-        this.currentTaskPath,
-        this.currentTaskId
-      );
-      if (latestName && latestName !== this.currentTaskName) {
-        this.setTask(latestName, this.currentTaskPath, this.currentTaskId);
-        await this.plugin.logManager.updateLoggedTaskName(
-          this.currentTaskId,
-          latestName,
-          this.currentTaskPath
-        );
+    const taskId = this.currentTaskId;
+    const taskPath = this.currentTaskPath;
+    if (taskId) {
+      const text = await findTaskTextById(this.plugin.app, taskPath, taskId);
+      // The read awaited: a task linked meanwhile is not this line's.
+      if (text !== null && this.currentTaskId === taskId && this.currentTaskPath === taskPath) {
+        const latestName = taskNameAfterEdit(this.currentTaskName, text);
+        if (latestName !== this.currentTaskName) {
+          this.setTask(latestName, taskPath, taskId);
+          await this.plugin.logManager.updateLoggedTaskName(taskId, latestName, taskPath);
+        } else {
+          this.currentTaskLineText = taskLineName(text);
+        }
       }
     }
 

@@ -515,7 +515,8 @@ function markdownNotesAt(app: App, paths: string[]): TFile[] {
   return found.sort(compareVaultOrder);
 }
 
-export function findTaskNameByIdInContent(content: string, taskId: string): string | null {
+/** The text of the task line carrying this 🆔 (after the checkbox), or null. */
+export function findTaskTextByIdInContent(content: string, taskId: string): string | null {
   if (!taskId) return null;
 
   const lines = content.split("\n");
@@ -526,14 +527,13 @@ export function findTaskNameByIdInContent(content: string, taskId: string): stri
     const idMatch = line.match(TASK_ID_REGEX);
     if (!idMatch || idMatch[1] !== taskId) continue;
 
-    const cleanText = normalizeTaskText(lineMatch[2]);
-    return cleanText || "Untitled Task";
+    return lineMatch[2];
   }
 
   return null;
 }
 
-export async function findTaskNameById(
+export async function findTaskTextById(
   app: App,
   filePath: string,
   taskId: string
@@ -544,7 +544,49 @@ export async function findTaskNameById(
   if (!(file instanceof TFile)) return null;
 
   const content = await app.vault.read(file);
-  return findTaskNameByIdInContent(content, taskId);
+  return findTaskTextByIdInContent(content, taskId);
+}
+
+/** A task line's name: what the picker links it by, and what is logged for it. */
+export function taskLineName(text: string): string {
+  return normalizeTaskText(text) || "Untitled Task";
+}
+
+/**
+ * The name a task with a 🆔 goes by once its line reads `text`: the line's
+ * name, unless all that changed since `previous` is the 🍅 counter's count —
+ * then `previous`, kept as it is.
+ *
+ * A 🆔 task's name is read again from its line when its note changes, when a
+ * session's log line is written, and by "Refresh log task names by ID", so
+ * that a rename reaches the daily log. The count is on that line too, and up
+ * to 0.6.8 each count was taken for a rename: every session renamed the task
+ * and rewrote every log line it ever had to the new number. A task with no 🆔
+ * keeps the name it was linked by (0.6.9); this is the same rule.
+ *
+ * Decided on the LINE, where the Tasks fields still mark the counter's place
+ * (`removeAnyPomodoroMarker` takes only the counter's marker off it): the line
+ * is put back with `previous`'s count in that place, and if it then reads as
+ * `previous`, only the count changed. So a `🍅 2` typed into the description
+ * is text, and changing it is a rename. `previous` is a name, whose fields are
+ * gone, so which of its `🍅 N` was the count cannot be told — and the counter
+ * test reads text after the fields as typed — so each one is tried; one that
+ * puts the line back exactly is a count. Spacing is ignored only when a count
+ * is involved, since putting one back respaces the line; with none on either
+ * side, any change is a rename, as it always was.
+ */
+export function taskNameAfterEdit(previous: string, text: string): string {
+  const name = taskLineName(text);
+  const uncounted = removeAnyPomodoroMarker(text);
+  const counts = pomodoroMarkers(previous).map((match) => parseInt(match[1], 10));
+  if (name === previous || (uncounted === text && counts.length === 0)) return name;
+
+  const before = [uncounted, ...counts.map((count) => placePomodoroMarker(uncounted, count))];
+  return before.some((line) => sameWords(taskLineName(line), previous)) ? previous : name;
+}
+
+function sameWords(a: string, b: string): boolean {
+  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
 }
 
 export async function loadTasks(app: App, options: TaskLoadOptions): Promise<TaskItem[]> {
@@ -588,7 +630,7 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
       const due = dueMatch ? dueMatch[1] : null;
 
       const effectiveDateStr = scheduled || due;
-      const cleanText = normalizeTaskText(originalText) || "Untitled Task";
+      const cleanText = taskLineName(originalText);
       const isPin = pin !== null && file.path === pin.path && cleanText === pin.cleanText;
 
       if (pinOnly && !isPin) continue;

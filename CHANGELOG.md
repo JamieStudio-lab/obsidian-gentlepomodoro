@@ -19,6 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the open task, not a done copy with the same text.
 - Your daily log is unchanged: a task keeps the name it was linked by, so the
   count never renames it there or on the **Current task** button.
+- **A task with a 🆔 is no longer renamed by its own count.** With the counter
+  on, every finished session took the new `🍅 N` into the task's logged name
+  and rewrote every past log line for that task, in every daily log, to the
+  new number. A change that is only the count — the counter's, one synced from
+  another device, or the count removed — now keeps the name. A real rename
+  still updates your logs, and so does **Refresh log task names by ID**, which
+  now leaves the count alone too. A `🍅 N` you typed inside a task's text is
+  still part of its name. Log lines already rewritten keep the name they have.
 - **The 🍅 counter no longer rewrites a `🍅 N` you typed into a task.** It took
   the first `🍅 N` on the line as its count, so the first counted session
   turned `Buy 🍅 2 kg ⏳ 2026-10-01` into `Buy kg 🍅 3 ⏳ 2026-10-01`: your text

@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { TFile } from "obsidian";
+import moment from "moment";
 import { TimerEngine } from "../TimerEngine";
+import { LogManager } from "../logManager";
 import { DEFAULT_SETTINGS, NO_TASK_LABEL } from "../constants";
 import { TASK_LINE_REGEX, normalizeTaskText } from "../taskLoader";
 import type { TimerState } from "../types";
@@ -828,6 +830,218 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(stub.calls.filter((c) => c.name === "updateTask").map((c) => c.args[0])).toEqual([name]);
     expect(timer.currentTaskName).toBe(name);
     expect(timer.getState().taskName).toBe(name);
+  });
+});
+
+describe("TimerEngine — the 🍅 counter on a task with a 🆔", () => {
+  // A task with a 🆔 has its name read again from its line — when its note
+  // changes, and when a session's log line is written — so that a rename
+  // reaches the daily log: the timer takes the new name, and every past log
+  // line with that ID is rewritten to it. The counter's `🍅 N` is on that line
+  // too, so up to 0.6.8 every count was a "rename": each session's line took
+  // the count, and each count rewrote every line the task ever had, in every
+  // daily log, to the new number.
+  const PATH = "Projects/Docs.md";
+  const LOG = "Logs/2026-10-02-gentle-pomodoro-log.md";
+  const OLD_LOG = "Logs/2026-09-30-gentle-pomodoro-log.md";
+  const oldLine = (name: string) =>
+    `- 🍅 Focus | Task:: [[${PATH}|${name}]] | ID:: abc123 | Start:: 2026-09-30 09:00:00 | ` +
+    "End:: 2026-09-30 09:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | " +
+    "Status:: finished | Type:: focus\n";
+
+  /** The `Task:: [[path|name]]` names in a log, in order. */
+  const names = (log: string) =>
+    [...log.matchAll(/Task:: \[\[[^|\]]+\|([^\]]+)\]\]/g)].map((m) => m[1]);
+
+  let previousMoment: unknown;
+  beforeEach(() => {
+    // LogManager stamps and names its files with the real moment; the date is
+    // pinned so the log's file name is known.
+    const g = globalThis as unknown as { moment?: unknown };
+    previousMoment = g.moment;
+    g.moment = moment;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 0, 0));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
+  });
+
+  /**
+   * A timer writing a real daily log, with Obsidian's "modify" event wired the
+   * way main.ts wires it: fired on every write, handed to the timer and not
+   * awaited. `settle` lets the events fired so far land.
+   */
+  function logging(line: string, pastName = "Write docs") {
+    const vault = fakeVault({
+      [PATH]: `${line}\n`,
+      [LOG]: "",
+      [OLD_LOG]: oldLine(pastName),
+    });
+    const stub = makePluginStub({ vault });
+    stub.settings.incrementPomodoroCountOnFinish = true;
+    stub.settings.logFolderPath = "Logs";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plugin = stub.plugin as any;
+    plugin.invalidateFocusTotalCache = () => {};
+    plugin.logManager = new LogManager(plugin);
+    const timer = new TimerEngine(plugin);
+
+    const events: Promise<void>[] = [];
+    const fire = (file: TFile) => {
+      events.push(timer.onFileModify(file));
+    };
+    const { process, modify } = vault;
+    vault.process = (file, fn) => {
+      const written = process(file, fn);
+      fire(file);
+      return written;
+    };
+    vault.modify = (file, data) => {
+      const written = modify(file, data);
+      fire(file);
+      return written;
+    };
+    Object.assign(vault, {
+      adapter: { exists: () => Promise.resolve(true) },
+      append: (file: TFile, data: string) => {
+        vault.contents[file.path] += data;
+        vault.writes.push(file.path);
+        fire(file);
+        return Promise.resolve();
+      },
+    });
+    const settle = async () => {
+      while (events.length > 0) await events.shift();
+    };
+    const note = vault.getAbstractFileByPath(PATH) as TFile;
+    /** The user (or sync) changes the task's line. */
+    const edit = async (next: string) => {
+      await vault.process(note, () => `${next}\n`);
+      await settle();
+    };
+    /** One focus session, logged and counted, then the break (not started, so not logged). */
+    const session = async () => {
+      timer.start();
+      await timer.finish();
+      await settle();
+      await timer.finish();
+      await settle();
+    };
+    return { vault, timer, settle, edit, session, note };
+  }
+
+  it("writes each session's line under the name the task was linked by", async () => {
+    const { vault, timer, session } = logging("- [ ] Write docs 🆔 abc123 ⏳ 2026-10-01");
+    timer.setTask("Write docs", PATH, "abc123");
+
+    await session();
+    await session();
+    await session();
+
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 3 🆔 abc123 ⏳ 2026-10-01\n");
+    expect(names(vault.contents[LOG])).toEqual(["Write docs", "Write docs", "Write docs"]);
+    expect(timer.currentTaskName).toBe("Write docs");
+    expect(timer.getState().taskName).toBe("Write docs");
+  });
+
+  it("never rewrites a past log line for a count", async () => {
+    const { vault, timer, session } = logging("- [ ] Write docs 🆔 abc123 ⏳ 2026-10-01");
+    timer.setTask("Write docs", PATH, "abc123");
+
+    await session();
+    await session();
+
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs"));
+    expect(vault.writes.filter((path) => path === OLD_LOG)).toEqual([]);
+  });
+
+  it("keeps a name linked with a count in it, as the picker links it", async () => {
+    const { vault, timer, session } = logging(
+      "- [ ] Write docs 🍅 4 🆔 abc123 ⏳ 2026-10-01",
+      "Write docs 🍅 4"
+    );
+    timer.setTask("Write docs 🍅 4", PATH, "abc123");
+
+    await session();
+    await session();
+
+    expect(names(vault.contents[LOG])).toEqual(["Write docs 🍅 4", "Write docs 🍅 4"]);
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs 🍅 4"));
+    expect(timer.currentTaskName).toBe("Write docs 🍅 4");
+  });
+
+  it("follows a count made elsewhere with the text the picker matches, not the name", async () => {
+    // Another device's count arriving by sync, or a hand edit. The picker ticks
+    // and pins the linked line by this text, so it has to move with the line.
+    const { vault, timer, edit } = logging("- [ ] Write docs 🍅 2 🆔 abc123", "Write docs 🍅 2");
+    timer.setTask("Write docs 🍅 2", PATH, "abc123");
+
+    await edit("- [ ] Write docs 🍅 3 🆔 abc123");
+
+    expect(timer.currentTaskName).toBe("Write docs 🍅 2");
+    expect(timer.currentTaskLineText).toBe("Write docs 🍅 3");
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs 🍅 2"));
+  });
+
+  it("does not take the count being removed as a rename either", async () => {
+    // "Remove all 🍅 markers", or a hand edit.
+    const { vault, timer, edit } = logging("- [ ] Write docs 🍅 2 🆔 abc123", "Write docs 🍅 2");
+    timer.setTask("Write docs 🍅 2", PATH, "abc123");
+
+    await edit("- [ ] Write docs 🆔 abc123");
+
+    expect(timer.currentTaskName).toBe("Write docs 🍅 2");
+    expect(timer.currentTaskLineText).toBe("Write docs");
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs 🍅 2"));
+  });
+
+  it("still takes a real rename into the log, past lines included", async () => {
+    const { vault, timer, edit, session } = logging("- [ ] Write docs 🆔 abc123 ⏳ 2026-10-01");
+    timer.setTask("Write docs", PATH, "abc123");
+    await session();
+
+    // The task is renamed; the count stays on its line, so the new name
+    // carries it — the name the picker would link it by now.
+    await edit("- [ ] Write the docs 🍅 1 🆔 abc123 ⏳ 2026-10-01");
+    await session();
+
+    const renamed = "Write the docs 🍅 1";
+    expect(timer.currentTaskName).toBe(renamed);
+    expect(names(vault.contents[LOG])).toEqual([renamed, renamed]);
+    expect(vault.contents[OLD_LOG]).toBe(oldLine(renamed));
+  });
+
+  it("takes a change to a 🍅 typed into the description as a rename", async () => {
+    // Only a marker in the counter's place is the count; `Buy 🍅 2 kg` is text.
+    const { vault, timer, edit } = logging("- [ ] Buy 🍅 2 kg 🆔 abc123", "Buy 🍅 2 kg");
+    timer.setTask("Buy 🍅 2 kg", PATH, "abc123");
+
+    await edit("- [ ] Buy kg 🆔 abc123");
+
+    expect(timer.currentTaskName).toBe("Buy kg");
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Buy kg"));
+  });
+
+  it("does not hand the line it read to a task linked while it was reading", async () => {
+    const { vault, timer, note } = logging("- [ ] Write the docs 🆔 abc123");
+    timer.setTask("Write docs", PATH, "abc123");
+    const read = vault.read;
+    vault.read = async (file) => {
+      vault.read = read;
+      const text = await read(file);
+      timer.setTask("Other task", "Projects/Other.md", "zzz999"); // a picker row clicked meanwhile
+      return text;
+    };
+
+    await timer.onFileModify(note);
+
+    expect(timer.currentTaskName).toBe("Other task");
+    expect(timer.currentTaskId).toBe("zzz999");
+    expect(timer.currentTaskLineText).toBe("Other task");
+    expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs"));
   });
 });
 

@@ -3,7 +3,9 @@ import {
   TASK_LINE_REGEX,
   normalizeTaskText,
   normalizeTaskTextForDisplay,
-  findTaskNameByIdInContent,
+  findTaskTextByIdInContent,
+  taskLineName,
+  taskNameAfterEdit,
   parsePomodoroCount,
   incrementPomodoroCount,
   repairPomodoroMarkerPlacement,
@@ -96,7 +98,13 @@ describe("TASK_LINE_REGEX", () => {
   });
 });
 
-describe("findTaskNameByIdInContent", () => {
+describe("findTaskTextByIdInContent", () => {
+  // The line's text; taskLineName makes the name the picker would link it by.
+  const findTaskNameByIdInContent = (content: string, taskId: string) => {
+    const text = findTaskTextByIdInContent(content, taskId);
+    return text === null ? null : taskLineName(text);
+  };
+
   const content = [
     "Some notes about the project.",
     "",
@@ -136,6 +144,78 @@ describe("findTaskNameByIdInContent", () => {
     expect(findTaskNameByIdInContent(altBullets, "star-id")).toBe("Star task");
     expect(findTaskNameByIdInContent(altBullets, "plus-id")).toBe("Plus task");
     expect(findTaskNameByIdInContent(altBullets, "num-id")).toBe("Numbered task");
+  });
+});
+
+describe("taskNameAfterEdit", () => {
+  // The name a task with a 🆔 goes by once its line changes: the line's name,
+  // unless all that changed is the 🍅 counter's count.
+  const name = (text: string) => normalizeTaskText(text);
+
+  it.each([
+    ["the first count", "Write docs", "Write docs 🍅 1 ⏳ 2026-10-01 🆔 x"],
+    ["a count going up", "Write docs 🍅 3", "Write docs 🍅 4 ⏳ 2026-10-01 🆔 x"],
+    ["the count removed", "Write docs 🍅 3", "Write docs ⏳ 2026-10-01 🆔 x"],
+    ["a count set by hand", "Write docs 🍅 3", "Write docs 🍅 12 🆔 x"],
+    [
+      "a tag after the fields",
+      name("Write docs 🍅 3 ⏳ 2026-10-01 #task/research/docs 🆔 x"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 #task/research/docs 🆔 x",
+    ],
+    [
+      "text after the fields",
+      name("Write docs ⏳ 2026-10-01 see notes 🆔 x"),
+      "Write docs 🍅 1 ⏳ 2026-10-01 see notes 🆔 x",
+    ],
+    [
+      "a ≤0.5.0 marker moved in front of the fields",
+      name("Write docs ⏳ 2026-10-01 🆔 x 🍅 3"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 🆔 x",
+    ],
+    [
+      "a count with text after the fields",
+      name("Write docs 🍅 3 ⏳ 2026-10-01 see notes 🆔 x"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 see notes 🆔 x",
+    ],
+    // A name has lost the fields that tell the counter's 🍅 from a typed one,
+    // so each 🍅 in it is tried as the count.
+    ["a count beside a typed 🍅", "Buy 🍅 2 kg 🍅 1", "Buy 🍅 2 kg 🍅 2 ⏳ 2026-10-01 🆔 x"],
+    ["a block reference", "Write docs ^ref1", "Write docs 🍅 1 🆔 x ^ref1"],
+    ["no Tasks fields at all", "Write docs", "Write docs 🍅 1"],
+  ])("keeps the name through %s", (_label, previous, text) => {
+    expect(taskNameAfterEdit(previous, text)).toBe(previous);
+  });
+
+  it.each([
+    ["a new name", "Write docs 🍅 3", "Write the docs 🍅 4 🆔 x", "Write the docs 🍅 4"],
+    ["a new name, no count", "Write docs", "Write the docs 🆔 x", "Write the docs"],
+    ["a new name, count removed", "Write docs 🍅 3", "Write the docs 🆔 x", "Write the docs"],
+    ["a new tag", "Write docs 🍅 3", "Write docs #urgent 🍅 4 🆔 x", "Write docs #urgent 🍅 4"],
+    // A 🍅 typed into the description is text, not the count.
+    ["a typed 🍅 changed", "Buy 🍅 2 kg", "Buy 🍅 3 kg 🆔 x", "Buy 🍅 3 kg"],
+    ["a typed 🍅 removed", "Buy 🍅 2 kg", "Buy kg 🆔 x", "Buy kg"],
+    [
+      "a typed 🍅 changed beside a count",
+      "Buy 🍅 2 kg 🍅 1",
+      "Buy 🍅 3 kg 🍅 1 🆔 x",
+      "Buy 🍅 3 kg 🍅 1",
+    ],
+    ["a 🍅 typed in", "Buy kg", "Buy 🍅 2 kg 🆔 x", "Buy 🍅 2 kg"],
+  ])("renames on %s", (_label, previous, text, renamed) => {
+    expect(taskNameAfterEdit(previous, text)).toBe(renamed);
+  });
+
+  it("reads alike when only the spacing differs, as a count rewrites it", () => {
+    expect(taskNameAfterEdit("Write  docs", "Write docs 🍅 1 🆔 x")).toBe("Write  docs");
+  });
+
+  it("leaves a change with no count on either side as it always was", () => {
+    // Only the count is new here: with none involved, any change is a rename.
+    expect(taskNameAfterEdit("Write  docs", "Write docs 🆔 x")).toBe("Write docs");
+  });
+
+  it("is the line's own name when nothing changed", () => {
+    expect(taskNameAfterEdit("Write docs 🍅 2", "Write docs 🍅 2 🆔 x")).toBe("Write docs 🍅 2");
   });
 });
 

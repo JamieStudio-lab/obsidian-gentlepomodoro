@@ -2,7 +2,12 @@ import { Notice, TFile, normalizePath } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
 import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
-import { filesInFolder, findTaskNameById, findTaskNameByIdInContent } from "./taskLoader";
+import {
+  filesInFolder,
+  findTaskTextById,
+  findTaskTextByIdInContent,
+  taskNameAfterEdit,
+} from "./taskLoader";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -249,7 +254,7 @@ export class LogManager {
     }
 
     const taskContentCache = new Map<string, string | null>();
-    const taskNameCache = new Map<string, string | null>();
+    const taskTextCache = new Map<string, string | null>();
 
     let filesUpdated = 0;
     let linesUpdated = 0;
@@ -265,8 +270,8 @@ export class LogManager {
         if (!ref || !ref.taskPath) continue;
 
         const cacheKey = `${ref.taskPath}::${ref.taskId}`;
-        let latestName = taskNameCache.get(cacheKey);
-        if (latestName === undefined) {
+        let taskText = taskTextCache.get(cacheKey);
+        if (taskText === undefined) {
           let taskContent = taskContentCache.get(ref.taskPath);
           if (taskContent === undefined) {
             const taskFile = app.vault.getAbstractFileByPath(ref.taskPath);
@@ -278,12 +283,14 @@ export class LogManager {
             taskContentCache.set(ref.taskPath, taskContent);
           }
 
-          latestName = taskContent ? findTaskNameByIdInContent(taskContent, ref.taskId) : null;
-          taskNameCache.set(cacheKey, latestName);
+          taskText = taskContent ? findTaskTextByIdInContent(taskContent, ref.taskId) : null;
+          taskTextCache.set(cacheKey, taskText);
         }
 
-        if (!latestName) continue;
+        if (taskText === null) continue;
 
+        // A line whose name differs from the task's only by the 🍅 count keeps it.
+        const latestName = taskNameAfterEdit(ref.taskName, taskText);
         const updated = this.updateLogLineTaskName(line, ref.taskId, latestName, ref.taskPath);
         if (updated !== line) {
           lines[i] = updated;
@@ -301,7 +308,9 @@ export class LogManager {
     new Notice(`[GentlePomo] Updated ${linesUpdated} log line(s) across ${filesUpdated} file(s).`);
   }
 
-  private parseLogLineTaskRef(line: string): { taskId: string; taskPath?: string } | null {
+  private parseLogLineTaskRef(
+    line: string
+  ): { taskId: string; taskPath?: string; taskName: string } | null {
     if (!line.includes("🍅 Focus") || !line.includes("| ID:: ")) return null;
 
     const idMatch = line.match(/\|\s*ID::\s*([^|]+)\s*\|/);
@@ -314,8 +323,9 @@ export class LogManager {
     const taskStr = taskMatch[1].trim();
     const linkMatch = taskStr.match(/^\[\[([^|\]]+)\|([^\]]+)\]\]$/);
     const taskPath = linkMatch ? linkMatch[1] : undefined;
+    const taskName = linkMatch ? linkMatch[2] : taskStr;
 
-    return { taskId: idMatch[1].trim(), taskPath };
+    return { taskId: idMatch[1].trim(), taskPath, taskName };
   }
 
   private updateLogLineTaskName(
@@ -347,11 +357,12 @@ export class LogManager {
 
     const app = this.plugin.app;
 
-    // Refresh task name from file if ID is available (handles renames)
+    // Refresh task name from file if ID is available (handles renames) — but
+    // not for the 🍅 counter's count, which is not a rename (taskNameAfterEdit).
     if (session.mode === "focus" && session.taskId && session.taskPath) {
-      const latestName = await findTaskNameById(app, session.taskPath, session.taskId);
-      if (latestName) {
-        session.taskName = latestName;
+      const taskText = await findTaskTextById(app, session.taskPath, session.taskId);
+      if (taskText !== null) {
+        session.taskName = taskNameAfterEdit(session.taskName, taskText);
       }
     }
 

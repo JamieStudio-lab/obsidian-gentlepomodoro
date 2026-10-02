@@ -38,7 +38,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 
 - One markdown file per day: `<folder>/YYYY-MM-DD-gentle-pomodoro-log.md`.
 - One inline-field line per session (start, end, pauses, duration, status, type).
-- **Rename-safe** when tasks carry `🆔` — past log lines update on rename, or via the `Refresh log task names by ID` command.
+- **Rename-safe** when tasks carry `🆔` — past log lines update on rename, or via the `Refresh log task names by ID` command. A change to the 🍅 count is not a rename.
 
 ### 🧭 Status bar
 
