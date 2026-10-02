@@ -717,6 +717,12 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
   it.each([
     ["no 🆔", "- [ ] Buy 🍅 2 kg ⏳ 2026-10-01", undefined, "- [ ] Buy 🍅 2 kg 🍅 2 ⏳ 2026-10-01"],
     [
+      "a note in brackets after it",
+      "- [ ] Buy 🍅 2 (big ones) ⏳ 2026-10-01",
+      undefined,
+      "- [ ] Buy 🍅 2 (big ones) 🍅 2 ⏳ 2026-10-01",
+    ],
+    [
       "a 🆔",
       "- [ ] Buy 🍅 2 kg 🆔 abc123 ⏳ 2026-10-01",
       "abc123",

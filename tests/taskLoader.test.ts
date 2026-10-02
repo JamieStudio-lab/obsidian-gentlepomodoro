@@ -152,8 +152,11 @@ describe("parsePomodoroCount", () => {
     expect(parsePomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)")).toBe(5);
   });
 
-  it("tolerates arbitrary content inside the legacy parens", () => {
-    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (anything)")).toBe(7);
+  it("reads only a date in the legacy parens — anything else in brackets is the user's", () => {
+    // The dated build only ever wrote `(YYYY-MM-DD)`. Taking any `(…)` as part
+    // of the marker made "🍅 7 (anything)" the counter and deleted the note.
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (anything)")).toBe(0);
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (2024-01-01, at work)")).toBe(0);
   });
 });
 
@@ -575,6 +578,54 @@ describe("a 🍅 the user typed is never the counter", () => {
       const result = removeAllPomodoroMarkersInContent(content);
       expect(result.linesChanged).toBe(2);
       expect(result.content).toBe([TYPED, TYPED, TYPED, AFTER_EMOJI_IN_TEXT].join("\n"));
+    });
+  });
+
+  describe("a note in brackets after a typed 🍅", () => {
+    // Only `(YYYY-MM-DD)` belongs to a marker — the 13-minute dated build from
+    // before 0.1.0 wrote nothing else. Any other `(…)` is ordinary text, so the
+    // 🍅 in front of it is the user's.
+    const NOTE = "- [ ] Buy 🍅 2 (big ones) ⏳ 2026-10-01";
+    const NOTE_AT_END = "- [ ] Call mum 🍅 2 (Sunday)";
+
+    it("is not read as a count", () => {
+      expect(parsePomodoroCount(NOTE)).toBe(0);
+      expect(parsePomodoroCount(NOTE_AT_END)).toBe(0);
+      expect(parsePomodoroCount("- [ ] Push-ups 🍅 2 (10-15)")).toBe(0);
+      expect(parsePomodoroCount("- [ ] Buy 🍅 2 (big ones) 🍅 4 ⏳ 2026-10-01")).toBe(4);
+    });
+
+    it("keeps its note when the counter counts", () => {
+      expect(incrementPomodoroCount(NOTE)).toBe("- [ ] Buy 🍅 2 (big ones) 🍅 1 ⏳ 2026-10-01");
+      expect(incrementPomodoroCount(NOTE_AT_END)).toBe("- [ ] Call mum 🍅 2 (Sunday) 🍅 1");
+      expect(incrementPomodoroCount("- [ ] Push-ups 🍅 2 (10-15)")).toBe(
+        "- [ ] Push-ups 🍅 2 (10-15) 🍅 1"
+      );
+      expect(incrementPomodoroCount("- [ ] Write 🍅 1 (2024-01-01, at work)")).toBe(
+        "- [ ] Write 🍅 1 (2024-01-01, at work) 🍅 1"
+      );
+    });
+
+    it("is left alone by Remove all, which takes only the counter beside it", () => {
+      expect(removeAnyPomodoroMarker(NOTE)).toBe(NOTE);
+      expect(removeAnyPomodoroMarker(NOTE_AT_END)).toBe(NOTE_AT_END);
+      expect(removeAnyPomodoroMarker(incrementPomodoroCount(NOTE))).toBe(NOTE);
+    });
+
+    it("is never called misplaced, even after the fields", () => {
+      const line = "- [ ] Buy ⏳ 2026-10-01 🍅 2 (big ones)";
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+    });
+
+    it("still treats a dated marker as the counter, date dropped on write", () => {
+      expect(parsePomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(5);
+      expect(incrementPomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(
+        "- [ ] Write docs 🍅 6 ⏳ 2026-10-01"
+      );
+      expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(
+        "- [ ] Write docs ⏳ 2026-10-01"
+      );
     });
   });
 

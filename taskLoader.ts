@@ -49,12 +49,15 @@ export const TASK_LINE_REGEX = /^\s*(?:[-*+]|\d+[.)])\s*\[( |x)\]\s+(.*)$/i;
 const SCHEDULED_REGEX = /⏳\s*(\d{4}-\d{2}-\d{2})/;
 const DUE_REGEX = /📅\s*(\d{4}-\d{2}-\d{2})/;
 const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
-// Pomodoro count marker. The optional `(...)` group tolerates the legacy
-// 0.1.0 today-only format (`🍅 N (YYYY-MM-DD)`) so existing markers are still
-// readable — the parens (and any content) get stripped on the next write.
+// Pomodoro count marker. The optional `(YYYY-MM-DD)` group reads the today-only
+// format of a build from before 0.1.0 (`🍅 N (2026-05-18)`), so such markers
+// are still found — the date is dropped on the next write. A DATE only, not
+// any `(…)`: that build wrote nothing else, and a note in brackets the user
+// typed after a `🍅 N` ("Call mum 🍅 2 (Sunday)") is their text — taken as part
+// of the marker, it made that 🍅 the counter and the next write deleted it.
 // A line can carry more than one `🍅 N` — the counter's and one the user typed
 // — so nothing reads "the first match"; see findCounterMarker.
-const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\([^)]*\))?/g;
+const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\(\d{4}-\d{2}-\d{2}\))?/g;
 // First Tasks-plugin metadata token on a line (dates, priorities, recurrence,
 // ID, plus the Tasks 8.x field emojis this plugin doesn't otherwise read:
 // ❌ cancelled, ⛔ depends-on, 🏁 on-completion). The 🍅 marker must be
@@ -162,8 +165,8 @@ function findCounterMarker(line: string): RegExpMatchArray | null {
 /**
  * Read the lifetime pomodoro count from a task line — the counter's marker
  * only, so a line whose only `🍅 N` the user typed reads 0. Tolerates the
- * legacy `🍅 N (YYYY-MM-DD)` format from 0.1.0 — the date is ignored, N is
- * returned.
+ * legacy `🍅 N (YYYY-MM-DD)` format of a build from before 0.1.0 — the date is
+ * ignored, N is returned.
  */
 export function parsePomodoroCount(line: string): number {
   const match = findCounterMarker(line);
@@ -180,10 +183,10 @@ export function parsePomodoroCount(line: string): number {
  * line, so a trailing marker turns every field into plain description text
  * and the task's dates vanish from queries and Edit Task (GitHub issue #2).
  *
- * - If the counter's marker exists (with or without legacy parens): increment
+ * - If the counter's marker exists (with or without a legacy date): increment
  *   N and re-insert at the correct position — lines written by ≤0.5.0 (marker
- *   trailing the fields) heal on their next increment. Legacy parens are
- *   stripped on write, so `🍅 N (date)` markers migrate to plain `🍅 N`.
+ *   trailing the fields) heal on their next increment. A legacy date is
+ *   dropped on write, so `🍅 N (YYYY-MM-DD)` markers migrate to plain `🍅 N`.
  * - If not: insert ` 🍅 1` before the first metadata token, keeping a
  *   trailing block reference (`^block-id`) at the very end of the line.
  *

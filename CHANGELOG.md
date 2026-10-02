@@ -34,6 +34,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Remove all** now also removes a counter marker with a tag right behind it,
   which is where the Tasks plugin moves your tags when it rewrites a line —
   for example when you tick the task off.
+- **The 🍅 counter no longer deletes a note in brackets after a `🍅 N` you
+  typed** (`Call mum 🍅 2 (Sunday)`). It read any `(…)` there as part of an
+  old marker format; now only a date in brackets is, which is all that format
+  ever held.
 
 ## [0.6.8] — 2026-09-29
 
