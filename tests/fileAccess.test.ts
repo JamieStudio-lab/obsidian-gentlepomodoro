@@ -271,7 +271,7 @@ describe("loadTasks reads only what its scope names", () => {
 
     const tasks = await loadTasks(appOf(vault), {
       scope: notes("Inbox/d.md"),
-      pin: { path: "Projects-archive/c.md", cleanText: "In the sibling" },
+      pin: { path: "Projects-archive/c.md", lineText: "In the sibling" },
     });
 
     expect(tasks.map((t) => t.cleanText)).toEqual(["In the inbox", "In the sibling"]);
@@ -354,7 +354,7 @@ describe("loadTasks keeps the old order where the sort ties", () => {
 
     const tasks = await loadTasks(appOf(vault), {
       scope: notes(tied[0]),
-      pin: { path: tied[2], cleanText: "Soft hyphen" },
+      pin: { path: tied[2], lineText: "Soft hyphen" },
     });
 
     expect(tasks.map((t) => t.path)).toEqual([tied[0], tied[2]]);

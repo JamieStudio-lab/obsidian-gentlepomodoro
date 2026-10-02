@@ -8,8 +8,6 @@ import {
   TASK_LINE_REGEX,
   findTaskTextById,
   incrementPomodoroCount,
-  normalizeTaskText,
-  taskLineName,
   taskNameAfterEdit,
   taskMatchKey,
 } from "./taskLoader";
@@ -69,6 +67,15 @@ interface PlayingPreview {
   gain: GainNode;
 }
 
+/** A linked task, as one vault round trip saw it when it started. */
+interface TaskLink {
+  name: string;
+  path: string | undefined;
+  id: string | undefined;
+  /** The line's raw text after the checkbox (TimerEngine.currentTaskLineText). */
+  lineText: string;
+}
+
 /**
  * Index of a linked task's line in a note's lines, or -1.
  *
@@ -90,7 +97,7 @@ function linkedLineIndex(lines: string[], taskId: string | undefined, lineText: 
   let done = -1;
   for (let i = 0; i < lines.length; i++) {
     const taskMatch = lines[i].match(TASK_LINE_REGEX);
-    if (!taskMatch || taskMatchKey(normalizeTaskText(taskMatch[2])) !== key) continue;
+    if (!taskMatch || taskMatchKey(taskMatch[2]) !== key) continue;
     if (taskMatch[1] === " ") return i;
     if (done === -1) done = i;
   }
@@ -212,11 +219,13 @@ export class TimerEngine {
   public currentTaskId: string | undefined;
 
   /**
-   * The linked line's text as the 🍅 counter last left it: what a task with no
-   * 🆔 is found by. It starts as the linked name and follows every count this
-   * engine writes ("Write docs" → "Write docs 🍅 1"), because that write
-   * changes the very text the line is matched on — matching on the linked name
-   * found the line once and never again. For a task with a 🆔 it also follows
+   * The linked line's raw text (after the checkbox) as the 🍅 counter last
+   * left it: what a task with no 🆔 is found by, compared through
+   * taskMatchKey. It starts as the line the picker linked and follows every
+   * count this engine writes ("Write docs ⏳ …" → "Write docs 🍅 1 ⏳ …"),
+   * because that write changes the very text the line is matched on —
+   * matching on the linked name found the line once and never again. For a
+   * task with a 🆔 it also follows
    * whatever `onFileModify` reads off the line, a count made elsewhere
    * included. A match key only, never logged or shown: the log, the status bar
    * and the "Current task" button keep `currentTaskName`, the name the task
@@ -237,10 +246,21 @@ export class TimerEngine {
     };
   }
 
-  /** Update the active task and notify LogManager so future log lines reflect the change. */
-  setTask(name: string, path?: string, taskId?: string) {
+  /**
+   * Update the active task and notify LogManager so future log lines reflect
+   * the change. `lineText` is the line's raw text after the checkbox, which a
+   * task with no 🆔 is matched by; it defaults to the name. Linking the task
+   * that is already linked keeps the line text the engine has followed: a
+   * picker loaded before a count still offers the old text, and taking it
+   * again stopped the counting it had just been fixed to do.
+   */
+  setTask(name: string, path?: string, taskId?: string, lineText: string = name) {
+    const sameTask =
+      name === this.currentTaskName &&
+      path === this.currentTaskPath &&
+      taskId === this.currentTaskId;
     this.currentTaskName = name;
-    this.currentTaskLineText = name;
+    if (!sameTask) this.currentTaskLineText = lineText;
     this.currentTaskPath = path;
     this.currentTaskId = taskId;
     this.state.taskName = name;
@@ -280,10 +300,10 @@ export class TimerEngine {
       if (text !== null && this.currentTaskId === taskId && this.currentTaskPath === taskPath) {
         const latestName = taskNameAfterEdit(this.currentTaskName, text);
         if (latestName !== this.currentTaskName) {
-          this.setTask(latestName, taskPath, taskId);
+          this.setTask(latestName, taskPath, taskId, text);
           await this.plugin.logManager.updateLoggedTaskName(taskId, latestName, taskPath);
         } else {
-          this.currentTaskLineText = taskLineName(text);
+          this.currentTaskLineText = text;
         }
       }
     }
@@ -293,6 +313,26 @@ export class TimerEngine {
 
     // 5. Check completion
     await this.checkTaskCompletionAndUnlink();
+  }
+
+  /** The linked task as it stands now, for a vault round trip to hold on to. */
+  private currentLink(): TaskLink {
+    return {
+      name: this.currentTaskName,
+      path: this.currentTaskPath,
+      id: this.currentTaskId,
+      lineText: this.currentTaskLineText,
+    };
+  }
+
+  /** Is `link` still the linked task, with the line text it was taken with? */
+  private isCurrentLink(link: TaskLink): boolean {
+    return (
+      this.currentTaskName === link.name &&
+      this.currentTaskPath === link.path &&
+      this.currentTaskId === link.id &&
+      this.currentTaskLineText === link.lineText
+    );
   }
 
   getState(): TimerState {
@@ -523,13 +563,19 @@ export class TimerEngine {
   }
 
   private async handleFinished(autoStartNext: boolean) {
+    // The task this session was for, taken before the first await: logging it
+    // reads and writes the vault, and a task picked meanwhile — at the zero
+    // crossing, when people choose what comes next — is not the one that
+    // earned this 🍅. The log line is the session's; so is its count.
+    const link = this.currentLink();
+
     // Log the finished session
     await this.plugin.logManager.endSession("finished");
 
     // For focus sessions: optionally increment the task's pomodoro count
     // BEFORE the unlink check so we don't skip on a just-completed task.
     if (this.state.mode === "focus") {
-      await this.maybeIncrementTaskPomodoroCount();
+      await this.maybeIncrementTaskPomodoroCount(link);
     }
 
     // Check if task is completed and unlink if so
@@ -559,20 +605,16 @@ export class TimerEngine {
    * lifetime `🍅 N` marker on the linked task line. Best-effort: failures are
    * logged but never throw.
    */
-  private async maybeIncrementTaskPomodoroCount() {
+  private async maybeIncrementTaskPomodoroCount(link: TaskLink) {
     if (!this.plugin.settings.incrementPomodoroCountOnFinish) return;
-    if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
+    if (!link.path || link.name === NO_TASK_LABEL) return;
 
-    const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
+    const file = this.plugin.app.vault.getAbstractFileByPath(link.path);
     if (!(file instanceof TFile)) return;
 
-    // Which link this count belongs to. Linking another task while the write
-    // is in flight must not hand that task this line's text — nor this
-    // session's 🍅: `process` reads the file before it calls back, and a
-    // picker click in that gap used to move the count to the new task.
-    const linkedPath = this.currentTaskPath;
-    const linkedText = this.currentTaskLineText;
-    const linkedId = this.currentTaskId;
+    // Count the session's task, as it was linked when the session ended —
+    // never whatever is linked once the vault answers. A task linked
+    // meanwhile must get neither this 🍅 nor this line's text.
     let counted = "";
 
     try {
@@ -580,11 +622,11 @@ export class TimerEngine {
       // sync/plugin write can't be clobbered between our read and write.
       await this.plugin.app.vault.process(file, (content) => {
         const lines = content.split("\n");
-        const index = linkedLineIndex(lines, linkedId, linkedText);
+        const index = linkedLineIndex(lines, link.id, link.lineText);
         if (index === -1) return content;
 
         lines[index] = incrementPomodoroCount(lines[index]);
-        counted = normalizeTaskText(lines[index].match(TASK_LINE_REGEX)?.[2] ?? "");
+        counted = lines[index].match(TASK_LINE_REGEX)?.[2] ?? "";
         return lines.join("\n");
       });
     } catch (e) {
@@ -594,9 +636,7 @@ export class TimerEngine {
 
     // Follow the line: the count just changed the text a task with no 🆔 is
     // found by. Only after the write landed, and only for the same link.
-    if (counted && this.currentTaskPath === linkedPath && this.currentTaskLineText === linkedText) {
-      this.currentTaskLineText = counted;
-    }
+    if (counted && this.isCurrentLink(link)) this.currentTaskLineText = counted;
   }
 
   private async checkTaskCompletionAndUnlink() {
@@ -608,19 +648,11 @@ export class TimerEngine {
     // The link this check is about. A task linked while the note is being read
     // is another task, perhaps in another note: checking it against this note
     // could find a done line with its text and unlink it.
-    const linkedPath = this.currentTaskPath;
-    const linkedText = this.currentTaskLineText;
-    const linkedId = this.currentTaskId;
+    const link = this.currentLink();
 
     try {
       const content = await this.plugin.app.vault.read(file);
-      if (
-        this.currentTaskPath !== linkedPath ||
-        this.currentTaskLineText !== linkedText ||
-        this.currentTaskId !== linkedId
-      ) {
-        return;
-      }
+      if (!this.isCurrentLink(link)) return;
       // CRLF-safe split: this path only reads, and the $-anchored
       // TASK_LINE_REGEX can't match a line with a trailing \r. Write paths
       // (marker increment/repair) must keep split("\n") — they rejoin on "\n".
@@ -628,7 +660,7 @@ export class TimerEngine {
 
       let foundIncomplete = false;
       let foundComplete = false;
-      const linkedKey = taskMatchKey(linkedText);
+      const linkedKey = taskMatchKey(link.lineText);
 
       for (const line of lines) {
         // If current task has ID, match by ID
@@ -650,7 +682,7 @@ export class TimerEngine {
         // Fallback: match by normalized text — as the 🍅 counter last left it,
         // not as it was linked, or the first count hides the line from here.
         const taskMatch = line.match(TASK_LINE_REGEX);
-        if (taskMatch && taskMatchKey(normalizeTaskText(taskMatch[2])) === linkedKey) {
+        if (taskMatch && taskMatchKey(taskMatch[2]) === linkedKey) {
           if (taskMatch[1] === " ") {
             foundIncomplete = true;
             break;

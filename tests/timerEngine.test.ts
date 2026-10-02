@@ -7,7 +7,7 @@ import moment from "moment";
 import { TimerEngine } from "../TimerEngine";
 import { LogManager } from "../logManager";
 import { DEFAULT_SETTINGS, NO_TASK_LABEL } from "../constants";
-import { TASK_LINE_REGEX, normalizeTaskText } from "../taskLoader";
+import { TASK_LINE_REGEX, normalizeTaskText, parsePomodoroCount } from "../taskLoader";
 import type { TimerState } from "../types";
 import { fakeVault } from "./fakeVault";
 
@@ -565,11 +565,11 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     return { vault, stub, timer };
   }
 
-  /** Link a line the way the picker does: by its normalizeTaskText form, no ID. */
+  /** Link a line the way the picker does: named by its normalizeTaskText form, matched by its raw text, no ID. */
   function link(timer: TimerEngine, line: string, path = PATH) {
     const match = line.match(TASK_LINE_REGEX);
     if (!match) throw new Error(`not a task line: ${line}`);
-    timer.setTask(normalizeTaskText(match[2]), path);
+    timer.setTask(normalizeTaskText(match[2]), path, undefined, match[2]);
   }
 
   /** One focus session and the break after it: back to focus, paused. */
@@ -841,6 +841,76 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(timer.currentTaskPath).toBe(OTHER);
   });
 
+  it.each([
+    ["another task is linked", (timer: TimerEngine) => link(timer, "- [ ] Task B")],
+    ["the task is unlinked", (timer: TimerEngine) => timer.setTask(NO_TASK_LABEL)],
+  ])(
+    "counts the session's own task when, while its log line is written, %s",
+    async (_label, change) => {
+      // The session's link is taken when it ends. Logging it reads and writes
+      // the vault first, and a task picked in that time — at the zero crossing,
+      // when people choose what is next — got the 🍅 the log gave the old one.
+      const { vault, stub, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
+      link(timer, "- [ ] Task A");
+      stub.plugin.logManager.endSession = async () => {
+        await Promise.resolve();
+        change(timer);
+      };
+
+      await timer.finish();
+
+      expect(vault.contents[PATH]).toBe("- [ ] Task A 🍅 1\n- [ ] Task B\n");
+    }
+  );
+
+  it("keeps following the line when the same task is linked again from an old list", async () => {
+    // A picker opened before a count still offers the line as it was; picking
+    // the linked task again used to hand the engine that old text, and the
+    // counting stopped as it did before 0.6.9.
+    const line = "- [ ] Write docs ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+
+    link(timer, line); // the stale row, clicked
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 2 ⏳ 2026-10-01\n");
+  });
+
+  it("keeps counting a recurrence with a comma after Tasks moved the tag in front of it", async () => {
+    const line = "- [ ] Gym 🔁 every week on Monday, Friday 📅 2026-10-05 #health";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+
+    vault.contents[PATH] = "- [ ] Gym 🍅 1 #health 🔁 every week on Monday, Friday 📅 2026-10-09\n";
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(
+      "- [ ] Gym #health 🍅 2 🔁 every week on Monday, Friday 📅 2026-10-09\n"
+    );
+  });
+
+  it.each([
+    ["⛔", "- [ ] Fix ⛔ login page ⏳ 2026-10-01", "- [ ] Fix ⛔ signup page ⏳ 2026-10-01"],
+    ["🏁", "- [ ] Release 🏁 alpha build", "- [ ] Release 🏁 beta build"],
+    ["❌", "- [ ] Refund ❌ 2026-09-30 order", "- [ ] Refund ❌ 2026-10-02 order"],
+  ])(
+    "never mistakes a task for another whose text differs only in what follows a %s",
+    async (_label, other, mine) => {
+      // Only a field at the END of the line is a field; inside the words it is
+      // the task's text, and it tells two tasks apart.
+      const { vault, timer } = counting(`${other}\n${mine}\n`);
+      link(timer, mine);
+
+      await focusSession(timer);
+
+      expect(vault.contents[PATH].split("\n")[0]).toBe(other);
+      expect(parsePomodoroCount(vault.contents[PATH].split("\n")[1])).toBe(1);
+    }
+  );
+
   it("forgets the old line when another task is linked", async () => {
     const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
     link(timer, "- [ ] Task A");
@@ -900,9 +970,14 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
       .replace(/^\s*\/\/.*$/gm, "")
       .replace(/\s+/g, " ");
 
-    expect(view).toContain("{ path: linkedPath, cleanText: this.timer.currentTaskLineText }");
     expect(view).toContain(
-      "taskMatchKey(task.cleanText) === taskMatchKey(this.timer.currentTaskLineText) && task.path === this.timer.currentTaskPath"
+      "{ path: linkedPath, lineText: this.timer.currentTaskLineText, taskId: this.timer.currentTaskId, }"
+    );
+    expect(view).toContain("if (this.isLinkedRow(task)) {");
+    expect(view).toContain("if (task.path !== this.timer.currentTaskPath) return false;");
+    expect(view).toContain("if (id) return task.taskId === id;");
+    expect(view).toContain(
+      "return taskMatchKey(task.text) === taskMatchKey(this.timer.currentTaskLineText);"
     );
     expect(view).not.toMatch(/cleanText(?::| ===) this\.timer\.currentTaskName\b/);
   });
@@ -1076,7 +1151,7 @@ describe("TimerEngine — the 🍅 counter on a task with a 🆔", () => {
     await edit("- [ ] Write docs 🍅 3 🆔 abc123");
 
     expect(timer.currentTaskName).toBe("Write docs 🍅 2");
-    expect(timer.currentTaskLineText).toBe("Write docs 🍅 3");
+    expect(timer.currentTaskLineText).toBe("Write docs 🍅 3 🆔 abc123");
     expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs 🍅 2"));
   });
 
@@ -1088,7 +1163,7 @@ describe("TimerEngine — the 🍅 counter on a task with a 🆔", () => {
     await edit("- [ ] Write docs 🆔 abc123");
 
     expect(timer.currentTaskName).toBe("Write docs 🍅 2");
-    expect(timer.currentTaskLineText).toBe("Write docs");
+    expect(timer.currentTaskLineText).toBe("Write docs 🆔 abc123");
     expect(vault.contents[OLD_LOG]).toBe(oldLine("Write docs 🍅 2"));
   });
 
@@ -1117,6 +1192,33 @@ describe("TimerEngine — the 🍅 counter on a task with a 🆔", () => {
 
     expect(timer.currentTaskName).toBe("Buy kg");
     expect(vault.contents[OLD_LOG]).toBe(oldLine("Buy kg"));
+  });
+
+  it.each([
+    [
+      "two counter markers, folded into one",
+      "- [ ] Write docs 🍅 2 🍅 4 🆔 abc123 ⏳ 2026-10-01",
+      "Write docs 🍅 2 🍅 4",
+      "- [ ] Write docs 🍅 3 🆔 abc123 ⏳ 2026-10-01",
+    ],
+    [
+      "a count 0.6.8 wrote after a 📆 date, moved in front of it",
+      "- [ ] Write docs 📆 2026-10-05 🍅 3 🆔 abc123",
+      "Write docs 📆 2026-10-05 🍅 3",
+      "- [ ] Write docs 🍅 4 📆 2026-10-05 🆔 abc123",
+    ],
+  ])("takes no count as a rename — %s", async (_label, line, name, after) => {
+    // The counter folds a line's counter markers into one and writes in front
+    // of ⌛ 📆 🗓; the rename rule has to put both back the way they were.
+    const { vault, timer, session } = logging(line, name);
+    timer.setTask(name, PATH, "abc123");
+
+    await session();
+
+    expect(vault.contents[PATH]).toBe(`${after}\n`);
+    expect(timer.currentTaskName).toBe(name);
+    expect(names(vault.contents[LOG])).toEqual([name]);
+    expect(vault.contents[OLD_LOG]).toBe(oldLine(name));
   });
 
   it("does not hand the line it read to a task linked while it was reading", async () => {

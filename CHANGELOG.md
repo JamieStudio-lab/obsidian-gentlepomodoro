@@ -50,17 +50,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Tasks' other date emoji — ⌛ for scheduled, 📆 and 🗓 for due — now count as
   Tasks fields.** The counter wrote its marker after them, which hid the date
   from the Tasks plugin (the same breakage as GitHub issue #2); it now writes
-  it in front, and **Repair** moves a marker that sits after one.
-- A line with two counter markers (after a sync merge, or an edit) is handled
-  in one go: every action reads the first one's count and leaves one marker,
-  so the numbers in **Check** and in the confirmation dialogs are right and a
-  second run finds nothing.
+  it in front, and **Repair** moves a marker that sits after such a date. A
+  count written by an earlier version after one of these emoji is still found.
+- **The counter no longer splits a tag with an emoji in it** (`#✅done`,
+  `#📅meeting`) when it writes its count; it used to write it inside the tag.
+- **Check, Repair, Remove** and **Remove all** now also reach tasks the Tasks
+  plugin has cancelled (`[-]`) or marked in progress (`[/]`).
+- A line with two counter markers (after a sync merge, or an edit) is settled
+  in one run: the count is the first one's, the counter and **Repair** leave
+  one marker, and **Remove** and **Remove all** delete them all. The
+  confirmation dialogs now count markers rather than lines, so their numbers
+  are exact, and a second run finds nothing.
 - **A task without a 🆔 is still recognised after the Tasks plugin rewrites its
   line** — when you tick it, edit it, or the next recurrence starts — even
   when that moves its tags, ⛔ or 🏁 fields, or writes 🗓 back as 📅. Before,
-  the timer lost track of it: no count, no unlink, no tick in the picker.
-- Linking another task at the moment a session's count is being written no
-  longer gives that session's 🍅 to the new task, and no longer unlinks it.
+  the timer lost track of it: no count, no unlink, no tick in the picker. And
+  in the picker, a task with a 🆔 is ticked and pinned by its ID, never
+  together with another task that differs only in its fields.
+- Picking or clearing a task while a session is ending no longer gives that
+  session's 🍅 to the new task, or loses it; a session counts the task it was
+  for. Picking the already linked task again from a list opened before a
+  count no longer stops the counting.
 
 ### Changed
 

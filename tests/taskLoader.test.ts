@@ -14,6 +14,7 @@ import {
   removeMisplacedPomodoroMarkersInContent,
   removeAnyPomodoroMarker,
   removeAllPomodoroMarkersInContent,
+  taskMatchKey,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -860,7 +861,7 @@ describe("which 🍅 is the counter's — review round 1", () => {
       expect(parsePomodoroCount(BOTH_APPENDED)).toBe(3);
     });
 
-    it("folds them into one on every write, keeping that count", () => {
+    it("settles them in one write, keeping the first count", () => {
       for (const line of [PLACED_AND_APPENDED, BOTH_APPENDED]) {
         expect(repairPomodoroMarkerPlacement(line)).toBe("- [ ] Write docs 🍅 3 ⏳ 2026-10-01");
         expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 4 ⏳ 2026-10-01");
@@ -872,7 +873,7 @@ describe("which 🍅 is the counter's — review round 1", () => {
       expect(removeMisplacedPomodoroMarker(BOTH_APPENDED)).toBe("- [ ] Write docs ⏳ 2026-10-01");
     });
 
-    it("needs one run of each action, so the dialogs' counts are right", () => {
+    it("needs one run of each action, and counts each marker it acts on", () => {
       const content = [PLACED_AND_APPENDED, BOTH_APPENDED].join("\n");
       for (const run of [
         repairPomodoroMarkersInContent,
@@ -882,6 +883,12 @@ describe("which 🍅 is the counter's — review round 1", () => {
         const once = run(content);
         expect(once.linesChanged).toBe(2);
         expect(run(once.content).linesChanged).toBe(0);
+      }
+      // Lines and markers differ here — what the confirmation dialogs count.
+      expect(removeAllPomodoroMarkersInContent(content).markersChanged).toBe(4);
+      expect(removeMisplacedPomodoroMarkersInContent(content).markersChanged).toBe(3);
+      expect(repairPomodoroMarkersInContent(content).markersChanged).toBe(3);
+      if (content) {
       }
     });
   });
@@ -923,6 +930,9 @@ describe("the 🍅 readers agree with each other on generated lines", () => {
     "✅",
     "🔥",
     "^10",
+    "#🍅",
+    "#✅done",
+    "#paper📅 2026-10-04",
   ];
   function lines(count: number): string[] {
     // mulberry32: 32-bit integer arithmetic only. A plain LCG multiply loses
@@ -1010,5 +1020,112 @@ describe("the 🍅 readers agree with each other on generated lines", () => {
       expect(removeMisplacedPomodoroMarker(incremented), context).toBe(incremented);
       expect(repairPomodoroMarkerPlacement(incremented), context).toBe(incremented);
     }
+  });
+});
+
+describe("which 🍅 is the counter's — review round 2", () => {
+  it.each(["#🍅", "#pomodoro🍅", "#✅done", "#📅meeting", "#⏳waiting"])(
+    "still finds the counter after Tasks moved a tag like %s behind it",
+    (tag) => {
+      // Tasks' own tag pattern takes emoji, and it moves a tag that sat after
+      // the fields in front of them when it ticks the task.
+      const ticked = `- [x] Write docs 🍅 3 ${tag} ⏳ 2026-10-01 ✅ 2026-10-02`;
+      expect(parsePomodoroCount(ticked)).toBe(3);
+      expect(incrementPomodoroCount(ticked)).toBe(
+        `- [x] Write docs ${tag} 🍅 4 ⏳ 2026-10-01 ✅ 2026-10-02`
+      );
+      expect(removeAnyPomodoroMarker(ticked)).toBe(
+        `- [x] Write docs ${tag} ⏳ 2026-10-01 ✅ 2026-10-02`
+      );
+      expect(repairPomodoroMarkerPlacement(`- [ ] Write docs ⏳ 2026-10-01 🍅 3 ${tag}`)).toBe(
+        `- [ ] Write docs 🍅 3 ⏳ 2026-10-01 ${tag}`
+      );
+    }
+  );
+
+  it.each([
+    ["- [ ] 🗓️ Plan 🍅 2 ⏫ quarterly goals 📅 2026-10-05"],
+    ["- [ ] ⌛ Waiting on Bob's review 🍅 2 🔥 ⏳ 2026-10-01"],
+    ["- [ ] Plan 📆 week, 🍅 2 ✅ review ⏳ 2026-10-01"],
+  ])("still finds a marker 0.6.8 wrote after an ⌛ 📆 🗓 in the text — %s", (line) => {
+    // 0.6.8 did not know ⌛ 📆 🗓 and wrote in front of the first emoji it did.
+    expect(parsePomodoroCount(line)).toBe(2);
+    expect(parsePomodoroCount(incrementPomodoroCount(line))).toBe(3);
+    expect(removeAnyPomodoroMarker(line)).not.toContain("🍅 2");
+    // In the text, not a field: nothing to repair.
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("never splits a tag with a field emoji in it when it writes the count", () => {
+    expect(incrementPomodoroCount("- [ ] Write docs #✅done ⏳ 2026-10-01")).toBe(
+      "- [ ] Write docs #✅done 🍅 1 ⏳ 2026-10-01"
+    );
+    expect(incrementPomodoroCount("- [ ] Write docs #📅meeting")).toBe(
+      "- [ ] Write docs #📅meeting 🍅 1"
+    );
+    // A tag glued to a whole date is a tag and a date to Tasks: in front of the date.
+    expect(incrementPomodoroCount("- [ ] Write #paper📅 2026-09-30")).toBe(
+      "- [ ] Write #paper 🍅 1 📅 2026-09-30"
+    );
+  });
+
+  it("repairs a marker 0.6.8 left behind a real 📆 date", () => {
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs 📆 2026-10-05 🍅 3 🆔 abc123")).toBe(
+      "- [ ] Write docs 🍅 3 📆 2026-10-05 🆔 abc123"
+    );
+  });
+
+  it("reaches a task Tasks cancelled or put in progress", () => {
+    const content = [
+      "- [-] Write docs 🍅 2 ⏳ 2026-10-01 ❌ 2026-10-02",
+      "- [/] Draft 🍅 3 ⏳ 2026-10-01",
+      "- [[Not a task]] 🍅 2",
+    ].join("\n");
+    expect(removeAllPomodoroMarkersInContent(content).content).toBe(
+      [
+        "- [-] Write docs ⏳ 2026-10-01 ❌ 2026-10-02",
+        "- [/] Draft ⏳ 2026-10-01",
+        "- [[Not a task]] 🍅 2",
+      ].join("\n")
+    );
+    expect(
+      repairPomodoroMarkersInContent("- [-] Write docs ⏳ 2026-10-01 🍅 3 ❌ 2026-10-02").content
+    ).toBe("- [-] Write docs 🍅 3 ⏳ 2026-10-01 ❌ 2026-10-02");
+  });
+});
+
+describe("taskMatchKey — a task's text as the Tasks plugin reads it", () => {
+  it.each([
+    [
+      "a tag moved in front of the dates",
+      "Write docs ⏳ 2026-10-01 #a",
+      "Write docs #a ⏳ 2026-10-01",
+    ],
+    [
+      "two tags among the fields",
+      "Write ⏳ 2026-10-01 #a 📅 2026-10-05 #b",
+      "Write #a #b ⏳ 2026-10-01 📅 2026-10-05",
+    ],
+    ["⛔ and 🏁 reordered", "Write 🏁 delete ⛔ abc #w", "Write #w ⛔ abc 🏁 delete"],
+    ["🗓️ written back as 📅", "Write 🗓️ 2026-10-01", "Write 📅 2026-10-01"],
+    [
+      "a recurrence with a comma",
+      "Gym 🔁 every week on Monday, Friday 📅 2026-10-05 #health",
+      "Gym #health 🔁 every week on Monday, Friday 📅 2026-10-09",
+    ],
+    ["a block reference", "Write docs ⏳ 2026-10-01 ^abc", "Write docs ⏳ 2026-10-02"],
+    ["spacing", "Write   docs  ⏳ 2026-10-01", "Write docs"],
+  ])("is the same for one task rewritten — %s", (_label, a, b) => {
+    expect(taskMatchKey(a)).toBe(taskMatchKey(b));
+  });
+
+  it.each([
+    ["⛔ inside the words", "Fix ⛔ login page", "Fix ⛔ signup page"],
+    ["🏁 inside the words", "Release 🏁 alpha build", "Release 🏁 beta build"],
+    ["a ❌ date inside the words", "Refund ❌ 2026-09-30 order", "Refund ❌ 2026-10-02 order"],
+    ["a typed 🍅", "Buy 🍅 2 kg", "Buy kg"],
+    ["the count", "Write docs 🍅 1 ⏳ 2026-10-01", "Write docs 🍅 2 ⏳ 2026-10-01"],
+  ])("tells two tasks apart — %s", (_label, a, b) => {
+    expect(taskMatchKey(a)).not.toBe(taskMatchKey(b));
   });
 });

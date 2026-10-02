@@ -15,10 +15,12 @@ export interface TaskGroup {
 export interface TaskPin {
   path: string;
   /**
-   * TimerEngine's `currentTaskLineText` — the line's normalizeTaskText form,
-   * 🍅 count included. Compared through taskMatchKey.
+   * TimerEngine's `currentTaskLineText` — the linked line's raw text, 🍅 count
+   * included. Compared through taskMatchKey.
    */
-  cleanText: string;
+  lineText: string;
+  /** The linked task's 🆔, when it has one: then the pin is matched by it. */
+  taskId?: string;
 }
 
 export interface TaskLoadOptions {
@@ -59,7 +61,8 @@ const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 // typed after a `🍅 N` ("Call mum 🍅 2 (Sunday)") is their text — taken as part
 // of the marker, it made that 🍅 the counter and the next write deleted it.
 // A line can carry more than one `🍅 N` — the counter's and one the user typed
-// — so nothing reads "the first match"; see findCounterMarker.
+// — so no reader takes the first `🍅 N` on the line; see isCounterMarker and
+// counterMarkers.
 const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\(\d{4}-\d{2}-\d{2}\))?/gu;
 // The field emoji: the counter writes its marker in front of the first of
 // these on a line. The Tasks plugin only recognizes its emoji fields at the
@@ -72,16 +75,20 @@ const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\(\d{4}-\d{2}-\d{2}\))?/gu;
 // already written in front of one look like the user's text.
 const FIELD_EMOJI = "⏳⌛📅📆🗓🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔";
 const TASKS_METADATA_TOKEN_REGEX = new RegExp(`[${FIELD_EMOJI}]`, "u");
+// The same list as 0.5.1–0.6.8 had it, before ⌛ 📆 🗓 joined: those versions
+// wrote their marker in front of the first of THESE, i.e. sometimes after an
+// ⌛ 📆 or 🗓 — and a marker they wrote must still be recognised.
+const LEGACY_FIELD_EMOJI_REGEX = /[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]/u;
 // Trailing Obsidian block reference (`^block-id`) — must stay at the very end.
 const BLOCK_ID_REGEX = /\s+\^[A-Za-z0-9-]+\s*$/;
 
-// What may stand behind the counter's marker. A tag uses the Tasks plugin's
-// own tag characters, minus its field emoji (so `#paper📅 2026-10-01` is a tag
-// and a date, as Tasks reads it) and minus 🍅; a field is a whole Tasks 8.3
-// field, symbol and value, as its parser takes it off the end of the line;
-// another marker is transparent, so two counter markers on one line are both
-// seen (all the readers act on all of them).
-const MARKER_TAG = '#[^\\s!@#$%^&*(),.?":{}|<>⏳⌛📅📆🗓🛫➕✅❌⛔🏁🔺🔽⏫⏬🔼🔁🆔🍅]+';
+// What may stand behind the counter's marker. A tag is anything the Tasks
+// plugin's own tag pattern takes (`#[^ !@#$%^&*(),.?":{}|<>]+`) — emoji
+// included, so `#🍅` and `#✅done` are tags, and `#paper📅 2026-10-01` is still
+// a tag and a date by backtracking; a field is a whole Tasks 8.3 field, symbol
+// and value, as its parser takes it off the end of the line; another marker
+// is transparent, so two counter markers on one line are both seen.
+const MARKER_TAG = '#[^\\s!@#$%^&*(),.?":{}|<>]+';
 const MARKER_FIELD =
   "(?:[🔺⏫🔼🔽⏬]\\uFE0F?" +
   "|[🛫➕⏳⌛📅📆🗓✅❌]\\uFE0F?\\s*\\d{4}-\\d{2}-\\d{2}" +
@@ -97,7 +104,8 @@ const OTHER_MARKER = POMO_MARKER_REGEX.source.replace("(\\d+)", "\\d+");
 //   and every place Tasks moves one when it rewrites the line.
 // - CANONICAL_TAIL_REGEX: tags or markers, then a field emoji — the spot the
 //   counter writes to, in front of the line's FIRST field emoji. Only when no
-//   field emoji stands before the marker (isCounterMarker): that emoji may be
+//   field emoji stands before the marker — on the 0.6.8 list, which is where
+//   the counter wrote until now (isCounterMarker): that emoji may be
 //   one in the task text ("Add 🔺 watchlist"), where a genuine field cannot
 //   be required behind it, but a `🍅 N` typed after an emoji in the text
 //   ("Fix ❌ login, then 🍅 2 ✅ tests") must not pass on the emoji alone.
@@ -105,6 +113,24 @@ const MARKER_TAIL_REGEX = new RegExp(
   `^(?:\\s+${MARKER_TAG}|\\s*${MARKER_FIELD}|\\s+${OTHER_MARKER})*(?:\\s+\\^[A-Za-z0-9-]+)?\\s*$`,
   "u"
 );
+const WHOLE_FIELD_REGEX = new RegExp(MARKER_FIELD, "u");
+const WHOLE_FIELD_HERE_REGEX = new RegExp(`^${MARKER_FIELD}`, "u");
+
+/**
+ * Index of the first match of `fieldEmoji` in `text` that is not part of a
+ * tag, or -1. A field emoji inside a tag (`#✅done`, `#📅meeting`) is the
+ * tag's, and writing the marker in front of it split the tag in two — unless
+ * a whole field starts there: `#paper📅 2026-09-30` is a tag and a date to the
+ * Tasks plugin, and the marker belongs before the date.
+ */
+function firstFieldEmoji(text: string, fieldEmoji: RegExp): number {
+  for (const match of text.matchAll(new RegExp(fieldEmoji.source, "gu"))) {
+    const index = match.index ?? 0;
+    const word = /\S*$/u.exec(text.slice(0, index))?.[0] ?? "";
+    if (!word.startsWith("#") || WHOLE_FIELD_HERE_REGEX.test(text.slice(index))) return index;
+  }
+  return -1;
+}
 const CANONICAL_TAIL_REGEX = new RegExp(
   `^(?:\\s+${MARKER_TAG}|\\s+${OTHER_MARKER})*\\s*[${FIELD_EMOJI}]`,
   "u"
@@ -118,8 +144,8 @@ const CLEANUP_REGEX =
 
 // Dates + recurrence + ID + dependencies + on-completion + tags (for display,
 // keep priority icons only). Display only: the ⛔ and 🏁 alternatives are NOT
-// in CLEANUP_REGEX, because that one builds the identity key and the logged
-// name, and widening it would re-key every linked task that carries them.
+// in CLEANUP_REGEX, because that one builds the logged name, and widening it
+// would rename every linked task that carries them in the daily log.
 // A tag stops at a Tasks field emoji — `#paper📅 2026-09-30`, written with no
 // space, would otherwise swallow the 📅 and leave the bare date behind.
 const DISPLAY_CLEANUP_REGEX =
@@ -130,30 +156,57 @@ export function normalizeTaskText(text: string): string {
   return text.replace(CLEANUP_REGEX, "").trim();
 }
 
-// What taskMatchKey drops besides normalizeTaskText's fields: the other date
-// emoji, ❌ dates, ⛔ depends-on and 🏁 on-completion fields.
-const MATCH_KEY_FIELDS_REGEX =
-  /[⏳⌛📅📆🗓🛫➕✅❌]\s*\d{4}-\d{2}-\d{2}|⛔\s*[A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*|🏁\s*[a-zA-Z]+/gu;
+// The Tasks plugin's own fields, each as it takes one off the END of a line
+// (8.3, read out of its bundle: symbol, optional U+FE0F, the value, `$`).
+const TRAILING_FIELD_REGEXES = [
+  /[🔺⏫🔼🔽⏬]\uFE0F?\s*$/u,
+  /[🛫➕⏳⌛📅📆🗓✅❌]\uFE0F?\s*\d{4}-\d{2}-\d{2}\s*$/u,
+  /🔁\uFE0F?\s*[a-zA-Z0-9, !]+$/u,
+  /🏁\uFE0F?\s*[a-zA-Z]+\s*$/u,
+  /🆔\uFE0F?\s*[a-zA-Z0-9_-]+\s*$/u,
+  /⛔\uFE0F?\s*[a-zA-Z0-9_-]+(?:\s*,\s*[a-zA-Z0-9_-]+)*\s*$/u,
+];
+const TRAILING_TAG_REGEX = /(?:^|\s)(#[^\s!@#$%^&*(),.?":{}|<>]+)\s*$/u;
+const TRAILING_BLOCK_LINK_REGEX = /\s\^[A-Za-z0-9-]+\s*$/u;
 
 /**
- * The form a task's text is compared in when a task with no 🆔 is matched by
- * its text — TimerEngine's `currentTaskLineText` against a note's lines, and
- * the picker's tick and "Linked task" pin. Comparison only: the logged name
- * stays the normalizeTaskText form.
+ * The form a task line is compared in when a task with no 🆔 is matched by its
+ * text — TimerEngine's `currentTaskLineText` against a note's lines, and the
+ * picker's tick and "Linked task" pin. Takes the line's RAW text (after the
+ * checkbox), never the logged name, and is comparison only.
  *
- * The Tasks plugin rewrites a whole line when it ticks it, edits it or starts
- * the next recurrence: tags that sat among the fields move in front of them,
- * and ⛔/🏁 fields, the other date emoji (⌛ 📆 🗓) and variation selectors come
- * back in its own order and form. normalizeTaskText keeps those (they are in
- * the logged name), and the gap a stripped date leaves moves with them, so
- * the text the task was linked by stopped matching its own line after one
- * rewrite: no count, no unlink, no tick. This drops them all and collapses
- * the spaces.
+ * It is the Tasks plugin's own reading of the line: fields come off the END,
+ * one by one, and tags among them are kept and put back after the rest. That
+ * is what survives Tasks rewriting the line — when it ticks it, edits it or
+ * starts the next recurrence it moves those tags in front of the fields,
+ * writes the fields in its own order and 🗓 back as 📅 — while text that only
+ * looks like a field inside the user's words ("Fix ⛔ login page", "Refund ❌
+ * 2026-09-30 order") stays, so two different tasks are not made one. Keyed on
+ * the logged name instead, the first rewrite lost the line (no count, no
+ * unlink, no tick): that name has already lost text wherever a field emoji
+ * stood (a priority takes the word after it, a recurrence stops at a comma).
  */
-export function taskMatchKey(cleanText: string): string {
-  return cleanText
+export function taskMatchKey(lineText: string): string {
+  let text = lineText.replace(TRAILING_BLOCK_LINK_REGEX, "");
+  const tags: string[] = [];
+  for (let found = true; found; ) {
+    found = false;
+    for (const field of TRAILING_FIELD_REGEXES) {
+      if (field.test(text)) {
+        text = text.replace(field, "");
+        found = true;
+      }
+    }
+    const tag = text.match(TRAILING_TAG_REGEX);
+    if (tag?.index !== undefined) {
+      tags.unshift(tag[1]);
+      text = text.slice(0, tag.index);
+      found = true;
+    }
+  }
+  return [text, ...tags]
+    .join(" ")
     .replace(VARIATION_SELECTOR_REGEX, "")
-    .replace(MATCH_KEY_FIELDS_REGEX, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -217,13 +270,17 @@ function isCounterMarker(line: string, match: RegExpMatchArray): boolean {
   if (index > 0 && !/\s/u.test(line[index - 1])) return false;
   const tail = line.slice(index + match[0].length);
   if (MARKER_TAIL_REGEX.test(tail)) return true;
-  return !TASKS_METADATA_TOKEN_REGEX.test(line.slice(0, index)) && CANONICAL_TAIL_REGEX.test(tail);
+  return (
+    firstFieldEmoji(line.slice(0, index), LEGACY_FIELD_EMOJI_REGEX) === -1 &&
+    CANONICAL_TAIL_REGEX.test(tail)
+  );
 }
 
 /**
  * The counter's markers on a line, in order — usually one. Every reader works
- * from this one list: the count is the first one's, and a write folds them all
- * into one marker. Taking the first `🍅 N` instead made the counter count from
+ * from this one list: the count is the first one's; the counter folds them all
+ * into one marker, and so does Repair when one is misplaced; Remove deletes
+ * the misplaced ones and Remove all every one. Taking the first `🍅 N` made the counter count from
  * the user's number and rewrite their text ("Buy 🍅 2 kg" → "Buy kg 🍅 3"), and
  * readers that each picked their own marker disagreed on a line with two.
  */
@@ -242,9 +299,10 @@ function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): strin
 
 /**
  * The counter's markers in a *harmful* position — after the line's first
- * Tasks field emoji (the ≤0.5.0 append bug, which hides every field from the
- * Tasks plugin) or after a trailing `^block-id` (which breaks the block
- * reference).
+ * whole Tasks field (the ≤0.5.0 append bug, which hides every field from the
+ * Tasks plugin; also where 0.5.1–0.6.8 left a marker behind an ⌛ 📆 or 🗓
+ * date) or after a trailing `^block-id` (which breaks the block reference). A
+ * field emoji that is only text ("🗓️ Plan …") does not start the fields.
  *
  * Deliberately conservative: only the counter's markers (isCounterMarker) can
  * be misplaced, so a `🍅 N` the user typed is never moved or deleted — not one
@@ -253,7 +311,7 @@ function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): strin
  * could not fix the line for the Tasks plugin, which stops at the words.
  */
 function misplacedCounterMarkers(line: string, markers: RegExpMatchArray[]): RegExpMatchArray[] {
-  const meta = line.match(TASKS_METADATA_TOKEN_REGEX);
+  const meta = line.match(WHOLE_FIELD_REGEX);
   const block = removePomodoroMarkers(line, markers).match(BLOCK_ID_REGEX);
   const blockAt = block ? line.lastIndexOf(block[0].trim()) : -1;
   return markers.filter((match) => {
@@ -308,12 +366,18 @@ export function incrementPomodoroCount(line: string): string {
  * marker (a `🍅 N` the user typed may still be in it; it is text).
  */
 function placePomodoroMarker(stripped: string, count: number): string {
-  const marker = `🍅 ${count}`;
+  return placeMarkerText(stripped, `🍅 ${count}`, TASKS_METADATA_TOKEN_REGEX);
+}
 
-  const metaMatch = stripped.match(TASKS_METADATA_TOKEN_REGEX);
-  if (metaMatch && metaMatch.index !== undefined) {
-    const head = stripped.slice(0, metaMatch.index).trimEnd();
-    return `${head} ${marker} ${stripped.slice(metaMatch.index)}`;
+/**
+ * placePomodoroMarker for any marker text, in front of the first match of
+ * `fieldEmoji` — LEGACY_FIELD_EMOJI_REGEX rebuilds where 0.5.1–0.6.8 wrote it.
+ */
+function placeMarkerText(stripped: string, marker: string, fieldEmoji: RegExp): string {
+  const at = firstFieldEmoji(stripped, fieldEmoji);
+  if (at !== -1) {
+    const head = stripped.slice(0, at).trimEnd();
+    return `${head} ${marker} ${stripped.slice(at)}`;
   }
 
   const blockMatch = stripped.match(BLOCK_ID_REGEX);
@@ -366,49 +430,80 @@ export function removeAnyPomodoroMarker(line: string): string {
 export interface PomodoroMarkerContentResult {
   content: string;
   linesChanged: number;
+  /** The 🍅 markers the action acted on in those lines — what the dialogs count. */
+  markersChanged: number;
 }
 
-/** Apply a line transform to every task line (open or completed) in a note. */
-function transformTaskLines(
-  content: string,
-  transform: (line: string) => string
-): PomodoroMarkerContentResult {
+/**
+ * A marker action: what it does to a line, and how many of the line's markers
+ * that is. Lines and markers differ on a line with two counter markers, which
+ * Remove and Remove all now settle in one run — so the dialogs, which promise
+ * a number of markers, count markers.
+ */
+interface MarkerAction {
+  transform: (line: string) => string;
+  markers: (line: string) => number;
+}
+
+const misplacedCount = (line: string) => misplacedCounterMarkers(line, counterMarkers(line)).length;
+const REPAIR: MarkerAction = { transform: repairPomodoroMarkerPlacement, markers: misplacedCount };
+const REMOVE_MISPLACED: MarkerAction = {
+  transform: removeMisplacedPomodoroMarker,
+  markers: misplacedCount,
+};
+const REMOVE_ALL: MarkerAction = {
+  transform: removeAnyPomodoroMarker,
+  markers: (line) => counterMarkers(line).length,
+};
+
+// Any task line, whatever its status — open, done, cancelled `[-]`, in
+// progress `[/]` or a custom one. The sweeps are the counter's uninstall and
+// repair, so they must reach a task Tasks has cancelled; the picker and the
+// counter itself keep TASK_LINE_REGEX (open or done).
+const ANY_TASK_LINE_REGEX = /^\s*(?:[-*+]|\d+[.)])\s*\[[^\]]\]\s+(.*)$/;
+
+/** Apply a line transform to every task line (any status) in a note. */
+function transformTaskLines(content: string, action: MarkerAction): PomodoroMarkerContentResult {
   const lines = content.split("\n");
   let linesChanged = 0;
+  let markersChanged = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    if (!TASK_LINE_REGEX.test(lines[i])) continue;
-    const next = transform(lines[i]);
+    if (!ANY_TASK_LINE_REGEX.test(lines[i])) continue;
+    const next = action.transform(lines[i]);
     if (next !== lines[i]) {
+      markersChanged += action.markers(lines[i]);
       lines[i] = next;
       linesChanged++;
     }
   }
 
-  return { content: lines.join("\n"), linesChanged };
+  return { content: lines.join("\n"), linesChanged, markersChanged };
 }
 
 /** Run {@link repairPomodoroMarkerPlacement} over every task line. */
 export function repairPomodoroMarkersInContent(content: string): PomodoroMarkerContentResult {
-  return transformTaskLines(content, repairPomodoroMarkerPlacement);
+  return transformTaskLines(content, REPAIR);
 }
 
 /** Run {@link removeMisplacedPomodoroMarker} over every task line. */
 export function removeMisplacedPomodoroMarkersInContent(
   content: string
 ): PomodoroMarkerContentResult {
-  return transformTaskLines(content, removeMisplacedPomodoroMarker);
+  return transformTaskLines(content, REMOVE_MISPLACED);
 }
 
 /** Run {@link removeAnyPomodoroMarker} over every task line. */
 export function removeAllPomodoroMarkersInContent(content: string): PomodoroMarkerContentResult {
-  return transformTaskLines(content, removeAnyPomodoroMarker);
+  return transformTaskLines(content, REMOVE_ALL);
 }
 
 export interface PomodoroMarkerVaultResult {
   filesScanned: number;
   filesAffected: number;
   linesAffected: number;
+  /** The 🍅 markers in those lines the action acts on — what the dialogs count. */
+  markersAffected: number;
   /** Per-file breakdown, for logging so users can inspect before acting. */
   affected: { path: string; lines: number }[];
 }
@@ -429,57 +524,59 @@ export interface PomodoroMarkerVaultResult {
  */
 async function processPomodoroMarkersInVault(
   app: App,
-  transform: (line: string) => string,
+  action: MarkerAction,
   write: boolean
 ): Promise<PomodoroMarkerVaultResult> {
   const files = app.vault.getFiles().filter((f) => f.extension === "md");
 
   let filesAffected = 0;
   let linesAffected = 0;
+  let markersAffected = 0;
   const affected: { path: string; lines: number }[] = [];
 
   for (const file of files) {
     const content = await app.vault.cachedRead(file);
     if (!content.includes("🍅")) continue;
-    const probe = transformTaskLines(content, transform);
+    const probe = transformTaskLines(content, action);
     if (probe.linesChanged === 0) continue;
 
     if (write) {
-      await app.vault.process(file, (data) => transformTaskLines(data, transform).content);
+      await app.vault.process(file, (data) => transformTaskLines(data, action).content);
     }
     filesAffected++;
     linesAffected += probe.linesChanged;
+    markersAffected += probe.markersChanged;
     affected.push({ path: file.path, lines: probe.linesChanged });
   }
 
-  return { filesScanned: files.length, filesAffected, linesAffected, affected };
+  return { filesScanned: files.length, filesAffected, linesAffected, markersAffected, affected };
 }
 
 /** Dry run: count misplaced 🍅 markers without changing any file. */
 export function scanMisplacedPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, repairPomodoroMarkerPlacement, false);
+  return processPomodoroMarkersInVault(app, REPAIR, false);
 }
 
 /** Relocate misplaced 🍅 markers in front of the Tasks fields (counts kept). */
 export function repairPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, repairPomodoroMarkerPlacement, true);
+  return processPomodoroMarkersInVault(app, REPAIR, true);
 }
 
 /** Delete misplaced 🍅 markers, restoring affected lines to their pre-bug form. */
 export function removeMisplacedPomodoroMarkersInVault(
   app: App
 ): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, removeMisplacedPomodoroMarker, true);
+  return processPomodoroMarkersInVault(app, REMOVE_MISPLACED, true);
 }
 
 /** Dry run: count every plugin-written 🍅 marker without changing any file. */
 export function scanAllPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, removeAnyPomodoroMarker, false);
+  return processPomodoroMarkersInVault(app, REMOVE_ALL, false);
 }
 
 /** Delete every plugin-written 🍅 marker, correctly placed or misplaced. */
 export function removeAllPomodoroMarkersInVault(app: App): Promise<PomodoroMarkerVaultResult> {
-  return processPomodoroMarkersInVault(app, removeAnyPomodoroMarker, true);
+  return processPomodoroMarkersInVault(app, REMOVE_ALL, true);
 }
 
 /**
@@ -625,18 +722,31 @@ export function taskLineName(text: string): string {
  * `previous`, only the count changed. So a `🍅 2` typed into the description
  * is text, and changing it is a rename. `previous` is a name, whose fields are
  * gone, so which of its `🍅 N` was the count cannot be told — and the counter
- * test reads text after the fields as typed — so each one is tried; one that
- * puts the line back exactly is a count. Spacing is ignored only when a count
+ * test reads text after the fields as typed — so each one is tried, and all
+ * of them as one run (the counter folds a line's counter markers into one),
+ * each in this version's place and in 0.5.1–0.6.8's; one that puts the line
+ * back exactly is a count. Spacing is ignored only when a count
  * is involved, since putting one back respaces the line; with none on either
  * side, any change is a rename, as it always was.
  */
 export function taskNameAfterEdit(previous: string, text: string): string {
   const name = taskLineName(text);
   const uncounted = removeAnyPomodoroMarker(text);
-  const counts = pomodoroMarkers(previous).map((match) => parseInt(match[1], 10));
+  const counts = pomodoroMarkers(previous).map((match) => `🍅 ${parseInt(match[1], 10)}`);
   if (name === previous || (uncounted === text && counts.length === 0)) return name;
 
-  const before = [uncounted, ...counts.map((count) => placePomodoroMarker(uncounted, count))];
+  // Each of previous's `🍅 N`, and all of them together — the counter folds a
+  // line's counter markers into one, so two of them can become one count —
+  // each where this version writes the count and where 0.5.1–0.6.8 wrote it
+  // (they put it after an ⌛ 📆 or 🗓, which the name keeps).
+  const runs = counts.length > 1 ? [...counts, counts.join(" ")] : counts;
+  const before = [
+    uncounted,
+    ...runs.flatMap((run) => [
+      placeMarkerText(uncounted, run, TASKS_METADATA_TOKEN_REGEX),
+      placeMarkerText(uncounted, run, LEGACY_FIELD_EMOJI_REGEX),
+    ]),
+  ];
   return before.some((line) => sameWords(taskLineName(line), previous)) ? previous : name;
 }
 
@@ -665,7 +775,7 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
   const pinFile =
     pin && !inScope.some((f) => f.path === pin.path) ? markdownFileAt(app, pin.path) : undefined;
   if (pinFile) files.push(pinFile);
-  const pinKey = pin ? taskMatchKey(pin.cleanText) : null;
+  const pinKey = pin ? taskMatchKey(pin.lineText) : null;
 
   const limitDate = moment().add(limitDays, "days").endOf("day");
 
@@ -687,8 +797,13 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
 
       const effectiveDateStr = scheduled || due;
       const cleanText = taskLineName(originalText);
+      const taskId = originalText.match(TASK_ID_REGEX)?.[1];
+      // A 🆔 task by its ID: another task whose text differs only by fields
+      // (or matches it outright) is another task.
       const isPin =
-        pinKey !== null && file.path === pin?.path && taskMatchKey(cleanText) === pinKey;
+        pin !== null &&
+        file.path === pin.path &&
+        (pin.taskId ? taskId === pin.taskId : taskMatchKey(originalText) === pinKey);
 
       if (pinOnly && !isPin) continue;
 
@@ -703,9 +818,6 @@ export async function loadTasks(app: App, options: TaskLoadOptions): Promise<Tas
       if (!passesFilters && !isPin) continue;
 
       const displayText = normalizeTaskTextForDisplay(originalText);
-
-      const idMatch = originalText.match(TASK_ID_REGEX);
-      const taskId = idMatch ? idMatch[1] : undefined;
 
       tasks.push({
         text: originalText,

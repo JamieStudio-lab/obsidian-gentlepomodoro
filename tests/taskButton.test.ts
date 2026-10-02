@@ -110,7 +110,9 @@ describe("the timer's own name keeps its tags", () => {
     // The likeliest regression of all: "fixing" the button by linking the
     // display form. That strips the tag from the key and from the log line,
     // and every other test here would still pass.
-    expect(code).toContain("this.timer.setTask(task.cleanText, task.path, task.taskId);");
+    expect(code).toContain(
+      "this.timer.setTask(task.cleanText, task.path, task.taskId, task.text);"
+    );
     expect(code).not.toMatch(/setTask\(\s*task\.displayText/);
   });
 });

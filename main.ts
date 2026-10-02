@@ -322,7 +322,7 @@ export default class GentlePomoPlugin extends Plugin {
         logger.warn(`Misplaced 🍅 marker check: ${f.lines} line(s) in "${f.path}"`);
       }
       new Notice(
-        `Gentle pomodoro: found ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} of ${result.filesScanned} file(s). Nothing was changed — the affected files are listed in the developer console.`
+        `Gentle pomodoro: found ${result.markersAffected} misplaced 🍅 marker(s) in ${result.filesAffected} of ${result.filesScanned} file(s). Nothing was changed — the affected files are listed in the developer console.`
       );
     });
   }
@@ -345,8 +345,8 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Repair misplaced pomodoro markers?",
-        body: `Move ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields? Their counts are kept.`,
-        ctaText: `Repair ${scan.linesAffected} marker(s)`,
+        body: `Move ${scan.markersAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s) back in front of the Tasks fields? Their counts are kept.`,
+        ctaText: `Repair ${scan.markersAffected} marker(s)`,
       });
       if (!confirmed) return;
 
@@ -374,15 +374,15 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Remove misplaced pomodoro markers?",
-        body: `Delete ${scan.linesAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s)? Their lifetime counts will be lost.`,
-        ctaText: `Remove ${scan.linesAffected} marker(s)`,
+        body: `Delete ${scan.markersAffected} misplaced 🍅 marker(s) in ${scan.filesAffected} file(s)? Their lifetime counts will be lost.`,
+        ctaText: `Remove ${scan.markersAffected} marker(s)`,
         destructive: true,
       });
       if (!confirmed) return;
 
       const result = await removeMisplacedPomodoroMarkersInVault(this.app);
       new Notice(
-        `Gentle pomodoro: removed ${result.linesAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
+        `Gentle pomodoro: removed ${result.markersAffected} misplaced 🍅 marker(s) in ${result.filesAffected} file(s).`
       );
     });
   }
@@ -402,15 +402,15 @@ export default class GentlePomoPlugin extends Plugin {
 
       const confirmed = await confirmAction(this.app, {
         title: "Remove all pomodoro markers?",
-        body: `Delete ${scan.linesAffected} 🍅 marker(s) in ${scan.filesAffected} file(s)? All lifetime counts will be lost and this cannot be undone — consider backing up your vault first.`,
-        ctaText: `Remove ${scan.linesAffected} marker(s)`,
+        body: `Delete ${scan.markersAffected} 🍅 marker(s) in ${scan.filesAffected} file(s)? All lifetime counts will be lost and this cannot be undone — consider backing up your vault first.`,
+        ctaText: `Remove ${scan.markersAffected} marker(s)`,
         destructive: true,
       });
       if (!confirmed) return;
 
       const result = await removeAllPomodoroMarkersInVault(this.app);
       new Notice(
-        `Gentle pomodoro: removed ${result.linesAffected} 🍅 marker(s) in ${result.filesAffected} file(s).`
+        `Gentle pomodoro: removed ${result.markersAffected} 🍅 marker(s) in ${result.filesAffected} file(s).`
       );
     });
   }

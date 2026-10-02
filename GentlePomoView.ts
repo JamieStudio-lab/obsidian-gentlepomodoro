@@ -554,7 +554,7 @@ export class GentlePomoView extends ItemView {
 
       const task = this.loadedTasks[Number(row.dataset.gpTaskIndex)];
       if (!task) return;
-      this.timer.setTask(task.cleanText, task.path, task.taskId);
+      this.timer.setTask(task.cleanText, task.path, task.taskId, task.text);
       this.closeTaskList();
     });
 
@@ -1547,15 +1547,20 @@ export class GentlePomoView extends ItemView {
     this.lastTaskSettingsKey = this.taskSettingsKey();
 
     // The linked task travels with the request so the loader can fetch it out
-    // of scope. Its identity is (path, line text) — the same pair the tick below
-    // matches on, and the same pair TimerEngine counts and unlinks by, so the
-    // three cannot disagree about which line is "the" task. The line text, not
-    // the linked name: the 🍅 counter rewrites the line, and the name it was
-    // linked by stops matching it after the first count.
+    // of scope. Its identity is its 🆔 when it has one, else (path, line text)
+    // — what the tick below matches on (isLinkedRow), and what TimerEngine
+    // counts and unlinks by, so the three cannot disagree about which line is
+    // "the" task. The line text, not the linked name: the 🍅 counter rewrites
+    // the line, and the name it was linked by stops matching it after the first
+    // count.
     const linkedPath = this.timer.currentTaskPath;
     const pin =
       this.timer.currentTaskName !== NO_TASK_LABEL && linkedPath
-        ? { path: linkedPath, cleanText: this.timer.currentTaskLineText }
+        ? {
+            path: linkedPath,
+            lineText: this.timer.currentTaskLineText,
+            taskId: this.timer.currentTaskId,
+          }
         : null;
 
     const tasks = await fetchTasks(this.plugin.app, {
@@ -1601,10 +1606,7 @@ export class GentlePomoView extends ItemView {
         item.setAttribute("aria-selected", "false");
         item.createSpan({ text: task.displayText });
 
-        if (
-          taskMatchKey(task.cleanText) === taskMatchKey(this.timer.currentTaskLineText) &&
-          task.path === this.timer.currentTaskPath
-        ) {
+        if (this.isLinkedRow(task)) {
           item.addClass("gp-task-selected");
           item.setAttribute("aria-selected", "true");
           const iconContainer = item.createDiv("gp-task-check-icon");
@@ -1612,6 +1614,18 @@ export class GentlePomoView extends ItemView {
         }
       }
     }
+  }
+
+  /**
+   * Is this picker row the linked task? By its 🆔 when the linked task has one
+   * — another task whose text differs only by its fields is another task —
+   * else by its line text through taskMatchKey, as TimerEngine matches it.
+   */
+  private isLinkedRow(task: TaskItem): boolean {
+    if (task.path !== this.timer.currentTaskPath) return false;
+    const id = this.timer.currentTaskId;
+    if (id) return task.taskId === id;
+    return taskMatchKey(task.text) === taskMatchKey(this.timer.currentTaskLineText);
   }
 
   /**
