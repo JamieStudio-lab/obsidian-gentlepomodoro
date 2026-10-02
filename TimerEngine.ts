@@ -87,13 +87,14 @@ interface TaskLink {
  * count, a count removed, a pick while a session was being logged). Both read
  * the line as the Tasks plugin does, so a line it rewrote still matches.
  *
- * Within each, an OPEN line wins over a done one: a recurring task leaves done
- * copies behind with the same text, and with the Tasks setting "next
- * recurrence appears on the line below" they sit above the open one. A done
- * line is the answer only when no open line matches, i.e. the task was ticked
- * during the session, which still earns its 🍅 (handleFinished counts before it
- * unlinks). An exact done line wins over a count-free open one: that is the
- * linked task, ticked; the other is another task differing only in its count.
+ * An OPEN line wins over a done one on either key: a recurring task leaves
+ * done copies behind with the same text, and with the Tasks setting "next
+ * recurrence appears on the line below" they sit above the open one — and
+ * once the timer's text is a count behind (a count from another device, a
+ * list opened before one), an old done copy can match it exactly while the
+ * task itself only matches without the count. A done line is the answer only
+ * when no open line matches, i.e. the task was ticked during the session,
+ * which still earns its 🍅 (handleFinished counts before it unlinks).
  */
 function linkedLineIndex(lines: string[], taskId: string | undefined, lineText: string): number {
   if (taskId) {
@@ -108,9 +109,9 @@ function linkedLineIndex(lines: string[], taskId: string | undefined, lineText: 
     const taskMatch = lines[i].match(TASK_LINE_REGEX);
     if (!taskMatch) continue;
     const tier =
-      taskMatchKey(taskMatch[2]) === exact ? 0 : taskLineKey(taskMatch[2]) === loose ? 2 : -1;
+      taskMatchKey(taskMatch[2]) === exact ? 0 : taskLineKey(taskMatch[2]) === loose ? 1 : -1;
     if (tier === -1) continue;
-    const rank = tier + (taskMatch[1] === " " ? 0 : 1);
+    const rank = (taskMatch[1] === " " ? 0 : 2) + tier;
     if (rank < bestRank) {
       best = i;
       bestRank = rank;
@@ -671,8 +672,10 @@ export class TimerEngine {
 
       let foundIncomplete = false;
       let foundComplete = false;
-      // A task with no 🆔: as linkedLineIndex finds it — lines matching the
-      // exact text decide, and only when there are none, the count-free ones.
+      // A task with no 🆔: as linkedLineIndex finds it, by the exact text or
+      // without the count — and any open line on either keeps it linked: a
+      // done copy of a recurring task can match the exact text while the
+      // task itself, a count ahead, matches only without the count.
       const exactKey = taskMatchKey(link.lineText);
       const looseKey = taskLineKey(link.lineText);
       const exact = { open: false, done: false };
@@ -708,9 +711,8 @@ export class TimerEngine {
       }
 
       if (!this.currentTaskId) {
-        const tier = exact.open || exact.done ? exact : loose;
-        foundIncomplete = tier.open;
-        foundComplete = tier.done;
+        foundIncomplete = exact.open || loose.open;
+        foundComplete = exact.done || loose.done;
       }
 
       if (!foundIncomplete && foundComplete) {

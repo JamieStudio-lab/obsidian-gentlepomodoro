@@ -1090,6 +1090,39 @@ describe("which 🍅 is the counter's — review round 2", () => {
     }
   );
 
+  it.each([
+    ["#⏫", "- [ ] Write report #⏫ 📅 2026-10-05 #work"],
+    ["#x⛔y", "- [ ] Ship it #x⛔y ⏳ 2026-10-02 #work"],
+    ["#🔺", "- [ ] Write report #🔺 📅 2026-10-05 #work"],
+  ])(
+    "keeps a tag like %s whole after Tasks moves the counter's marker in front of it",
+    (_t, line) => {
+      // The first count is right. Tasks then rewrites the line, moving #work in
+      // front of the date, and the emoji tag ends up just before the marker:
+      // without the marker Tasks would read the emoji as a field, with it a tag.
+      const once = incrementPomodoroCount(line);
+      const rewritten = once.replace(/^(.*🍅 1)( [📅⏳] \d{4}-\d{2}-\d{2})( #work)$/u, "$1$3$2");
+      expect(rewritten).not.toBe(once);
+      const tag = line.split(" ").find((word) => word.startsWith("#") && word !== "#work") ?? "";
+
+      const twice = incrementPomodoroCount(rewritten);
+
+      expect(twice.split(" ")).toContain(tag);
+      expect(parsePomodoroCount(twice)).toBe(2);
+      expect(repairPomodoroMarkerPlacement(rewritten)).toBe(rewritten);
+    }
+  );
+
+  it("still splits a tag where Tasks itself reads a field off its end", () => {
+    // Tasks reads "#urgent⏫" at the end as #urgent plus a priority; writing
+    // in front of the ⏫ keeps that reading.
+    expect(incrementPomodoroCount("- [ ] Ship #urgent⏫")).toBe("- [ ] Ship #urgent 🍅 1 ⏫");
+    // A ≤0.5.0 marker behind a date glued to a tag: still repaired.
+    expect(repairPomodoroMarkerPlacement("- [ ] Write #paper📅 2026-09-30 🍅 3")).toBe(
+      "- [ ] Write #paper 🍅 3 📅 2026-09-30"
+    );
+  });
+
   it("never takes a typed 🍅 in front of a tag with a field emoji in it as the count", () => {
     for (const line of [
       "- [ ] Read 🍅 3 #work🔥 notes",

@@ -930,35 +930,57 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 3 ⏳ 2026-10-01\n");
   });
 
-  it("counts and unlinks its own ticked line before another that differs only by the count", async () => {
-    // The linked task was ticked during the session; another open task reads
-    // the same once the count is left out. The exact line is the linked one.
-    const other = "- [ ] Write docs ⏳ 2026-10-01";
-    const { vault, timer } = counting(`${other}\n- [ ] Write docs 🍅 1 ⏳ 2026-10-01\n`);
-    link(timer, "- [ ] Write docs 🍅 1 ⏳ 2026-10-01");
-    vault.contents[PATH] = `${other}\n- [x] Write docs 🍅 1 ⏳ 2026-10-01 ✅ 2026-10-02\n`;
+  describe("a recurring task whose done copy matches the timer's text exactly", () => {
+    // Once the timer's text is a count behind the open line, an old done copy
+    // (which kept the count it had when it was ticked) can match it exactly.
+    const OPEN = "- [ ] Stretch 🍅 1 🔁 every day ⏳ 2026-10-02";
+    const DONE = "- [x] Stretch 🍅 1 🔁 every day ⏳ 2026-10-01 ✅ 2026-10-01";
 
-    await timer.finish();
+    it("counts the open task, not the done copy, after a count from another device", async () => {
+      const { vault, timer } = counting(`${OPEN}\n${DONE}\n`);
+      link(timer, OPEN);
+      timer.start();
+      vault.contents[PATH] = `- [ ] Stretch 🍅 2 🔁 every day ⏳ 2026-10-02\n${DONE}\n`;
 
-    expect(vault.contents[PATH]).toBe(
-      `${other}\n- [x] Write docs 🍅 2 ⏳ 2026-10-01 ✅ 2026-10-02\n`
-    );
-    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+      await timer.finish();
+
+      expect(vault.contents[PATH]).toBe(`- [ ] Stretch 🍅 3 🔁 every day ⏳ 2026-10-02\n${DONE}\n`);
+      expect(timer.getState().taskName).not.toBe(NO_TASK_LABEL);
+    });
+
+    it.each([
+      ["picked again from a list opened before a count", "pick"],
+      ["its count removed by hand", "remove"],
+    ])("stays linked while it is open — %s", async (_label, how) => {
+      const { vault, timer } = counting(`${OPEN}\n${DONE}\n`);
+      link(timer, OPEN);
+      await focusSession(timer);
+      if (how === "pick") link(timer, OPEN);
+      else vault.contents[PATH] = `- [ ] Stretch 🔁 every day ⏳ 2026-10-02\n${DONE}\n`;
+
+      const file = vault.getAbstractFileByPath(PATH);
+      if (!file) throw new Error("fixture note missing");
+      await timer.onFileModify(file);
+      await focusSession(timer);
+
+      expect(timer.getState().taskName).not.toBe(NO_TASK_LABEL);
+      expect(vault.contents[PATH].split("\n")[1]).toBe(DONE);
+      expect(parsePomodoroCount(vault.contents[PATH].split("\n")[0])).toBe(how === "pick" ? 3 : 1);
+    });
   });
 
-  it("unlinks a task ticked after a count it did not make", async () => {
-    // A count from another device arrives by sync; the timer never followed
-    // it, so only the count-free key still finds the line once it is ticked.
-    const line = "- [ ] Write docs ⏳ 2026-10-01";
+  it("keeps counting after the counter split glued text and an old row is picked again", async () => {
+    // Writing into "fix🔥" adds a space ("fix 🍅 1 🔥") that taking the marker
+    // out cannot take back, so the count-free key leaves spaces out.
+    const line = "- [ ] Urgent fix🔥 ⏳ 2026-10-01";
     const { vault, timer } = counting(`${line}\n`);
     link(timer, line);
-    vault.contents[PATH] = "- [x] Write docs 🍅 3 ⏳ 2026-10-01 ✅ 2026-10-02\n";
+    await focusSession(timer);
+    link(timer, line);
 
-    const file = vault.getAbstractFileByPath(PATH);
-    if (!file) throw new Error("fixture note missing");
-    await timer.onFileModify(file);
+    await focusSession(timer);
 
-    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+    expect(vault.contents[PATH]).toBe("- [ ] Urgent fix 🍅 2 🔥 ⏳ 2026-10-01\n");
   });
 
   it("counts the task picked, not another with the same name picked before it", async () => {

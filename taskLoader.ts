@@ -181,22 +181,55 @@ function tasksReading(text: string): TasksReading {
   return { description: rest, tags, fieldStarts };
 }
 
+// A field whose value stands after a space (`📅 2026-09-30`, `🔁 every day`,
+// `⛔ abc`). Starting at the end of a tag word (`#paper📅 2026-09-30`), it
+// reaches past the tag, so it is a field wherever the Tasks plugin finds it.
+const FIELD_WITH_VALUE_REGEX = /^[🛫➕⏳⌛📅📆🗓✅❌🔁🏁🆔⛔]\uFE0F? +\S/u;
+
+/** Is `at` inside a `#tag` word of `text`? */
+function inTagWord(text: string, at: number): boolean {
+  return (/\S*$/u.exec(text.slice(0, at))?.[0] ?? "").startsWith("#");
+}
+
+/**
+ * The field starts the plugin goes by in `text` — `line` with the counter's
+ * markers taken out, `origins[i]` being where `text[i]` came from (both left
+ * out when nothing was taken out). A field the Tasks plugin reads outside a
+ * tag, always. One inside a tag only if its value reaches past the tag word,
+ * or if Tasks reads it as a field on `line` as it stands. Tasks reads `#⏫` as
+ * a tag while the counter's marker stands after it and as a priority once the
+ * marker is gone (its priority step runs before its tag step), so judged on
+ * the line without the marker, the next count — after Tasks had moved its own
+ * marker behind such a tag — wrote into the tag and gave the task a priority.
+ */
+function honouredFieldStarts(text: string, line = text, origins?: number[]): Set<number> {
+  const here = tasksReading(text).fieldStarts;
+  const standing = line === text ? here : tasksReading(line).fieldStarts;
+  return new Set(
+    here.filter(
+      (at) =>
+        !inTagWord(text, at) ||
+        FIELD_WITH_VALUE_REGEX.test(text.slice(at)) ||
+        standing.includes(origins ? origins[at] : at)
+    )
+  );
+}
+
 /**
  * Index of the first match of `fieldEmoji` in `text` that is not part of a
  * tag, or -1. A field emoji inside a tag (`#✅done`, `#⏫`, `#x⛔y`) is the
  * tag's — writing the marker in front of it split the tag, and could hand the
- * task a priority, an ID or a dependency it did not have — unless the Tasks
- * plugin itself reads a field starting there: `#paper📅 2026-09-30` is a tag
- * and a date to it, and the marker belongs before the date.
+ * task a priority, an ID or a dependency it did not have — unless it starts a
+ * field the plugin goes by (honouredFieldStarts): `#paper📅 2026-09-30` is a
+ * tag and a date to Tasks, and the marker belongs before the date.
  */
-function firstFieldEmoji(text: string, fieldEmoji: RegExp): number {
-  let reading: TasksReading | undefined;
+function firstFieldEmoji(text: string, fieldEmoji: RegExp, honoured?: Set<number>): number {
+  let fields = honoured;
   for (const match of text.matchAll(new RegExp(fieldEmoji.source, "gu"))) {
     const index = match.index ?? 0;
-    const word = /\S*$/u.exec(text.slice(0, index))?.[0] ?? "";
-    if (!word.startsWith("#")) return index;
-    reading ??= tasksReading(text);
-    if (reading.fieldStarts.includes(index)) return index;
+    if (!inTagWord(text, index)) return index;
+    fields ??= honouredFieldStarts(text);
+    if (fields.has(index)) return index;
   }
   return -1;
 }
@@ -254,10 +287,12 @@ export function taskMatchKey(lineText: string): string {
  * removed by hand or by Remove all, a pick while a session was being logged.
  * The timer tries the exact key first and this second; the picker's tick and
  * pin use this. A `🍅 N` the user typed is not the counter's and stays in it,
- * so "Buy 🍅 2 kg" and "Buy kg" are still two tasks.
+ * so "Buy 🍅 2 kg" and "Buy kg" are still two tasks. Spaces are left out
+ * too: writing a marker into glued text adds one ("fix🔥" becomes "fix 🍅 1
+ * 🔥"), and taking the marker out cannot know to take it back.
  */
 export function taskLineKey(lineText: string): string {
-  return taskMatchKey(removeAnyPomodoroMarker(lineText));
+  return taskMatchKey(removeAnyPomodoroMarker(lineText)).replace(/\s+/gu, "");
 }
 
 export function normalizeTaskTextForDisplay(text: string): string {
@@ -336,13 +371,29 @@ function counterMarkers(line: string): RegExpMatchArray[] {
   return pomodoroMarkers(line).filter((match) => isCounterMarker(line, match));
 }
 
+/**
+ * `line` with `markers` taken out, each with the space in front of it, and
+ * where each character left came from (`origins[i]` is the index in `line`
+ * of `text[i]`).
+ */
+function stripMarkers(
+  line: string,
+  markers: RegExpMatchArray[]
+): { text: string; origins: number[] } {
+  const cuts = markers.map((match) => {
+    const index = match.index ?? 0;
+    return [line.slice(0, index).trimEnd().length, index + match[0].length];
+  });
+  const origins: number[] = [];
+  for (let i = 0; i < line.length; i++) {
+    if (!cuts.some(([from, to]) => i >= from && i < to)) origins.push(i);
+  }
+  return { text: origins.map((i) => line[i]).join(""), origins };
+}
+
 /** Remove markers from the line, collapsing the space each leaves. */
 function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): string {
-  // Right to left, so each index still points into the unchanged part.
-  return [...markers].reverse().reduce((text, match) => {
-    const index = match.index ?? 0;
-    return text.slice(0, index).trimEnd() + text.slice(index + match[0].length);
-  }, line);
+  return stripMarkers(line, markers).text;
 }
 
 /**
@@ -361,15 +412,16 @@ function removePomodoroMarkers(line: string, markers: RegExpMatchArray[]): strin
  * could not fix the line for the Tasks plugin, which stops at the words.
  */
 function misplacedCounterMarkers(line: string, markers: RegExpMatchArray[]): RegExpMatchArray[] {
-  const stripped = removePomodoroMarkers(line, markers);
-  const fieldStarts = tasksReading(stripped).fieldStarts;
-  const fieldsAt = fieldStarts.length > 0 ? Math.min(...fieldStarts) : -1;
-  const block = stripped.match(BLOCK_ID_REGEX);
+  if (markers.length === 0) return [];
+  const { text, origins } = stripMarkers(line, markers);
+  const fields = honouredFieldStarts(text, line, origins);
+  const fieldsAt = fields.size > 0 ? Math.min(...fields) : -1;
+  const block = text.match(BLOCK_ID_REGEX);
   const blockAt = block ? line.lastIndexOf(block[0].trim()) : -1;
-  return markers.filter((match, i) => {
+  return markers.filter((match) => {
     const index = match.index ?? 0;
-    // Where the marker stands once the markers are out, in `stripped`.
-    const at = removePomodoroMarkers(line.slice(0, index), markers.slice(0, i)).trimEnd().length;
+    // Where the marker stands once the markers are out, in `text`.
+    const at = origins.filter((origin) => origin < index).length;
     return (fieldsAt !== -1 && at > fieldsAt) || (blockAt !== -1 && index > blockAt);
   });
 }
@@ -411,7 +463,7 @@ export function incrementPomodoroCount(line: string): string {
   const markers = counterMarkers(line);
   if (markers.length === 0) return placePomodoroMarker(line, 1);
   const next = parseInt(markers[0][1], 10) + 1;
-  return placePomodoroMarker(removePomodoroMarkers(line, markers), next);
+  return placeAfterStripping(line, markers, next);
 }
 
 /**
@@ -423,11 +475,27 @@ function placePomodoroMarker(stripped: string, count: number): string {
 }
 
 /**
+ * Take the counter's markers out of `line` and write `🍅 count` back in its
+ * place — judging a field emoji inside a tag by the line as it stands, markers
+ * in (honouredFieldStarts).
+ */
+function placeAfterStripping(line: string, markers: RegExpMatchArray[], count: number): string {
+  const { text, origins } = stripMarkers(line, markers);
+  const fields = honouredFieldStarts(text, line, origins);
+  return placeMarkerText(text, `🍅 ${count}`, TASKS_METADATA_TOKEN_REGEX, fields);
+}
+
+/**
  * placePomodoroMarker for any marker text, in front of the first match of
  * `fieldEmoji` — LEGACY_FIELD_EMOJI_REGEX rebuilds where 0.5.1–0.6.8 wrote it.
  */
-function placeMarkerText(stripped: string, marker: string, fieldEmoji: RegExp): string {
-  const at = firstFieldEmoji(stripped, fieldEmoji);
+function placeMarkerText(
+  stripped: string,
+  marker: string,
+  fieldEmoji: RegExp,
+  honoured?: Set<number>
+): string {
+  const at = firstFieldEmoji(stripped, fieldEmoji, honoured);
   if (at !== -1) {
     const head = stripped.slice(0, at).trimEnd();
     return `${head} ${marker} ${stripped.slice(at)}`;
@@ -453,7 +521,7 @@ export function repairPomodoroMarkerPlacement(line: string): string {
   const markers = counterMarkers(line);
   if (misplacedCounterMarkers(line, markers).length === 0) return line;
   const count = parseInt(markers[0][1], 10);
-  return placePomodoroMarker(removePomodoroMarkers(line, markers), count);
+  return placeAfterStripping(line, markers, count);
 }
 
 /**
