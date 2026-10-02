@@ -1542,13 +1542,15 @@ export class GentlePomoView extends ItemView {
     this.lastTaskSettingsKey = this.taskSettingsKey();
 
     // The linked task travels with the request so the loader can fetch it out
-    // of scope. Its identity is (path, cleanText) — the same pair the tick below
-    // matches on, and the same pair TimerEngine unlinks by when the line is
-    // completed, so the three cannot disagree about which line is "the" task.
+    // of scope. Its identity is (path, line text) — the same pair the tick below
+    // matches on, and the same pair TimerEngine counts and unlinks by, so the
+    // three cannot disagree about which line is "the" task. The line text, not
+    // the linked name: the 🍅 counter rewrites the line, and the name it was
+    // linked by stops matching it after the first count.
     const linkedPath = this.timer.currentTaskPath;
     const pin =
       this.timer.currentTaskName !== NO_TASK_LABEL && linkedPath
-        ? { path: linkedPath, cleanText: this.timer.currentTaskName }
+        ? { path: linkedPath, cleanText: this.timer.currentTaskLineText }
         : null;
 
     const tasks = await fetchTasks(this.plugin.app, {
@@ -1595,7 +1597,7 @@ export class GentlePomoView extends ItemView {
         item.createSpan({ text: task.displayText });
 
         if (
-          task.cleanText === this.timer.currentTaskName &&
+          task.cleanText === this.timer.currentTaskLineText &&
           task.path === this.timer.currentTaskPath
         ) {
           item.addClass("gp-task-selected");

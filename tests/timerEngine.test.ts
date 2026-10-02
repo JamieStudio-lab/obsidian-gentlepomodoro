@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { TFile } from "obsidian";
 import { TimerEngine } from "../TimerEngine";
 import { DEFAULT_SETTINGS, NO_TASK_LABEL } from "../constants";
+import { TASK_LINE_REGEX, normalizeTaskText } from "../taskLoader";
 import type { TimerState } from "../types";
+import { fakeVault } from "./fakeVault";
 
 // TimerEngine uses `window.setInterval` / `window.clearInterval`. In Node those
 // live on globalThis, so we just alias window -> globalThis for the test run.
@@ -31,10 +36,8 @@ interface PluginStubOptions {
   longBreakEvery?: number;
   sessionsSinceLongBreak?: number;
   sessionCounterDate?: string | null;
-  vault?: {
-    getAbstractFileByPath: (path: string) => unknown;
-    read: (file: unknown) => Promise<string>;
-  };
+  /** Stands in for `app.vault` — a two-method stub, or a whole fakeVault. */
+  vault?: object;
 }
 
 function makePluginStub(opts: PluginStubOptions = {}) {
@@ -539,6 +542,261 @@ describe("TimerEngine — completion unlink", () => {
     await timer.finish();
 
     expect(timer.getState().taskName).toBe("Write docs");
+  });
+});
+
+describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
+  // A task with no 🆔 is found by its text, and the counter's own write changes
+  // that text: "Write docs" becomes "Write docs 🍅 1". Up to 0.6.8 the timer
+  // looked for the text as it was LINKED, so it found the line once and never
+  // again — the count stopped one past where it started, the completion unlink
+  // stopped seeing the line, and nothing said so.
+  const PATH = "Projects/Docs.md";
+  const OTHER = "Projects/Other.md";
+
+  function counting(content: string, others: Record<string, string> = {}) {
+    const vault = fakeVault({ [PATH]: content, ...others });
+    const stub = makePluginStub({ vault });
+    stub.settings.incrementPomodoroCountOnFinish = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    return { vault, stub, timer };
+  }
+
+  /** Link a line the way the picker does: by its normalizeTaskText form, no ID. */
+  function link(timer: TimerEngine, line: string, path = PATH) {
+    const match = line.match(TASK_LINE_REGEX);
+    if (!match) throw new Error(`not a task line: ${line}`);
+    timer.setTask(normalizeTaskText(match[2]), path);
+  }
+
+  /** One focus session and the break after it: back to focus, paused. */
+  async function focusSession(timer: TimerEngine) {
+    expect(timer.getState().mode).toBe("focus");
+    await timer.finish();
+    await timer.finish();
+  }
+
+  it.each([
+    ["no marker yet", "- [ ] Write docs ⏳ 2026-10-01", "- [ ] Write docs 🍅 2 ⏳ 2026-10-01"],
+    [
+      "an existing 🍅 3",
+      "- [ ] Write docs 🍅 3 ⏳ 2026-10-01",
+      "- [ ] Write docs 🍅 5 ⏳ 2026-10-01",
+    ],
+    [
+      "a ≤0.5.0 marker after the fields",
+      "- [ ] Write docs ⏳ 2026-10-01 🍅 3",
+      "- [ ] Write docs 🍅 5 ⏳ 2026-10-01",
+    ],
+    [
+      "a 0.1.0 dated marker",
+      "- [ ] Write docs 🍅 3 (2025-05-18) ⏳ 2026-10-01",
+      "- [ ] Write docs 🍅 5 ⏳ 2026-10-01",
+    ],
+    [
+      "a tag after the fields",
+      "- [ ] Write docs ⏳ 2026-10-01 #task/research/docs",
+      "- [ ] Write docs 🍅 2 ⏳ 2026-10-01 #task/research/docs",
+    ],
+    ["no Tasks fields", "* [ ] Write docs", "* [ ] Write docs 🍅 2"],
+  ])("counts every session, not only the first — %s", async (_label, line, after) => {
+    const { vault, timer } = counting(`${line}\nNext line\n`);
+    link(timer, line);
+
+    await focusSession(timer);
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(`${after}\nNext line\n`);
+  });
+
+  it("still unlinks a task ticked during the session, after counting it", async () => {
+    // handleFinished counts FIRST and checks for completion second, on purpose,
+    // so a task finished mid-session still gets its 🍅. The count's own write
+    // used to hide the line from that check, so the task stayed linked.
+    const { vault, timer } = counting("- [ ] Write docs ⏳ 2026-10-01\n");
+    link(timer, "- [ ] Write docs ⏳ 2026-10-01");
+    vault.contents[PATH] = "- [x] Write docs ⏳ 2026-10-01 ✅ 2026-10-01\n";
+
+    await timer.finish();
+
+    expect(vault.contents[PATH]).toBe("- [x] Write docs 🍅 1 ⏳ 2026-10-01 ✅ 2026-10-01\n");
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("unlinks it when it is ticked later, sessions after it was linked", async () => {
+    const { vault, timer } = counting("- [ ] Write docs ⏳ 2026-10-01\n");
+    link(timer, "- [ ] Write docs ⏳ 2026-10-01");
+    await focusSession(timer);
+    await focusSession(timer);
+
+    vault.contents[PATH] = "- [x] Write docs 🍅 2 ⏳ 2026-10-01 ✅ 2026-10-02\n";
+    const file = vault.getAbstractFileByPath(PATH);
+    if (!file) throw new Error("fixture note missing");
+    await timer.onFileModify(file);
+
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("counts the open line, not a ticked copy with the same text above it", async () => {
+    // A recurring task leaves its done copies behind with the same text, and
+    // with the Tasks setting "next recurrence appears on the line below" they
+    // sit ABOVE the open one. The first match in file order was the done copy,
+    // and now that the count follows its line, every session would land there.
+    const done = "- [x] Stretch 🍅 1 🔁 every day ⏳ 2026-09-30 ✅ 2026-09-30";
+    const open = "- [ ] Stretch 🍅 1 🔁 every day ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${done}\n${open}\n`);
+    link(timer, open);
+
+    await focusSession(timer);
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(`${done}\n- [ ] Stretch 🍅 3 🔁 every day ⏳ 2026-10-01\n`);
+  });
+
+  it("with no open line, counts the first done one — the order it always used", async () => {
+    const first = "- [x] Write docs ⏳ 2026-09-30 ✅ 2026-09-30";
+    const second = "- [x] Write docs ⏳ 2026-10-01 ✅ 2026-10-01";
+    const { vault, timer } = counting(`${first}\n${second}\n`);
+    link(timer, "- [ ] Write docs ⏳ 2026-10-01");
+
+    await timer.finish();
+
+    expect(vault.contents[PATH]).toBe(
+      `- [x] Write docs 🍅 1 ⏳ 2026-09-30 ✅ 2026-09-30\n${second}\n`
+    );
+  });
+
+  it("finds a task with a 🆔 by the ID, whatever its text now says", async () => {
+    const { vault, timer } = counting(
+      "- [ ] Other task\n- [ ] Renamed docs 🍅 4 🆔 abc123 ⏳ 2026-10-01\n"
+    );
+    timer.setTask("Write docs", PATH, "abc123");
+
+    await focusSession(timer);
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(
+      "- [ ] Other task\n- [ ] Renamed docs 🍅 6 🆔 abc123 ⏳ 2026-10-01\n"
+    );
+  });
+
+  it("does not follow a write that failed, so the next session still finds the line", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { vault, timer } = counting("- [ ] Write docs ⏳ 2026-10-01\n");
+    link(timer, "- [ ] Write docs ⏳ 2026-10-01");
+    const write = vault.process;
+    vault.process = (_file, fn) => {
+      fn(vault.contents[PATH]); // the edit is worked out, then the write fails
+      return Promise.reject(new Error("disk full"));
+    };
+    await focusSession(timer);
+    vault.process = write;
+
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Write docs 🍅 1 ⏳ 2026-10-01\n");
+    warn.mockRestore();
+  });
+
+  it("never counts on a different task that only differs by a 🍅 typed into it", async () => {
+    // Write safety: a `🍅 2` the user typed mid-description is their text, not
+    // the counter. Matching "with the marker ignored" would call these two
+    // lines the same task and rewrite the first one.
+    const typed = "- [ ] Buy 🍅 2 kg ⏳ 2026-10-01";
+    const mine = "- [ ] Buy kg ⏳ 2026-10-01";
+    const { vault, timer } = counting(`${typed}\n${mine}\n`);
+    link(timer, mine);
+
+    await focusSession(timer);
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe(`${typed}\n- [ ] Buy kg 🍅 2 ⏳ 2026-10-01\n`);
+  });
+
+  it("forgets the old line when another task is linked", async () => {
+    const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
+    link(timer, "- [ ] Task A");
+    await focusSession(timer);
+    link(timer, "- [ ] Task B");
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Task A 🍅 1\n- [ ] Task B 🍅 1\n");
+  });
+
+  it.each([
+    [
+      "another task in the same note",
+      "- [ ] Task B",
+      PATH,
+      "- [ ] Task A 🍅 1\n- [ ] Task B 🍅 1\n",
+      "- [ ] Task A\n",
+    ],
+    [
+      "the same text in another note",
+      "- [ ] Task A",
+      OTHER,
+      "- [ ] Task A 🍅 1\n- [ ] Task B\n",
+      "- [ ] Task A 🍅 1\n",
+    ],
+  ])(
+    "does not hand its line's text to a link made while the count was writing — %s",
+    async (_label, next, nextPath, expected, expectedOther) => {
+      const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n", {
+        [OTHER]: "- [ ] Task A\n",
+      });
+      link(timer, "- [ ] Task A");
+      const write = vault.process;
+      vault.process = async (file, fn) => {
+        const written = await write(file, fn);
+        link(timer, next, nextPath); // a picker row clicked while finish() awaits
+        return written;
+      };
+      await timer.finish();
+      vault.process = write;
+      await timer.finish();
+
+      await focusSession(timer);
+
+      expect(vault.contents[PATH]).toBe(expected);
+      expect(vault.contents[OTHER]).toBe(expectedOther);
+    }
+  );
+
+  it("the picker ticks and pins the line by the text the engine matches", () => {
+    // Read as code — nothing can import the view. Keyed on the linked name, the
+    // row's tick and the out-of-scope "Linked task" pin lost the line at the
+    // first count, exactly as the engine did.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const view = readFileSync(resolve(root, "GentlePomoView.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\s+/g, " ");
+
+    expect(view).toContain("{ path: linkedPath, cleanText: this.timer.currentTaskLineText }");
+    expect(view).toContain(
+      "task.cleanText === this.timer.currentTaskLineText && task.path === this.timer.currentTaskPath"
+    );
+    expect(view).not.toMatch(/cleanText(?::| ===) this\.timer\.currentTaskName\b/);
+  });
+
+  it("keeps the name it was linked by — the log and the button do not take the count", async () => {
+    // The linked name is also the `Task:: [[path|name]]` alias in the daily log,
+    // which reviews group by. Following the line must not rename the task.
+    const line = "- [ ] Write docs #task/research/docs ⏳ 2026-10-01";
+    const { stub, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    timer.start();
+    timer.pause();
+
+    const name = "Write docs #task/research/docs";
+    const started = stub.calls.filter((c) => c.name === "startSession");
+    expect(started).toHaveLength(1);
+    expect(started[0].args[1]).toBe(name);
+    expect(stub.calls.filter((c) => c.name === "updateTask").map((c) => c.args[0])).toEqual([name]);
+    expect(timer.currentTaskName).toBe(name);
+    expect(timer.getState().taskName).toBe(name);
   });
 });
 

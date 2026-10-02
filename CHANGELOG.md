@@ -4,6 +4,22 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] — 2026-10-02
+
+### Fixed
+
+- **The opt-in 🍅 counter now counts every session on a task without a 🆔.**
+  It found such a task by its text, and its own `🍅 N` changed that text, so
+  it counted the first session and then silently stopped. Tasks with a 🆔
+  were not affected. The same fix brings back two things for those tasks:
+  ticking the task off unlinks it again, and the task picker keeps its tick
+  and its **Linked task** entry after a count.
+- When a recurring task leaves done copies **above** the open one (the Tasks
+  setting "Next recurrence appears on the line below"), the counter now counts
+  the open task, not a done copy with the same text.
+- Your daily log is unchanged: a task keeps the name it was linked by, so the
+  count never renames it there or on the **Current task** button.
+
 ## [0.6.8] — 2026-09-29
 
 ### Added

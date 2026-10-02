@@ -180,6 +180,18 @@ export class TimerEngine {
 
   public currentTaskId: string | undefined;
 
+  /**
+   * The linked line's text as the 🍅 counter last left it: what a task with no
+   * 🆔 is found by. It starts as the linked name and follows every count this
+   * engine writes ("Write docs" → "Write docs 🍅 1"), because that write
+   * changes the very text the line is matched on — matching on the linked name
+   * found the line once and never again. A match key only, never logged or
+   * shown: the log, the status bar and the "Current task" button keep
+   * `currentTaskName`, the name the task was linked by, so counting can never
+   * rename a task in anyone's log.
+   */
+  public currentTaskLineText: string = NO_TASK_LABEL;
+
   constructor(plugin: GentlePomoPlugin) {
     this.plugin = plugin;
     const total = plugin.settings.focusMinutes * ONE_MINUTE_MS;
@@ -196,6 +208,7 @@ export class TimerEngine {
   /** Update the active task and notify LogManager so future log lines reflect the change. */
   setTask(name: string, path?: string, taskId?: string) {
     this.currentTaskName = name;
+    this.currentTaskLineText = name;
     this.currentTaskPath = path;
     this.currentTaskId = taskId;
     this.state.taskName = name;
@@ -515,40 +528,59 @@ export class TimerEngine {
     const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
     if (!(file instanceof TFile)) return;
 
+    // Which link this count belongs to. Linking another task while the write
+    // is in flight must not hand that task this line's text.
+    const linkedPath = this.currentTaskPath;
+    const linkedText = this.currentTaskLineText;
+    let counted = "";
+
     try {
       // Atomic read-modify-write: `process` locks the file, so a concurrent
       // sync/plugin write can't be clobbered between our read and write.
       await this.plugin.app.vault.process(file, (content) => {
         const lines = content.split("\n");
-        let updatedIndex = -1;
+        const index = this.linkedLineIndex(lines);
+        if (index === -1) return content;
 
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          // Prefer ID match when available.
-          if (this.currentTaskId) {
-            const idMatch = line.match(TASK_ID_REGEX);
-            if (idMatch && idMatch[1] === this.currentTaskId) {
-              updatedIndex = i;
-              break;
-            }
-            continue;
-          }
-          // Fallback: match by normalized text on a task line (open or completed).
-          const taskMatch = line.match(TASK_LINE_REGEX);
-          if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
-            updatedIndex = i;
-            break;
-          }
-        }
-
-        if (updatedIndex === -1) return content;
-
-        lines[updatedIndex] = incrementPomodoroCount(lines[updatedIndex]);
+        lines[index] = incrementPomodoroCount(lines[index]);
+        counted = normalizeTaskText(lines[index].match(TASK_LINE_REGEX)?.[2] ?? "");
         return lines.join("\n");
       });
     } catch (e) {
       logger.warn("Failed to increment task pomodoro count", e);
+      return;
     }
+
+    // Follow the line: the count just changed the text a task with no 🆔 is
+    // found by. Only after the write landed, and only for the same link.
+    if (counted && this.currentTaskPath === linkedPath && this.currentTaskLineText === linkedText) {
+      this.currentTaskLineText = counted;
+    }
+  }
+
+  /**
+   * Index of the linked task's line in a note's lines, or -1.
+   *
+   * By 🆔 when the task has one. Without one, by `currentTaskLineText` — and an
+   * OPEN line wins over a done one: a recurring task leaves done copies behind
+   * with the same text, and with the Tasks setting "next recurrence appears on
+   * the line below" they sit above the open one. A done line is the answer only
+   * when no open line matches, i.e. the task was ticked during the session,
+   * which still earns its 🍅 (handleFinished counts before it unlinks).
+   */
+  private linkedLineIndex(lines: string[]): number {
+    if (this.currentTaskId) {
+      return lines.findIndex((line) => line.match(TASK_ID_REGEX)?.[1] === this.currentTaskId);
+    }
+
+    let done = -1;
+    for (let i = 0; i < lines.length; i++) {
+      const taskMatch = lines[i].match(TASK_LINE_REGEX);
+      if (!taskMatch || normalizeTaskText(taskMatch[2]) !== this.currentTaskLineText) continue;
+      if (taskMatch[1] === " ") return i;
+      if (done === -1) done = i;
+    }
+    return done;
   }
 
   private async checkTaskCompletionAndUnlink() {
@@ -584,9 +616,10 @@ export class TimerEngine {
           continue;
         }
 
-        // Fallback: match by normalized text
+        // Fallback: match by normalized text — as the 🍅 counter last left it,
+        // not as it was linked, or the first count hides the line from here.
         const taskMatch = line.match(TASK_LINE_REGEX);
-        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
+        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskLineText) {
           if (taskMatch[1] === " ") {
             foundIncomplete = true;
             break;

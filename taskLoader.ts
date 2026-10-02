@@ -14,7 +14,7 @@ export interface TaskGroup {
 /** The linked task, so it can be shown even when the scope would hide it. */
 export interface TaskPin {
   path: string;
-  /** TimerEngine's `currentTaskName` — i.e. the line's normalizeTaskText form. */
+  /** TimerEngine's `currentTaskLineText` — the line's normalizeTaskText form, 🍅 count included. */
   cleanText: string;
 }
 
@@ -108,10 +108,12 @@ export function normalizeTaskTextForDisplay(text: string): string {
  *
  * The timer holds a task by its normalizeTaskText form, and that form keeps
  * `#tags` on purpose: it is the key the picker, the 🆔 name refresh, the
- * completion unlink and the 🍅 counter all compare against, and it is the name
- * written into the daily log, where a Dataview query may read a tag straight
- * off the line. So the button derives a display form here rather than the
- * timer storing a different name. It is the cleanup the picker's rows get, so
+ * completion unlink and the 🍅 counter all compare against (all but the
+ * refresh through TimerEngine's `currentTaskLineText`, which starts as this
+ * name and follows each count), and it is the name written into the daily
+ * log, where a Dataview query may read a tag straight off the line. So the
+ * button derives a display form here rather than the timer storing a
+ * different name. It is the cleanup the picker's rows get, so
  * the two read alike; only the row adds a priority icon, which the timer's
  * name has already lost. One more difference it cannot undo: a priority emoji
  * typed mid-description takes the word after it out of the timer's name
