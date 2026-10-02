@@ -19,6 +19,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the open task, not a done copy with the same text.
 - Your daily log is unchanged: a task keeps the name it was linked by, so the
   count never renames it there or on the **Current task** button.
+- **The 🍅 counter no longer rewrites a `🍅 N` you typed into a task.** It took
+  the first `🍅 N` on the line as its count, so the first counted session
+  turned `Buy 🍅 2 kg ⏳ 2026-10-01` into `Buy kg 🍅 3 ⏳ 2026-10-01`: your text
+  lost its `🍅 2` and the count started from your number. Now your text stays
+  as it is and the count starts at 1 beside it:
+  `Buy 🍅 2 kg 🍅 1 ⏳ 2026-10-01`. Tasks with and without a 🆔 alike.
+- The 🍅 recovery actions had the same blind spot: a `🍅 N` you typed in front
+  of the counter's marker hid that marker from **Check**, **Repair**,
+  **Remove** and **Remove all**. They now find it.
+- **Repair** and **Remove** no longer move or delete a `🍅 N` you typed after
+  an emoji the Tasks plugin also uses, inside the task's own text
+  (`Fix ❌ login, then 🍅 2 tests`).
+- **Remove all** now also removes a counter marker with a tag right behind it,
+  which is where the Tasks plugin moves your tags when it rewrites a line —
+  for example when you tick the task off.
 
 ## [0.6.8] — 2026-09-29
 

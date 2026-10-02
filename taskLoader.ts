@@ -52,7 +52,9 @@ const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
 // Pomodoro count marker. The optional `(...)` group tolerates the legacy
 // 0.1.0 today-only format (`🍅 N (YYYY-MM-DD)`) so existing markers are still
 // readable — the parens (and any content) get stripped on the next write.
-const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\([^)]*\))?/;
+// A line can carry more than one `🍅 N` — the counter's and one the user typed
+// — so nothing reads "the first match"; see findCounterMarker.
+const POMO_MARKER_REGEX = /🍅\s*(\d+)(?:\s*\([^)]*\))?/g;
 // First Tasks-plugin metadata token on a line (dates, priorities, recurrence,
 // ID, plus the Tasks 8.x field emojis this plugin doesn't otherwise read:
 // ❌ cancelled, ⛔ depends-on, 🏁 on-completion). The 🍅 marker must be
@@ -63,10 +65,15 @@ const TASKS_METADATA_TOKEN_REGEX = /[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫�
 // Trailing Obsidian block reference (`^block-id`) — must stay at the very end.
 const BLOCK_ID_REGEX = /\s+\^[A-Za-z0-9-]+\s*$/;
 // Everything that may legitimately follow a plugin-written 🍅 marker: the end
-// of the line, a Tasks metadata token, or a trailing block reference. Used to
-// tell plugin-written markers (removable) from a `🍅 N` the user typed
-// mid-description (kept — ordinary text after the marker rules the plugin out).
-const MARKER_TAIL_REGEX = /^\s*(?:$|[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]|\^[A-Za-z0-9-]+\s*$)/u;
+// of the line, a Tasks metadata token, or a trailing block reference — after
+// any number of tags, because the Tasks plugin moves tags that sit among its
+// fields to the end of the description whenever it rewrites a line (ticking
+// it, Edit Task, the next recurrence), which is right behind the marker. This
+// is the ONE test of whether a `🍅 N` is the counter's (findCounterMarker):
+// ordinary text after it means the user typed it mid-description, and it is
+// their text — never read as a count, moved or deleted.
+const MARKER_TAIL_REGEX =
+  /^(?:\s+#[^\s#]+)*\s*(?:$|[⏳📅🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]|\^[A-Za-z0-9-]+\s*$)/u;
 const PRIORITY_REGEX = /[🔺🔽🔥⏫⏬🔼]\uFE0F?/gu;
 const VARIATION_SELECTOR_REGEX = /\uFE0F/gu;
 
@@ -124,12 +131,42 @@ export function linkedTaskDisplayName(cleanText: string): string {
   return normalizeTaskTextForDisplay(cleanText) || cleanText;
 }
 
+/** Every `🍅 N` on a line, in order, each with its index. */
+function pomodoroMarkers(line: string): RegExpMatchArray[] {
+  return [...line.matchAll(POMO_MARKER_REGEX)];
+}
+
 /**
- * Read the lifetime pomodoro count from a task line. Tolerates the legacy
- * `🍅 N (YYYY-MM-DD)` format from 0.1.0 — the date is ignored, N is returned.
+ * Is this `🍅 N` in a place the plugin writes — nothing but tags between it
+ * and the Tasks fields, a trailing block reference or the end of the line
+ * (MARKER_TAIL_REGEX)? That covers where the counter puts it now and every
+ * place the ≤0.5.0 append bug left it. With ordinary text after it, the user
+ * typed it ("Buy 🍅 2 kg"). "After the first field emoji" is NOT the test:
+ * real task text carries field emoji ("Add 🔺 watchlist — all ⏫/🔺 tasks").
+ */
+function isCounterMarker(line: string, match: RegExpMatchArray): boolean {
+  const end = (match.index ?? 0) + match[0].length;
+  return MARKER_TAIL_REGEX.test(line.slice(end));
+}
+
+/**
+ * The counter's marker on a line: the first `🍅 N` in a place the plugin
+ * writes, or null. A `🍅 N` the user typed in front of it — or alone — is
+ * skipped: taking the first match made the counter count from the user's
+ * number and rewrite their text ("Buy 🍅 2 kg" → "Buy kg 🍅 3").
+ */
+function findCounterMarker(line: string): RegExpMatchArray | null {
+  return pomodoroMarkers(line).find((match) => isCounterMarker(line, match)) ?? null;
+}
+
+/**
+ * Read the lifetime pomodoro count from a task line — the counter's marker
+ * only, so a line whose only `🍅 N` the user typed reads 0. Tolerates the
+ * legacy `🍅 N (YYYY-MM-DD)` format from 0.1.0 — the date is ignored, N is
+ * returned.
  */
 export function parsePomodoroCount(line: string): number {
-  const match = line.match(POMO_MARKER_REGEX);
+  const match = findCounterMarker(line);
   if (!match) return 0;
   return parseInt(match[1], 10);
 }
@@ -143,16 +180,20 @@ export function parsePomodoroCount(line: string): number {
  * line, so a trailing marker turns every field into plain description text
  * and the task's dates vanish from queries and Edit Task (GitHub issue #2).
  *
- * - If marker exists (with or without legacy parens): increment N and
- *   re-insert at the correct position — lines written by ≤0.5.0 (marker
+ * - If the counter's marker exists (with or without legacy parens): increment
+ *   N and re-insert at the correct position — lines written by ≤0.5.0 (marker
  *   trailing the fields) heal on their next increment. Legacy parens are
  *   stripped on write, so `🍅 N (date)` markers migrate to plain `🍅 N`.
- * - If no marker: insert ` 🍅 1` before the first metadata token, keeping a
+ * - If not: insert ` 🍅 1` before the first metadata token, keeping a
  *   trailing block reference (`^block-id`) at the very end of the line.
+ *
+ * A `🍅 N` the user typed is not the counter's marker (findCounterMarker) and
+ * stays byte-for-byte as it is: "Buy 🍅 2 kg ⏳ …" becomes
+ * "Buy 🍅 2 kg 🍅 1 ⏳ …", and later sessions count the second one.
  */
 export function incrementPomodoroCount(line: string): string {
-  const match = line.match(POMO_MARKER_REGEX);
-  if (match && match.index !== undefined) {
+  const match = findCounterMarker(line);
+  if (match) {
     const next = parseInt(match[1], 10) + 1;
     return placePomodoroMarker(removePomodoroMarker(line, match), next);
   }
@@ -165,7 +206,10 @@ function removePomodoroMarker(line: string, match: RegExpMatchArray): string {
   return line.slice(0, index).trimEnd() + line.slice(index + match[0].length);
 }
 
-/** Insert `🍅 count` at the canonical position in a marker-free line. */
+/**
+ * Insert `🍅 count` at the canonical position in a line without the counter's
+ * marker (a `🍅 N` the user typed may still be in it; it is text).
+ */
 function placePomodoroMarker(stripped: string, count: number): string {
   const marker = `🍅 ${count}`;
 
@@ -189,29 +233,38 @@ function placePomodoroMarker(stripped: string, count: number): string {
  * token (the ≤0.5.0 append bug, which hides every field from the Tasks
  * plugin) or after a trailing `^block-id` (which breaks the block reference).
  *
+ * Only a marker in a place the plugin writes can be misplaced
+ * (isCounterMarker), and every `🍅 N` on the line is looked at, not just the
+ * first: a typed one in front used to hide a misplaced counter behind it.
+ *
  * Deliberately conservative: a marker that is merely unusual but harmless
  * (e.g. `🍅 2` mid-description on a line with no Tasks fields) does not
- * count, nor does a line without a marker — both return null.
+ * count, nor does one the user typed after a field emoji in the task text
+ * ("Fix ❌ login, then 🍅 2 tests"), nor a line without a marker — all
+ * return null. Moving such a `🍅` would rewrite the user's text, and could
+ * never fix the line for the Tasks plugin, which stops at the text after it.
  */
 function findMisplacedPomodoroMarker(line: string): { count: number; stripped: string } | null {
-  const match = line.match(POMO_MARKER_REGEX);
-  if (!match || match.index === undefined) return null;
-
   const meta = line.match(TASKS_METADATA_TOKEN_REGEX);
-  const afterFields = meta?.index !== undefined && match.index > meta.index;
 
-  const stripped = removePomodoroMarker(line, match);
-  let afterBlockRef = false;
-  if (!afterFields) {
-    const block = stripped.match(BLOCK_ID_REGEX);
-    if (block?.index !== undefined) {
-      const token = block[0].trim();
-      afterBlockRef = match.index > line.lastIndexOf(token);
+  for (const match of pomodoroMarkers(line)) {
+    if (!isCounterMarker(line, match)) continue;
+    const index = match.index ?? 0;
+    const afterFields = meta?.index !== undefined && index > meta.index;
+
+    const stripped = removePomodoroMarker(line, match);
+    let afterBlockRef = false;
+    if (!afterFields) {
+      const block = stripped.match(BLOCK_ID_REGEX);
+      if (block?.index !== undefined) {
+        const token = block[0].trim();
+        afterBlockRef = index > line.lastIndexOf(token);
+      }
     }
-  }
 
-  if (!afterFields && !afterBlockRef) return null;
-  return { count: parseInt(match[1], 10), stripped };
+    if (afterFields || afterBlockRef) return { count: parseInt(match[1], 10), stripped };
+  }
+  return null;
 }
 
 /**
@@ -240,15 +293,15 @@ export function removeMisplacedPomodoroMarker(line: string): string {
 
 /**
  * Delete a 🍅 marker whether it is correctly placed or misplaced — the
- * "uninstall" for the counter's data. Only markers in a position the plugin
- * itself writes (followed by nothing but Tasks fields, a block reference, or
- * the end of the line — see MARKER_TAIL_REGEX) are removed; a `🍅 N` the
- * user typed mid-description is left byte-for-byte untouched.
+ * "uninstall" for the counter's data. Only the counter's marker is removed
+ * (findCounterMarker: followed by nothing but tags and then Tasks fields, a
+ * block reference, or the end of the line — see MARKER_TAIL_REGEX); a `🍅 N`
+ * the user typed mid-description is left byte-for-byte untouched, including
+ * one in front of the counter, which used to hide the counter from here.
  */
 export function removeAnyPomodoroMarker(line: string): string {
-  const match = line.match(POMO_MARKER_REGEX);
-  if (!match || match.index === undefined) return line;
-  if (!MARKER_TAIL_REGEX.test(line.slice(match.index + match[0].length))) return line;
+  const match = findCounterMarker(line);
+  if (!match) return line;
   return removePomodoroMarker(line, match);
 }
 

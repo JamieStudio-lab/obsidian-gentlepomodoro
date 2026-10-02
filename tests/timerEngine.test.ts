@@ -714,6 +714,31 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     expect(vault.contents[PATH]).toBe(`${typed}\n- [ ] Buy kg 🍅 2 ⏳ 2026-10-01\n`);
   });
 
+  it.each([
+    ["no 🆔", "- [ ] Buy 🍅 2 kg ⏳ 2026-10-01", undefined, "- [ ] Buy 🍅 2 kg 🍅 2 ⏳ 2026-10-01"],
+    [
+      "a 🆔",
+      "- [ ] Buy 🍅 2 kg 🆔 abc123 ⏳ 2026-10-01",
+      "abc123",
+      "- [ ] Buy 🍅 2 kg 🍅 2 🆔 abc123 ⏳ 2026-10-01",
+    ],
+  ])(
+    "counts beside a 🍅 typed into the linked task and never rewrites it — %s",
+    async (_label, line, id, after) => {
+      // The counter took the first `🍅 N` on the line as its own, so the first
+      // session turned "Buy 🍅 2 kg" into "Buy kg 🍅 3": the user's text lost
+      // its 🍅 2 and the count started from their number.
+      const { vault, timer } = counting(`${line}\n`);
+      if (id) timer.setTask("Buy 🍅 2 kg", PATH, id);
+      else link(timer, line);
+
+      await focusSession(timer);
+      await focusSession(timer);
+
+      expect(vault.contents[PATH]).toBe(`${after}\n`);
+    }
+  );
+
   it("forgets the old line when another task is linked", async () => {
     const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
     link(timer, "- [ ] Task A");
