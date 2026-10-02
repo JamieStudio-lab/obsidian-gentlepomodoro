@@ -72,6 +72,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   session's 🍅 to the new task, or loses it; a session counts the task it was
   for. Picking the already linked task again — from a list opened before a
   count, or after you removed its count — no longer stops the counting.
+- **No more square box behind the timer in the sidebar.** The colour behind the
+  timer square — there to hide the list as it scrolls under the rounded
+  corners — was always the main editor's background, so in a sidebar, which
+  Obsidian paints a slightly different shade, a square box showed behind the
+  rounded timer: darker in dark mode, white on light grey in light mode. The
+  same happened in a phone or tablet sidebar in dark mode and in a translucent
+  window. It now takes the colour of whatever the panel sits in — sidebar, main
+  area, pop-out window, phone or tablet sidebar — and follows themes that
+  restyle panels. (Minimal hid it on the right sidebar, which it paints in the
+  main colour.)
 
 ### Changed
 
