@@ -279,6 +279,15 @@ body {
      leaf's width (the whole side panel), not the focus block's width. */
   container-name: gp-view;
   container-type: inline-size;
+
+  /* Takes the colour of the leaf it sits in, only so the sticky timer
+     square below can inherit it — see .gp-timer-visual. Where the leaf is
+     transparent (a translucent window, a mobile drawer) this is transparent
+     too. Painting the leaf's own colour over the leaf changes nothing on
+     desktop; in a phone or tablet main-area leaf, with no scrollbar gutter,
+     anti-aliased edges in the panel can move by a few levels out of 255
+     (DESIGN.md entry 13). */
+  background-color: inherit;
 }
 
 /* Flex spacers vertically center the content when the leaf is taller
@@ -312,12 +321,27 @@ body {
 
 /* --- The Abstract Shape Container ---
    Sticky to the top of the scrolling leaf so the focus color block + time
-   number remain visible while the user scrolls through settings / tasks. */
+   number remain visible while the user scrolls through settings / tasks.
+
+   THE BACKDROP IS THE LEAF'S OWN COLOUR, INHERITED (through .gp-root);
+   outside a mobile drawer it never names an Obsidian variable. It exists
+   only to hide what scrolls under the square's rounded corners, so it must
+   be the colour around the square. Until 0.6.9 it was --background-primary,
+   which is the leaf colour only in the MAIN area (and a light-mode mobile
+   drawer): a desktop sidebar leaf is --background-secondary, so the panel's
+   usual home showed a square box behind the rounded timer — a darker one in
+   dark mode, a white one on light grey. Inheriting also
+   follows popout windows, a translucent window (transparent) and any theme
+   that restyles the leaf itself. The one place Obsidian paints an OPAQUE
+   ground above a transparent leaf is the mobile drawer; that has its own
+   rule in the Mobile & touch section. The square must stay a direct child
+   of .gp-root: inherit reads the parent, and sticky sticks within it.
+   tests/designTokens.test.ts. */
 .gp-timer-visual {
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--background-primary);
+  background-color: inherit;
   margin-bottom: var(--gp-space-9);
   width: 100%;
   /* Floor — the clock stays readable even on narrow sidebars; the leaf
@@ -4282,6 +4306,17 @@ body.is-tablet .gp-icon-btn svg.svg-icon {
 body.is-mobile .gp-timer-visual,
 body.is-tablet .gp-timer-visual {
   max-width: var(--gp-clock-max-touch);
+}
+
+/* The sticky square's backdrop in a mobile sidebar. Obsidian makes the leaf
+   transparent in a drawer (`.workspace-drawer .workspace-leaf`) and paints
+   .workspace-drawer-active-tab-container with --mobile-sidebar-background
+   instead, so the inherited colour (see .gp-timer-visual) is transparent here
+   and would let the list show through the corners as it scrolls under the
+   square. Same variable Obsidian paints with: --background-primary in light
+   mode, --background-secondary in dark. */
+.workspace-drawer .gp-timer-visual {
+  background-color: var(--mobile-sidebar-background);
 }
 
 /* Compact panel (e.g. iPhone landscape — a short, wide leaf). Detection is done in

@@ -18,8 +18,10 @@ The plugin draws two kinds of thing, and they get opposite treatment.
 | Colour from         | Obsidian's variables (`--text-normal`, `--interactive-accent`) | Our own tokens                              |
 | Follows user theme? | Always                                                         | No — that is what the theme picker is for   |
 
-**Chrome inherits, artwork declares.** There are 54 `var()` references to 17 Obsidian variables in
-the file today; do not re-mint them as `--gp-*`. Read them where Obsidian declares them, though:
+**Chrome inherits, artwork declares.** There are 67 `var()` references to 20 Obsidian variables in
+the file today; do not re-mint them as `--gp-*`. The ground the timer square stands on goes one step
+further: outside a mobile drawer it names no variable at all and inherits the leaf's own colour
+(entry 13). Read Obsidian's variables where Obsidian declares them, though:
 see the next section, and the body block that closed a hole the focus ring had from 0.6.1 to 0.6.8. Conversely, nothing inside
 `.gp-timer-visual` may read `--text-*` or `--background-*` — with one scoped exception, made in
 0.6.5 and pinned by a test: the **Frosted Glass 2** rim's **shade** reads `--background-primary`,
@@ -393,6 +395,81 @@ when it is behaving. Eight things here look like tidy-up targets and are not:
   (`--gp-lg-deep-2/3` = palette mixed with the deep), because a neutral shade over saturated orange
   reads muddy. Dark and Nord grounds stay within 8/255 of the fixed-black version; white, cream and
   grey lose the ink.
+
+### 13. The sticky square's backdrop is the leaf's own colour, inherited.
+
+`.gp-timer-visual` is `position: sticky` and paints a backdrop so the list scrolling under it does
+not show through the square's rounded corners. That backdrop has to be the colour _around_ the
+square, and Obsidian decides that per place: `--background-primary` for a main-area leaf (popout
+windows included), `--background-secondary` for a sidebar leaf, transparent in a translucent window,
+and in a mobile drawer a transparent leaf over `.workspace-drawer-active-tab-container`, which paints
+`--mobile-sidebar-background` (primary in light mode, secondary in dark). Until 0.6.9 the square named
+`--background-primary`, which is right only in the main area and in a light-mode mobile drawer, so
+the panel's usual home showed a square box behind the timer: darker in dark mode, white on light grey
+in light mode, opaque in a translucent window. Rendered in headless Chrome under Obsidian 1.13.7's own
+app.css, the box showed in a sidebar in both modes, in the mobile drawer in dark mode, and in the drag
+preview of a drop into a sidebar; under five community themes it showed in six of their ten right
+sidebar renders and was faint, a few levels off, in two more. A theme that sets
+`--background-secondary` to the primary colour on a sidebar hid it there — Minimal does so by default
+on the right sidebar, which is why its left sidebar still showed the box.
+
+So outside a mobile drawer nothing names a colour. `.gp-root` (the leaf-content element) takes
+`background-color: inherit` from its leaf, and the square inherits from `.gp-root`. Three things here
+look like tidy-up targets and are not:
+
+- **`.gp-root { background-color: inherit }` is the middle link, not a stray paint.** `inherit`
+  reads the parent only, so without it the square inherits transparent. Where the leaf is
+  transparent, so is the panel. Painting the leaf's own colour over the leaf changes nothing on
+  desktop. In a phone or tablet main-area leaf, where `.gp-root` has no scrollbar gutter, the
+  now-opaque scroller background is rastered together with its content: in headless Chrome,
+  anti-aliased edges and text in the panel moved by up to 2/255 (4/255 under Things), and by nothing
+  in the drawer, where `.gp-root` is transparent. Not visible, not measured in WebKit, and not worth
+  undoing the touch re-centring that `scrollbar-gutter: auto` is there for.
+- **The square is built straight onto `.gp-root`, in `onOpen`, and never moved.** `inherit` reads
+  the parent and `position: sticky` sticks within it, so a wrapper breaks this either way: around the
+  square alone, the square can only stick inside the wrapper's box and scrolls away with the list;
+  around the square and what follows, the square inherits the wrapper's transparent background and
+  the list shows through its corners.
+- **`.workspace-drawer .gp-timer-visual` reads `--mobile-sidebar-background`**, because the drawer
+  is the one place Obsidian paints an _opaque_ ground above a transparent leaf
+  (`.workspace-drawer .workspace-leaf { background-color: transparent }`), so inheriting there gives
+  transparent. It is the same variable the drawer container paints with. A translucent window also
+  clears the leaf, under a 60% tint nothing could match; that case is left see-through on purpose
+  (below).
+
+Accepted, and the reason it is not a JavaScript lookup of the painted colour: where a leaf is
+transparent and something above it paints — a translucent window, or a theme that clears its
+main-area leaves, as Blue Topaz does in dark mode — the square's backdrop is transparent too. There is
+no box, but what scrolls under the square shows in its four corners while it passes. Nothing could
+match a see-through window, and a colour measured in JavaScript would need re-measuring on every
+theme, mode and layout change, and a missed trigger leaves a wrong-coloured box. A theme that paints
+its leaves with a _translucent_ colour gets it twice around the square (`.gp-root` over the leaf) and
+three times under it, so a tinted box shows behind the timer again, as an opaque one did before;
+none of the five themes checked (Minimal, Blue Topaz, Things, Notation 2, Obsidianotion) does that.
+The frosted panes' `backdrop-filter` samples the backdrop near their edges, so where the ground
+changed both glass themes moved near the edge — by up to 4/255 in a desktop sidebar and 7/255 (one
+colour channel) in a dark mobile drawer, mostly within ~30px of the edge and faintly as far as ~55px
+in — and now reflect the ground they sit on, as they always did in the main area, where on desktop
+every theme is pixel-identical to 0.6.8. Frosted Glass 2's rim still takes its shade from
+`--background-primary` (entry 12), the main area's colour, wherever it sits.
+
+Held by `tests/designTokens.test.ts`, "the sticky square's backdrop", which fails closed — two review
+rounds found it weaker than its name each time it matched the shapes of code it expected:
+
+- the exact set of background declarations, in the whole file, on every rule whose subject names a
+  class either element carries or the panel's data-type, or is classless (`*`, a tag, a structural
+  pseudo-class) beneath the panel — including the steps of any `@keyframes` such a rule animates;
+  selector lists and compounds are split outside parentheses, so `:not(…, …)` and `:has(> …)` are
+  read whole;
+- the classes, read out of the view from every member access on every name either element goes by
+  (`.`, `?.`, `!.`; addClass, toggleClass, addClasses, classList add / toggle / replace), with any
+  write it cannot read — a non-literal class, className, a class attribute, the element bound to
+  another name — failing the test. Not seen: an element handed to a helper function as an argument;
+- `onOpen` building the square straight onto `.gp-root`, once, and nothing inserting it anywhere
+  after.
+
+Thirty-six mutants, all killed, and two harmless edits (inserting a node before the square, renaming
+its local) left green.
 
 ## Build
 

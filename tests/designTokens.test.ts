@@ -806,20 +806,20 @@ describe("Frosted glass 2's lit rim", () => {
     // read as ink on every pale user theme. Two reads, one per mode, both
     // assigned to --gp-lg-env and nowhere else. A third read is the boundary
     // eroding; zero is the feature gone.
-    // .gp-timer-visual paints the ground itself (chrome, shared by every
-    // theme) and is the one legitimate read outside a theme block; every
-    // other read in the file must be one of these two.
-    const reads = [...stripped.matchAll(/var\(\s*--background-primary\b/g)]
-      .map((m) => selectorOf(stripped, m.index ?? 0))
-      .filter((sel) => sel !== ".gp-timer-visual");
+    // Until 0.6.9 .gp-timer-visual read it too, for its sticky backdrop, and
+    // was exempted here; it inherits the leaf's colour now (see "the sticky
+    // square's backdrop" below), so these two are the only reads in the file.
+    // The WHOLE file, token region included: `stripped` starts after the
+    // :root and body blocks, where a read would otherwise go unseen.
+    const everything = stripComments(css);
+    const reads = [...everything.matchAll(/var\(\s*--background-primary\b/g)].map((m) =>
+      selectorOf(everything, m.index ?? 0)
+    );
     expect(reads, "the rim's ground read is gone, or has spread").toEqual([
       `.${GLASS_2} .gp-timer-shape`,
       `.theme-dark .${GLASS_2} .gp-timer-shape`,
     ]);
-    const lines = stripped
-      .split("\n")
-      .filter((l) => /var\(\s*--background-primary\b/.test(l))
-      .filter((l) => !/^\s*background:/.test(l));
+    const lines = everything.split("\n").filter((l) => /var\(\s*--background-primary\b/.test(l));
     expect(
       lines.every((l) => /^\s*--gp-lg-env\s*:/.test(l)),
       "the ground must be read into --gp-lg-env only, never inline"
@@ -1190,4 +1190,343 @@ describe("the scattered glass rules exist for both themes", () => {
       }
     });
   }
+});
+
+describe("the sticky square's backdrop", () => {
+  // DESIGN.md register entry 13. .gp-timer-visual is sticky and paints a
+  // backdrop so the list scrolling under it does not show through the square's
+  // rounded corners — so the backdrop must be the colour AROUND the square,
+  // and Obsidian decides that per place: --background-primary in the main
+  // area, --background-secondary in a sidebar, transparent in a translucent
+  // window, and in a mobile drawer a transparent leaf over a container painted
+  // --mobile-sidebar-background. Until 0.6.9 the square hard-coded
+  // --background-primary, so the panel's usual home, the right sidebar, showed
+  // a square box behind the rounded timer.
+  //
+  // The fix is a chain: .gp-root takes its leaf's colour, the square takes
+  // .gp-root's. Any other background on either breaks it somewhere nobody
+  // looks — a named variable is right in one place and a box in the others —
+  // so the whole set of rules that paint them is pinned, not just one value.
+  // Both review rounds of 0.6.9 found the guard weaker than its name in the
+  // same way: it matched the SHAPES of code it expected. So everything below
+  // fails closed — what it cannot read is a failure, not a pass.
+
+  /**
+   * The WHOLE file, token region included. `styleRules` above starts after
+   * the :root and body blocks, and a rule written beside them — a natural
+   * place for "the panel's ground" — would otherwise be invisible here.
+   */
+  const everyRule = parseRules(stripComments(css));
+
+  /** Where the bracket opened at `open` closes, skipping string contents. */
+  const closeOf = (text: string, open: number): number => {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '"' || ch === "'" || ch === "`") {
+        for (i++; i < text.length && text[i] !== ch; i++) if (text[i] === "\\") i++;
+      } else if ("([{".includes(ch)) depth++;
+      else if (")]}".includes(ch) && --depth === 0) return i;
+    }
+    return -1;
+  };
+
+  /** Split at `sep` outside brackets and strings: `a(b, c), d` -> [`a(b, c)`, `d`]. */
+  const splitTop = (text: string, sep: string): string[] => {
+    const out: string[] = [];
+    let from = 0;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if ("([{\"'`".includes(ch)) {
+        const end =
+          ch === "(" || ch === "[" || ch === "{" ? closeOf(text, i) : text.indexOf(ch, i + 1);
+        if (end < 0) break;
+        i = end;
+      } else if (ch === sep) {
+        out.push(text.slice(from, i));
+        from = i + 1;
+      }
+    }
+    return [...out, text.slice(from)].map((a) => a.trim()).filter(Boolean);
+  };
+
+  // ---- the view ----------------------------------------------------------
+
+  /**
+   * The view as code: block comments and whole-line `//` comments gone, so
+   * prose cannot stand in for a call. (End-of-line `//` comments stay, as in
+   * tests/taskButton.test.ts: a `//` can sit inside a string.)
+   */
+  const view = readFileSync(resolve(root, "GentlePomoView.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+  /** onOpen's own body — where the two elements are built. */
+  const onOpen = ((): string => {
+    const at = view.indexOf("override onOpen(");
+    const open = at < 0 ? -1 : view.indexOf("{", at);
+    const close = open < 0 ? -1 : closeOf(view, open);
+    return close < 0 ? "" : view.slice(open, close + 1);
+  })();
+  const container = /const (\w+) = this\.containerEl;/.exec(onOpen)?.[1] ?? "container";
+  const built = new RegExp(
+    `const (\\w+) = ${container}\\.createDiv\\((?:"gp-timer-visual"|\\{\\s*cls:\\s*"gp-timer-visual"\\s*\\})\\)`
+  ).exec(onOpen);
+  const squareLocal = built?.[1] ?? "visual";
+
+  /** The names the view reaches each element by. */
+  const PANEL_REFS = [container, "this.containerEl"];
+  const SQUARE_REFS = [squareLocal, "this.timerVisual"];
+  const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const refPattern = (refs: string[]): string => `(?<![\\w$.])(?:${refs.map(esc).join("|")})`;
+
+  /** A string literal's value, or null for anything else. */
+  const literal = (arg: string): string | null => /^\s*"([\w-]+)"\s*$/.exec(arg)?.[1] ?? null;
+
+  /**
+   * Every class the view gives an element, and every write it could NOT
+   * read. It finds every member access on every name the element goes by —
+   * `.`, `?.` and `!.` alike — and reads the arguments with a bracket
+   * matcher, so a call it does not understand is reported, never skipped:
+   *  - addClass / classList.add take any number of classes; toggleClass and
+   *    classList.toggle one class (toggleClass also an array), then a flag;
+   *    addClasses an array; classList.replace adds its second argument.
+   *  - Anything else that can write a class — className, a "class" attribute
+   *    through setAttr / setAttribute / setAttrs, another classList method,
+   *    a non-literal argument — is `unread`. The one non-literal the view
+   *    passes on purpose is the theme toggle, whose values THEME_IDS lists.
+   *  - The element bound to any other name (`const sq = this.timerVisual`)
+   *    is `unread` too: the guard cannot follow an alias.
+   * What it still cannot see is an element handed to a helper as an
+   * argument; DESIGN.md entry 13 says so.
+   */
+  const classesOn = (refs: string[], themed: boolean): { classes: string[]; unread: string[] } => {
+    const classes: string[] = [];
+    const unread: string[] = [];
+    const take = (arg: string, where: string): void => {
+      const v = literal(arg);
+      if (v) classes.push(v);
+      else if (/^\s*\[/.test(arg))
+        splitTop(arg.trim().slice(1, -1), ",").forEach((a) => take(a, where));
+      else if (!(themed && /^\s*themeClass\(/.test(arg))) unread.push(where);
+    };
+    const argsAt = (from: number): { list: string[]; end: number } | null => {
+      const open = view.indexOf("(", from);
+      if (open < 0 || view.slice(from, open).trim() !== "") return null;
+      const close = closeOf(view, open);
+      return close < 0
+        ? null
+        : { list: splitTop(view.slice(open + 1, close), ","), end: close + 1 };
+    };
+    const access = new RegExp(`${refPattern(refs)}\\s*[!?]?\\s*\\.\\s*(\\w+)`, "g");
+    for (const m of view.matchAll(access)) {
+      const where = m[0];
+      const after = (m.index ?? 0) + m[0].length;
+      const member = m[1];
+      if (/^(?:addClass|toggleClass|addClasses)$/.test(member)) {
+        const a = argsAt(after);
+        if (!a) unread.push(where);
+        else if (member === "addClass") a.list.forEach((x) => take(x, where));
+        else if (member === "toggleClass") take(a.list[0] ?? "", where);
+        else if (/^\s*\[/.test(a.list[0] ?? "")) take(a.list[0], where);
+        else unread.push(where);
+      } else if (member === "classList") {
+        const cm = /^\s*[!?]?\s*\.\s*(\w+)/.exec(view.slice(after));
+        const a = cm ? argsAt(after + cm[0].length) : null;
+        if (!cm || !a) unread.push(where);
+        else if (cm[1] === "add") a.list.forEach((x) => take(x, where));
+        else if (cm[1] === "toggle") take(a.list[0] ?? "", where);
+        else if (cm[1] === "replace") take(a.list[1] ?? "", where);
+        else if (!/^(?:remove|contains)$/.test(cm[1])) unread.push(where);
+      } else if (/^(?:setAttr|setAttribute)$/.test(member)) {
+        const a = argsAt(after);
+        if (!a || !/^\s*"[\w-]+"\s*$/.test(a.list[0] ?? "") || literal(a.list[0]) === "class") {
+          unread.push(where);
+        }
+      } else if (/^(?:className|setAttrs|attributes)$/.test(member)) {
+        unread.push(where);
+      }
+    }
+    // Aliases: the element on the right of an `=` by itself. The two the view
+    // makes on purpose are the ones it reaches the elements by.
+    const alias = new RegExp(
+      `(?<![=!<>])=(?![=>])\\s*${refPattern(refs)}\\s*(?=[;,)\\]}]|$)`,
+      "gm"
+    );
+    for (const m of view.matchAll(alias)) {
+      const line = view.slice(
+        view.lastIndexOf("\n", m.index ?? 0) + 1,
+        (m.index ?? 0) + m[0].length
+      );
+      const known =
+        /^\s*this\.timerVisual\s*=\s*\w+$/.test(line.trim()) ||
+        new RegExp(`^const ${container} = this\\.containerEl$`).test(line.trim());
+      if (!known) unread.push(line.trim());
+    }
+    return { classes, unread };
+  };
+  const panel = classesOn(PANEL_REFS, true);
+  const square = classesOn(SQUARE_REFS, false);
+  // The panel is also the leaf-content element Obsidian gives the view, which
+  // the min-height rule at the top of styles.css selects by its data-type.
+  const PANEL = [...panel.classes, ...THEME_IDS.map(themeClass), "workspace-leaf-content"];
+  const SQUARE = ["gp-timer-visual", ...square.classes];
+  const DATA_TYPE = `[data-type="${VIEW_TYPE_GENTLE_POMO}"]`;
+
+  // ---- the stylesheet ----------------------------------------------------
+
+  /** A selector's compounds, split at combinators outside brackets: `:has(> .x)` stays whole. */
+  const compounds = (sel: string): string[] =>
+    splitTop(sel.replace(/\s*([>+~])\s*/g, " $1 "), " ").filter((c) => !/^[>+~]$/.test(c));
+
+  /** Functional pseudo-classes removed, arguments and all. */
+  const withoutFunctions = (compound: string, only = "[\\w-]+"): string => {
+    let out = compound;
+    for (let m = new RegExp(`:${only}\\(`).exec(out); m; m = new RegExp(`:${only}\\(`).exec(out)) {
+      const close = closeOf(out, m.index + m[0].length - 1);
+      out = out.slice(0, m.index) + (close < 0 ? "" : out.slice(close + 1));
+      if (close < 0) break;
+    }
+    return out;
+  };
+
+  const namesPanel = (c: string): boolean =>
+    PANEL.some((p) => namesClass(c, p)) || c.includes(DATA_TYPE);
+
+  /**
+   * Does this selector style the panel or the square? Its subject (last
+   * compound) must name a class either element carries, or the panel's
+   * data-type — or carry no class, id or attribute of its own at all (`*`, a
+   * tag, `:first-child`) beneath the panel, which then styles the square too.
+   * The status bar item carries gp-mode-focus / gp-mode-break as well
+   * (DESIGN.md entry 8), so a subject that IS the status bar is not the
+   * square — but only a positive `.gp-status`: `.gp-mode-focus:not(.gp-status)`
+   * is exactly how a rule would aim at the square alone.
+   */
+  const stylesPanelOrSquare = (one: string): boolean => {
+    const parts = compounds(one);
+    const s = parts[parts.length - 1] ?? "";
+    if (namesClass(withoutFunctions(s, "not"), "gp-status")) return false;
+    if (namesPanel(s) || SQUARE.some((c) => namesClass(s, c))) return true;
+    const bare = !/[.#[]/.test(withoutFunctions(s));
+    return bare && parts.slice(0, -1).some(namesPanel);
+  };
+
+  const backgroundsOf = (body: string): string[] =>
+    body
+      .split(";")
+      .map((d) => d.trim().replace(/\s+/g, " "))
+      .filter((d) => /^background(-[\w-]+)?\s*:/i.test(d));
+
+  /** Every keyframes block in the file, by name. */
+  const keyframes = new Map<string, CssRule[]>();
+  for (const r of everyRule) {
+    const name = r.context.map((c) => /^@keyframes\s+([\w-]+)/.exec(c)?.[1]).find(Boolean);
+    if (name) keyframes.set(name, [...(keyframes.get(name) ?? []), r]);
+  }
+
+  /**
+   * Every background on a rule that styles the panel or the square — and in
+   * every @keyframes such a rule animates, since an animation that paints a
+   * background overrides the inherited one for as long as it runs.
+   */
+  const backdrops = everyRule
+    .filter((r) => !r.context.some((c) => c.startsWith("@keyframes")))
+    .flatMap((r) =>
+      splitTop(r.sel, ",")
+        .filter(stylesPanelOrSquare)
+        .flatMap((one) => {
+          const animated = r.body
+            .split(";")
+            .filter((d) => /^\s*animation(-name)?\s*:/i.test(d))
+            .flatMap((d) => d.split(/[\s,:]+/))
+            .filter((w) => keyframes.has(w));
+          return [
+            { sel: one, context: r.context, decls: backgroundsOf(r.body) },
+            ...animated.flatMap((name) =>
+              (keyframes.get(name) ?? []).map((step) => ({
+                sel: `${one} → @keyframes ${name} ${step.sel}`,
+                context: r.context,
+                decls: backgroundsOf(step.body),
+              }))
+            ),
+          ];
+        })
+    )
+    .filter((b) => b.decls.length > 0)
+    .sort((a, b) => a.sel.localeCompare(b.sel));
+
+  it("reads every class both elements carry out of the view", () => {
+    // If these reads stop matching, the guard below shrinks to the two class
+    // names it was first written against and stops seeing everything else —
+    // so a class set in a way this cannot read fails here instead.
+    expect([...panel.unread, ...square.unread], "a class write the guard cannot read").toEqual([]);
+    expect(PANEL).toEqual(expect.arrayContaining(["gp-root", "gp-compact", "gp-theme-classic"]));
+    expect(SQUARE).toEqual(
+      expect.arrayContaining(["gp-peek", "gp-state-running", "gp-state-overtime", "gp-mode-focus"])
+    );
+  });
+
+  it("paints the panel and the square only by inheritance, plus the mobile drawer", () => {
+    expect(
+      backdrops,
+      "a background on the panel or the square that is not the inherited leaf colour"
+    ).toEqual([
+      // Exists so the square below can inherit the leaf's colour. On desktop
+      // it changes nothing on screen; in a phone or tablet main-area leaf,
+      // where .gp-root has no scrollbar gutter, anti-aliased edges in the
+      // panel moved by a few levels out of 255 in headless Chrome (DESIGN.md
+      // entry 13).
+      { sel: ".gp-root", context: [], decls: ["background-color: inherit"] },
+      { sel: ".gp-timer-visual", context: [], decls: ["background-color: inherit"] },
+      // The one place Obsidian paints an OPAQUE ground above a transparent
+      // leaf (`.workspace-drawer .workspace-leaf { background-color:
+      // transparent }`), so inheriting there gives transparent and the list
+      // shows through the corners. The same variable Obsidian's drawer
+      // container paints with. (A translucent window also clears the leaf,
+      // under a 60% tint nothing could match; left see-through on purpose.)
+      {
+        sel: ".workspace-drawer .gp-timer-visual",
+        context: [],
+        decls: ["background-color: var(--mobile-sidebar-background)"],
+      },
+    ]);
+  });
+
+  it("builds the square straight onto the panel, in onOpen, and never moves it", () => {
+    // `inherit` reads the PARENT, and `position: sticky` sticks within it. A
+    // wrapper breaks this either way: around the square alone, the square can
+    // only stick inside the wrapper's own box and scrolls away with the list;
+    // around the square and what follows it, the square inherits the
+    // wrapper's transparent background and the list shows through its corners.
+    expect(onOpen, "onOpen is gone or could not be read").not.toBe("");
+    expect(onOpen, "onOpen no longer names this.containerEl").toMatch(
+      /const \w+ = this\.containerEl;/
+    );
+    expect(onOpen).toContain(`${container}.addClass("gp-root")`);
+    expect(built, "the square is no longer built straight onto .gp-root in onOpen").not.toBeNull();
+    expect(
+      view.match(/"gp-timer-visual"/g),
+      "the square is built in more than one place"
+    ).toHaveLength(1);
+    // Only the node being INSERTED counts: `container.insertBefore(notice,
+    // square)` puts something above the square and leaves it where it is.
+    const insertedSquare: string[] = [];
+    const insertion =
+      /\.\s*(append|appendChild|prepend|replaceChildren|insertBefore|insertAdjacentElement|before|after|replaceWith)\s*\(/g;
+    for (const m of view.matchAll(insertion)) {
+      const open = (m.index ?? 0) + m[0].length - 1;
+      const close = closeOf(view, open);
+      const list = close < 0 ? [] : splitTop(view.slice(open + 1, close), ",");
+      const inserted =
+        m[1] === "insertBefore"
+          ? list.slice(0, 1)
+          : m[1] === "insertAdjacentElement"
+            ? list.slice(1, 2)
+            : list;
+      if (inserted.some((a) => SQUARE_REFS.includes(a.replace(/!$/, "").trim())))
+        insertedSquare.push(m[0]);
+    }
+    expect(insertedSquare, "the square is handed to a DOM insertion after it is built").toEqual([]);
+  });
 });
