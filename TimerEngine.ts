@@ -11,6 +11,7 @@ import {
   normalizeTaskText,
   taskLineName,
   taskNameAfterEdit,
+  taskMatchKey,
 } from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
 import {
@@ -66,6 +67,34 @@ interface PlayingPreview {
   edge: CueEdge;
   source: AudioBufferSourceNode;
   gain: GainNode;
+}
+
+/**
+ * Index of a linked task's line in a note's lines, or -1.
+ *
+ * By 🆔 when the task has one. Without one, by its line text (TimerEngine's
+ * `currentTaskLineText`), compared through taskMatchKey so a line the Tasks
+ * plugin has rewritten still matches — and an OPEN line wins over a done one:
+ * a recurring task leaves done copies behind with the same text, and with the
+ * Tasks setting "next recurrence appears on the line below" they sit above the
+ * open one. A done line is the answer only when no open line matches, i.e. the
+ * task was ticked during the session, which still earns its 🍅 (handleFinished
+ * counts before it unlinks).
+ */
+function linkedLineIndex(lines: string[], taskId: string | undefined, lineText: string): number {
+  if (taskId) {
+    return lines.findIndex((line) => line.match(TASK_ID_REGEX)?.[1] === taskId);
+  }
+
+  const key = taskMatchKey(lineText);
+  let done = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const taskMatch = lines[i].match(TASK_LINE_REGEX);
+    if (!taskMatch || taskMatchKey(normalizeTaskText(taskMatch[2])) !== key) continue;
+    if (taskMatch[1] === " ") return i;
+    if (done === -1) done = i;
+  }
+  return done;
 }
 
 export class TimerEngine {
@@ -538,9 +567,12 @@ export class TimerEngine {
     if (!(file instanceof TFile)) return;
 
     // Which link this count belongs to. Linking another task while the write
-    // is in flight must not hand that task this line's text.
+    // is in flight must not hand that task this line's text — nor this
+    // session's 🍅: `process` reads the file before it calls back, and a
+    // picker click in that gap used to move the count to the new task.
     const linkedPath = this.currentTaskPath;
     const linkedText = this.currentTaskLineText;
+    const linkedId = this.currentTaskId;
     let counted = "";
 
     try {
@@ -548,7 +580,7 @@ export class TimerEngine {
       // sync/plugin write can't be clobbered between our read and write.
       await this.plugin.app.vault.process(file, (content) => {
         const lines = content.split("\n");
-        const index = this.linkedLineIndex(lines);
+        const index = linkedLineIndex(lines, linkedId, linkedText);
         if (index === -1) return content;
 
         lines[index] = incrementPomodoroCount(lines[index]);
@@ -567,39 +599,28 @@ export class TimerEngine {
     }
   }
 
-  /**
-   * Index of the linked task's line in a note's lines, or -1.
-   *
-   * By 🆔 when the task has one. Without one, by `currentTaskLineText` — and an
-   * OPEN line wins over a done one: a recurring task leaves done copies behind
-   * with the same text, and with the Tasks setting "next recurrence appears on
-   * the line below" they sit above the open one. A done line is the answer only
-   * when no open line matches, i.e. the task was ticked during the session,
-   * which still earns its 🍅 (handleFinished counts before it unlinks).
-   */
-  private linkedLineIndex(lines: string[]): number {
-    if (this.currentTaskId) {
-      return lines.findIndex((line) => line.match(TASK_ID_REGEX)?.[1] === this.currentTaskId);
-    }
-
-    let done = -1;
-    for (let i = 0; i < lines.length; i++) {
-      const taskMatch = lines[i].match(TASK_LINE_REGEX);
-      if (!taskMatch || normalizeTaskText(taskMatch[2]) !== this.currentTaskLineText) continue;
-      if (taskMatch[1] === " ") return i;
-      if (done === -1) done = i;
-    }
-    return done;
-  }
-
   private async checkTaskCompletionAndUnlink() {
     if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
 
     const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
     if (!(file instanceof TFile)) return;
 
+    // The link this check is about. A task linked while the note is being read
+    // is another task, perhaps in another note: checking it against this note
+    // could find a done line with its text and unlink it.
+    const linkedPath = this.currentTaskPath;
+    const linkedText = this.currentTaskLineText;
+    const linkedId = this.currentTaskId;
+
     try {
       const content = await this.plugin.app.vault.read(file);
+      if (
+        this.currentTaskPath !== linkedPath ||
+        this.currentTaskLineText !== linkedText ||
+        this.currentTaskId !== linkedId
+      ) {
+        return;
+      }
       // CRLF-safe split: this path only reads, and the $-anchored
       // TASK_LINE_REGEX can't match a line with a trailing \r. Write paths
       // (marker increment/repair) must keep split("\n") — they rejoin on "\n".
@@ -607,6 +628,7 @@ export class TimerEngine {
 
       let foundIncomplete = false;
       let foundComplete = false;
+      const linkedKey = taskMatchKey(linkedText);
 
       for (const line of lines) {
         // If current task has ID, match by ID
@@ -628,7 +650,7 @@ export class TimerEngine {
         // Fallback: match by normalized text — as the 🍅 counter last left it,
         // not as it was linked, or the first count hides the line from here.
         const taskMatch = line.match(TASK_LINE_REGEX);
-        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskLineText) {
+        if (taskMatch && taskMatchKey(normalizeTaskText(taskMatch[2])) === linkedKey) {
           if (taskMatch[1] === " ") {
             foundIncomplete = true;
             break;

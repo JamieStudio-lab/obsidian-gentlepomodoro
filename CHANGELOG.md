@@ -36,9 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The 🍅 recovery actions had the same blind spot: a `🍅 N` you typed in front
   of the counter's marker hid that marker from **Check**, **Repair**,
   **Remove** and **Remove all**. They now find it.
-- **Repair** and **Remove** no longer move or delete a `🍅 N` you typed after
-  an emoji the Tasks plugin also uses, inside the task's own text
-  (`Fix ❌ login, then 🍅 2 tests`).
+- **Repair**, **Remove** and **Remove all** no longer move or delete a `🍅 N`
+  you typed in the task's own text: after an emoji the Tasks plugin also uses
+  (`Fix ❌ login, then 🍅 2 ✅ tests`), glued to a word (`复习🍅2`), or followed
+  by a closing bracket or `**`.
 - **Remove all** now also removes a counter marker with a tag right behind it,
   which is where the Tasks plugin moves your tags when it rewrites a line —
   for example when you tick the task off.
@@ -46,6 +47,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   typed** (`Call mum 🍅 2 (Sunday)`). It read any `(…)` there as part of an
   old marker format; now only a date in brackets is, which is all that format
   ever held.
+- **Tasks' other date emoji — ⌛ for scheduled, 📆 and 🗓 for due — now count as
+  Tasks fields.** The counter wrote its marker after them, which hid the date
+  from the Tasks plugin (the same breakage as GitHub issue #2); it now writes
+  it in front, and **Repair** moves a marker that sits after one.
+- A line with two counter markers (after a sync merge, or an edit) is handled
+  in one go: every action reads the first one's count and leaves one marker,
+  so the numbers in **Check** and in the confirmation dialogs are right and a
+  second run finds nothing.
+- **A task without a 🆔 is still recognised after the Tasks plugin rewrites its
+  line** — when you tick it, edit it, or the next recurrence starts — even
+  when that moves its tags, ⛔ or 🏁 fields, or writes 🗓 back as 📅. Before,
+  the timer lost track of it: no count, no unlink, no tick in the picker.
+- Linking another task at the moment a session's count is being written no
+  longer gives that session's 🍅 to the new task, and no longer unlinks it.
+
+### Changed
+
+- If you add words after the counter's `🍅 N` (Edit Task puts them there), the
+  counter now reads that marker as your text and starts a new count beside it
+  on the next session — it can't tell those words from a `🍅 N` you typed
+  yourself. Nothing is deleted; remove the old marker by hand if you like.
 
 ## [0.6.8] — 2026-09-29
 

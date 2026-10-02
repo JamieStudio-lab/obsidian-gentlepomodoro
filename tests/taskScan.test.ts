@@ -439,6 +439,26 @@ describe("loadTasks — the pinned (linked) task", () => {
     expect(tasks.map((t) => t.cleanText).sort()).toEqual(["In folder", "The linked task"]);
     expect(tasks.find((t) => t.cleanText === "The linked task")?.pinned).toBe(true);
   });
+
+  it("still finds the linked line after the Tasks plugin rewrote it", async () => {
+    // Linked as "- [ ] The linked task 📅 2026-09-05 #work ⛔ abc": the key
+    // kept the gap the date left and the ⛔ field. Tasks then moved the tag
+    // and the ⛔ in front of the date when it rewrote the line.
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task #work ⛔ abc 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: notes("a.md"),
+      pin: { path: "elsewhere/linked.md", cleanText: "The linked task  #work ⛔ abc" },
+    });
+
+    expect(tasks.map((t) => [t.cleanText, t.pinned])).toContainEqual([
+      "The linked task #work ⛔ abc",
+      true,
+    ]);
+  });
 });
 
 describe("groupTasksByDate — undated and pinned (0.6.4)", () => {

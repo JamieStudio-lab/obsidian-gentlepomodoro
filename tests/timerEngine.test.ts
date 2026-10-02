@@ -747,6 +747,100 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
     }
   );
 
+  it.each([
+    [
+      "ticked, with the tag moved in front of the dates",
+      "- [ ] Write docs ⏳ 2026-10-01 #task/research/docs",
+      "- [x] Write docs 🍅 1 #task/research/docs ⏳ 2026-10-01 ✅ 2026-10-02",
+    ],
+    [
+      "ticked, with its tag moved in front of its ⛔",
+      "- [ ] Write docs ⏳ 2026-10-01 ⛔ abc123 #work",
+      "- [x] Write docs 🍅 1 #work ⛔ abc123 ⏳ 2026-10-01 ✅ 2026-10-02",
+    ],
+    [
+      "ticked, with its tag moved in front of its 🏁",
+      "- [ ] Write docs ⏳ 2026-10-01 🏁 delete #work",
+      "- [x] Write docs 🍅 1 #work 🏁 delete ⏳ 2026-10-01 ✅ 2026-10-02",
+    ],
+    [
+      "ticked, with 🗓️ written back as 📅",
+      "- [ ] Write docs 🗓️ 2026-10-01",
+      "- [x] Write docs 🍅 1 📅 2026-10-01 ✅ 2026-10-02",
+    ],
+  ])("still unlinks a task the Tasks plugin rewrote — %s", async (_label, line, rewritten) => {
+    // Tasks rewrites the whole line when it ticks it: tags among the fields
+    // move in front of them, ⛔ and the date emoji come back in its own order
+    // and form. Compared as normalizeTaskText left them, the task the timer
+    // linked no longer matched its own line, so it was never unlinked.
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    expect(timer.getState().taskName).not.toBe(NO_TASK_LABEL);
+
+    vault.contents[PATH] = `${rewritten}\n`;
+    const file = vault.getAbstractFileByPath(PATH);
+    if (!file) throw new Error("fixture note missing");
+    await timer.onFileModify(file);
+
+    expect(timer.getState().taskName).toBe(NO_TASK_LABEL);
+  });
+
+  it("keeps counting a recurring task after the Tasks plugin rewrote its line", async () => {
+    const line = "- [ ] Stretch 🔁 every day ⏳ 2026-10-01 #health";
+    const { vault, timer } = counting(`${line}\n`);
+    link(timer, line);
+    await focusSession(timer);
+    expect(vault.contents[PATH]).toBe("- [ ] Stretch 🍅 1 🔁 every day ⏳ 2026-10-01 #health\n");
+
+    vault.contents[PATH] = "- [ ] Stretch 🍅 1 #health 🔁 every day ⏳ 2026-10-01\n";
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Stretch #health 🍅 2 🔁 every day ⏳ 2026-10-01\n");
+  });
+
+  it("counts the session's own task when another is linked while the note is read", async () => {
+    // Obsidian's `process` reads the file before it calls back. A picker click
+    // in that gap used to send this session's 🍅 to the newly linked task, and
+    // that task's text then stopped being followed, so it was never counted.
+    const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
+    link(timer, "- [ ] Task A");
+    const write = vault.process;
+    vault.process = async (file, fn) => {
+      await Promise.resolve();
+      link(timer, "- [ ] Task B"); // clicked while the note is being read
+      return write(file, fn);
+    };
+    await timer.finish();
+    vault.process = write;
+    await timer.finish();
+
+    await focusSession(timer);
+
+    expect(vault.contents[PATH]).toBe("- [ ] Task A 🍅 1\n- [ ] Task B 🍅 1\n");
+  });
+
+  it("never unlinks a task linked while the old task's note was being read", async () => {
+    // The old note holds a done line with the new task's text.
+    const { vault, timer } = counting("- [x] Task A\n- [x] Task B\n", {
+      [OTHER]: "- [ ] Task B\n",
+    });
+    link(timer, "- [ ] Task A");
+    const read = vault.read;
+    vault.read = async (file) => {
+      const content = await read(file);
+      link(timer, "- [ ] Task B", OTHER);
+      return content;
+    };
+    const file = vault.getAbstractFileByPath(PATH);
+    if (!file) throw new Error("fixture note missing");
+    await timer.onFileModify(file);
+    vault.read = read;
+
+    expect(timer.getState().taskName).toBe("Task B");
+    expect(timer.currentTaskPath).toBe(OTHER);
+  });
+
   it("forgets the old line when another task is linked", async () => {
     const { vault, timer } = counting("- [ ] Task A\n- [ ] Task B\n");
     link(timer, "- [ ] Task A");
@@ -808,7 +902,7 @@ describe("TimerEngine — the 🍅 counter on a task with no 🆔", () => {
 
     expect(view).toContain("{ path: linkedPath, cleanText: this.timer.currentTaskLineText }");
     expect(view).toContain(
-      "task.cleanText === this.timer.currentTaskLineText && task.path === this.timer.currentTaskPath"
+      "taskMatchKey(task.cleanText) === taskMatchKey(this.timer.currentTaskLineText) && task.path === this.timer.currentTaskPath"
     );
     expect(view).not.toMatch(/cleanText(?::| ===) this\.timer\.currentTaskName\b/);
   });

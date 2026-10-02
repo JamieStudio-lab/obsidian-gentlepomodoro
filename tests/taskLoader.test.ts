@@ -753,3 +753,262 @@ describe("a 🍅 the user typed is never the counter", () => {
     });
   });
 });
+
+describe("which 🍅 is the counter's — review round 1", () => {
+  it("needs a genuine Tasks field behind it, not just a field emoji, once one stands before it", () => {
+    // ✅ followed by a word is not a done date, and 🔥 is not a Tasks field.
+    for (const line of [
+      "- [ ] Fix ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01",
+      "- [ ] 🔥 Sauce: roast 🍅 4 🔥 chilies ⏳ 2026-10-01",
+      "- [ ] Add ⏫ review, plus 🍅 3 🔺 watchlist ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] Fix ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01")).toBe(
+      "- [ ] Fix 🍅 1 ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01"
+    );
+  });
+
+  it("still counts its own marker in front of an emoji in the task text", () => {
+    // Where the counter writes when the line's first field emoji is in the text.
+    const line = "- [ ] Add 🍅 1 🔺 watchlist ⏳ 2026-10-01";
+    expect(parsePomodoroCount(line)).toBe(1);
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Add 🍅 2 🔺 watchlist ⏳ 2026-10-01");
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it.each([
+    ["a priority", "⏫"],
+    ["a recurrence", "🔁 every week"],
+    ["an on-completion", "🏁 delete"],
+    ["a depends-on list", "⛔ abc, def"],
+    ["an ID", "🆔 abc123"],
+    ["a date with a variation selector", "📅️ 2026-10-05"],
+    ["a cancelled date", "❌ 2026-10-02"],
+    ["a tag and a done date", "#done ✅ 2026-10-02"],
+  ])("still finds a ≤0.5.0 marker with %s written after it", (_label, field) => {
+    const line = `- [ ] Write docs ⏳ 2026-10-01 🍅 3 ${field}`;
+    expect(parsePomodoroCount(line)).toBe(3);
+    expect(repairPomodoroMarkerPlacement(line)).toBe(
+      `- [ ] Write docs 🍅 3 ⏳ 2026-10-01 ${field}`
+    );
+  });
+
+  it("takes only Tasks tag characters as a tag behind the marker", () => {
+    for (const line of [
+      "- [ ] Ask about it (🍅 2 #garden)",
+      "- [ ] Discuss 🍅 2 #standup.",
+      "- [ ] Bold **🍅 2 #x** ⏳ 2026-10-01",
+      "- [ ] Mark ==🍅 2 #x== ⏳ 2026-10-01",
+      "- [ ] Note [[Log|🍅 2 #x]] ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+  });
+
+  it("never takes a 🍅 glued to the text in front of it", () => {
+    // Every version wrote a space before the marker.
+    for (const line of [
+      "- [ ] Work #pomo🍅2 ⏳ 2026-10-01",
+      "- [ ] 复习🍅2 ⏳ 2026-10-01",
+      "- [ ] Read https://example.com/🍅2",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] 复习🍅2 ⏳ 2026-10-01")).toBe(
+      "- [ ] 复习🍅2 🍅 1 ⏳ 2026-10-01"
+    );
+  });
+
+  it("needs a space before a block reference, as Obsidian and Tasks do", () => {
+    expect(parsePomodoroCount("- [ ] Compute 🍅 2^10")).toBe(0);
+    expect(incrementPomodoroCount("- [ ] Compute 🍅 2^10")).toBe("- [ ] Compute 🍅 2^10 🍅 1");
+    expect(removeAnyPomodoroMarker("- [ ] Compute 🍅 2^10")).toBe("- [ ] Compute 🍅 2^10");
+  });
+
+  it("knows Tasks' other date emoji: ⌛ scheduled, 📆 and 🗓 due", () => {
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 1 🗓️ 2026-10-05")).toBe(1);
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 1 🗓️ 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 2 🗓️ 2026-10-05"
+    );
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 1 ⌛ 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 2 ⌛ 2026-10-05"
+    );
+    // Written in front of them, not after (which hid the date from Tasks).
+    expect(incrementPomodoroCount("- [ ] Write docs 📆 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 1 📆 2026-10-05"
+    );
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs ⏳ 2026-10-01 🍅 3 📆 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 3 ⏳ 2026-10-01 📆 2026-10-05"
+    );
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs 📆 2026-10-05 🍅 3")).toBe(
+      "- [ ] Write docs 🍅 3 📆 2026-10-05"
+    );
+  });
+
+  describe("two counter markers on one line", () => {
+    const PLACED_AND_APPENDED = "- [ ] Write docs 🍅 3 ⏳ 2026-10-01 🍅 1";
+    const BOTH_APPENDED = "- [ ] Write docs ⏳ 2026-10-01 🍅 3 🍅 1";
+
+    it("reads the first one's count", () => {
+      expect(parsePomodoroCount(PLACED_AND_APPENDED)).toBe(3);
+      expect(parsePomodoroCount(BOTH_APPENDED)).toBe(3);
+    });
+
+    it("folds them into one on every write, keeping that count", () => {
+      for (const line of [PLACED_AND_APPENDED, BOTH_APPENDED]) {
+        expect(repairPomodoroMarkerPlacement(line)).toBe("- [ ] Write docs 🍅 3 ⏳ 2026-10-01");
+        expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 4 ⏳ 2026-10-01");
+        expect(removeAnyPomodoroMarker(line)).toBe("- [ ] Write docs ⏳ 2026-10-01");
+      }
+      expect(removeMisplacedPomodoroMarker(PLACED_AND_APPENDED)).toBe(
+        "- [ ] Write docs 🍅 3 ⏳ 2026-10-01"
+      );
+      expect(removeMisplacedPomodoroMarker(BOTH_APPENDED)).toBe("- [ ] Write docs ⏳ 2026-10-01");
+    });
+
+    it("needs one run of each action, so the dialogs' counts are right", () => {
+      const content = [PLACED_AND_APPENDED, BOTH_APPENDED].join("\n");
+      for (const run of [
+        repairPomodoroMarkersInContent,
+        removeMisplacedPomodoroMarkersInContent,
+        removeAllPomodoroMarkersInContent,
+      ]) {
+        const once = run(content);
+        expect(once.linesChanged).toBe(2);
+        expect(run(once.content).linesChanged).toBe(0);
+      }
+    });
+  });
+});
+
+describe("the 🍅 readers agree with each other on generated lines", () => {
+  // A seeded generator (no Math.random: a failure must replay) over the
+  // pieces a task line is made of, glued with and without spaces.
+  const PIECES = [
+    "Buy",
+    "kg",
+    "tests",
+    "(big)",
+    "**",
+    "==",
+    "[[Log|x]]",
+    "https://a.io/#x",
+    "🍅 2",
+    "🍅 3",
+    "🍅2",
+    "🍅 4 (2024-01-01)",
+    "🍅 5 (Sunday)",
+    "⏳ 2026-10-01",
+    "📅 2026-10-05",
+    "🗓️ 2026-10-06",
+    "⌛ 2026-10-07",
+    "✅ 2026-10-02",
+    "❌ 2026-10-03",
+    "⏫",
+    "🔺",
+    "🔁 every day",
+    "🆔 abc123",
+    "⛔ abc",
+    "🏁 delete",
+    "#a",
+    "#task/x/y",
+    "#x)",
+    "❌",
+    "✅",
+    "🔥",
+    "^10",
+  ];
+  function lines(count: number): string[] {
+    // mulberry32: 32-bit integer arithmetic only. A plain LCG multiply loses
+    // its low bits past 2^53 in a double, and its "random" lines repeat.
+    let seed = 20261002;
+    const next = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+      let text = "";
+      const length = 1 + next(7);
+      for (let j = 0; j < length; j++) {
+        const piece = PIECES[next(PIECES.length)];
+        // A `^id` after a space is a block reference only at the line's end;
+        // mid-line, the markers behind it decide what it is. Real notes have
+        // one only at the end (added below), so mid-line `^` stays glued.
+        const glue = j === 0 || piece.startsWith("^") || next(5) === 0;
+        text += (glue ? "" : " ") + piece;
+      }
+      if (next(6) === 0) text += " ^blk1";
+      out.push(`- [${next(4) === 0 ? "x" : " "}] ${text}`);
+    }
+    return out;
+  }
+  // Whitespace aside: the counter has always put a space on each side of the
+  // marker it writes. Every other character must survive every write.
+  const squash = (text: string) => text.replace(/\s+/g, "");
+
+  /**
+   * The `🍅 N`s on a line that are surely the user's, worked out WITHOUT the
+   * code under test: glued to the text before it (kept with that character),
+   * or followed by a word or a bracket (kept with its first character).
+   */
+  function typedSnippets(line: string): string[] {
+    const out: string[] = [];
+    for (const match of line.matchAll(/🍅\s*\d+(?:\s*\(\d{4}-\d{2}-\d{2}\))?/gu)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (start > 0 && !/\s/u.test(line[start - 1])) out.push(line.slice(start - 1, end));
+      const word = /^\s*[A-Za-z(*=[]/u.exec(line.slice(end));
+      if (word) out.push(line.slice(start, end + word[0].length));
+    }
+    return out;
+  }
+
+  it("never changes a 🍅 that is surely the user's", () => {
+    let checked = 0;
+    for (const line of lines(30000)) {
+      const snippets = typedSnippets(line);
+      if (snippets.length === 0) continue;
+      checked++;
+      for (const written of [
+        incrementPomodoroCount(line),
+        repairPomodoroMarkerPlacement(line),
+        removeMisplacedPomodoroMarker(line),
+        removeAnyPomodoroMarker(line),
+      ]) {
+        for (const snippet of snippets) expect(written, `line: ${line}`).toContain(snippet);
+      }
+    }
+    expect(checked).toBeGreaterThan(5000);
+  });
+
+  it("writes touch only the counter's markers, and every action settles in one run", () => {
+    for (const line of lines(30000)) {
+      const count = parsePomodoroCount(line);
+      const text = squash(removeAnyPomodoroMarker(line));
+      const incremented = incrementPomodoroCount(line);
+      const repaired = repairPomodoroMarkerPlacement(line);
+      const trimmed = removeMisplacedPomodoroMarker(line);
+      const context = `line: ${line}`;
+
+      expect(parsePomodoroCount(incremented), context).toBe(count + 1);
+      expect(parsePomodoroCount(repaired), context).toBe(count);
+      expect(parsePomodoroCount(removeAnyPomodoroMarker(line)), context).toBe(0);
+      for (const written of [incremented, repaired, trimmed]) {
+        expect(squash(removeAnyPomodoroMarker(written)), context).toBe(text);
+      }
+      expect(repairPomodoroMarkerPlacement(repaired), context).toBe(repaired);
+      expect(removeMisplacedPomodoroMarker(trimmed), context).toBe(trimmed);
+      expect(removeMisplacedPomodoroMarker(incremented), context).toBe(incremented);
+      expect(repairPomodoroMarkerPlacement(incremented), context).toBe(incremented);
+    }
+  });
+});

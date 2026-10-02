@@ -45,7 +45,12 @@ import {
   CAPTION_NAME_FADE_MS,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
-import { loadTasks as fetchTasks, groupTasksByDate, linkedTaskDisplayName } from "./taskLoader";
+import {
+  loadTasks as fetchTasks,
+  groupTasksByDate,
+  linkedTaskDisplayName,
+  taskMatchKey,
+} from "./taskLoader";
 import {
   TASK_SOURCE_ORDER,
   TASK_SOURCE_LABELS,
@@ -1597,7 +1602,7 @@ export class GentlePomoView extends ItemView {
         item.createSpan({ text: task.displayText });
 
         if (
-          task.cleanText === this.timer.currentTaskLineText &&
+          taskMatchKey(task.cleanText) === taskMatchKey(this.timer.currentTaskLineText) &&
           task.path === this.timer.currentTaskPath
         ) {
           item.addClass("gp-task-selected");
