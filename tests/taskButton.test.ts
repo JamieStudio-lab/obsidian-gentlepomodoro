@@ -122,10 +122,12 @@ describe("the view's task button", () => {
    * load-bearing: the text and the tooltip both come from the display form,
    * and BOTH guard fields are written before the measure — drop either
    * assignment and the guard is always true, which means a DOM write and a
-   * forced layout read on every tick (the iPhone-flicker shape).
+   * forced layout read on every tick (the iPhone-flicker shape). "Linked" is
+   * the task's note being set, never its name: a task can be called "No Task"
+   * (0.6.9, F36).
    */
   const TICK_BLOCK = squash(`
-    const linked = state.taskName !== NO_TASK_LABEL;
+    const linked = state.taskPath !== undefined;
     const taskText = linked ? linkedTaskDisplayName(state.taskName) : "Select a task...";
     const fullText = linked ? taskText : "";
     if (taskText !== this.lastTaskBtnText || fullText !== this.taskBtnFullText) {

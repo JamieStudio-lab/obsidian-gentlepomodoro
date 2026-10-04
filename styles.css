@@ -3930,7 +3930,10 @@ body {
 
 /* In-view daily-goal progress line. Hidden on desktop (the status bar carries
    it there); revealed on mobile, where Obsidian hides the status bar entirely.
-   Updated from main.ts via GentlePomoView.setGoalProgress(). */
+   Updated from main.ts via GentlePomoView.setGoalProgress(). It also opens
+   today's log (0.6.9): a button in all but element, so it takes the pointer,
+   and the panel's ring below — outward, as the shared ring is, since nothing
+   around it clips. */
 .gp-goal-progress {
   display: none;
   margin-top: var(--gp-space-4);
@@ -3938,11 +3941,18 @@ body {
   color: var(--text-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  border-radius: var(--gp-radius-sm);
 }
 
 .gp-goal-progress.gp-goal-met {
   color: var(--interactive-accent);
   font-weight: var(--gp-weight-strong);
+}
+
+.gp-goal-progress:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
 }
 
 /* =========================================================================
@@ -4613,4 +4623,12 @@ body.is-tablet .gp-timer-time {
 /* No message, no gap. */
 .gp-setting-note:empty {
   display: none;
+}
+
+/* A note rather than a refusal (0.6.9, the log folder row): an existing
+   folder's capitalisation taken, or logs left in the folder before. Saved, so
+   not in the error colour. Two classes, so it wins over the base rule on
+   specificity rather than on where it sits in the file. */
+.gp-setting-note.gp-setting-note-info {
+  color: var(--text-muted);
 }

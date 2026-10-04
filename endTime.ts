@@ -1,6 +1,19 @@
 import type { MomentFactory } from "./momentTypes";
 
 /**
+ * An instant as the clock shows it — "17:25", or "Thu 17:25" when it is not
+ * today. The two session questions name one this way (F21): the unfinished
+ * session's start, and the long focus's planned end — which, for the timer
+ * left running overnight that question exists for, is yesterday's, and a bare
+ * time then read as later today. Shown, never stored: the clock as the app's
+ * language writes it.
+ */
+export function clockLabel(moment: MomentFactory, ms: number): string {
+  const at = moment(ms);
+  return at.isSame(moment(), "day") ? at.format("LT") : at.format("ddd LT");
+}
+
+/**
  * Format a projected end timestamp as a localized wall-clock time — "Ends
  * 15:30" (or "Ends 3:30 PM" per locale, via moment's LT). When the session
  * finishes on a later calendar day than now (a late start plus a long

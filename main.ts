@@ -1,17 +1,43 @@
-import { Menu, Notice, Platform, Plugin, WorkspaceLeaf, normalizePath, setTooltip } from "obsidian";
+import {
+  Menu,
+  Notice,
+  Platform,
+  Plugin,
+  TFile,
+  WorkspaceLeaf,
+  normalizePath,
+  setTooltip,
+} from "obsidian";
 import { DEFAULT_THEME } from "./themes";
 
 import { confirmAction } from "./confirmModal";
+import { askLongSession } from "./longSessionModal";
+import {
+  longSessionMessage,
+  longSessionPlannedLabel,
+  sleepPauseMessage,
+  type LongSessionAnswer,
+  type LongSessionQuestion,
+} from "./sessionGaps";
 import { GentlePomoSettingTab } from "./GentlePomoSettingTab";
 import { GentlePomoView } from "./GentlePomoView";
 import {
   FocusTotalTracker,
+  GoalNotice,
   focusGoalText,
   formatHoursMinutes,
-  liveFocusSeconds,
+  liveFocusSecondsToday,
+  logFolderHint,
+  panelGoalText,
   type FocusTotalHost,
+  type GoalNoticeHost,
 } from "./focusTotals";
-import { LogManager, shouldFireGoalNotice } from "./logManager";
+import { deviceStorage } from "./deviceStorage";
+import { askRecovery } from "./recoveryModal";
+import { recoveryMessage, savedSessionSeconds } from "./sessionRecovery";
+import { LogManager, resolveLogLink } from "./logManager";
+import { createLogApi, type GentlePomoApi } from "./logApi";
+import { LogTools } from "./logTools";
 import { SettingsStore, coerceToDefaults, deriveEndChimes } from "./settingsStore";
 import { logger } from "./logger";
 import {
@@ -29,10 +55,10 @@ import {
   DEFAULT_SETTINGS,
   FOCUS_TOTAL_HEARTBEAT_MS,
   MUSIC_POSITION_SAVE_MS,
-  NO_TASK_LABEL,
+  OPEN_SESSION_SAVE_MS,
   VIEW_TYPE_GENTLE_POMO,
 } from "./constants";
-import { formatEndTime } from "./endTime";
+import { clockLabel, formatEndTime } from "./endTime";
 import { buildStatusGlyph } from "./icons";
 import {
   deriveStatusBarTime,
@@ -53,16 +79,23 @@ import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./
 import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
+import { logicalDate } from "./logLine";
 
 declare const moment: MomentFactory;
-
-// Local-timezone YYYY-MM-DD; matches LogManager's daily-log file naming.
-const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
 export default class GentlePomoPlugin extends Plugin {
   override settings!: GentlePomoSettings;
   timer!: TimerEngine;
   logManager!: LogManager;
+  /** The daily log's own commands: open, check, convert, add, fix. */
+  logTools!: LogTools;
+  /**
+   * The read-only API for templates (logApi.ts):
+   * `app.plugins.plugins["gentle-pomo"]?.api` in a dataviewjs block. Set in
+   * onload, gone after unload, so a template finds none while the plugin is
+   * off rather than one that reads through a disabled plugin.
+   */
+  api?: GentlePomoApi;
   private statusBarEl: HTMLElement | null = null;
   private statusModeEl: HTMLElement | null = null;
   private statusTimeEl: HTMLElement | null = null;
@@ -79,6 +112,8 @@ export default class GentlePomoPlugin extends Plugin {
   private statusMenuFor: string | null = null;
   /** Today's logged focus total, TTL- and date-stamped. */
   private readonly focusTotals = new FocusTotalTracker(this.createFocusTotalHost());
+  /** The once-a-day "goal hit" notice, checked against data.json first (C5). */
+  private readonly goalNotice = new GoalNotice(this.createGoalNoticeHost());
   /** Reads and writes data.json, and reports when either fails. */
   private readonly settingsStore = new SettingsStore({
     read: () => this.loadData(),
@@ -94,6 +129,9 @@ export default class GentlePomoPlugin extends Plugin {
   private statusTimerListener: TimerListener | null = null;
   private goalTimerListener: TimerListener | null = null;
   private autoOpenObserver: MutationObserver | null = null;
+  // The session questions open now: Stop's about a long focus, and the
+  // startup's about an unfinished session. Closed at unload (F19).
+  private readonly sessionDialogs = new Set<{ close(): void }>();
   private repairInFlight = false;
   /** Station slots and their remembered positions. Constructed here rather
    *  than in onload because loadSettings() reconciles through it. */
@@ -109,12 +147,52 @@ export default class GentlePomoPlugin extends Plugin {
 
   override async onload() {
     await this.loadSettings();
-    this.logManager = new LogManager(this);
+    // Kept on this device, never in data.json: the open session, so a quit or
+    // a crash can offer it back, and lines a write failed on. Constructing the
+    // manager takes what an earlier run left — before anything can start a
+    // session and save over it.
+    this.logManager = new LogManager(this, {
+      storage: deviceStorage(this.app),
+      plannedMs: () => this.timer.getState().totalMs,
+    });
+    this.logTools = new LogTools({
+      app: this.app,
+      settings: () => this.settings,
+      confirm: (options) => confirmAction(this.app, options),
+      duplicateTaskIds: () => this.logManager.findDuplicateTaskIds(),
+      // A line converted, added or fixed may be one of today's: read the
+      // total again and repaint, as for a new folder.
+      logChanged: () => {
+        this.logFolderChanged();
+      },
+    });
     this.timer = new TimerEngine(this);
+    this.api = createLogApi({
+      settings: () => this.settings,
+      read: async (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return file instanceof TFile ? this.app.vault.cachedRead(file) : null;
+      },
+      resolveLink: (linktext, sourcePath) => resolveLogLink(this.app, linktext, sourcePath),
+      moment: (ms) => moment(ms),
+      now: () => Date.now(),
+    });
 
     this.registerEvent(
       this.app.vault.on("modify", async (file) => {
         await this.timer.onFileModify(file);
+      })
+    );
+    // The linked task's note moved, or went (C1): the link follows it, or
+    // keeps the task's name without a dead link.
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        this.timer.onFileRename(file, oldPath);
+      })
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        this.timer.onFileDelete(file);
       })
     );
 
@@ -130,7 +208,49 @@ export default class GentlePomoPlugin extends Plugin {
       id: "refresh-logs-by-task-id",
       name: "Refresh log task names by ID",
       callback: async () => {
-        await this.logManager.refreshLoggedTaskNamesById();
+        await this.refreshLogTaskNames();
+      },
+    });
+
+    // The daily log's own commands (0.6.9). Until then nothing opened the log
+    // or wrote to it but a running timer (F56, C6).
+    this.addCommand({
+      id: "open-todays-log",
+      name: "Open today's log",
+      callback: async () => {
+        await this.openTodayLog();
+      },
+    });
+
+    this.addCommand({
+      id: "check-log",
+      name: "Check log",
+      callback: async () => {
+        await this.checkLog();
+      },
+    });
+
+    this.addCommand({
+      id: "convert-old-log-lines",
+      name: "Convert old log lines",
+      callback: async () => {
+        await this.convertLog();
+      },
+    });
+
+    this.addCommand({
+      id: "add-session",
+      name: "Add a session",
+      callback: async () => {
+        await this.addSession();
+      },
+    });
+
+    this.addCommand({
+      id: "fix-logged-session",
+      name: "Fix a logged session",
+      callback: () => {
+        this.fixSession();
       },
     });
 
@@ -241,7 +361,7 @@ export default class GentlePomoPlugin extends Plugin {
     // the status-bar listener is unregistered. Emits only kick the guarded
     // refetch; the once-per-day goal notice fires from the refetch landing in
     // maybeRefreshFocusTotal, against logged totals only (see
-    // maybeFireGoalNotice for why). onChange invokes the listener immediately,
+    // createGoalNoticeHost for why). onChange invokes the listener immediately,
     // so no extra bootstrap call is needed.
     this.goalTimerListener = () => {
       void this.maybeRefreshFocusTotal();
@@ -265,6 +385,16 @@ export default class GentlePomoPlugin extends Plugin {
       void this.maybeRefreshFocusTotal();
     });
 
+    // The open session's once-a-minute save on this device (F23): a quit or a
+    // crash on a computer loses at most this. A phone that suspends Obsidian
+    // in the background runs no timer, so its saves stop when the app is left
+    // and a recovered session ends at about then.
+    this.registerInterval(
+      window.setInterval(() => {
+        this.logManager.heartbeat();
+      }, OPEN_SESSION_SAVE_MS)
+    );
+
     // Safety net for the remembered music position. Every deliberate save is a
     // boundary (pause, stop, track end, panel close, unload); this catches the
     // force-quit/crash case, and writes nothing unless the position moved.
@@ -284,6 +414,11 @@ export default class GentlePomoPlugin extends Plugin {
       // the vault index is not complete before it. Nothing at all happens on
       // the default sounds.
       this.timer.prepareEndCues();
+      // Lines a write failed on (F53), and sessions an earlier run left open
+      // (F23). After layout-ready: the vault index is complete, and a dialog
+      // has a window to open in.
+      void this.logManager.retryUnwrittenLines();
+      void this.offerUnfinishedSessions();
     });
   }
 
@@ -415,7 +550,47 @@ export default class GentlePomoPlugin extends Plugin {
     });
   }
 
+  /** Open today's log — the command, the settings button, the panel's goal
+   *  line and the status bar menu all come here. Never creates the file. */
+  openTodayLog(): Promise<void> {
+    return this.logTools.openToday();
+  }
+
+  /** Read-only: old lines, and anything in the log that looks wrong. */
+  checkLog(): Promise<void> {
+    return this.logTools.check();
+  }
+
+  /** Rewrite lines from before 0.6.9 in the format Dataview reads, after asking. */
+  convertLog(): Promise<void> {
+    return this.logTools.convert();
+  }
+
+  /** "Refresh log task names by ID", from the palette or the settings tab. */
+  refreshLogTaskNames(): Promise<void> {
+    return this.logManager.refreshLoggedTaskNamesById();
+  }
+
+  /** Log a session done away from the timer. */
+  addSession(): Promise<void> {
+    return this.logTools.addSession();
+  }
+
+  /** Change or delete one logged session. */
+  fixSession(): void {
+    this.logTools.fixSession();
+  }
+
   override onunload() {
+    // Gone first: a template that runs from here on finds no API (see `api`).
+    this.api = undefined;
+    // A session question answered after unload acted from this disposed
+    // plugin, beside the reloaded one that asks again: two lines for one
+    // session (F19). Closed, each answers as Esc does — the Stop is cancelled,
+    // the session kept for the next start — and the disposed timer and log
+    // manager act on neither.
+    for (const dialog of [...this.sessionDialogs]) dialog.close();
+
     // Best effort — saveSettings is async and a hard quit may cut it short,
     // which is what the MUSIC_POSITION_SAVE_MS interval backstops.
     this.flushMusicPosition();
@@ -432,6 +607,9 @@ export default class GentlePomoPlugin extends Plugin {
 
     this.destroyStatusBar();
     this.sessionEndNotifier.dispose();
+    // Saves the open session on this device, to be offered back at the next
+    // start, and drops the task renames still waiting (see dispose).
+    if (this.logManager) this.logManager.dispose();
 
     // Release the tick loop + shared AudioContext so they don't leak across
     // plugin disable/enable cycles.
@@ -777,6 +955,9 @@ export default class GentlePomoPlugin extends Plugin {
       case "open":
         await this.activateView();
         return;
+      case "log":
+        await this.openTodayLog();
+        return;
       default:
         await this.setStatusBarTime(action.slice("time:".length));
     }
@@ -829,7 +1010,9 @@ export default class GentlePomoPlugin extends Plugin {
     // overtime outright: a pause and a Reset inside the same second, or the
     // tick that crosses zero, change what is shown without changing the
     // second. The live focus seconds move with the second; a logged total
-    // that lands arrives with force=true.
+    // that lands arrives with force=true. Whether a task is linked is its own
+    // entry: a task can be called "No Task", so linking it while idle changes
+    // the hover text without changing the name (F36).
     const second = Math.ceil(Math.abs(state.remainingMs) / 1000);
     const key = [
       second,
@@ -840,6 +1023,7 @@ export default class GentlePomoPlugin extends Plugin {
       state.isRunning,
       state.totalMs,
       state.taskName,
+      state.taskPath !== undefined,
       time,
       showTotal,
       goalMinutes,
@@ -879,10 +1063,11 @@ export default class GentlePomoPlugin extends Plugin {
       state,
       nowMs: now,
       formatEnd,
-      taskName: state.taskName !== NO_TASK_LABEL ? linkedTaskDisplayName(state.taskName) : null,
+      taskName: state.taskPath !== undefined ? linkedTaskDisplayName(state.taskName) : null,
       todayText: formatHoursMinutes(focusSeconds),
       goalText: goalMinutes > 0 ? formatHoursMinutes(goalMinutes * 60) : null,
       goalMet,
+      logFolderHint: logFolderHint(this.settings.logFolderPath),
     });
     // Obsidian's tooltip reads aria-label, so this is also the item's
     // accessible name — the whole state in words, which the colours cannot be.
@@ -897,7 +1082,7 @@ export default class GentlePomoPlugin extends Plugin {
     // status-bar updates; the view element is CSS-hidden on desktop.
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_GENTLE_POMO)) {
       if (leaf.view instanceof GentlePomoView) {
-        leaf.view.setGoalProgress(totalText, goalMet);
+        leaf.view.setGoalProgress(panelGoalText(totalText, this.settings.logFolderPath), goalMet);
       }
     }
 
@@ -906,9 +1091,13 @@ export default class GentlePomoPlugin extends Plugin {
 
   /** Focus seconds counted toward today's goal: the date-guarded cached base
    *  (a base fetched on an earlier day counts as 0 until the refetch lands)
-   *  plus the live in-progress focus session. */
+   *  plus the live in-progress focus session — only if it began today, since
+   *  its line is filed under the day it started (F8). */
   private currentFocusSeconds(state: TimerState): number {
-    return this.focusTotals.loggedSeconds() + liveFocusSeconds(state);
+    return (
+      this.focusTotals.loggedSeconds() +
+      liveFocusSecondsToday(state, this.logManager.openSessionDay(), this.logicalToday())
+    );
   }
 
   /** "Today Xh / Yh" focus-time + goal text and whether the goal is met, from the
@@ -922,7 +1111,9 @@ export default class GentlePomoPlugin extends Plugin {
    *  when "Show in status bar" is off. Called by the view on open and on every timer tick. */
   refreshViewGoalProgress(view: GentlePomoView, state: TimerState = this.timer.getState()): void {
     const { text, met } = this.focusGoalText(state);
-    view.setGoalProgress(text, met);
+    // With no log folder the line says so (F5): it then counts only the
+    // running session, and drops to zero at every Stop.
+    view.setGoalProgress(panelGoalText(text, this.settings.logFolderPath), met);
     void this.maybeRefreshFocusTotal();
   }
 
@@ -952,6 +1143,51 @@ export default class GentlePomoPlugin extends Plugin {
    *  whether the next one began on its own. Gated on the setting inside. */
   notifySessionEnd(endedMode: PomoMode, nextStarts: boolean): void {
     this.sessionEndNotifier.sessionEnded(endedMode, nextStarts);
+  }
+
+  /** Called by TimerEngine when it paused a session the computer slept
+   *  through (desktop only); `gapMs` is the time not counted. */
+  notifySleepPause(gapMs: number): void {
+    new Notice(sleepPauseMessage(gapMs));
+  }
+
+  /**
+   * Ask about each session an earlier run left open (F23): "Unfinished focus
+   * from 09:00 (24m)." — Log it, or Discard; and for a long one past its plan,
+   * Log up to planned end as well (F18).
+   */
+  private offerUnfinishedSessions(): Promise<void> {
+    return this.logManager.offerUnfinishedSessions((saved, long) =>
+      askRecovery(
+        this.app,
+        {
+          message: recoveryMessage(
+            saved.mode,
+            clockLabel(moment, saved.startMs),
+            savedSessionSeconds(saved, (ms) => moment(ms)),
+            long && {
+              overtimeSeconds: long.overtimeSeconds,
+              plannedEndLabel: clockLabel(moment, long.plannedEndAt),
+            }
+          ),
+          plannedEnd: long !== null,
+        },
+        this.sessionDialogs
+      )
+    );
+  }
+
+  /** Stop's question about a long focus, asked for TimerEngine. "cancel" — the
+   *  dialog closed without an answer — cancels the Stop. */
+  askAboutLongSession(question: LongSessionQuestion): Promise<LongSessionAnswer> {
+    return askLongSession(
+      this.app,
+      {
+        message: longSessionMessage(question.activeSeconds, question.overtimeSeconds),
+        plannedLabel: longSessionPlannedLabel(clockLabel(moment, question.plannedEndAt)),
+      },
+      this.sessionDialogs
+    );
   }
 
   /** Shows a sample notification when the switch is turned on, from either
@@ -1034,32 +1270,42 @@ export default class GentlePomoPlugin extends Plugin {
     this.musicStations.flush();
   }
 
-  /** Fire the once-per-day "goal hit" notice. Fed *logged* seconds only —
-   *  deliberately no live in-progress time: the notice lands at the session
-   *  boundary alongside the end bell instead of interrupting mid-focus, and
-   *  time that never reaches the log (Obsidian quit or plugin disabled
-   *  mid-session) can never consume the once-per-day flag. The status bar and
-   *  in-view meter still count live seconds — display is reversible, the
-   *  notice is not. Called only from maybeRefreshFocusTotal's landing: the
-   *  logged total is this check's sole input, and it only changes when a
-   *  fetch lands, so that is the one place the crossing can newly become true. */
-  private maybeFireGoalNotice(loggedSeconds: number) {
-    const today = todayLocalStr();
-    if (
-      !shouldFireGoalNotice(
-        loggedSeconds,
-        this.settings.dailyFocusGoalMinutes,
-        this.settings.goalNoticeEnabled,
-        this.settings.lastGoalHitDate,
-        today
-      )
-    ) {
-      return;
-    }
-    const goalHm = formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
-    new Notice(`[GentlePomo] Daily focus goal hit: ${goalHm}`);
-    this.settings.lastGoalHitDate = today;
-    void this.saveSettings();
+  /**
+   * The once-per-day "goal hit" notice's view of the plugin. Fed *logged*
+   * seconds only — deliberately no live in-progress time: the notice lands at
+   * the session boundary alongside the end bell instead of interrupting
+   * mid-focus, and time that never reaches the log (Obsidian quit or plugin
+   * disabled mid-session) can never consume the once-per-day flag. The status
+   * bar and in-view meter still count live seconds — display is reversible,
+   * the notice is not. Checked only from the totals tracker's landing: the
+   * logged total is its sole input, and it only changes when a fetch lands.
+   *
+   * Before it fires, the flag is read again from data.json (C5): another
+   * device may have fired it today, and this one's copy dates from its start.
+   */
+  private createGoalNoticeHost(): GoalNoticeHost {
+    return {
+      goalMinutes: () => this.settings.dailyFocusGoalMinutes,
+      noticeEnabled: () => this.settings.goalNoticeEnabled,
+      lastGoalHitDate: () => this.settings.lastGoalHitDate,
+      storedGoalHitDate: () => this.settingsStore.storedValue("lastGoalHitDate"),
+      today: () => this.logicalToday(),
+      adopt: (date) => {
+        this.settings.lastGoalHitDate = date;
+      },
+      fire: (date) => {
+        const goalHm = formatHoursMinutes(this.settings.dailyFocusGoalMinutes * 60);
+        new Notice(`[GentlePomo] Daily focus goal hit: ${goalHm}`);
+        this.settings.lastGoalHitDate = date;
+        void this.saveSettings();
+      },
+    };
+  }
+
+  /** Today as the log names it: English digits, and "Day starts at" applied —
+   *  the same rule as the daily log's file name and the long-break counter. */
+  private logicalToday(): string {
+    return logicalDate(moment(), this.settings.dayStartHour);
   }
 
   /** A log line was just written; the next refresh must actually read the file. */
@@ -1075,10 +1321,14 @@ export default class GentlePomoPlugin extends Plugin {
   private createFocusTotalHost(): FocusTotalHost {
     return {
       now: () => Date.now(),
-      today: () => todayLocalStr(),
+      today: () => this.logicalToday(),
       fetchLoggedSeconds: () => this.logManager.getTodayFocusSeconds(),
       checkGoalNotice: (loggedSeconds) => {
-        this.maybeFireGoalNotice(loggedSeconds);
+        void this.goalNotice.check(loggedSeconds);
+      },
+      setTimer: (callback, ms) => {
+        const id = window.setTimeout(callback, ms);
+        return () => window.clearTimeout(id);
       },
       onLanded: () => {
         const state = this.timer.getState();

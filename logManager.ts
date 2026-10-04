@@ -1,61 +1,107 @@
-import { Notice, TFile, normalizePath } from "obsidian";
+import { Notice, TFile, getLinkpath, normalizePath, type App } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
-import { FOCUS_TOTAL_CACHE_TTL_MS } from "./constants";
+import { confirmAction, type ConfirmOptions } from "./confirmModal";
 import {
+  FOCUS_TOTAL_CACHE_TTL_MS,
+  MIN_SESSION_SECONDS,
+  NO_TASK_LABEL,
+  TASK_RENAME_DELAY_MS,
+} from "./constants";
+import {
+  duplicateTaskIds,
   filesInFolder,
   findTaskTextById,
-  findTaskTextByIdInContent,
+  isPathGone,
+  pathAfterMove,
   taskNameAfterEdit,
 } from "./taskLoader";
+import {
+  formatLogLine,
+  logDateNames,
+  logicalDate,
+  logTaskId,
+  loggedTotalSeconds,
+  parseFocusTotalSeconds,
+  parseLogLine,
+  replaceTaskValue,
+  type SessionLog,
+} from "./logLine";
+import {
+  REFRESH_SKIPS,
+  emptyRefreshSkips,
+  refreshExamples,
+  refreshLeftAlone,
+  refreshLogContent,
+  refreshTargets,
+  renameLogContent,
+  type RefreshNotes,
+  type RefreshedName,
+  type ResolveLink,
+  type TaskRename,
+} from "./logRename";
+import {
+  activeReachedAt,
+  activeSecondsWithin,
+  resolveTaskSwitchLogging,
+  sameTask,
+  segmentLogs,
+  type ClosedSegment,
+  type SegmentLine,
+} from "./logSegments";
 import type { MomentFactory, MomentLike } from "./momentTypes";
+import type { DeviceStorage } from "./deviceStorage";
+import { frontmatterRowCount, resolveGoalMinutes, withLogGoal } from "./logFrontmatter";
+import { dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
+import { plannedSessionEnd, type LongSessionQuestion } from "./sessionGaps";
+import {
+  OPEN_SESSION_KEY,
+  UNFINISHED_SESSIONS_KEY,
+  UNWRITTEN_LINES_KEY,
+  UNWRITTEN_LINE_NOTICE,
+  readSavedSession,
+  readSavedSessions,
+  readUnwrittenLines,
+  recoveredLongSession,
+  recoveredSession,
+  sameSavedSession,
+  unwrittenLinesWrittenMessage,
+  worthRecovering,
+  type RecoveryAnswer,
+  type SavedSession,
+  type UnwrittenLines,
+} from "./sessionRecovery";
 
 declare const moment: MomentFactory;
 
-export interface SessionLog {
-  mode: "focus" | "break";
-  taskName: string;
-  taskPath?: string; // Store the file path of the task
-  scheduledDurationMinutes: number;
-  startTime: MomentLike;
-  endTime: MomentLike;
-  pauses: { start: MomentLike; end: MomentLike }[];
-  status: "finished" | "cancelled";
-  taskId?: string; // Tasks plugin ID
-  // null/undefined when mode is "focus"; otherwise distinguishes short vs long break.
-  breakType?: "short" | "long" | null;
+type ActiveSessionLog = Omit<SessionLog, "endTime">;
+type LoggedPause = SessionLog["pauses"][number];
+
+/** A 🆔 the log names that is on task lines of its note it cannot tell apart (F2). */
+export interface DuplicateTaskId {
+  taskId: string;
+  /** The note holding the copies. */
+  path: string;
 }
 
-type ActiveSessionLog = Omit<SessionLog, "endTime">;
+/** How the engine ends a session — see LogManager.endSession. */
+export interface SessionEnd {
+  /** The end instant in ms; now when left out. */
+  endAt?: number;
+  /** Active seconds past the planned end; 0 when left out. */
+  overtimeSeconds?: number;
+}
 
-// Pure helper: format a completed session as a single log line.
-// Exported so tests can lock in the inline-field schema that users' Dataview queries depend on.
-export function formatLogLine(session: SessionLog): string {
-  let totalPauseMs = 0;
-  const pauseStrings = session.pauses.map((p) => {
-    totalPauseMs += p.end.diff(p.start);
-    return `${p.start.format("YYYY-MM-DD HH:mm:ss")} - ${p.end.format("YYYY-MM-DD HH:mm:ss")}`;
-  });
-
-  const totalDurationMs = session.endTime.diff(session.startTime) - totalPauseMs;
-  const totalSeconds = Math.floor(totalDurationMs / 1000);
-  const scheduledSeconds = session.scheduledDurationMinutes * 60;
-
-  const startFmt = session.startTime.format("YYYY-MM-DD HH:mm:ss");
-  const endFmt = session.endTime.format("YYYY-MM-DD HH:mm:ss");
-
-  if (session.mode === "focus") {
-    let taskStr = session.taskName === "No Task" ? "No Task" : `${session.taskName}`;
-    if (session.taskPath && session.taskName !== "No Task") {
-      taskStr = `[[${session.taskPath}|${session.taskName}]]`;
-    }
-    const pauseJson = JSON.stringify(pauseStrings);
-    const idStr = session.taskId ? ` | ID:: ${session.taskId}` : "";
-    return `- 🍅 Focus | Task:: ${taskStr}${idStr} | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Pauses:: ${pauseJson} | Total:: ${totalSeconds} | Status:: ${session.status} | Type:: focus`;
-  }
-
-  const breakTypeStr = session.breakType === "long" ? "long-break" : "short-break";
-  return `- ☕ Rest | Start:: ${startFmt} | End:: ${endFmt} | Scheduled:: ${scheduledSeconds} | Total:: ${totalSeconds} | Type:: ${breakTypeStr}`;
+/**
+ * The pauses as they stand at `end`: one that began at or after it is dropped,
+ * one still going then is cut there. Only an end earlier than now — the zero
+ * crossing's — can change anything.
+ */
+function pausesUntil(pauses: LoggedPause[], end: MomentLike): LoggedPause[] {
+  const limit = end.valueOf();
+  return pauses
+    .filter((p) => p.start.valueOf() < limit)
+    .map((p) => (p.end.valueOf() > limit ? { start: p.start, end } : p));
 }
 
 /**
@@ -85,10 +131,11 @@ export function shouldFireGoalNotice(
  * Pure helper: seconds to count from the cached focus-total base.
  *
  * The base was summed from the log file of `baseDate`, so it only describes
- * that local day. Once midnight rolls over it is yesterday's total and must
- * count as 0 until a fresh fetch lands — otherwise an app kept open across
- * midnight feeds yesterday's seconds into the goal math and fires a spurious
- * "goal hit" notice on the first session of the new day.
+ * that day — the log's day, as "Day starts at" counts it. Once the day turns
+ * it is yesterday's total and must count as 0 until a fresh fetch lands —
+ * otherwise an app kept open across the turn feeds yesterday's seconds into
+ * the goal math and fires a spurious "goal hit" notice on the first session
+ * of the new day.
  */
 export function effectiveFocusBaseSeconds(
   baseSeconds: number,
@@ -98,39 +145,173 @@ export function effectiveFocusBaseSeconds(
   return baseDate === today ? baseSeconds : 0;
 }
 
-// Pure helper: sum Total:: seconds across focus lines in a log file's content.
-// Skipped sessions (Status:: cancelled) are forfeited — they don't count toward
-// the daily goal (classic pomodoro: an interrupted session doesn't count; Stop
-// logs `finished` and still counts, Skip is the discard gesture). Only an
-// explicit `cancelled` is excluded, so hand-edited lines without a Status::
-// field still count.
-export function parseFocusTotalSeconds(content: string): number {
-  const lines = content.split("\n");
-  let total = 0;
-  for (const line of lines) {
-    if (!line.includes("🍅 Focus")) continue;
-    if (/Status::\s*cancelled/.test(line)) continue;
-    const totalMatch = line.match(/Total::\s*(\d+)/);
-    if (!totalMatch) continue;
-    const seconds = parseInt(totalMatch[1], 10);
-    if (!Number.isNaN(seconds)) total += seconds;
+/** What LogManager keeps on this device (sessionRecovery.ts). */
+export interface LogManagerDevice {
+  storage: DeviceStorage;
+  /** The open session's planned active time in ms, as on the clock (±5
+   *  included) — what a recovered focus's Overtime is counted past. */
+  plannedMs: () => number | null;
+}
+
+/**
+ * The daily log's text with `lines` added at the end (F39). A line break goes
+ * in front only when the text does not already end in one, the file's own
+ * line ending is used (a CRLF file stays CRLF), and the text ends in a line
+ * break. Until 0.6.9 files were created without one and every append put one
+ * in front, so a file an editor or a sync tool had ended with a line break
+ * got a blank line that split the list, and a CRLF file an LF line.
+ */
+export function appendToLog(content: string, lines: readonly string[]): string {
+  if (lines.length === 0) return content;
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const block = lines.join(eol) + eol;
+  if (content === "" || content.endsWith("\n")) return content + block;
+  return content + eol + block;
+}
+
+/** The last line of `content` that is not blank, or null. */
+export function lastLogLine(content: string): string | null {
+  const lines = content.split(/\r?\n/).filter((line) => line.trim() !== "");
+  return lines.length === 0 ? null : lines[lines.length - 1];
+}
+
+/**
+ * A line kept to be written later (F53) with its Task link following a note
+ * that was renamed or moved, or a folder above it (F27) — as Obsidian updates
+ * the links of the lines already in the log. Any other line comes back as it
+ * is.
+ */
+export function taskLinkAfterMove(line: string, oldPath: string, newPath: string): string {
+  const parsed = parseLogLine(line);
+  const task = parsed?.task;
+  if (!parsed || !task || task.path === undefined) return line;
+  const moved = pathAfterMove(task.path, oldPath, newPath);
+  if (moved === null) return line;
+  // `[[path|name]]` or `[[path]]`: only the path changes.
+  return replaceTaskValue(line, parsed, `[[${moved}${task.raw.slice(2 + task.path.length)}`);
+}
+
+/** A stored unfinished list without `saved`; what it cannot read is kept. */
+function storedWithout(raw: unknown, saved: SavedSession): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as unknown[]).filter((entry) => {
+    const other = readSavedSession(entry);
+    return other === null || !sameSavedSession(other, saved);
+  });
+}
+
+/** `lines` without the ones `content` already holds. */
+function linesNotIn(content: string, lines: readonly string[]): string[] {
+  const present = new Set(content.split(/\r?\n/));
+  return lines.filter((line) => !present.has(line));
+}
+
+/**
+ * Create the log folder if missing, tolerating a sync race that creates it
+ * first. Shared with the session dialog (logTools.ts), which writes the same
+ * files.
+ */
+export async function ensureLogFolder(app: App, normalizedFolder: string): Promise<void> {
+  if (await app.vault.adapter.exists(normalizedFolder)) return;
+  try {
+    await app.vault.createFolder(normalizedFolder);
+  } catch (e) {
+    // A concurrent write or sync may have created it between the check and
+    // here; only swallow that case, re-throw anything else.
+    if (await app.vault.adapter.exists(normalizedFolder)) return;
+    throw e;
   }
-  return total;
+}
+
+/**
+ * A log line's link as a vault path, the way Obsidian resolves it — so a link
+ * it shortened when the note moved (`[[Toy|…]]`) still leads to the note
+ * (F10) — or, failing that, the text as an exact path; null when it leads to
+ * no note. A `#heading` part is no part of the path, as for Obsidian
+ * (getLinkpath). The renames, Refresh and the read API (logApi.ts) all read
+ * links this way.
+ */
+export function resolveLogLink(app: App, linktext: string, sourcePath: string): string | null {
+  const linkpath = getLinkpath(linktext);
+  const dest = app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
+  if (dest) return dest.path;
+  const exact = app.vault.getAbstractFileByPath(linkpath);
+  return exact instanceof TFile ? exact.path : null;
+}
+
+/** Obsidian's Vault.create rejects with this when the path is taken. */
+function isAlreadyExists(e: unknown): boolean {
+  return e instanceof Error && /already exists/i.test(e.message);
 }
 
 export class LogManager {
   private plugin: GentlePomoPlugin;
   private currentSession: ActiveSessionLog | null = null;
   private currentPauseStart: MomentLike | null = null;
+  // The segments task switches closed in the open focus, oldest first — only
+  // with "Split at the switch" (logSegments.ts). The open session's own task
+  // is the segment still going.
+  private closedSegments: ClosedSegment[] = [];
   private focusTotalCacheDate: string | null = null;
   private focusTotalCacheSeconds = 0;
   private focusTotalCacheAt = 0;
+  // Renames waiting out TASK_RENAME_DELAY_MS, by 🆔, and their timers.
+  private pendingRenames = new Map<string, TaskRename>();
+  private renameTimers = new Map<string, number>();
+  // The log rewrites, chained so that one runs at a time.
+  private walks: Promise<void> = Promise.resolve();
+  private refreshInFlight = false;
+  private disposed = false;
+  // This device's storage (sessionRecovery.ts); null keeps everything in
+  // memory, as before 0.6.9.
+  private readonly device: LogManagerDevice | null;
+  // Whether the open session is saved on this device, so a discard clears it.
+  private openSaved = false;
+  // Sessions an earlier run left open, waiting for "Log it" or "Discard".
+  private unfinished: SavedSession[] = [];
+  private offering = false;
+  // Lines a write failed on, oldest first, retried before the next write and
+  // at startup (F53).
+  private unwritten: UnwrittenLines[] = [];
+  private retrying: Promise<number> | null = null;
 
-  constructor(plugin: GentlePomoPlugin) {
+  constructor(plugin: GentlePomoPlugin, device: LogManagerDevice | null = null) {
     this.plugin = plugin;
+    this.device = device;
+    if (device) this.takeSavedState(device.storage);
   }
 
-  /** Open a new session or resume from pause (idempotent if a session is already active). */
+  /**
+   * What an earlier run left on this device. Its open session is moved to the
+   * unfinished list here, at construction — before anything can start a
+   * session, whose first save would write over it. A session under a minute
+   * is dropped: logging it would write nothing (F59).
+   */
+  private takeSavedState(storage: DeviceStorage) {
+    this.unwritten = readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY));
+    this.unfinished = readSavedSessions(storage.load(UNFINISHED_SESSIONS_KEY));
+    const raw = storage.load(OPEN_SESSION_KEY);
+    if (raw === null) return;
+    const saved = readSavedSession(raw);
+    if (
+      saved !== null &&
+      worthRecovering(saved, (ms) => moment(ms)) &&
+      !this.unfinished.some((other) => sameSavedSession(other, saved))
+    ) {
+      this.unfinished.push(saved);
+      storage.save(UNFINISHED_SESSIONS_KEY, this.unfinished);
+    }
+    // Only once the list holds it: a crash in between leaves it in both, and
+    // the next start keeps one copy (sameSavedSession) — never none.
+    storage.save(OPEN_SESSION_KEY, null);
+  }
+
+  /**
+   * Open a new session, or resume the open one from a pause. Never across
+   * modes (F21): a session of the other mode still open here is a stray — a
+   * Start that landed while the last end was still writing — and resuming it
+   * logged a break as a 🍅 Focus line that counted toward the goal.
+   */
   startSession(
     mode: "focus" | "break",
     taskName: string,
@@ -139,15 +320,20 @@ export class LogManager {
     taskId?: string,
     breakType?: "short" | "long" | null
   ) {
+    if (this.currentSession && this.currentSession.mode !== mode) {
+      logger.warn(`Discarded an open ${this.currentSession.mode} session to start a ${mode}`);
+      this.discardSession();
+    }
     // If a session is already active (e.g. resuming from pause), don't overwrite start time
     if (this.currentSession) {
       this.resumeSession();
       return;
     }
 
+    this.closedSegments = [];
     this.currentSession = {
       mode,
-      taskName: taskName || "No Task",
+      taskName: taskName || NO_TASK_LABEL,
       taskPath,
       taskId,
       scheduledDurationMinutes: durationMinutes,
@@ -156,11 +342,14 @@ export class LogManager {
       status: "cancelled",
       breakType,
     };
+    this.saveOpenSession();
   }
 
-  pauseSession() {
+  /** Open a pause, at `at` (ms) — the last tick before a computer slept — or now. */
+  pauseSession(at?: number) {
     if (!this.currentSession) return;
-    this.currentPauseStart = moment();
+    this.currentPauseStart = at === undefined ? moment() : moment(at);
+    this.saveOpenSession();
   }
 
   resumeSession() {
@@ -172,73 +361,429 @@ export class LogManager {
       end: pauseEnd,
     });
     this.currentPauseStart = null;
+    this.saveOpenSession();
   }
 
-  // Allow updating task name mid-session
-  updateTask(newTaskName: string, newTaskPath?: string, newTaskId?: string) {
-    if (this.currentSession) {
-      this.currentSession.taskName = newTaskName || "No Task";
-      this.currentSession.taskPath = newTaskPath;
-      this.currentSession.taskId = newTaskId;
-    }
-  }
-
-  /** Close the active session and append a log line; invalidates today's focus-total cache. */
-  async endSession(status: "finished" | "cancelled") {
-    if (!this.currentSession) return;
-
-    // If we were paused when ending, close the pause loop
-    if (this.currentPauseStart) {
-      this.resumeSession();
-    }
-
-    const session: SessionLog = {
-      ...this.currentSession,
-      endTime: moment(),
-      status,
+  /**
+   * Save the open session on this device, seen running now (F23): at every
+   * start, pause, resume and task change, once a minute while it runs
+   * (heartbeat) and at unload. A quit or a crash then loses at most the time
+   * since the last save: a minute on a computer, but a phone that suspends
+   * the app saves nothing while it is away. Never after dispose — a session an unload's last
+   * continuation opens will never run. Never with no log folder either (the
+   * shipped default): ending it would write nothing, so the next start would
+   * ask about a session it could only throw away.
+   */
+  private saveOpenSession(seenAt = Date.now()) {
+    const open = this.currentSession;
+    if (!this.device || !open || this.disposed || !this.keepsLog()) return;
+    const saved: SavedSession = {
+      mode: open.mode,
+      taskName: open.taskName,
+      taskPath: open.taskPath,
+      taskId: open.taskId,
+      startMs: open.startTime.valueOf(),
+      pauses: open.pauses.map((p) => [p.start.valueOf(), p.end.valueOf()]),
+      pauseStartMs: this.currentPauseStart ? this.currentPauseStart.valueOf() : null,
+      scheduledMinutes: open.scheduledDurationMinutes,
+      breakType: open.breakType ?? null,
+      segments: this.closedSegments.map((segment) => ({
+        taskName: segment.taskName,
+        taskPath: segment.taskPath,
+        taskId: segment.taskId,
+        endMs: segment.end.valueOf(),
+      })),
+      plannedMs: this.device.plannedMs(),
+      lastSeenMs: seenAt,
     };
+    this.device.storage.save(OPEN_SESSION_KEY, saved);
+    this.openSaved = true;
+  }
 
-    await this.writeLog(session);
+  /** Whether a session's lines are written at all: no log folder, no log. */
+  private keepsLog(): boolean {
+    return Boolean(this.plugin.settings.logFolderPath);
+  }
 
-    // Reset state
+  /** The once-a-minute save while a session runs (main.ts's interval). Paused,
+   *  there is nothing new to save: a recovered session ends where it paused. */
+  heartbeat() {
+    if (this.currentSession && !this.currentPauseStart) this.saveOpenSession();
+  }
+
+  /**
+   * The clock's planned length changed (±5): saved at once, paused too. A
+   * recovered focus counts its Overtime past it, and a ±5 made while paused
+   * reached the device only at the next resume — so a quit before then
+   * logged Overtime past the old length (F16).
+   */
+  plannedLengthChanged() {
+    if (this.currentSession) this.saveOpenSession();
+  }
+
+  /**
+   * The open session ended or was thrown away: nothing to recover. After
+   * dispose (F19) a reloaded plugin may have saved its own session here
+   * since, so the key is cleared only while it still holds this one — an end
+   * whose write was under way at unload, its line in the log now.
+   */
+  private forgetOpenSession(open: ActiveSessionLog | null) {
+    if (!this.device || !this.openSaved) return;
+    this.openSaved = false;
+    if (this.disposed && !(open && this.storedOpenSessionIs(open))) return;
+    this.device.storage.save(OPEN_SESSION_KEY, null);
+  }
+
+  private storedOpenSessionIs(open: ActiveSessionLog): boolean {
+    const stored = this.device
+      ? readSavedSession(this.device.storage.load(OPEN_SESSION_KEY))
+      : null;
+    return stored?.mode === open.mode && stored.startMs === open.startTime.valueOf();
+  }
+
+  /**
+   * The linked task changed mid-session. A different task is a SWITCH: with
+   * "Split at the switch" the segment so far is kept for the task it was for,
+   * if it ran a minute; a shorter one joins the next part, or the one before
+   * it if it is the last (segmentLogs), and the default gives the whole
+   * session to the task linked at the end (F52). `renamed` is the linked task
+   * under a new name (a rename read off its 🆔), never a switch.
+   */
+  updateTask(newTaskName: string, newTaskPath?: string, newTaskId?: string, renamed = false) {
+    const open = this.currentSession;
+    if (!open) return;
+    const next = {
+      taskName: newTaskName || NO_TASK_LABEL,
+      taskPath: newTaskPath,
+      taskId: newTaskId,
+    };
+    if (!renamed && open.mode === "focus" && this.splitsAtSwitch() && !sameTask(open, next)) {
+      const now = moment();
+      if (this.segmentActiveSeconds(now) >= MIN_SESSION_SECONDS) {
+        this.closedSegments.push({
+          taskName: open.taskName,
+          taskPath: open.taskPath,
+          taskId: open.taskId,
+          end: now,
+        });
+      }
+    }
+    open.taskName = next.taskName;
+    open.taskPath = next.taskPath;
+    open.taskId = next.taskId;
+    this.saveOpenSession();
+  }
+
+  private splitsAtSwitch(): boolean {
+    return resolveTaskSwitchLogging(this.plugin.settings.taskSwitchLogging) === "split";
+  }
+
+  /** The open session's pauses as they stand at `at`, an open one closed there. */
+  private pausesAt(at: MomentLike): LoggedPause[] {
+    const open = this.currentSession;
+    if (!open) return [];
+    const pauses = [...open.pauses];
+    if (this.currentPauseStart) pauses.push({ start: this.currentPauseStart, end: at });
+    return pausesUntil(pauses, at);
+  }
+
+  /** Active seconds of the segment still going: since the last switch, or the start. */
+  private segmentActiveSeconds(at: MomentLike): number {
+    const open = this.currentSession;
+    if (!open) return 0;
+    const last = this.closedSegments[this.closedSegments.length - 1];
+    return activeSecondsWithin(this.pausesAt(at), last ? last.end : open.startTime, at);
+  }
+
+  /**
+   * The open session's active time if it ended at `at` (ms), as its line would
+   * write Total; null with no session open. What Stop's long-session question
+   * is judged on.
+   */
+  openSessionActiveSeconds(at: number): number | null {
+    const open = this.currentSession;
+    if (!open) return null;
+    const end = moment(at);
+    return loggedTotalSeconds({
+      startTime: open.startTime,
+      endTime: end,
+      pauses: this.pausesAt(end),
+    });
+  }
+
+  /**
+   * The instant (ms) the open session's active time reached `activeSeconds`,
+   * pauses as they stood at `at` (activeReachedAt); null with no session open.
+   * "End at planned end" ends there.
+   */
+  openSessionReachedAt(activeSeconds: number, at: number): number | null {
+    const open = this.currentSession;
+    if (!open) return null;
+    return activeReachedAt(open.startTime, this.pausesAt(moment(at)), activeSeconds);
+  }
+
+  /**
+   * Throw the open session away: no line, nothing counted. Reset (F7), and
+   * the engine's guard against a stray session outliving its mode.
+   */
+  discardSession() {
+    const open = this.currentSession;
     this.currentSession = null;
     this.currentPauseStart = null;
+    this.closedSegments = [];
+    // Every end comes through here too (endSession's finally), logged or
+    // under a minute: either way there is nothing left to offer back.
+    this.forgetOpenSession(open);
   }
 
-  /** Rewrite the Task:: field on all log lines that reference `taskId`. Used when the task is renamed. */
-  async updateLoggedTaskName(taskId: string, taskName: string, taskPath?: string) {
+  /**
+   * The day the open session will be filed under — its START, as "Day starts
+   * at" counts days — or null when none is open. The meter counts a running
+   * session toward today only when this is today (F8).
+   */
+  openSessionDay(): string | null {
+    if (!this.currentSession) return null;
+    return logicalDate(this.currentSession.startTime, this.plugin.settings.dayStartHour);
+  }
+
+  /**
+   * Close the active session and append its log line; invalidates today's
+   * focus-total cache. True when the session counted — at least
+   * MIN_SESSION_SECONDS of active time — and false when it did not or none was
+   * open, in which case nothing is written and the engine adds no 🍅 and no
+   * long-break step (F59). A failed write still counts: the time was worked.
+   *
+   * `end.endAt` ends it at that instant instead of now: the zero crossing that
+   * auto-starts the next session ends this one at its planned end however late
+   * the tick ran (F3). An open pause closes there, and pauses are cut to it.
+   * `end.overtimeSeconds` is the active time past the planned end, the focus
+   * line's Overtime.
+   */
+  async endSession(status: "finished" | "cancelled", end: SessionEnd = {}): Promise<boolean> {
+    const open = this.currentSession;
+    // After dispose it stays saved, for the next start to offer (F19): a
+    // continuation of the unloaded plugin writes nothing.
+    if (!open || this.disposed) return false;
+    const closed = this.closedSegments;
+
+    try {
+      const endTime = end.endAt === undefined ? moment() : moment(end.endAt);
+      // A new list, never the open session's own: a pause or resume landing
+      // while this line is written must not reach into it.
+      const pauses = [...open.pauses];
+      if (this.currentPauseStart) pauses.push({ start: this.currentPauseStart, end: endTime });
+
+      const session: SessionLog = {
+        ...open,
+        pauses: pausesUntil(pauses, endTime),
+        endTime,
+        status,
+        overtimeSeconds: end.overtimeSeconds ?? 0,
+      };
+
+      // The whole session is judged, a split one too: its segments are
+      // lines, not sessions.
+      if (loggedTotalSeconds(session) < MIN_SESSION_SECONDS) return false;
+      await this.writeLog(segmentLogs(session, closed));
+      return true;
+    } finally {
+      // In a finally (F22): a session left open after a failed end was
+      // resumed by the next start, and that line then carried both sessions.
+      // Only if it is still this session — one opened meanwhile is not ours.
+      if (this.currentSession === open) this.discardSession();
+    }
+  }
+
+  /**
+   * The linked task's note was renamed or moved — or a folder above it. The
+   * open session and the segments a split closed follow it, and so does a
+   * rename still waiting for its walk; a line logged with the old path would
+   * be a dead link nothing repairs, as Obsidian has already updated its links
+   * by then (C1).
+   */
+  taskNoteMoved(oldPath: string, newPath: string) {
+    const follow = (item: { taskPath?: string }) => {
+      const moved = pathAfterMove(item.taskPath, oldPath, newPath);
+      if (moved !== null) item.taskPath = moved;
+    };
+    if (this.currentSession) follow(this.currentSession);
+    this.closedSegments.forEach(follow);
+    this.pendingRenames.forEach(follow);
+    this.saveOpenSession();
+    // The lines still to be written follow it too (F27): the sessions an
+    // earlier run left, and the lines a write failed on — which Obsidian
+    // would have updated with the rest of the log, had they been in it.
+    this.changeUnfinished(follow);
+    let changed = false;
+    for (const entry of this.unwritten) {
+      const lines = entry.lines.map((line) => taskLinkAfterMove(line, oldPath, newPath));
+      if (lines.every((line, i) => line === entry.lines[i])) continue;
+      entry.lines = lines;
+      changed = true;
+    }
+    if (changed && !this.disposed) this.saveUnwritten();
+  }
+
+  /**
+   * A note was deleted. The open session and its closed segments keep their
+   * task's name and drop the path, so their lines log the name with no dead
+   * link to a note that is gone (C1) — and so do the sessions an earlier run
+   * left (F27). A line a write failed on is left as it is: it is a line of
+   * the log already, and Obsidian leaves the log's links to a deleted note.
+   */
+  taskNoteDeleted(path: string) {
+    const drop = (item: { taskPath?: string }) => {
+      if (isPathGone(item.taskPath, path)) item.taskPath = undefined;
+    };
+    if (this.currentSession) drop(this.currentSession);
+    this.closedSegments.forEach(drop);
+    this.saveOpenSession();
+    this.changeUnfinished(drop);
+  }
+
+  /** Apply `change` to each unfinished session and its segments, and save
+   *  them if a task path moved. Never after dispose (F19): the stored list may
+   *  be a reloaded plugin's by then. */
+  private changeUnfinished(change: (item: { taskPath?: string }) => void) {
+    let changed = false;
+    const apply = (item: { taskPath?: string }) => {
+      const before = item.taskPath;
+      change(item);
+      if (item.taskPath !== before) changed = true;
+    };
+    for (const saved of this.unfinished) {
+      apply(saved);
+      saved.segments.forEach(apply);
+    }
+    if (changed && !this.disposed) {
+      this.device?.storage.save(UNFINISHED_SESSIONS_KEY, this.unfinished);
+    }
+  }
+
+  /**
+   * Rewrite a renamed task's past log lines, TASK_RENAME_DELAY_MS after the
+   * last rename of it (F26). Obsidian saves a note every 2 s while it is being
+   * typed in, and each save that changed the name walked and rewrote every log
+   * — writing the half-typed names into history and through Sync. Walks run
+   * one at a time; a rename of the same 🆔 meanwhile waits for the walk after.
+   * The timer takes the new name at once: only history waits.
+   */
+  scheduleTaskRename(rename: TaskRename) {
+    if (this.disposed) return;
+    this.pendingRenames.set(rename.taskId, { ...rename });
+    const waiting = this.renameTimers.get(rename.taskId);
+    if (waiting !== undefined) window.clearTimeout(waiting);
+    this.renameTimers.set(
+      rename.taskId,
+      window.setTimeout(() => this.startTaskRename(rename.taskId), TASK_RENAME_DELAY_MS)
+    );
+  }
+
+  private startTaskRename(taskId: string) {
+    this.renameTimers.delete(taskId);
+    const rename = this.pendingRenames.get(taskId);
+    this.pendingRenames.delete(taskId);
+    if (!rename) return;
+    void this.queueWalk(() => this.updateLoggedTaskName(rename));
+  }
+
+  /** Run `walk` once every walk queued before it has finished. */
+  private queueWalk<T>(walk: () => Promise<T>): Promise<T> {
+    const run = this.walks.then(walk);
+    this.walks = run.then(
+      () => undefined,
+      (e: unknown) => logger.error("A log rewrite failed", e)
+    );
+    return run;
+  }
+
+  /** Resolves once every rewrite queued so far has finished. */
+  walksSettled(): Promise<void> {
+    return this.walks;
+  }
+
+  /**
+   * Plugin unload: the renames still waiting are dropped, not started — no
+   * vault writes from a plugin being turned off. "Refresh log task names by
+   * ID" catches up on them. The open session is saved, seen running now, and
+   * left saved: an update or a reload mid-session offers it back at the next
+   * start (F23). Paused too, with the planned length as the clock has it now
+   * (F16): it still ends where its pause began (savedSessionEnd).
+   */
+  dispose() {
+    if (this.currentSession) this.saveOpenSession();
+    this.disposed = true;
+    this.renameTimers.forEach((timer) => window.clearTimeout(timer));
+    this.renameTimers.clear();
+    this.pendingRenames.clear();
+  }
+
+  /** A log line's link as a vault path (resolveLogLink). */
+  private readonly resolveLink: ResolveLink = (linktext, sourcePath) =>
+    resolveLogLink(this.plugin.app, linktext, sourcePath);
+
+  /**
+   * Rewrite the past lines of a renamed task: the lines carrying its 🆔 whose
+   * own link leads to its note (renameLogContent). Each file through
+   * Vault.process, which reads and writes in one step, so a session line
+   * appended meanwhile is never lost (F25); a file that fails is reported and
+   * the walk goes on (F41). Files that would not change are not written.
+   */
+  async updateLoggedTaskName(rename: TaskRename) {
     const folderPath = this.plugin.settings.logFolderPath;
-    if (!folderPath || !taskId) return;
+    if (!folderPath || !rename.taskId) return;
 
     const app = this.plugin.app;
     const files = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
-
-    if (files.length === 0) return;
+    let failed = 0;
 
     for (const file of files) {
-      const content = await app.vault.read(file);
-      const lines = content.split("\n");
-      let changed = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line.includes("🍅 Focus") || !line.includes(`| ID:: ${taskId} |`)) continue;
-
-        const updated = this.updateLogLineTaskName(line, taskId, taskName, taskPath);
-        if (updated !== line) {
-          lines[i] = updated;
-          changed = true;
-        }
+      try {
+        const content = await app.vault.read(file);
+        if (!content.includes(rename.taskId)) continue;
+        if (renameLogContent(content, file.path, rename, this.resolveLink).lines === 0) continue;
+        await app.vault.process(
+          file,
+          (data) => renameLogContent(data, file.path, rename, this.resolveLink).content
+        );
+      } catch (e) {
+        failed++;
+        logger.warn(`Could not rename the task in "${file.path}"`, e);
       }
+    }
 
-      if (changed) {
-        await app.vault.modify(file, lines.join("\n"));
-      }
+    if (failed > 0) {
+      new Notice(
+        `Gentle pomodoro: couldn't rename the task in ${failed} log file(s). Run "Refresh log task names by ID" to try again.`
+      );
     }
   }
 
-  /** Refresh ALL log files' Task:: fields by re-resolving each ID-bearing line against the source task. */
-  async refreshLoggedTaskNamesById() {
+  /**
+   * "Refresh log task names by ID": every 🆔 line takes its task's name as the
+   * task line reads now — a rename made while the task was not linked never
+   * reached the log. A dry run first, then a dialog with the count and a few
+   * examples, then the write (F12). One at a time.
+   */
+  async refreshLoggedTaskNamesById(
+    confirm: (options: ConfirmOptions) => Promise<boolean> = (options) =>
+      confirmAction(this.plugin.app, options)
+  ) {
+    if (this.refreshInFlight) return;
+    this.refreshInFlight = true;
+    try {
+      await this.refreshTaskNames(confirm);
+    } catch (e) {
+      logger.error("Failed to refresh the log's task names", e);
+      new Notice(
+        "Gentle pomodoro: couldn't refresh the task names — see the developer console for details."
+      );
+    } finally {
+      this.refreshInFlight = false;
+    }
+  }
+
+  private async refreshTaskNames(confirm: (options: ConfirmOptions) => Promise<boolean>) {
     const folderPath = this.plugin.settings.logFolderPath;
     if (!folderPath) {
       new Notice("Gentle pomodoro: log folder path is not set.");
@@ -247,134 +792,353 @@ export class LogManager {
 
     const app = this.plugin.app;
     const logFiles = filesInFolder(app, folderPath).filter((f) => f.extension === "md");
-
     if (logFiles.length === 0) {
-      new Notice("Gentle pomodoro: no log files found.");
+      // A stored top level or capitalisation the vault lacks: the timer still
+      // writes the logs, so say what is wrong instead of "none found" (F29).
+      const problem = logFolderProblem(folderPath, app.vault);
+      new Notice(
+        problem
+          ? logFolderProblemNotice(folderPath, problem)
+          : "Gentle pomodoro: no log files found."
+      );
       return;
     }
 
-    const taskContentCache = new Map<string, string | null>();
-    const taskTextCache = new Map<string, string | null>();
-
-    let filesUpdated = 0;
-    let linesUpdated = 0;
-
+    // Read everything first — the logs, then the notes their 🆔 lines link to
+    // — so the plan, and later the write inside Vault.process, run without
+    // awaiting anything.
+    const logs: { file: TFile; content: string }[] = [];
+    let failedFiles = 0;
     for (const file of logFiles) {
-      const content = await app.vault.read(file);
-      const lines = content.split("\n");
-      let changed = false;
+      try {
+        logs.push({ file, content: await app.vault.read(file) });
+      } catch (e) {
+        failedFiles++;
+        logger.warn(`Could not read "${file.path}"`, e);
+      }
+    }
+    const notes = await this.readRefreshNotes(logs);
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const ref = this.parseLogLineTaskRef(line);
-        if (!ref || !ref.taskPath) continue;
+    const skipped = emptyRefreshSkips();
+    const renamed: RefreshedName[] = [];
+    const changing: TFile[] = [];
+    for (const { file, content } of logs) {
+      const plan = refreshLogContent(content, file.path, notes);
+      for (const kind of REFRESH_SKIPS) skipped[kind] += plan.skipped[kind];
+      if (plan.renamed.length === 0) continue;
+      renamed.push(...plan.renamed);
+      changing.push(file);
+    }
+    const leftAlone = refreshLeftAlone(skipped, failedFiles);
 
-        const cacheKey = `${ref.taskPath}::${ref.taskId}`;
-        let taskText = taskTextCache.get(cacheKey);
-        if (taskText === undefined) {
-          let taskContent = taskContentCache.get(ref.taskPath);
-          if (taskContent === undefined) {
-            const taskFile = app.vault.getAbstractFileByPath(ref.taskPath);
-            if (taskFile instanceof TFile) {
-              taskContent = await app.vault.read(taskFile);
-            } else {
-              taskContent = null;
-            }
-            taskContentCache.set(ref.taskPath, taskContent);
-          }
+    if (renamed.length === 0) {
+      new Notice(`Gentle pomodoro: no task names to update.${leftAlone}`);
+      return;
+    }
 
-          taskText = taskContent ? findTaskTextByIdInContent(taskContent, ref.taskId) : null;
-          taskTextCache.set(cacheKey, taskText);
-        }
+    const confirmed = await confirm({
+      title: "Update task names in the log?",
+      body: `${renamed.length} log line(s) in ${changing.length} file(s) will take their task's current name. Each line keeps its own tags.`,
+      list: refreshExamples(renamed),
+      ctaText: `Update ${renamed.length} line(s)`,
+    });
+    if (!confirmed) return;
 
-        if (taskText === null) continue;
+    const written = await this.queueWalk(() => this.writeRefresh(changing, notes));
+    new Notice(
+      `Gentle pomodoro: updated ${written.lines} line(s) in ${written.files} file(s).${refreshLeftAlone(skipped, failedFiles + written.failed)}`
+    );
+  }
 
-        // A line whose name differs from the task's only by the 🍅 count keeps it.
-        const latestName = taskNameAfterEdit(ref.taskName, taskText);
-        const updated = this.updateLogLineTaskName(line, ref.taskId, latestName, ref.taskPath);
-        if (updated !== line) {
-          lines[i] = updated;
-          changed = true;
-          linesUpdated += 1;
+  /** The notes the logs' 🆔 lines link to, read once each (CRLF-safe: read only). */
+  private async readRefreshNotes(
+    logs: readonly { file: TFile; content: string }[]
+  ): Promise<RefreshNotes> {
+    const app = this.plugin.app;
+    const read = new Map<string, readonly string[] | null>();
+    for (const { file, content } of logs) {
+      for (const path of refreshTargets(content, file.path, this.resolveLink)) {
+        if (read.has(path)) continue;
+        const note = app.vault.getAbstractFileByPath(path);
+        try {
+          read.set(
+            path,
+            note instanceof TFile ? (await app.vault.read(note)).split(/\r?\n/) : null
+          );
+        } catch (e) {
+          read.set(path, null);
+          logger.warn(`Could not read "${path}"`, e);
         }
       }
+    }
+    return { resolve: this.resolveLink, lines: (path) => read.get(path) ?? null };
+  }
 
-      if (changed) {
-        await app.vault.modify(file, lines.join("\n"));
-        filesUpdated += 1;
+  /** Refresh's write: each file through Vault.process, planned again on what it holds then. */
+  private async writeRefresh(files: readonly TFile[], notes: RefreshNotes) {
+    const app = this.plugin.app;
+    const written = { lines: 0, files: 0, failed: 0 };
+    for (const file of files) {
+      let lines = 0;
+      try {
+        await app.vault.process(file, (data) => {
+          const plan = refreshLogContent(data, file.path, notes);
+          lines = plan.renamed.length;
+          return plan.content;
+        });
+      } catch (e) {
+        written.failed++;
+        logger.warn(`Could not update "${file.path}"`, e);
+        continue;
+      }
+      written.lines += lines;
+      if (lines > 0) written.files++;
+    }
+    return written;
+  }
+
+  /**
+   * The 🆔s the log names that sit on more than one task line of their note,
+   * not one of them the single open line (F2, duplicateTaskIds) — sessions of
+   * such a task are never renamed, so Check log lists them. Notes that cannot
+   * be read are passed over.
+   */
+  async findDuplicateTaskIds(): Promise<DuplicateTaskId[]> {
+    const folderPath = this.plugin.settings.logFolderPath;
+    if (!folderPath) return [];
+    const app = this.plugin.app;
+    const logs: { file: TFile; content: string }[] = [];
+    for (const file of filesInFolder(app, folderPath).filter((f) => f.extension === "md")) {
+      try {
+        logs.push({ file, content: await app.vault.read(file) });
+      } catch (e) {
+        logger.warn(`Could not read "${file.path}"`, e);
       }
     }
 
-    new Notice(`[GentlePomo] Updated ${linesUpdated} log line(s) across ${filesUpdated} file(s).`);
+    const logged = new Map<string, Set<string>>();
+    for (const { file, content } of logs) {
+      for (const line of content.split(/\r?\n/).slice(frontmatterRowCount(content))) {
+        const parsed = parseLogLine(line);
+        const taskId = parsed ? logTaskId(parsed) : null;
+        const link = parsed?.task?.path;
+        if (!taskId || !link) continue;
+        const path = this.resolveLink(link, file.path);
+        if (path === null) continue;
+        const ids = logged.get(path) ?? new Set<string>();
+        ids.add(taskId);
+        logged.set(path, ids);
+      }
+    }
+
+    const found: DuplicateTaskId[] = [];
+    for (const [path, ids] of logged) {
+      const note = app.vault.getAbstractFileByPath(path);
+      if (!(note instanceof TFile)) continue;
+      try {
+        const twice = duplicateTaskIds(await app.vault.read(note));
+        for (const taskId of twice) if (ids.has(taskId)) found.push({ taskId, path });
+      } catch (e) {
+        logger.warn(`Could not read "${path}"`, e);
+      }
+    }
+    return found;
   }
 
-  private parseLogLineTaskRef(
-    line: string
-  ): { taskId: string; taskPath?: string; taskName: string } | null {
-    if (!line.includes("🍅 Focus") || !line.includes("| ID:: ")) return null;
-
-    const idMatch = line.match(/\|\s*ID::\s*([^|]+)\s*\|/);
-    if (!idMatch) return null;
-
-    const taskSegmentRegex = /Task::\s(\[\[[^\]]+\]\]|[^|]+)\s\|/;
-    const taskMatch = line.match(taskSegmentRegex);
-    if (!taskMatch) return null;
-
-    const taskStr = taskMatch[1].trim();
-    const linkMatch = taskStr.match(/^\[\[([^|\]]+)\|([^\]]+)\]\]$/);
-    const taskPath = linkMatch ? linkMatch[1] : undefined;
-    const taskName = linkMatch ? linkMatch[2] : taskStr;
-
-    return { taskId: idMatch[1].trim(), taskPath, taskName };
+  /** The sessions an earlier run left unfinished, oldest first. */
+  unfinishedSessions(): readonly SavedSession[] {
+    return this.unfinished;
   }
 
-  private updateLogLineTaskName(
-    line: string,
-    taskId: string,
-    taskName: string,
-    taskPath?: string
-  ): string {
-    if (!line.includes(`| ID:: ${taskId} |`)) return line;
-
-    const taskSegmentRegex = /Task::\s(\[\[[^\]]+\]\]|[^|]+)\s\|/;
-    const match = line.match(taskSegmentRegex);
-    if (!match) return line;
-
-    const oldTaskStr = match[1].trim();
-    const linkMatch = oldTaskStr.match(/^\[\[([^|\]]+)\|([^\]]+)\]\]$/);
-    const pathToUse = taskPath || (linkMatch ? linkMatch[1] : undefined);
-    const safeName = taskName || "No Task";
-
-    const newTaskStr =
-      pathToUse && safeName !== "No Task" ? `[[${pathToUse}|${safeName}]]` : safeName;
-
-    return line.replace(taskSegmentRegex, `Task:: ${newTaskStr} |`);
+  /**
+   * Ask about each session an earlier run left open (F23): "log" writes it,
+   * ended where it was last seen running; "discard" forgets it; "later" — the
+   * dialog closed — keeps it for the next start. One question at a time, and
+   * one round at a time. Not asked while no log folder is set: "Log it" could
+   * write nothing, and the session would be forgotten. They wait, kept, for a
+   * start with a folder. Never once disposed (F19): the reloaded plugin asks
+   * again, and an answer here too wrote the session twice.
+   *
+   * `long` is what Stop would have asked about it (recoveredLongSession), or
+   * null: a focus past the long-session threshold and its plan is offered a
+   * third answer, "planned", which logs it as Stop's "End at planned end"
+   * would have (F18). Judged on the setting as it is now.
+   */
+  async offerUnfinishedSessions(
+    ask: (saved: SavedSession, long: LongSessionQuestion | null) => Promise<RecoveryAnswer>
+  ) {
+    if (this.offering || !this.keepsLog()) return;
+    this.offering = true;
+    try {
+      for (const saved of [...this.unfinished]) {
+        if (this.disposed) break;
+        const long = recoveredLongSession(
+          saved,
+          (ms) => moment(ms),
+          this.plugin.settings.longSessionPromptHours
+        );
+        let answer: RecoveryAnswer;
+        try {
+          answer = await ask(saved, long);
+        } catch (e) {
+          logger.error("Could not ask about an unfinished session", e);
+          answer = "later";
+        }
+        if (this.disposed) break;
+        if (answer === "log") await this.logUnfinished(saved);
+        else if (answer === "planned" && long !== null) {
+          await this.logUnfinished(saved, plannedSessionEnd(long));
+        } else if (answer === "discard") this.forgetUnfinished(saved);
+      }
+    } finally {
+      this.offering = false;
+    }
   }
 
-  private async writeLog(session: SessionLog) {
+  /**
+   * Write an unfinished session's line(s), status finished, ended where it was
+   * last seen — or at `end`, the planned end (F18) — and under a minute,
+   * nothing (F59). Not counted toward the 🍅
+   * or the long-break count: those belong to a session the timer ends, and
+   * this one was ended by a quit. A write that fails is kept like any other
+   * (F53), so the session is forgotten here either way — unless the log
+   * folder was emptied while the question was open: then nothing could be
+   * written or kept, and it waits for the next start. After dispose nothing
+   * (F19): the reloaded plugin offers it.
+   */
+  async logUnfinished(
+    saved: SavedSession,
+    end?: { endAt: number; overtimeSeconds: number }
+  ): Promise<void> {
+    if (this.disposed || !this.keepsLog()) return;
+    const { session, closed } = recoveredSession(saved, (ms) => moment(ms), end);
+    try {
+      if (loggedTotalSeconds(session) >= MIN_SESSION_SECONDS) {
+        await this.writeLog(segmentLogs(session, closed));
+      }
+    } finally {
+      this.forgetUnfinished(saved);
+    }
+  }
+
+  /**
+   * Take a session off the unfinished list. After dispose (F19) the stored
+   * list may be a reloaded plugin's: this instance's own is never written over
+   * it, and only this session is taken out of it — a Log it whose write was
+   * under way at unload, its line in the log now.
+   */
+  private forgetUnfinished(saved: SavedSession) {
+    this.unfinished = this.unfinished.filter((other) => !sameSavedSession(other, saved));
+    const storage = this.device?.storage;
+    if (!storage) return;
+    const list: unknown[] = this.disposed
+      ? storedWithout(storage.load(UNFINISHED_SESSIONS_KEY), saved)
+      : this.unfinished;
+    storage.save(UNFINISHED_SESSIONS_KEY, list.length > 0 ? list : null);
+  }
+
+  /**
+   * Write the lines a write failed on (F53), oldest first, before the next
+   * write and at startup. A line the file already holds is not written again:
+   * a write that "failed" by timing out may have landed after all (F38). Stops
+   * at the first entry that still fails, keeping it and the ones after it.
+   * Resolves to the number of lines written; one run at a time.
+   */
+  retryUnwrittenLines(): Promise<number> {
+    // Never rejects: it runs ahead of every session's write, and from startup
+    // with nobody to catch it.
+    this.retrying ??= this.retryUnwritten()
+      .catch((e: unknown) => {
+        logger.error("Could not retry the unwritten session lines", e);
+        return 0;
+      })
+      .finally(() => {
+        this.retrying = null;
+      });
+    return this.retrying;
+  }
+
+  private async retryUnwritten(): Promise<number> {
+    let written = 0;
+    let focus = false;
+    while (this.unwritten.length > 0) {
+      const entry = this.unwritten[0];
+      try {
+        await this.ensureFolder(entry.folder);
+        await this.appendLines(entry.path, entry.lines, true);
+      } catch (e) {
+        logger.warn(
+          `Still couldn't write ${entry.lines.length} session line(s) to "${entry.path}"`,
+          e
+        );
+        break;
+      }
+      this.unwritten.shift();
+      this.saveUnwritten();
+      written += entry.lines.length;
+      focus ||= entry.focus;
+    }
+    if (focus) this.invalidateTodayTotal();
+    if (written > 0) new Notice(unwrittenLinesWrittenMessage(written));
+    return written;
+  }
+
+  private saveUnwritten() {
+    this.device?.storage.save(
+      UNWRITTEN_LINES_KEY,
+      this.unwritten.length > 0 ? this.unwritten : null
+    );
+  }
+
+  /** Write a session's lines — one, or one per segment of a split session. */
+  private async writeLog(parts: SegmentLine[]) {
+    // Lines that failed before go first, so the file keeps its order.
+    await this.retryUnwrittenLines();
+
+    if (!this.keepsLog()) return; // Logging disabled if no path set
     const folderPath = this.plugin.settings.logFolderPath;
-    if (!folderPath) return; // Logging disabled if no path set
 
     const app = this.plugin.app;
 
     // Refresh task name from file if ID is available (handles renames) — but
     // not for the 🍅 counter's count, which is not a rename (taskNameAfterEdit).
-    if (session.mode === "focus" && session.taskId && session.taskPath) {
-      const taskText = await findTaskTextById(app, session.taskPath, session.taskId);
-      if (taskText !== null) {
-        session.taskName = taskNameAfterEdit(session.taskName, taskText);
+    // A read that fails (an iCloud file not downloaded, Obsidian's 60 s file
+    // timeout) keeps the linked name: it threw out of endSession before the
+    // write, and the session was lost (F22).
+    for (const part of parts) {
+      if (part.mode !== "focus" || !part.taskId || !part.taskPath) continue;
+      try {
+        // By the name when the 🆔 is on several lines: the open copy whose
+        // name it is, else the one open copy — a ticked copy's name too, as
+        // the timer follows a task copied forward — or none (F2, resolveIdLine).
+        // Not for a segment a switch closed: its name is history, and a ticked
+        // copy it names keeps it — or the time worked on the old copy before
+        // the new one was picked was logged under the new one's name.
+        const taskText = await findTaskTextById(
+          app,
+          part.taskPath,
+          part.taskId,
+          part.taskName,
+          part.closedBySwitch !== true
+        );
+        if (taskText !== null) {
+          part.taskName = taskNameAfterEdit(part.taskName, taskText);
+        }
+      } catch (e) {
+        logger.warn("Could not read the task's note; logging the linked name", e);
       }
     }
 
     const normalizedFolder = normalizePath(folderPath);
 
-    // File name is based on the session's start time (local date).
-    const dateStr = session.startTime.format("YYYY-MM-DD");
-    const fileName = `${dateStr}-gentle-pomodoro-log.md`;
-    const filePath = normalizePath(`${normalizedFolder}/${fileName}`);
+    // Filed under the day the session STARTED, as "Day starts at" counts days
+    // — every line of a split session too, under the day its first began.
+    const session = parts[0];
+    const dateStr = logicalDate(session.startTime, this.plugin.settings.dayStartHour);
+    const filePath = dailyLogPath(folderPath, dateStr);
 
-    // Format the line via the pure helper (tested in tests/logManager.test.ts).
-    const line = formatLogLine(session);
+    // Format the lines via the pure helper (logLine.ts; tests/logManager.test.ts).
+    const lines = parts.map(formatLogLine);
 
     // Writes can fail on mobile (Obsidian Sync / iCloud conflicts, locked files).
     // Catch here so a write failure never breaks the timer state machine — the
@@ -382,10 +1146,20 @@ export class LogManager {
     // and so the user is told instead of losing the session silently.
     try {
       await this.ensureFolder(normalizedFolder);
-      await this.appendLine(filePath, line);
+      await this.appendLines(filePath, lines);
     } catch (e) {
-      logger.error("Failed to write session log", e);
-      new Notice("Gentle pomodoro: couldn't write the session log — check the log folder setting.");
+      // The line itself goes to the console and stays on this device to be
+      // written later (F53). Until 0.6.9 only the error was logged, and the
+      // session's start, end and total were gone for good.
+      logger.error(`Failed to write the session log; it will be retried:\n${lines.join("\n")}`, e);
+      this.unwritten.push({
+        path: filePath,
+        folder: normalizedFolder,
+        lines,
+        focus: session.mode === "focus",
+      });
+      this.saveUnwritten();
+      new Notice(UNWRITTEN_LINE_NOTICE);
       return;
     }
 
@@ -410,48 +1184,85 @@ export class LogManager {
 
   /** Create the log folder if missing, tolerating a sync race that creates it first. */
   private async ensureFolder(normalizedFolder: string) {
+    await ensureLogFolder(this.plugin.app, normalizedFolder);
+  }
+
+  /**
+   * Append a session's lines to the daily log, creating the file if needed —
+   * in one write, so a split session's lines land together or not at all.
+   *
+   * An indexed file goes through Vault.process (F39): it reads and writes in
+   * one step, and appendToLog keeps the file's line endings and leaves no
+   * blank line. A new file is created ending in a line break.
+   *
+   * When create() fails because the file is there after all — the index lags
+   * the disk on mobile and right after a sync — the lines are appended through
+   * the adapter. Only then (F38): until 0.6.9 every failure took this path, so
+   * a create that timed out while its write still landed got the same line
+   * appended a second time, and the session counted twice. So it also never
+   * appends a block whose last line is already the file's last line.
+   *
+   * `retry`: lines kept from a failed write, which skip any line the file
+   * already holds, wherever it is.
+   *
+   * Today's file records today's goal in the same write (goalFor): no write
+   * of its own, nothing while the timer runs, nothing when the setting
+   * changes. The adapter's append cannot — it adds to the end — so the next
+   * session's write does.
+   */
+  private async appendLines(filePath: string, lines: string[], retry = false) {
     const app = this.plugin.app;
-    if (await app.vault.adapter.exists(normalizedFolder)) return;
+    const goal = this.goalFor(filePath);
+    const existing = app.vault.getAbstractFileByPath(filePath);
+    if (existing instanceof TFile) {
+      await app.vault.process(existing, (data) =>
+        withLogGoal(appendToLog(data, retry ? linesNotIn(data, lines) : lines), goal)
+      );
+      return;
+    }
     try {
-      await app.vault.createFolder(normalizedFolder);
+      await app.vault.create(filePath, withLogGoal(appendToLog("", lines), goal));
     } catch (e) {
-      // A concurrent write or sync may have created it between the check and
-      // here; only swallow that case, re-throw anything else.
-      if (await app.vault.adapter.exists(normalizedFolder)) return;
-      throw e;
+      if (!isAlreadyExists(e) && !(await app.vault.adapter.exists(filePath))) throw e;
+      const data = await app.vault.adapter.read(filePath);
+      const landed = lastLogLine(data) === lines[lines.length - 1];
+      const todo = retry ? linesNotIn(data, lines) : landed ? [] : lines;
+      if (todo.length === 0) return;
+      await app.vault.adapter.append(filePath, appendToLog(data, todo).slice(data.length));
     }
   }
 
   /**
-   * Append a line to the daily log, creating the file if needed. Resolves the
-   * file through the Vault index but falls back to the adapter when the index
-   * lags the filesystem (common on mobile right after create / on sync) — the
-   * previous adapter.exists()-then-getAbstractFileByPath() mix could silently
-   * drop a line when the two disagreed.
+   * The goal to record in the log file at `filePath` (logFrontmatter.ts): the
+   * daily goal setting when it is the file of the day it is now — "Day starts
+   * at" counted — and 0, which records nothing, for any other. A past day's
+   * file keeps the goal that day had: a session that started before midnight
+   * and is written after it goes into yesterday's file, and leaves its goal
+   * alone.
    */
-  private async appendLine(filePath: string, line: string) {
-    const app = this.plugin.app;
-    const existing = app.vault.getAbstractFileByPath(filePath);
-    if (existing instanceof TFile) {
-      await app.vault.append(existing, `\n${line}`);
-      return;
-    }
-    try {
-      await app.vault.create(filePath, line);
-    } catch {
-      // Index lagged the filesystem: the file exists on disk but wasn't in the
-      // Vault index, so create() throws "already exists". Append at the adapter
-      // level instead of dropping the session.
-      await app.vault.adapter.append(filePath, `\n${line}`);
-    }
+  private goalFor(filePath: string): number {
+    const settings = this.plugin.settings;
+    if (!settings.logFolderPath) return 0;
+    const today = dailyLogPath(
+      settings.logFolderPath,
+      logicalDate(moment(), settings.dayStartHour)
+    );
+    return filePath === today ? resolveGoalMinutes(settings.dailyFocusGoalMinutes) : 0;
   }
 
-  /** Today's total focus seconds, summed from today's log file. Cached for FOCUS_TOTAL_CACHE_TTL_MS. */
+  /**
+   * Today's total focus seconds, summed from today's log file. Cached for
+   * FOCUS_TOTAL_CACHE_TTL_MS. Under a language that writes its own digits the
+   * file 0.6.8 named in them is read too, so the morning before the update
+   * still counts (F4); the timer writes only the English-digit one.
+   */
   async getTodayFocusSeconds(): Promise<number> {
     const folderPath = this.plugin.settings.logFolderPath;
     if (!folderPath) return 0;
 
-    const dateStr = moment().format("YYYY-MM-DD");
+    const today = moment();
+    const dayStartHour = this.plugin.settings.dayStartHour;
+    const dateStr = logicalDate(today, dayStartHour);
     const now = Date.now();
 
     if (
@@ -461,19 +1272,12 @@ export class LogManager {
       return this.focusTotalCacheSeconds;
     }
 
-    const fileName = `${dateStr}-gentle-pomodoro-log.md`;
-    const normalizedFolder = normalizePath(folderPath);
-    const filePath = normalizePath(`${normalizedFolder}/${fileName}`);
-    const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-    if (!(file instanceof TFile)) {
-      this.focusTotalCacheDate = dateStr;
-      this.focusTotalCacheSeconds = 0;
-      this.focusTotalCacheAt = now;
-      return 0;
+    const vault = this.plugin.app.vault;
+    let totalSeconds = 0;
+    for (const date of logDateNames(today, dayStartHour)) {
+      const file = vault.getAbstractFileByPath(dailyLogPath(folderPath, date));
+      if (file instanceof TFile) totalSeconds += parseFocusTotalSeconds(await vault.read(file));
     }
-
-    const content = await this.plugin.app.vault.read(file);
-    const totalSeconds = parseFocusTotalSeconds(content);
 
     this.focusTotalCacheDate = dateStr;
     this.focusTotalCacheSeconds = totalSeconds;

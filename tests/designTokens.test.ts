@@ -413,9 +413,25 @@ describe("focus rings", () => {
       ".gp-task-item",
       ".gp-segmented-btn",
       ".gp-station-item",
+      ".gp-goal-progress",
     ]) {
       expect(rules, `${cls} has no :focus-visible rule`).toContain(`${cls}:focus-visible`);
     }
+  });
+
+  it("marks the panel's goal line as the button it is (0.6.9: it opens today's log)", () => {
+    // A div with role="button": nothing of Obsidian's styles it as one, so the
+    // pointer and the ring are this file's to give.
+    const rule = (sel: string) => {
+      const found = styleRules.find((r) => r.sel === sel && r.context.length === 0);
+      expect(found, `${sel} is gone`).toBeDefined();
+      return found?.body ?? "";
+    };
+    expect(rule(".gp-goal-progress")).toMatch(/cursor:\s*pointer/);
+    const ring = rule(".gp-goal-progress:focus-visible");
+    expect(ring).toContain("var(--gp-focus-ring-width)");
+    expect(ring).toContain("var(--gp-focus-ring-color)");
+    expect(ring).toMatch(/outline-offset:\s*var\(--gp-focus-ring-offset/);
   });
 
   it("gives the panel's dropdown the plugin's ring, not Obsidian's halo", () => {

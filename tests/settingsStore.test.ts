@@ -120,6 +120,28 @@ describe("coerceToDefaults", () => {
     const settings = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
     expect(coerceToDefaults({ ...settings }, settings)).toEqual(settings);
   });
+
+  it("keeps 'Day starts at' at midnight for an upgrade, and drops one that is not a number", () => {
+    // 0.6.9. Midnight is what every earlier version did, so nobody's days move.
+    expect(DEFAULT_SETTINGS.dayStartHour).toBe(0);
+    const settings = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+    expect(coerceToDefaults({ dayStartHour: 4 }, settings)).toEqual({ dayStartHour: 4 });
+    expect(coerceToDefaults({ dayStartHour: "4" }, settings)).toEqual({});
+  });
+
+  it("gives an upgrade the old task-switch logging, and asks about long sessions from 6 h", () => {
+    // 0.6.9. "last-task" is what every earlier version wrote; the question is
+    // new, and stated as on by default.
+    expect(DEFAULT_SETTINGS.taskSwitchLogging).toBe("last-task");
+    expect(DEFAULT_SETTINGS.longSessionPromptHours).toBe(6);
+    const settings = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+    expect(
+      coerceToDefaults({ taskSwitchLogging: "split", longSessionPromptHours: 0 }, settings)
+    ).toEqual({ taskSwitchLogging: "split", longSessionPromptHours: 0 });
+    expect(
+      coerceToDefaults({ taskSwitchLogging: true, longSessionPromptHours: "8" }, settings)
+    ).toEqual({});
+  });
 });
 
 let io: Io;
@@ -267,5 +289,35 @@ describe("deriveEndChimes", () => {
     // every upgrading user before any derivation runs.
     expect(DEFAULT_SETTINGS.breakEndSoundEnabled).toBe(false);
     expect(DEFAULT_SETTINGS.focusEndSoundEnabled).toBe(false);
+  });
+});
+
+describe("SettingsStore.storedValue — one field as data.json holds it now (C5)", () => {
+  it("reads the field from the file, not from memory", async () => {
+    const io = new Io();
+    io.raw = { lastGoalHitDate: "2026-10-02", theme: "classic" };
+    expect(await new SettingsStore(io).storedValue("lastGoalHitDate")).toBe("2026-10-02");
+  });
+
+  it("is undefined, quietly, for a missing field, a fresh install, damage or a rejected read", async () => {
+    const io = new Io();
+    const store = new SettingsStore(io);
+    io.raw = { theme: "classic" };
+    expect(await store.storedValue("lastGoalHitDate")).toBeUndefined();
+    io.raw = null;
+    expect(await store.storedValue("lastGoalHitDate")).toBeUndefined();
+    io.raw = undefined;
+    expect(await store.storedValue("lastGoalHitDate")).toBeUndefined();
+    io.readThrows = true;
+    expect(await store.storedValue("lastGoalHitDate")).toBeUndefined();
+    // A check made in passing: a damaged file was reported at load.
+    expect(io.notices).toEqual([]);
+    expect(io.warnings).toEqual([]);
+  });
+
+  it("reads only the file's own field, never one off the prototype", async () => {
+    const io = new Io();
+    io.raw = {};
+    expect(await new SettingsStore(io).storedValue("toString")).toBeUndefined();
   });
 });

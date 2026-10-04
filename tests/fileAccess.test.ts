@@ -6,9 +6,10 @@ import { normalizePath, type App, type TFile } from "obsidian";
 import { Notice } from "../__mocks__/obsidian";
 import { filesInFolder, loadTasks } from "../taskLoader";
 import { LogManager } from "../logManager";
+import { logFolderProblemNotice } from "../logFolder";
 import type GentlePomoPlugin from "../main";
 import type { TaskScope } from "../taskScope";
-import { fakeVault, type FakeVault } from "./fakeVault";
+import { fakeVault, linkCache, type FakeVault } from "./fakeVault";
 
 /**
  * 0.6.8 — each feature lists only the files it needs.
@@ -377,7 +378,18 @@ describe("the log rewrites walk only the log folder", () => {
     });
 
   const managerFor = (vault: FakeVault, logFolderPath: string) =>
-    new LogManager({ settings: { logFolderPath }, app: { vault } } as unknown as GentlePomoPlugin);
+    new LogManager({
+      settings: { logFolderPath },
+      app: { vault, metadataCache: linkCache(vault) },
+    } as unknown as GentlePomoPlugin);
+  const rename = {
+    taskId: "abc123",
+    name: "Renamed",
+    taskPath: "Projects/A.md",
+    createdDate: null,
+    line: "- [ ] Renamed 🆔 abc123",
+    copies: [],
+  };
 
   const inLogs = [
     "Logs/2026-09-01-gentle-pomodoro-log.md",
@@ -400,11 +412,7 @@ describe("the log rewrites walk only the log folder", () => {
     it(`renames the task in every log under ${JSON.stringify(logFolderPath)} and nowhere else`, async () => {
       const vault = vaultWithLogs();
 
-      await managerFor(vault, logFolderPath).updateLoggedTaskName(
-        "abc123",
-        "Renamed",
-        "Projects/A.md"
-      );
+      await managerFor(vault, logFolderPath).updateLoggedTaskName(rename);
 
       expect(vault.getFiles).not.toHaveBeenCalled();
       // In the order the old code wrote them, which is not the sorted order.
@@ -420,14 +428,14 @@ describe("the log rewrites walk only the log folder", () => {
   it("refreshes every log under the folder from the task's current name", async () => {
     const vault = vaultWithLogs();
 
-    await managerFor(vault, "Logs").refreshLoggedTaskNamesById();
+    await managerFor(vault, "Logs").refreshLoggedTaskNamesById(() => Promise.resolve(true));
 
     expect(vault.getFiles).not.toHaveBeenCalled();
     expect(vault.writes).toEqual(oldWriteOrder(vault, "Logs"));
     expect(vault.writes).not.toEqual([...vault.writes].sort());
     expect([...vault.writes].sort()).toEqual(inLogs);
     for (const path of inLogs) expect(vault.contents[path]).toContain("|New name]]");
-    expect(Notice.shown).toEqual(["[GentlePomo] Updated 2 log line(s) across 2 file(s)."]);
+    expect(Notice.shown).toEqual(["Gentle pomodoro: updated 2 line(s) in 2 file(s)."]);
   });
 
   it("says no log files were found when the folder is missing", async () => {
@@ -439,10 +447,24 @@ describe("the log rewrites walk only the log folder", () => {
     expect(vault.writes).toEqual([]);
   });
 
+  it("names the problem, not 'no log files', when the folder is stored in other capitals or as the top level (F29)", async () => {
+    const vault = vaultWithLogs();
+
+    await managerFor(vault, "logs").refreshLoggedTaskNamesById();
+    await managerFor(vault, "/").refreshLoggedTaskNamesById();
+
+    expect(Notice.shown).toEqual([
+      logFolderProblemNotice("logs", { kind: "case", real: "Logs" }),
+      logFolderProblemNotice("/", { kind: "root" }),
+    ]);
+    expect(vault.writes).toEqual([]);
+    expect(vault.getFiles).not.toHaveBeenCalled();
+  });
+
   it("writes nothing on a rename when the folder is missing", async () => {
     const vault = vaultWithLogs();
 
-    await managerFor(vault, "Nowhere").updateLoggedTaskName("abc123", "Renamed", "Projects/A.md");
+    await managerFor(vault, "Nowhere").updateLoggedTaskName(rename);
 
     expect(vault.writes).toEqual([]);
   });

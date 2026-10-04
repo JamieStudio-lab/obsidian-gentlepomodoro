@@ -3,6 +3,7 @@ import type { App, TAbstractFile } from "obsidian";
 import type { TaskItem } from "./types";
 import type { TaskScope } from "./taskScope";
 import type { MomentFactory } from "./momentTypes";
+import { sanitizeAlias } from "./logLine";
 
 declare const moment: MomentFactory;
 
@@ -788,36 +789,417 @@ function markdownNotesAt(app: App, paths: string[]): TFile[] {
   return found.sort(compareVaultOrder);
 }
 
-/** The text of the task line carrying this 🆔 (after the checkbox), or null. */
-export function findTaskTextByIdInContent(content: string, taskId: string): string | null {
-  if (!taskId) return null;
-
-  const lines = content.split("\n");
-  for (const line of lines) {
-    const lineMatch = line.match(TASK_LINE_REGEX);
-    if (!lineMatch) continue;
-
-    const idMatch = line.match(TASK_ID_REGEX);
-    if (!idMatch || idMatch[1] !== taskId) continue;
-
-    return lineMatch[2];
-  }
-
-  return null;
+/** A task's 🆔, read off its text (the first one on the line). */
+export function taskIdOf(text: string): string | undefined {
+  return text.match(TASK_ID_REGEX)?.[1];
 }
 
-export async function findTaskTextById(
+const CREATED_DATE_REGEX = /➕️?\s*(\d{4}-\d{2}-\d{2})/u;
+
+/** The date a task line's ➕ says it was created, or null. */
+export function taskCreatedDate(text: string): string | null {
+  return CREATED_DATE_REGEX.exec(text)?.[1] ?? null;
+}
+
+// Any task line, its status in group 1 — the counter's ID branch reaches a
+// task in progress `[/]` too, as it always has.
+const ANY_STATUS_TASK_REGEX = /^\s*(?:[-*+]|\d+[.)])\s*\[([^\]])\]\s+(.*)$/;
+
+/** A line carrying a task's 🆔, as the lookups weigh it. */
+interface IdLine {
+  index: number;
+  /** The text after the checkbox — the whole line when it is no task line. */
+  text: string;
+  open: boolean;
+}
+
+/**
+ * The lines carrying this 🆔: task lines, open or done — or, with `anyLine`,
+ * any line at all, which is what the 🍅 counter has always matched on.
+ */
+function linesCarryingId(lines: readonly string[], taskId: string, anyLine: boolean): IdLine[] {
+  const found: IdLine[] = [];
+  lines.forEach((raw, index) => {
+    // For matching only: a CRLF note split on "\n" — the counter's write path
+    // keeps that split — leaves a "\r" no $-anchored task regex can pass.
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    const task = (anyLine ? ANY_STATUS_TASK_REGEX : TASK_LINE_REGEX).exec(line);
+    if (!task && !anyLine) return;
+    const text = task ? task[2] : line;
+    if (taskIdOf(text) !== taskId) return;
+    found.push({ index, text, open: task?.[1] === " " });
+  });
+  return found;
+}
+
+/** Where findTaskLineById found a task's line, or why it did not. */
+export type TaskLineLookup =
+  | { kind: "found"; index: number; text: string }
+  | { kind: "missing" }
+  | { kind: "ambiguous" };
+
+/**
+ * How resolveIdLine compares its key with the copies: each copy's text (after
+ * the checkbox) is put in the key's form, then both are compared on `exact`
+ * and, failing that, on `loose`.
+ */
+interface IdKeyForm {
+  copy(text: string): string;
+  exact(text: string): string;
+  loose(text: string): string;
+  /**
+   * Whether the one open copy wins over ticked copies the key names. True for
+   * the timer's own key: the task it is linked to is the copy still open. A
+   * past line's name is history, and it stays with the copy it names.
+   */
+  followsOpenCopy: boolean;
+}
+
+/** A key that is line text — the timer's `currentTaskLineText` — or a name the timer holds. */
+const LINE_TEXT_FORM: IdKeyForm = {
+  copy: (text) => text,
+  exact: taskMatchKey,
+  loose: taskLineKey,
+  followsOpenCopy: true,
+};
+
+/**
+ * A name the timer held once and no longer does — a split session's segment
+ * that a switch closed (F22). Read as the timer's key, but it is history: a
+ * ticked copy it names keeps it, though one copy is open. Followed to the open
+ * copy, the segment worked on a ticked copy was logged under the open copy's
+ * name whenever a task copied forward was picked mid-session.
+ */
+const PAST_LINE_TEXT_FORM: IdKeyForm = { ...LINE_TEXT_FORM, followsOpenCopy: false };
+
+/**
+ * A key that is a name a log line was written with (F23). Each copy is read as
+ * the name a session of it is logged by (taskLineName), and both sides go
+ * through sanitizeAlias, as the writer put that name through it: `[[Paper]]`
+ * is logged as `Paper`, `[x]` as `(x)`, `::` as `:`. Compared with the raw
+ * line, such a name named no copy, every one of them fell to the one open
+ * copy, and renaming a task copied forward rewrote its ticked copy's history.
+ * Loosely, on loggedNameKey with no spaces: two names that renamedAlias calls
+ * no rename of each other (a count, a retag, a field, spacing) name one copy.
+ * A name that names a ticked copy is that copy's, even with an open copy
+ * beside it: renaming the open copy must never rewrite the ticked copy's
+ * history.
+ */
+const LOGGED_NAME_FORM: IdKeyForm = {
+  copy: (text) => taskLineName(text),
+  exact: (name) => taskMatchKey(sanitizeAlias(name)),
+  loose: (name) => loggedNameKey(sanitizeAlias(name)).replace(/\s+/gu, ""),
+  followsOpenCopy: false,
+};
+
+/**
+ * Which of the lines carrying a 🆔 is the task (F2), and the lines that choice
+ * weighed. The Tasks plugin does not keep IDs unique, and a copied line keeps
+ * its 🆔: the maintainer's notes hold 12 IDs on 25 lines. Taking the first one
+ * logged a session under the copy above the task, rewrote that task's history
+ * to the copy's name, and put the 🍅 on a done copy.
+ *
+ * So with several, the line is first chosen as a task with no 🆔 is
+ * (linkedLineIndex): by `keyText` — the raw line text the timer holds, or a
+ * name — on taskMatchKey, then taskLineKey, an open line before a done one;
+ * a name a log line was written with is compared in its own form instead
+ * (LOGGED_NAME_FORM). A key that matches exactly one OPEN line best wins.
+ *
+ * The timer's key that names only TICKED copies — or none — is the task
+ * copied forward when exactly one copy with the 🆔 is open (the maintainer's
+ * call, 2026-10-04): he copies a task forward, ticks the old copy and may
+ * edit the new one, and the timer stays with the open copy. Up to then a key
+ * that still named the ticked copy took it: the timer unlinked as the task
+ * was ticked, and a rename of the new copy was never followed. A past line's
+ * name (LOGGED_NAME_FORM) does not do this: it keeps the ticked copy it
+ * names, so its history is never rewritten by the open copy's rename.
+ *
+ * Otherwise, as before: a key that matches one line best wins, ticked or not;
+ * when it cannot single out one line — it matches several equally, or there
+ * is no key — the lines it matched (all of them, when it matched none) are the
+ * `pool`, and the ONE open line among them is the task. Two open lines, or
+ * none, is no answer (`pick` null), and every caller then keeps the name it
+ * has: a rename never lands on a guess.
+ */
+function resolveIdLine(
+  candidates: IdLine[],
+  keyText: string | undefined,
+  form: IdKeyForm = LINE_TEXT_FORM
+): { pick: IdLine | null; pool: IdLine[] } {
+  if (candidates.length <= 1) return { pick: candidates[0] ?? null, pool: candidates };
+  const matched: { line: IdLine; rank: number }[] = [];
+  if (keyText !== undefined) {
+    const exact = form.exact(keyText);
+    const loose = form.loose(keyText);
+    for (const line of candidates) {
+      const text = form.copy(line.text);
+      const tier = form.exact(text) === exact ? 0 : form.loose(text) === loose ? 1 : -1;
+      if (tier !== -1) matched.push({ line, rank: (line.open ? 0 : 2) + tier });
+    }
+  }
+  if (form.followsOpenCopy && !matched.some((match) => match.line.open)) {
+    const open = candidates.filter((line) => line.open);
+    if (open.length === 1) return { pick: open[0], pool: open };
+  }
+  const bestRank = Math.min(...matched.map((match) => match.rank));
+  const best = matched.filter((match) => match.rank === bestRank);
+  if (best.length === 1) return { pick: best[0].line, pool: [best[0].line] };
+
+  const pool = matched.length > 0 ? matched.map((match) => match.line) : candidates;
+  const open = pool.filter((line) => line.open);
+  return { pick: open.length === 1 ? open[0] : null, pool };
+}
+
+/** resolveIdLine's choice, as findTaskLineById, findTaskLineByLoggedName and linkedLineIndex report it. */
+function pickIdLine(
+  candidates: IdLine[],
+  keyText: string | undefined,
+  form?: IdKeyForm
+): TaskLineLookup {
+  if (candidates.length === 0) return { kind: "missing" };
+  const { pick } = resolveIdLine(candidates, keyText, form);
+  return pick ? { kind: "found", index: pick.index, text: pick.text } : { kind: "ambiguous" };
+}
+
+/**
+ * The task line (open or done) carrying this 🆔 — see resolveIdLine.
+ * `followsOpenCopy` false reads `keyText` as a name the timer no longer
+ * holds (PAST_LINE_TEXT_FORM): a ticked copy it names keeps it.
+ */
+export function findTaskLineById(
+  lines: readonly string[],
+  taskId: string,
+  keyText?: string,
+  followsOpenCopy = true
+): TaskLineLookup {
+  if (!taskId) return { kind: "missing" };
+  const form = followsOpenCopy ? LINE_TEXT_FORM : PAST_LINE_TEXT_FORM;
+  return pickIdLine(linesCarryingId(lines, taskId, false), keyText, form);
+}
+
+/**
+ * The task line carrying this 🆔 that a past log line's name names — as
+ * findTaskLineById, but `loggedName` is the name the log was written with,
+ * and each copy is compared as the name a session of it is logged by
+ * (LOGGED_NAME_FORM). The rename walk and Refresh ask this: a name that names
+ * a copy is that copy's, and one that names none is the one open copy's.
+ */
+export function findTaskLineByLoggedName(
+  lines: readonly string[],
+  taskId: string,
+  loggedName: string
+): TaskLineLookup {
+  if (!taskId) return { kind: "missing" };
+  return pickIdLine(linesCarryingId(lines, taskId, false), loggedName, LOGGED_NAME_FORM);
+}
+
+/**
+ * Is the task this 🆔 names done, as the 🍅 counter finds it (resolveIdLine)?
+ * The line it takes is ticked — or, when it cannot tell which copy is meant,
+ * every copy it weighed is. Null when no task line carries the 🆔. The
+ * completion unlink asks this, so a task is unlinked exactly when the line
+ * the counter counts is done: the linked copy ticked while exactly one copy
+ * is still open is a task copied forward, and the timer stays with the open
+ * copy (2026-10-04); with no copy open, or two, the ticked copy the key names
+ * is the task, finished.
+ */
+export function idTaskDone(
+  lines: readonly string[],
+  taskId: string,
+  keyText: string
+): boolean | null {
+  const candidates = linesCarryingId(lines, taskId, false);
+  if (candidates.length === 0) return null;
+  const { pick, pool } = resolveIdLine(candidates, keyText);
+  return pick ? !pick.open : pool.every((line) => !line.open);
+}
+
+/**
+ * The 🆔s on more than one task line of a note that an open line does not
+ * tell apart — none of them open, or two or more — each once (F2). Such a
+ * task's sessions are never renamed. With exactly one open copy the open one
+ * is the task (resolveIdLine), and a rename of it is followed.
+ */
+export function duplicateTaskIds(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const ids = new Set<string>();
+  for (const line of lines) {
+    const task = TASK_LINE_REGEX.exec(line);
+    const id = task ? taskIdOf(task[2]) : undefined;
+    if (id !== undefined) ids.add(id);
+  }
+  return [...ids].filter((id) => {
+    const copies = linesCarryingId(lines, id, false);
+    return copies.length > 1 && resolveIdLine(copies, undefined).pick === null;
+  });
+}
+
+/**
+ * The task line a 🆔 names in a note (findTaskLineById): its text after the
+ * checkbox, the whole line, and the other task lines carrying the 🆔, whole —
+ * what a rename of it hands on, so a past line under a copy's name stays that
+ * copy's (renameLogContent).
+ */
+export interface IdTaskLine {
+  text: string;
+  line: string;
+  copies: string[];
+}
+
+/**
+ * The task line carrying this 🆔, or null — also when several lines carry it
+ * and neither `keyText` nor a single open line tells which is meant. Reads
+ * only, so it splits CRLF too (F15): a note saved by a Windows editor kept a
+ * "\r" on every line, and the $-anchored regex then matched none.
+ */
+export function findIdTaskLineInContent(
+  content: string,
+  taskId: string,
+  keyText?: string,
+  followsOpenCopy = true
+): IdTaskLine | null {
+  const lines = content.split(/\r?\n/);
+  const found = findTaskLineById(lines, taskId, keyText, followsOpenCopy);
+  if (found.kind !== "found") return null;
+  const copies = linesCarryingId(lines, taskId, false)
+    .filter((copy) => copy.index !== found.index)
+    .map((copy) => lines[copy.index]);
+  return { text: found.text, line: lines[found.index], copies };
+}
+
+/** findIdTaskLineInContent on a note read from the vault; null when there is none. */
+export async function findIdTaskLine(
   app: App,
   filePath: string,
-  taskId: string
-): Promise<string | null> {
+  taskId: string,
+  keyText?: string,
+  followsOpenCopy = true
+): Promise<IdTaskLine | null> {
   if (!filePath || !taskId) return null;
 
   const file = app.vault.getAbstractFileByPath(filePath);
   if (!(file instanceof TFile)) return null;
 
   const content = await app.vault.read(file);
-  return findTaskTextByIdInContent(content, taskId);
+  return findIdTaskLineInContent(content, taskId, keyText, followsOpenCopy);
+}
+
+/** The text (after the checkbox) of the task line a 🆔 names — see findIdTaskLineInContent. */
+export function findTaskTextByIdInContent(
+  content: string,
+  taskId: string,
+  keyText?: string
+): string | null {
+  return findIdTaskLineInContent(content, taskId, keyText)?.text ?? null;
+}
+
+export async function findTaskTextById(
+  app: App,
+  filePath: string,
+  taskId: string,
+  keyText?: string,
+  followsOpenCopy = true
+): Promise<string | null> {
+  return (await findIdTaskLine(app, filePath, taskId, keyText, followsOpenCopy))?.text ?? null;
+}
+
+/**
+ * Index of a linked task's line in a note's lines, or -1.
+ *
+ * By 🆔 when the task has one — and when several lines carry it, by its line
+ * text as below, or the one open copy when that text names no open copy
+ * (resolveIdLine), -1 when neither can tell. Without one, by its
+ * line text (TimerEngine's `currentTaskLineText`): first by taskMatchKey, the
+ * text exactly as the timer last knew it, then by taskLineKey, the same
+ * without the counter's markers, for when that text is older or newer than the
+ * line (a list opened before a count, a count removed, a pick while a session
+ * was being logged). Both read the line as the Tasks plugin does, so a line it
+ * rewrote still matches.
+ *
+ * An OPEN line wins over a done one on either key: a recurring task leaves
+ * done copies behind with the same text, and with the Tasks setting "next
+ * recurrence appears on the line below" they sit above the open one — and
+ * once the timer's text is a count behind (a count from another device, a
+ * list opened before one), an old done copy can match it exactly while the
+ * task itself only matches without the count. A done line is the answer only
+ * when no open line matches, i.e. the task was ticked during the session,
+ * which still earns its 🍅 (handleFinished counts before it unlinks).
+ */
+export function linkedLineIndex(
+  lines: readonly string[],
+  taskId: string | undefined,
+  lineText: string
+): number {
+  if (taskId) {
+    const found = pickIdLine(linesCarryingId(lines, taskId, true), lineText);
+    return found.kind === "found" ? found.index : -1;
+  }
+
+  const exact = taskMatchKey(lineText);
+  const loose = taskLineKey(lineText);
+  let best = -1;
+  let bestRank = Infinity;
+  for (let i = 0; i < lines.length && bestRank > 0; i++) {
+    const taskMatch = lines[i].match(TASK_LINE_REGEX);
+    if (!taskMatch) continue;
+    const tier =
+      taskMatchKey(taskMatch[2]) === exact ? 0 : taskLineKey(taskMatch[2]) === loose ? 1 : -1;
+    if (tier === -1) continue;
+    const rank = (taskMatch[1] === " " ? 0 : 2) + tier;
+    if (rank < bestRank) {
+      best = i;
+      bestRank = rank;
+    }
+  }
+  return best;
+}
+
+/**
+ * Where `path` is once `oldPath` — the note itself, or a folder above it —
+ * was renamed or moved to `newPath`; null when the move did not touch it.
+ */
+export function pathAfterMove(
+  path: string | undefined,
+  oldPath: string,
+  newPath: string
+): string | null {
+  if (path === undefined) return null;
+  if (path === oldPath) return newPath;
+  if (path.startsWith(`${oldPath}/`)) return newPath + path.slice(oldPath.length);
+  return null;
+}
+
+/** Is `path` the deleted item `gone`, or inside it? */
+export function isPathGone(path: string | undefined, gone: string): boolean {
+  return path !== undefined && (path === gone || path.startsWith(`${gone}/`));
+}
+
+// A tag in a name, by the Tasks plugin's own pattern (MARKER_TAG), at the
+// start or after a space — so `C#` is no tag.
+const NAME_TAG_REGEX = new RegExp(`(^|\\s)(${MARKER_TAG})`, "gu");
+
+/** The #tags in a name, in order. */
+export function nameTags(name: string): string[] {
+  return [...name.matchAll(NAME_TAG_REGEX)].map((match) => match[2]);
+}
+
+/** A name with its #tags taken out, spacing collapsed. */
+export function nameWithoutTags(name: string): string {
+  return name
+    .replace(NAME_TAG_REGEX, (_tag, before: string) => before)
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+/**
+ * What two names of one task are compared on before a past log line is
+ * renamed: the words alone — no #tags, no counter count, no Tasks field,
+ * spacing collapsed. Equal keys are not a rename of history (F34, F54, F63): a
+ * retag, a count, a date or dependency added, a double space Tasks left where
+ * it moved a field.
+ */
+export function loggedNameKey(name: string): string {
+  return taskMatchKey(removeAnyPomodoroMarker(nameWithoutTags(name)));
 }
 
 /** A task line's name: what the picker links it by, and what is logged for it. */
@@ -846,15 +1228,22 @@ export function taskLineName(text: string): string {
  * test reads text after the fields as typed — so each one is tried, and all
  * of them as one run (the counter folds a line's counter markers into one),
  * each in this version's place and in 0.5.1–0.6.8's; one that puts the line
- * back exactly is a count. Spacing is ignored only when a count
- * is involved, since putting one back respaces the line; with none on either
- * side, any change is a rename, as it always was.
+ * back exactly is a count.
+ *
+ * Nor is it a rename when only Tasks fields or spacing changed (0.6.9, F34,
+ * F63): names are compared on taskMatchKey, which leaves out the fields the
+ * name still carries (⌛ 📆 🗓 ❌ ⛔ 🏁 — a reschedule or a dependency added in
+ * Edit Task) and collapses spacing (the double space a field leaves where
+ * Tasks moves a tag in front of it). Each of those rewrote the task's whole
+ * history. `previous` is kept as it is, so the logged name keeps its format.
  */
 export function taskNameAfterEdit(previous: string, text: string): string {
   const name = taskLineName(text);
+  if (name === previous) return name;
+  if (sameName(name, previous)) return previous;
   const uncounted = removeAnyPomodoroMarker(text);
   const counts = pomodoroMarkers(previous).map((match) => `🍅 ${parseInt(match[1], 10)}`);
-  if (name === previous || (uncounted === text && counts.length === 0)) return name;
+  if (uncounted === text && counts.length === 0) return name;
 
   // Each of previous's `🍅 N`, and all of them together — the counter folds a
   // line's counter markers into one, so two of them can become one count —
@@ -868,11 +1257,12 @@ export function taskNameAfterEdit(previous: string, text: string): string {
       placeMarkerText(uncounted, run, LEGACY_FIELD_EMOJI_REGEX),
     ]),
   ];
-  return before.some((line) => sameWords(taskLineName(line), previous)) ? previous : name;
+  return before.some((line) => sameName(taskLineName(line), previous)) ? previous : name;
 }
 
-function sameWords(a: string, b: string): boolean {
-  return a.replace(/\s+/g, " ").trim() === b.replace(/\s+/g, " ").trim();
+/** Two names that differ only by Tasks fields or spacing. */
+function sameName(a: string, b: string): boolean {
+  return taskMatchKey(a) === taskMatchKey(b);
 }
 
 export async function loadTasks(app: App, options: TaskLoadOptions): Promise<TaskItem[]> {

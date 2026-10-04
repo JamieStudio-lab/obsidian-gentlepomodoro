@@ -783,7 +783,24 @@ export class GentlePomoView extends ItemView {
     // even idle) and again on every timer tick (in timerListener below). Driving it
     // from the view's own subscription rather than the status-bar update path is what
     // makes it appear on mobile, where the status bar (and its update loop) is absent.
-    this.goalProgressEl = container.createDiv("gp-goal-progress");
+    //
+    // It also opens today's log (0.6.9, F56): the total is counted from that
+    // file, so that is where a tap on it should lead. A button in all but
+    // element, like the station rows — a <button> would take Obsidian's
+    // button chrome — so it carries the role, the tab stop and Enter/Space.
+    this.goalProgressEl = container.createDiv({
+      cls: "gp-goal-progress",
+      attr: { role: "button", tabindex: "0", title: "Open today's log" },
+    });
+    this.registerDomEvent(this.goalProgressEl, "click", () => {
+      void this.plugin.openTodayLog();
+    });
+    this.registerDomEvent(this.goalProgressEl, "keydown", (evt: KeyboardEvent) => {
+      if (evt.key !== "Enter" && evt.key !== " ") return;
+      // Space would scroll the panel.
+      evt.preventDefault();
+      void this.plugin.openTodayLog();
+    });
     this.plugin.refreshViewGoalProgress(this);
 
     // (Control-button glyph sizing — including the iPad min-width floor — lives in
@@ -838,7 +855,7 @@ export class GentlePomoView extends ItemView {
       // The engine's name keeps the task's #tags, because it is also the key
       // every task comparison uses and the name the log records — so the button
       // shows the display form the picker's rows show, never the raw name.
-      const linked = state.taskName !== NO_TASK_LABEL;
+      const linked = state.taskPath !== undefined;
       const taskText = linked ? linkedTaskDisplayName(state.taskName) : "Select a task...";
       const fullText = linked ? taskText : "";
       if (taskText !== this.lastTaskBtnText || fullText !== this.taskBtnFullText) {
@@ -1554,14 +1571,13 @@ export class GentlePomoView extends ItemView {
     // the line, and the name it was linked by stops matching it after the first
     // count.
     const linkedPath = this.timer.currentTaskPath;
-    const pin =
-      this.timer.currentTaskName !== NO_TASK_LABEL && linkedPath
-        ? {
-            path: linkedPath,
-            lineText: this.timer.currentTaskLineText,
-            taskId: this.timer.currentTaskId,
-          }
-        : null;
+    const pin = linkedPath
+      ? {
+          path: linkedPath,
+          lineText: this.timer.currentTaskLineText,
+          taskId: this.timer.currentTaskId,
+        }
+      : null;
 
     const tasks = await fetchTasks(this.plugin.app, {
       scope,

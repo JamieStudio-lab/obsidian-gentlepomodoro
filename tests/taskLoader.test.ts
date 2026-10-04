@@ -210,9 +210,36 @@ describe("taskNameAfterEdit", () => {
     expect(taskNameAfterEdit("Write  docs", "Write docs 🍅 1 🆔 x")).toBe("Write  docs");
   });
 
-  it("leaves a change with no count on either side as it always was", () => {
-    // Only the count is new here: with none involved, any change is a rename.
-    expect(taskNameAfterEdit("Write  docs", "Write docs 🆔 x")).toBe("Write docs");
+  it("reads alike when only the spacing differs and no count is involved (F63)", () => {
+    // Until 0.6.9 any change with no count on either side was a rename, so a
+    // double space a moved field left behind rewrote the task's history.
+    expect(taskNameAfterEdit("Write  docs", "Write docs 🆔 x")).toBe("Write  docs");
+    // Tasks moving a tag in front of the fields as it ticks the line.
+    const before = normalizeTaskText("Write draft ⏳ 2026-10-01 #task/research/x");
+    expect(before).toBe("Write draft  #task/research/x");
+    expect(
+      taskNameAfterEdit(before, "Write draft #task/research/x ⏳ 2026-10-01 ✅ 2026-10-02 🆔 x")
+    ).toBe(before);
+  });
+
+  it.each([
+    ["a dependency added", "Write docs ⛔ xyz789 🆔 abc"],
+    ["an on-completion action added", "Write docs 🏁 delete 🆔 abc"],
+    ["an ⌛ reschedule", "Write docs ⌛ 2026-10-05 🆔 abc"],
+    ["a 📆 due date", "Write docs 📆 2026-10-03 🆔 abc"],
+    ["a 🗓 due date", "Write docs 🗓️ 2026-10-03 🆔 abc"],
+    ["a cancelled date", "Write docs ❌ 2026-10-03 🆔 abc"],
+  ])("keeps the name when only a Tasks field changed — %s (F34)", (_label, text) => {
+    expect(taskNameAfterEdit("Write docs", text)).toBe("Write docs");
+    // The name keeps its own format: an old field stays as it was logged.
+    expect(taskNameAfterEdit("Write docs ⌛ 2026-10-01", text)).toBe("Write docs ⌛ 2026-10-01");
+  });
+
+  it("still renames on words, and on a tag (future sessions log the new one)", () => {
+    expect(taskNameAfterEdit("Write docs", "Write the docs ⛔ xyz789 🆔 abc")).toBe(
+      "Write the docs ⛔ xyz789"
+    );
+    expect(taskNameAfterEdit("Write docs #a", "Write docs #b 🆔 abc")).toBe("Write docs #b");
   });
 
   it("is the line's own name when nothing changed", () => {

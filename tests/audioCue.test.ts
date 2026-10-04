@@ -115,7 +115,16 @@ beforeAll(() => {
   const g = globalThis as unknown as Record<string, unknown>;
   g.window = globalThis;
   if (typeof g.moment === "undefined") {
-    g.moment = () => ({ format: () => "2025-05-18" });
+    g.moment = () => {
+      const fixed = {
+        format: () => "2025-05-18",
+        clone: () => fixed,
+        hour: () => 12,
+        locale: () => fixed,
+        subtract: () => fixed,
+      };
+      return fixed;
+    };
   }
 });
 

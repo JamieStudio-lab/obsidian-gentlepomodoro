@@ -176,6 +176,26 @@ export class SettingsStore {
   }
 
   /**
+   * One field as data.json on disk holds it now — undefined when the file is
+   * missing, damaged or has no such field. Quiet, unlike read(): this is a
+   * check made in passing (the goal notice asking whether another device has
+   * already fired it, C5), and a damaged file was reported at load.
+   */
+  async storedValue(key: string): Promise<unknown> {
+    let raw: unknown;
+    try {
+      raw = await this.io.read();
+    } catch {
+      return undefined;
+    }
+    const result = classifyPluginData(raw);
+    if (result.kind !== "ok" || !Object.prototype.hasOwnProperty.call(result.data, key)) {
+      return undefined;
+    }
+    return result.data[key];
+  }
+
+  /**
    * Persist, and report a failure. Returns whether the write landed.
    *
    * **`io.write` must not be `Plugin.saveData()`.** That method is
