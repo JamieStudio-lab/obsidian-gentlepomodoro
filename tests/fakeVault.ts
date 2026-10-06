@@ -15,6 +15,10 @@ import { TAbstractFile, TFile, TFolder, Vault } from "obsidian";
  * object's prototype instead of adding a key, so the lookup cannot see it
  * while the tree (and so `getFiles`) still holds it.
  *
+ * A file's `stat.mtime` is 0 until a write changes it, then the time of that
+ * write (Date.now(), fake timers included): the files a test starts with were
+ * written before anything it does.
+ *
  * `getFiles()` is `Vault.recurseChildren` from the root, which is exactly what
  * Obsidian's is (read out of app.js, 1.7.7 and 1.13.7), so the order a test
  * sees is the order the plugin really gets — including the one place it shows,
@@ -105,10 +109,15 @@ export function fakeVault(files: Record<string, string>, extraFolders: string[] 
     modify: (file, data) => {
       contents[file.path] = data;
       writes.push(file.path);
+      file.stat.mtime = Date.now();
       return Promise.resolve();
     },
+    // Obsidian's process writes only when the text changes (the adapter's
+    // process, app.js 1.13.7), and so moves the modification time only then.
     process: (file, fn) => {
-      contents[file.path] = fn(contents[file.path]);
+      const data = fn(contents[file.path]);
+      if (data !== contents[file.path]) file.stat.mtime = Date.now();
+      contents[file.path] = data;
       writes.push(file.path);
       return Promise.resolve(contents[file.path]);
     },

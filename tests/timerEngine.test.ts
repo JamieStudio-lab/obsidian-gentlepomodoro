@@ -102,7 +102,6 @@ function makePluginStub(opts: PluginStubOptions = {}) {
         updateTask: record("updateTask"),
         scheduleTaskRename: record("scheduleTaskRename"),
         taskNoteMoved: record("taskNoteMoved"),
-        taskNoteDeleted: record("taskNoteDeleted"),
         plannedLengthChanged: record("plannedLengthChanged"),
         // No session for the long-session question to read: it never asks.
         openSessionActiveSeconds: () => null,
@@ -1926,15 +1925,32 @@ describe("TimerEngine — which task a 🆔 or a note names (0.6.9)", () => {
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps the name and drops the dead link when the note is deleted", async () => {
+    // A deleted note's session keeps its link as it was — what 0.6.8 wrote,
+    // and what Obsidian leaves in the log's older lines of that task. Reviews
+    // count only linked sessions and take the area from the link's alias: the
+    // bare name 0.6.9 first wrote dropped that session to "No Task".
+    /** The note goes from the vault, and Obsidian's delete event reaches the timer. */
+    const deleteFromVault = (
+      vault: ReturnType<typeof harness>["vault"],
+      timer: TimerEngine,
+      deleted: string,
+      notes: string[] = [PATH]
+    ) => {
+      const item = vault.getAbstractFileByPath(deleted);
+      for (const path of notes) vault.remove(vault.getAbstractFileByPath(path) as TFile);
+      timer.onFileDelete(item as NonNullable<typeof item>);
+    };
+    const taskField = (log: string) => log.split("\n").filter((line) => line.includes("[Task:: "));
+
+    it("keeps the open session's link as it was when the note is deleted, and writes nothing into it", async () => {
       const { vault, timer, settle } = harness({ [PATH]: "- [ ] Write docs 🆔 abc123\n" });
       timer.setTask("Write docs", PATH, "abc123", "Write docs 🆔 abc123");
       timer.start();
-      const note = vault.getAbstractFileByPath(PATH) as TFile;
 
       timer.onFileDelete(Object.assign(new TFile(), { path: "Projects/Doc" }));
       expect(timer.currentTaskPath).toBe(PATH);
-      timer.onFileDelete(note);
+      deleteFromVault(vault, timer, PATH);
+      // The timer lets go of the note, and holds the task by name (F28).
       expect(timer.currentTaskPath).toBeUndefined();
       expect(timer.getState().taskPath).toBeUndefined();
       expect(timer.currentTaskName).toBe("Write docs");
@@ -1942,7 +1958,71 @@ describe("TimerEngine — which task a 🆔 or a note names (0.6.9)", () => {
       await timer.finish();
       await settle();
 
-      expect(tasks(vault.contents[LOG])).toEqual([{ task: "Write docs", id: "abc123" }]);
+      expect(tasks(vault.contents[LOG])).toEqual([
+        { task: `[[${PATH}|Write docs]]`, id: "abc123" },
+      ]);
+      expect(taskField(vault.contents[LOG])[0]).toContain(`[Task:: [[${PATH}|Write docs]]]`);
+      // No 🍅 and no unlink check reached for the missing note.
+      expect(PATH in vault.contents).toBe(false);
+      expect(vault.writes).not.toContain(PATH);
+      expect(timer.currentTaskName).toBe(NO_TASK_LABEL);
+      expect(timer.holdsTask()).toBe(false);
+    });
+
+    it.each([
+      ["after the switch closed its segment", true],
+      ["before the switch, while its segment was still going", false],
+    ])(
+      "with Split at the switch, keeps a deleted note's link in the segment it closed — %s",
+      async (_label, afterSwitch) => {
+        const OTHER = "Projects/Review.md";
+        const { vault, timer, stub, settle } = harness({
+          [PATH]: "- [ ] Write docs 🆔 abc123\n",
+          [OTHER]: "- [ ] Review 🆔 rev456\n",
+        });
+        stub.settings.taskSwitchLogging = "split";
+        timer.setTask("Write docs", PATH, "abc123", "Write docs 🆔 abc123");
+        timer.start();
+        vi.setSystemTime(Date.now() + 10 * ONE_MINUTE_MS);
+        if (!afterSwitch) deleteFromVault(vault, timer, PATH);
+        timer.setTask("Review", OTHER, "rev456", "Review 🆔 rev456");
+        if (afterSwitch) deleteFromVault(vault, timer, PATH);
+        vi.setSystemTime(Date.now() + 15 * ONE_MINUTE_MS);
+        await timer.finish();
+        await settle();
+
+        expect(tasks(vault.contents[LOG])).toEqual([
+          { task: `[[${PATH}|Write docs]]`, id: "abc123" },
+          { task: `[[${OTHER}|Review]]`, id: "rev456" },
+        ]);
+        expect(taskField(vault.contents[LOG])[0]).toContain(`[Task:: [[${PATH}|Write docs]]]`);
+        expect(PATH in vault.contents).toBe(false);
+        // The task picked after it stays linked, and got the 🍅.
+        expect(timer.currentTaskPath).toBe(OTHER);
+        expect(vault.contents[OTHER]).toBe("- [ ] Review 🍅 1 🆔 rev456\n");
+      }
+    );
+
+    it("keeps the link when a folder above the note is deleted, and lets go of the task when the session ends", async () => {
+      const NOTE = "Projects/Area/Docs.md";
+      const { vault, timer, settle } = harness({ [NOTE]: "- [ ] Write docs 🆔 abc123\n" });
+      timer.setTask("Write docs", NOTE, "abc123", "Write docs 🆔 abc123");
+      timer.start();
+
+      deleteFromVault(vault, timer, "Projects", [NOTE]);
+      expect(timer.currentTaskPath).toBeUndefined();
+      expect(timer.holdsTask()).toBe(true);
+      vi.setSystemTime(Date.now() + 25 * ONE_MINUTE_MS);
+      await timer.finish();
+      await settle();
+
+      expect(tasks(vault.contents[LOG])).toEqual([
+        { task: `[[${NOTE}|Write docs]]`, id: "abc123" },
+      ]);
+      expect(taskField(vault.contents[LOG])[0]).toContain(`[Task:: [[${NOTE}|Write docs]]]`);
+      expect(NOTE in vault.contents).toBe(false);
+      expect(timer.currentTaskName).toBe(NO_TASK_LABEL);
+      expect(timer.holdsTask()).toBe(false);
     });
 
     it("a task picked after the note was deleted stays linked when that session ends (F28)", async () => {
@@ -3612,8 +3692,12 @@ describe("TimerEngine + LogManager — the session lifecycle", () => {
   // session — logged by name and ID — while the panel and the status bar
   // showed no task, and with the picker hidden nothing could clear it.
   describe("a task whose note is deleted (F28)", () => {
-    const deleteNote = (t: ReturnType<typeof lifecycle>) =>
-      t.timer.onFileDelete(t.vault.getAbstractFileByPath(PATH) as TFile);
+    /** The note goes from the vault, and Obsidian's delete event reaches the timer. */
+    const deleteNote = (t: ReturnType<typeof lifecycle>) => {
+      const note = t.vault.getAbstractFileByPath(PATH) as TFile;
+      t.vault.remove(note);
+      t.timer.onFileDelete(note);
+    };
 
     it("with no session under way, is unlinked at once", async () => {
       const t = lifecycle();
@@ -3644,7 +3728,7 @@ describe("TimerEngine + LogManager — the session lifecycle", () => {
       ],
       ["Reset", 0, (t: ReturnType<typeof lifecycle>) => t.timer.reset()],
     ])(
-      "mid-session: that session keeps the name, and the task goes when it ends — %s",
+      "mid-session: that session keeps its link as it was, and the task goes when it ends — %s",
       async (_label, logged, end) => {
         const t = lifecycle();
         t.timer.setTask("Write docs", PATH, "abc123");
@@ -3661,9 +3745,11 @@ describe("TimerEngine + LogManager — the session lifecycle", () => {
         expect(t.timer.holdsTask()).toBe(false);
         expect(t.lines()).toHaveLength(logged);
         if (logged === 1) {
-          expect(t.field(t.lines()[0], "Task")).toBe("Write docs");
+          expect(t.field(t.lines()[0], "Task")).toBe(`[[${PATH}|Write docs]]`);
           expect(t.field(t.lines()[0], "ID")).toBe("abc123");
         }
+        // Nothing wrote into the note that is gone (the 🍅 counter is on).
+        expect(PATH in t.vault.contents).toBe(false);
       }
     );
 

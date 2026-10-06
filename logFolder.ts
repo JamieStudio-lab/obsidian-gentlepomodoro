@@ -116,6 +116,19 @@ export function dailyLogPath(folder: string, date: string): string {
   return normalizePath(`${normalizePath(folder)}/${dailyLogFileName(date)}`);
 }
 
+/**
+ * The daily log files in `folder`, as the log's commands list them: one
+ * folder walked (filesInFolder), and only files named like a daily log — a
+ * note the user keeps there, an index or a dashboard quoting a line, is not
+ * one. Check log, Convert and the notice after upgrading (logFormatNotice.ts)
+ * all read this list, so the notice speaks of exactly the files Convert would.
+ */
+export function dailyLogFiles(app: App, folder: string): TFile[] {
+  return filesInFolder(app, folder).filter(
+    (f) => f.extension === "md" && f.path.endsWith(LOG_FILE_SUFFIX)
+  );
+}
+
 /** A stored folder that means the vault's top level (F29). */
 const isTopLevel = (folder: string) => normalizePath(folder.trim()) === "/";
 

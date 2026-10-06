@@ -7,7 +7,9 @@
  * Every reader of a log file skips these rows (frontmatterRowCount): a
  * property is not a session line, and a value that looks like one — a YAML
  * list holding `- 🍅 Focus [Total:: …]` — must not be counted, converted,
- * renamed or moved. Every writer keeps them where they are, byte for byte.
+ * renamed or moved. Every writer keeps them where they are, byte for byte —
+ * the goal's own row apart, which the timer's goal write (recordLogGoal) adds,
+ * changes or takes out.
  */
 
 /** The property that holds the day's goal, in minutes. */
@@ -137,12 +139,12 @@ export function readLogGoal(content: string): number | null {
 
 /**
  * `content` recording `minutes` as its day's goal. Unchanged when it already
- * does, when `minutes` is no goal (0 — with the goal off nothing is written,
- * and a goal already there stays), when the file starts with a byte order
- * mark — a file another program wrote, as Obsidian drops the mark from every
- * file it saves; its head is left as that program wrote it — and when a file
- * with no properties starts with a row that starts with `---`: a block put in
- * front of that would end at it.
+ * does, when `minutes` is no goal (0 — a goal already there stays: taking it
+ * out is withoutLogGoal's, which recordLogGoal picks while the goal is off),
+ * when the file starts with a byte order mark — a file another program wrote,
+ * as Obsidian drops the mark from every file it saves; its head is left as
+ * that program wrote it — and when a file with no properties starts with a row
+ * that starts with `---`: a block put in front of that would end at it.
  *
  * Only the goal's own row is written: rewritten in place when the file has
  * one — the rows a value runs on over with it (goalRow) — added as the last
@@ -150,9 +152,15 @@ export function readLogGoal(content: string): number | null {
  * properties in front of everything, in the file's own line ending. Every
  * other byte stays, the body untouched.
  *
- * LogManager runs this inside the Vault.process callback that appends a
- * session to TODAY's file, and nowhere else: never on a past day's file,
- * whose goal is the one that day had.
+ * LogManager runs this, through recordLogGoal (LogManager.goalFor): on
+ * TODAY's file in the Vault.process callback that appends a session to it;
+ * when the goal setting changes, on the file of the day it changed on — the
+ * goal that day ended with, even when the write lands after it
+ * (goalChanged), unless that file was written after the change, by another
+ * device that changed the goal later that day, say; and on a past day's file
+ * the timer creates — its only session ran past midnight — which recorded no
+ * goal while it was today. Never otherwise on a past day's file, whose goal
+ * is the one that day had.
  */
 export function withLogGoal(content: string, minutes: number): string {
   if (resolveGoalMinutes(minutes) === 0 || content.startsWith("﻿")) return content;
@@ -171,4 +179,67 @@ export function withLogGoal(content: string, minutes: number): string {
   }
   if (row.minutes === minutes) return content;
   return content.slice(0, row.start) + value + content.slice(row.end);
+}
+
+/**
+ * `content` recording no goal for its day: every `goal_minutes` row of its
+ * properties taken out — each with the rows its value runs on over (goalRow)
+ * and its line break — so a reader finds none, a second copy of the key
+ * included. Every other property, comment and blank row stays, byte for byte,
+ * and so does the body.
+ *
+ * The block of properties goes too when that leaves it empty, as the timer
+ * writes one in a file that had none (withLogGoal): opened by `---` and closed
+ * by `---` alone, nothing between them now. A block that holds anything else
+ * stays, and so does one whose closing line is not `---` alone (`--- `,
+ * `----`), which the timer never writes; and so does one whose body starts
+ * with `---`, which would open properties of its own once the block in front
+ * of it was gone — withLogGoal's rule, the other way round.
+ *
+ * So the goal turned on and off again leaves a file as it was, with two
+ * exceptions. An empty block that was there before the goal went in (`---`
+ * over `---`) goes too. withLogGoal fills it exactly as it fills a file with
+ * no properties, and from the text alone no rule can give each its own back.
+ * Taking out the block the timer wrote is the one that matters: left, it
+ * would sit empty at the top of every log whose goal was turned off. The
+ * block held nothing, so nothing is lost. And a `goal_minutes` row that held
+ * no number — left empty, a word, a list — goes: it records no goal
+ * (readLogGoal), but the key is the timer's, so the goal is written in its
+ * place and the off write takes it out, as it takes out any copy of the key.
+ *
+ * Unchanged when the file has no `goal_minutes` row among its properties,
+ * and when it starts with a byte order mark: another program wrote it, and
+ * its head is left as that program wrote it (withLogGoal).
+ */
+export function withoutLogGoal(content: string): string {
+  if (content.startsWith("﻿")) return content;
+  let result = content;
+  for (;;) {
+    const frontmatter = logFrontmatter(result);
+    const row = frontmatter === null ? null : goalRow(result, frontmatter);
+    if (row === null) break;
+    // The closing `---` starts a row of its own, so a line break follows the
+    // goal's last row inside the properties.
+    const lineEnd = result.indexOf("\n", row.end);
+    result =
+      result.slice(0, row.start) + result.slice(lineEnd === -1 ? result.length : lineEnd + 1);
+  }
+  if (result === content) return content;
+  const frontmatter = logFrontmatter(result);
+  if (frontmatter === null || frontmatter.from !== frontmatter.to) return result;
+  const closing = result.slice(frontmatter.to, frontmatter.bodyStart).replace(/\r?\n$/, "");
+  const body = result.slice(frontmatter.bodyStart);
+  return closing === "---" && !body.startsWith("---") ? body : result;
+}
+
+/**
+ * `content` recording the goal setting `minutes` for its day: the goal
+ * written when it is on (withLogGoal), and taken out when it is off
+ * (withoutLogGoal) — so a day whose goal was turned off reads as one with no
+ * goal, never the number it had before. What LogManager writes to TODAY's
+ * file, to the file of a day the setting changed on, and to a past day's
+ * file it creates (withLogGoal).
+ */
+export function recordLogGoal(content: string, minutes: number): string {
+  return resolveGoalMinutes(minutes) > 0 ? withLogGoal(content, minutes) : withoutLogGoal(content);
 }

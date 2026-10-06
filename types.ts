@@ -143,6 +143,11 @@ export interface GentlePomoSettings {
   lastGoalHitDate: string | null;
   sessionsSinceLongBreak: number;
   sessionCounterDate: string | null;
+  // The one look, after upgrading to 0.6.9, for log lines in the old format,
+  // and the notice pointing to Convert when there are some
+  // (logFormatNotice.ts). true = that look is still to happen. Set once by
+  // loadSettings, true, when data.json has none: an upgrade, or an install.
+  logFormatNoticePending: boolean;
   // Remembered music positions (see musicResume), one per station URL. Keyed by
   // the `url` stamp each entry carries — the music-URL setting string it was
   // recorded under — so a position follows its link across slots and is dropped

@@ -25,6 +25,16 @@ export const SLEEP_GAP_MS = 10 * ONE_MINUTE_MS;
 // in; each save renamed the whole history, half-typed names included.
 export const TASK_RENAME_DELAY_MS = 3000;
 
+// How long after the last change of the daily goal setting today's log file
+// is given the new goal (0.6.9). Settings on Obsidian before 1.13 commit every
+// keystroke, so typing 120 sets 1, then 12, then 120: one write, of 120.
+export const LOG_GOAL_WRITE_DELAY_MS = 1500;
+
+// How long the one-time notice about old log lines stays up (0.6.9,
+// logFormatNotice.ts). Longer than Obsidian's default: it names a setting and
+// two buttons to find, and it never comes back.
+export const LOG_FORMAT_NOTICE_MS = 15_000;
+
 // How long the tapped-to-peek countdown stays revealed on touch before auto-hiding.
 export const PEEK_REVEAL_MS = 2000;
 
@@ -215,6 +225,11 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastGoalHitDate: null,
   sessionsSinceLongBreak: 0,
   sessionCounterDate: null,
+  // Never looked at as it stands: loadSettings derives it once when data.json
+  // has none (deriveLogFormatNotice) — true, an upgrade, a damaged data.json,
+  // a first install or a reinstall over old logs alike. false here so that
+  // nothing that falls back to this object ever starts a scan.
+  logFormatNoticePending: false,
   // Frozen: the shallow Object.assign in loadSettings copies this REFERENCE, so
   // an in-place push here would corrupt the default for the life of the process
   // (and leak between vitest cases that spread DEFAULT_SETTINGS). Freezing turns

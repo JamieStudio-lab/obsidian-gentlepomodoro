@@ -1448,6 +1448,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         // The ring, its tooltip and the panel's goal line all read this, and
         // the timer emits nothing while idle — which is when this tab is open.
         this.plugin.refreshGoalDisplays();
+        // Today's log file records the goal as it is set now (0.6.9), so the
+        // day keeps this one once it is past; written once the typing stops,
+        // into the file of the day it changed on (kept until then).
+        this.plugin.logManager.goalChanged();
         return;
       }
       case "goalNoticeEnabled":

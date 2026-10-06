@@ -225,8 +225,9 @@ export class TimerEngine {
   public currentTaskLineText: string = NO_TASK_LABEL;
 
   // The linked task's note was deleted while a session was under way: the
-  // task is held by name for that session and unlinked when it ends (F28).
-  // Any new link — a pick, or the unlink itself — clears it.
+  // timer holds the task by name for that session — its line keeps the link
+  // as it was (onFileDelete) — and unlinks it when it ends (F28). Any new
+  // link — a pick, or the unlink itself — clears it.
   private unlinkAtSessionEnd = false;
 
   constructor(plugin: GentlePomoPlugin) {
@@ -388,16 +389,21 @@ export class TimerEngine {
 
   /**
    * A note was deleted — the linked task's, or a folder above it. A session
-   * under way keeps the task's name and loses its note, so its line logs the
-   * name with no dead link (C1); the task is unlinked once that session ends
-   * (checkTaskCompletionAndUnlink, which every end runs). With none under
-   * way — or one already ending, whose line has its task — it goes at once.
-   * Kept on, it was given every later session while the panel and the status
-   * bar showed no task, and with the picker hidden nothing could clear it
-   * (F28).
+   * under way keeps its task: the log's open session, the segments a split
+   * closed and the sessions an earlier run left are not told, so their lines
+   * keep the link as it was, to the note now gone — what 0.6.8 wrote, and
+   * what Obsidian leaves in the log's older lines of that task. Reviews count
+   * only linked sessions and take the area from the link's alias; the bare
+   * name 0.6.9 first wrote dropped that session to "No Task". The timer lets
+   * go of the note itself — the 🍅 counter and the completion check have
+   * nothing to read or write — holds the task by name, and unlinks it once
+   * that session ends (checkTaskCompletionAndUnlink, which every end runs).
+   * With none under way — or one already ending, whose line has its task — it
+   * goes at once. Kept on, it was given every later session while the panel
+   * and the status bar showed no task, and with the picker hidden nothing
+   * could clear it (F28).
    */
   onFileDelete(file: TAbstractFile) {
-    this.plugin.logManager.taskNoteDeleted(file.path);
     if (!isPathGone(this.currentTaskPath, file.path)) return;
     if (!this.sessionInProgress() || this.ending) {
       this.setTask(NO_TASK_LABEL);

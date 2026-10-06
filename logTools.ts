@@ -39,8 +39,8 @@ import {
   type LoggedLine,
   type SessionForm,
 } from "./logEditor";
-import { dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
-import { LOG_FILE_SUFFIX, formatLogLine, logicalDate, type SessionLog } from "./logLine";
+import { dailyLogFiles, dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
+import { formatLogLine, logicalDate, type SessionLog } from "./logLine";
 import { ensureLogFolder, type DuplicateTaskId } from "./logManager";
 import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
@@ -51,7 +51,7 @@ import {
   type SessionFormOptions,
   type SessionTaskChoice,
 } from "./sessionModals";
-import { filesInFolder, loadTasks } from "./taskLoader";
+import { loadTasks } from "./taskLoader";
 import { resolveTaskScope, resolveTaskSource } from "./taskScope";
 import type { GentlePomoSettings } from "./types";
 
@@ -605,9 +605,7 @@ export class LogTools {
       return null;
     }
     const app = this.host.app;
-    const files = filesInFolder(app, folder).filter(
-      (f) => f.extension === "md" && f.path.endsWith(LOG_FILE_SUFFIX)
-    );
+    const files = dailyLogFiles(app, folder);
     if (files.length === 0) {
       // The top level, or a stored capitalisation the vault does not have:
       // the timer still writes the logs, so "none found" would be wrong (F29).

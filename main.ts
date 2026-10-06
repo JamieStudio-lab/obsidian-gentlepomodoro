@@ -38,6 +38,7 @@ import { recoveryMessage, savedSessionSeconds } from "./sessionRecovery";
 import { LogManager, resolveLogLink } from "./logManager";
 import { createLogApi, type GentlePomoApi } from "./logApi";
 import { LogTools } from "./logTools";
+import { deriveLogFormatNotice, offerLogFormatNotice } from "./logFormatNotice";
 import { SettingsStore, coerceToDefaults, deriveEndChimes } from "./settingsStore";
 import { logger } from "./logger";
 import {
@@ -132,6 +133,9 @@ export default class GentlePomoPlugin extends Plugin {
   // The session questions open now: Stop's about a long focus, and the
   // startup's about an unfinished session. Closed at unload (F19).
   private readonly sessionDialogs = new Set<{ close(): void }>();
+  // Set by onunload, never cleared: Obsidian builds a new plugin to enable it
+  // again. Work this one started and still awaits stops on it (F19).
+  private unloaded = false;
   private repairInFlight = false;
   /** Station slots and their remembered positions. Constructed here rather
    *  than in onload because loadSettings() reconciles through it. */
@@ -183,8 +187,9 @@ export default class GentlePomoPlugin extends Plugin {
         await this.timer.onFileModify(file);
       })
     );
-    // The linked task's note moved, or went (C1): the link follows it, or
-    // keeps the task's name without a dead link.
+    // The linked task's note moved (C1): the link follows it. Or it went: the
+    // session under way keeps its link as it was, and the timer lets go of
+    // the task once that session ends (F28).
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         this.timer.onFileRename(file, oldPath);
@@ -419,6 +424,22 @@ export default class GentlePomoPlugin extends Plugin {
       // has a window to open in.
       void this.logManager.retryUnwrittenLines();
       void this.offerUnfinishedSessions();
+      // A goal change a quit or an update cut short (LogManager.goalChanged),
+      // into the file of the day it was made on.
+      void this.logManager.writeWaitingGoals();
+      // After upgrading to 0.6.9, once: lines in the old format left in the
+      // log, and where Convert is. Not awaited — it reads the log folder, and
+      // nothing at startup waits on it. Unloaded meanwhile, it stops: the
+      // reloaded plugin looks for itself.
+      void offerLogFormatNotice({
+        app: this.app,
+        settings: () => this.settings,
+        save: () => this.saveSettings(),
+        notice: (message, durationMs) => {
+          new Notice(message, durationMs);
+        },
+        unloaded: () => this.unloaded,
+      });
     });
   }
 
@@ -584,6 +605,8 @@ export default class GentlePomoPlugin extends Plugin {
   override onunload() {
     // Gone first: a template that runs from here on finds no API (see `api`).
     this.api = undefined;
+    // And the work still awaited stops: the look for old log lines.
+    this.unloaded = true;
     // A session question answered after unload acted from this disposed
     // plugin, beside the reloaded one that asks again: two lines for one
     // session (F19). Closed, each answers as Esc does — the Stop is cancelled,
@@ -668,6 +691,11 @@ export default class GentlePomoPlugin extends Plugin {
     // 0.6.8's time display. Read off the legacy click-to-show switch before the
     // merge, which would otherwise fill in the default and hide the question.
     const statusBarTime = deriveStatusBarTime(loaded);
+    // 0.6.9's one look for log lines in the old format (logFormatNotice.ts):
+    // pending whenever data.json has no such field — an upgrade, a damaged
+    // file, a first install or a reinstall over old logs. Read before the
+    // merge, which would fill in the default and hide that it was missing.
+    const logFormatNotice = deriveLogFormatNotice(loaded);
     this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
     if (deriveTaskSelector) {
       this.settings.showTaskSelector = this.settings.tasksPath.trim() !== "";
@@ -683,6 +711,10 @@ export default class GentlePomoPlugin extends Plugin {
     }
     if (statusBarTime !== undefined) {
       this.settings.statusBarTime = statusBarTime;
+      migrated = true;
+    }
+    if (logFormatNotice !== undefined) {
+      this.settings.logFormatNoticePending = logFormatNotice;
       migrated = true;
     }
     // Music stations. musicUrl keeps its pre-0.5.7 meaning as slot 1, so the

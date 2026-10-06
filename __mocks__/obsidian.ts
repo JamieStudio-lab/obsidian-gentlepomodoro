@@ -9,6 +9,9 @@ export class TAbstractFile {
 export class TFile extends TAbstractFile {
   extension: string = "";
   basename: string = "";
+  // Obsidian's FileStats. tests/fakeVault.ts moves mtime on each write that
+  // changes a file, as Obsidian's does; 0 is a file last written long ago.
+  stat = { ctime: 0, mtime: 0, size: 0 };
 }
 
 export class TFolder extends TAbstractFile {

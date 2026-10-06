@@ -110,6 +110,9 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
     refreshStatusBar: () => calls.push({ method: "refreshStatusBar", args: [] }),
     refreshGoalDisplays: () => calls.push({ method: "refreshGoalDisplays", args: [] }),
     logFolderChanged: () => calls.push({ method: "logFolderChanged", args: [] }),
+    logManager: {
+      goalChanged: () => calls.push({ method: "goalChanged", args: [] }),
+    },
     clearAllMusicPositions: () => calls.push({ method: "clearAllMusicPositions", args: [] }),
     previewSessionEndNotification: () =>
       calls.push({ method: "previewSessionEndNotification", args: [] }),
@@ -1946,6 +1949,25 @@ describe("the status bar group (0.6.8)", () => {
     const methods = ctx.calls.map((c) => c.method);
     expect(methods.indexOf("refreshGoalDisplays")).toBeGreaterThan(methods.indexOf("saveSettings"));
     expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
+  });
+
+  it("hands a goal change to today's log file, after saving, and nothing it refuses", async () => {
+    // Today's file records the goal as it is set now (0.6.9): without this a
+    // goal changed after the day's last session left the old number, and the
+    // day read it once it was past. The manager waits out the typing itself.
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "0");
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.filter((m) => m === "goalChanged")).toHaveLength(1);
+    expect(methods.indexOf("goalChanged")).toBeGreaterThan(methods.indexOf("saveSettings"));
+    // A value the setting refuses changes nothing, so nothing is written.
+    ctx.calls.length = 0;
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "-5");
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "soon");
+    expect(ctx.calls).toEqual([]);
+    // No other setting asks for it.
+    await ctx.tab.setControlValue("goalNoticeEnabled", false);
+    await ctx.tab.setControlValue("dayStartHour", "4");
+    expect(ctx.calls.map((c) => c.method)).not.toContain("goalChanged");
   });
 
   it("re-reads today's total from a new log folder, after saving", async () => {

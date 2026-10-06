@@ -1,7 +1,8 @@
 /**
  * What is kept on this device so a quit or a failed write does not lose a
  * session (0.6.9): the session in progress (F23), and a log line that could
- * not be written (F53).
+ * not be written (F53) — and, beside them, a change of the daily goal not yet
+ * recorded in its day's log file (PENDING_GOALS_KEY).
  *
  * Until 0.6.9 the open session lived in LogManager's memory alone. Quitting
  * Obsidian, a plugin update, disable and enable, or iOS closing a
@@ -16,7 +17,7 @@
  * asks.
  */
 import { MIN_SESSION_SECONDS } from "./constants";
-import { loggedTotalSeconds, type SessionLog } from "./logLine";
+import { LOG_FILE_SUFFIX, loggedTotalSeconds, type SessionLog } from "./logLine";
 import { activeReachedAt, pausesWithin, type ClosedSegment } from "./logSegments";
 import type { MomentLike } from "./momentTypes";
 import { describeDuration, isLongSession, type LongSessionQuestion } from "./sessionGaps";
@@ -27,6 +28,19 @@ export const OPEN_SESSION_KEY = "gentle-pomodoro-open-session";
 export const UNFINISHED_SESSIONS_KEY = "gentle-pomodoro-unfinished-sessions";
 /** Log lines that could not be written, oldest first. */
 export const UNWRITTEN_LINES_KEY = "gentle-pomodoro-unwritten-lines";
+/**
+ * Goal changes not yet written to their day's log file (LogManager.goalChanged):
+ * `{ path, minutes, at }` for each day a change was made on — the value set
+ * last on it, and when (ms). Kept so a quit within the write's delay, or a
+ * phone that suspends the app, loses none: the next start writes them.
+ */
+export const PENDING_GOALS_KEY = "gentle-pomodoro-pending-goals";
+
+/** A goal change kept for its day's log file: the minutes set, and when (ms). */
+export interface PendingGoal {
+  minutes: number;
+  at: number;
+}
 
 /** A segment a task switch closed (logSegments.ts), its end in ms. */
 export interface SavedSegment {
@@ -150,6 +164,27 @@ export function readUnwrittenLines(raw: unknown): UnwrittenLines[] {
       lines: r.lines,
       focus: r.focus === true,
     });
+  }
+  return out;
+}
+
+/**
+ * The stored goal changes, by log file path; anything unreadable is left out
+ * — a path that is no daily log's (the write must never reach another note),
+ * minutes that are no number of them (a goal, or 0 for none), or no time it
+ * was made at: without one, a later write to its file could not be told from
+ * an earlier one (LogManager.goalFor).
+ */
+export function readPendingGoals(raw: unknown): Map<string, PendingGoal> {
+  const out = new Map<string, PendingGoal>();
+  if (!Array.isArray(raw)) return out;
+  for (const item of raw as unknown[]) {
+    if (typeof item !== "object" || item === null) continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.path !== "string" || !r.path.endsWith(LOG_FILE_SUFFIX)) continue;
+    if (typeof r.minutes !== "number" || !Number.isFinite(r.minutes) || r.minutes < 0) continue;
+    if (typeof r.at !== "number" || !Number.isFinite(r.at) || r.at < 0) continue;
+    out.set(r.path, { minutes: r.minutes, at: r.at });
   }
   return out;
 }

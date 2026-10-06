@@ -74,15 +74,31 @@ the `|` between them — see the first entry under **Changed**.
   it was locked or left, however long it stayed away.
 - **Focus lines record `Overtime`**: the active time past the planned end, in
   seconds.
-- **Each day's log keeps that day's goal.** Each time the timer logs a
-  session, today's log file gets the daily goal as a property at its top,
-  `goal_minutes: 120`, so the file holds the goal as it was at the day's last
-  session: a change made after that is not recorded. An earlier day's file is
-  never changed, so a review of an old day still shows the goal it had.
-  Nothing is written while the goal is off. Properties you keep there are read
-  as Obsidian reads them, so the goal goes in among them, never as a second
-  block. The property doesn't change any line, so queries and scripts that
-  read the lines read them as before.
+- **Each day's log keeps that day's goal.** Today's log file gets the daily
+  goal as a property at its top, `goal_minutes: 120`: written when the timer
+  logs a session, and again a moment after you stop changing the setting, so
+  a goal changed after the day's last session is recorded too — in the file
+  of the day you changed it on, even when Obsidian is closed or your phone
+  locks a moment later (the change is kept on that device, and the next start
+  writes it — unless another device has written that day's file since, whose
+  later write stays). That update goes to the day's file only if it exists;
+  none is made for a goal, and a day whose file is first written after it
+  ended — its only session ran past midnight — gets the goal as it is set
+  then. With the goal off, the property is taken out of today's
+  file (and its block of properties with it, when nothing else is in it), so
+  that day reads as one with no goal, never the number it had before. An
+  earlier day's file is never otherwise changed, so a review of an old day
+  still shows the goal it had. Properties
+  you keep there are read as Obsidian reads them, so the goal goes in among
+  them, never as a second block. The property doesn't change any line, so
+  queries and scripts that read the lines read them as before.
+- **A one-time notice after you update**, only when your log still holds
+  lines in the old format: it says where **Convert old log lines** is, and
+  that **Check log** counts them first and changes nothing. The plugin looks
+  once, at the first start after updating, through the daily log files in
+  your log folder, and never again; a new install or a reinstall, which
+  keeps your logs, looks once too; with no log folder set it waits until
+  there is one, and nothing is written to the log.
 - **A read-only API for your own templates**, so a `dataviewjs` review no
   longer needs its own copy of the log's format:
   `app.plugins.plugins["gentle-pomo"]?.api`. `getDay("2026-10-04")` and
@@ -108,7 +124,8 @@ the `|` between them — see the first entry under **Changed**.
   line — and one that splits a line on `|`, or looks for `| Key::`, reads
   only the old lines. Your existing logs are not touched: the plugin reads
   both kinds, and **Convert old log lines** brings the old ones over when
-  you're ready.
+  you're ready — a notice after you update says where it is, if your log has
+  old lines.
 - **A session shorter than a minute is no longer a session.** Stop, Skip or
   the time running out after less than a minute of active time — almost always
   a mis-click — writes no line, adds no 🍅 and doesn't move the long-break
@@ -255,10 +272,12 @@ the `|` between them — see the first entry under **Changed**.
 - **A task renamed to a name with `$` in it** (`$1`, `$&`) is written into the
   log as typed.
 - **A task whose note you move or rename stays linked**, and its sessions link
-  to the note where it is now; deleting the note keeps the task's name in the
-  log without a dead link for the session under way, and the timer lets go of
-  the task when that session ends (at once if none is under way). Past lines
-  are renamed even when Obsidian has shortened their link after a move.
+  to the note where it is now; deleting the note leaves the session under way
+  linked as it was, to the note now gone — as Obsidian leaves the log's older
+  lines of that task, and so that reviews still count it and file it under its
+  area — and the timer lets go of the task when that session ends (at once if
+  none is under way). Past lines are renamed even when Obsidian has shortened
+  their link after a move.
 - **Two task lines sharing a 🆔** — a copied line, a done copy of a recurring
   task — no longer rename each other's sessions, and the 🍅 goes to the copy
   you linked. When the text no longer says which copy that is — you copied a

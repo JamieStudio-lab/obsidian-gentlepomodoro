@@ -4,6 +4,7 @@ import { logger } from "./logger";
 import { confirmAction, type ConfirmOptions } from "./confirmModal";
 import {
   FOCUS_TOTAL_CACHE_TTL_MS,
+  LOG_GOAL_WRITE_DELAY_MS,
   MIN_SESSION_SECONDS,
   NO_TASK_LABEL,
   TASK_RENAME_DELAY_MS,
@@ -12,7 +13,6 @@ import {
   duplicateTaskIds,
   filesInFolder,
   findTaskTextById,
-  isPathGone,
   pathAfterMove,
   taskNameAfterEdit,
 } from "./taskLoader";
@@ -51,14 +51,17 @@ import {
 } from "./logSegments";
 import type { MomentFactory, MomentLike } from "./momentTypes";
 import type { DeviceStorage } from "./deviceStorage";
-import { frontmatterRowCount, resolveGoalMinutes, withLogGoal } from "./logFrontmatter";
+import { frontmatterRowCount, recordLogGoal, resolveGoalMinutes } from "./logFrontmatter";
 import { dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
 import { plannedSessionEnd, type LongSessionQuestion } from "./sessionGaps";
 import {
   OPEN_SESSION_KEY,
+  PENDING_GOALS_KEY,
   UNFINISHED_SESSIONS_KEY,
   UNWRITTEN_LINES_KEY,
   UNWRITTEN_LINE_NOTICE,
+  readPendingGoals,
+  type PendingGoal,
   readSavedSession,
   readSavedSessions,
   readUnwrittenLines,
@@ -179,14 +182,20 @@ export function lastLogLine(content: string): string | null {
  * A line kept to be written later (F53) with its Task link following a note
  * that was renamed or moved, or a folder above it (F27) — as Obsidian updates
  * the links of the lines already in the log. Any other line comes back as it
- * is.
+ * is, and so does one `follows` turns down (LogManager.taskNoteMoved): a
+ * link to a note deleted before a folder above it was renamed.
  */
-export function taskLinkAfterMove(line: string, oldPath: string, newPath: string): string {
+export function taskLinkAfterMove(
+  line: string,
+  oldPath: string,
+  newPath: string,
+  follows: (from: string, to: string) => boolean = () => true
+): string {
   const parsed = parseLogLine(line);
   const task = parsed?.task;
   if (!parsed || !task || task.path === undefined) return line;
   const moved = pathAfterMove(task.path, oldPath, newPath);
-  if (moved === null) return line;
+  if (moved === null || !follows(task.path, moved)) return line;
   // `[[path|name]]` or `[[path]]`: only the path changes.
   return replaceTaskValue(line, parsed, `[[${moved}${task.raw.slice(2 + task.path.length)}`);
 }
@@ -261,6 +270,11 @@ export class LogManager {
   // The log rewrites, chained so that one runs at a time.
   private walks: Promise<void> = Promise.resolve();
   private refreshInFlight = false;
+  // The goal setting changed: the file of each day it changed on is given the
+  // value set last that day once the typing stops (goalChanged), kept on this
+  // device until it is, with the time it was made at.
+  private goalTimer: number | null = null;
+  private pendingGoals = new Map<string, PendingGoal>();
   private disposed = false;
   // This device's storage (sessionRecovery.ts); null keeps everything in
   // memory, as before 0.6.9.
@@ -289,6 +303,7 @@ export class LogManager {
    */
   private takeSavedState(storage: DeviceStorage) {
     this.unwritten = readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY));
+    this.pendingGoals = readPendingGoals(storage.load(PENDING_GOALS_KEY));
     this.unfinished = readSavedSessions(storage.load(UNFINISHED_SESSIONS_KEY));
     const raw = storage.load(OPEN_SESSION_KEY);
     if (raw === null) return;
@@ -600,11 +615,33 @@ export class LogManager {
    * rename still waiting for its walk; a line logged with the old path would
    * be a dead link nothing repairs, as Obsidian has already updated its links
    * by then (C1).
+   *
+   * A DELETED note is not followed, on purpose: the lines still to be written
+   * keep their link as it was, to the note now gone — what 0.6.8 wrote, and
+   * what Obsidian leaves in the log's older lines of that task. Reviews count
+   * only linked sessions and take the area from the link's alias, so the bare
+   * name 0.6.9 first wrote there dropped that one session to "No Task". The
+   * timer lets go of the task once that session ends (TimerEngine.onFileDelete).
+   *
+   * Nor once a folder it was in is renamed after it went: a link follows a
+   * move only while a note is at its path or at the one the move gives it.
+   * Obsidian updates only the links that lead to a note — a deleted note's
+   * lead nowhere — so following by the path alone wrote a link to a path
+   * that never held the note, while the older lines of that task kept the
+   * old one. Both paths are asked because Obsidian says a folder was renamed
+   * before it moves the notes in it, each of which then says so for itself
+   * (FileSystemAdapter.rename, app.js 1.13.7): at the folder's word the note
+   * is still at its old path, at its own already at the new one. A deleted
+   * note is at neither.
    */
   taskNoteMoved(oldPath: string, newPath: string) {
+    const isNote = (path: string) =>
+      this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFile;
+    const follows = (from: string, to: string) => isNote(from) || isNote(to);
     const follow = (item: { taskPath?: string }) => {
-      const moved = pathAfterMove(item.taskPath, oldPath, newPath);
-      if (moved !== null) item.taskPath = moved;
+      const from = item.taskPath;
+      const moved = pathAfterMove(from, oldPath, newPath);
+      if (from !== undefined && moved !== null && follows(from, moved)) item.taskPath = moved;
     };
     if (this.currentSession) follow(this.currentSession);
     this.closedSegments.forEach(follow);
@@ -616,29 +653,12 @@ export class LogManager {
     this.changeUnfinished(follow);
     let changed = false;
     for (const entry of this.unwritten) {
-      const lines = entry.lines.map((line) => taskLinkAfterMove(line, oldPath, newPath));
+      const lines = entry.lines.map((line) => taskLinkAfterMove(line, oldPath, newPath, follows));
       if (lines.every((line, i) => line === entry.lines[i])) continue;
       entry.lines = lines;
       changed = true;
     }
     if (changed && !this.disposed) this.saveUnwritten();
-  }
-
-  /**
-   * A note was deleted. The open session and its closed segments keep their
-   * task's name and drop the path, so their lines log the name with no dead
-   * link to a note that is gone (C1) — and so do the sessions an earlier run
-   * left (F27). A line a write failed on is left as it is: it is a line of
-   * the log already, and Obsidian leaves the log's links to a deleted note.
-   */
-  taskNoteDeleted(path: string) {
-    const drop = (item: { taskPath?: string }) => {
-      if (isPathGone(item.taskPath, path)) item.taskPath = undefined;
-    };
-    if (this.currentSession) drop(this.currentSession);
-    this.closedSegments.forEach(drop);
-    this.saveOpenSession();
-    this.changeUnfinished(drop);
   }
 
   /** Apply `change` to each unfinished session and its segments, and save
@@ -709,6 +729,14 @@ export class LogManager {
    * left saved: an update or a reload mid-session offers it back at the next
    * start (F23). Paused too, with the planned length as the clock has it now
    * (F16): it still ends where its pause began (savedSessionEnd).
+   *
+   * A goal change still waiting for its write (goalChanged) is not written
+   * either, for the renames' reason: a vault write after unload would race
+   * the reloaded plugin's own. It is kept on this device from the moment it
+   * is made, and the next start writes it (writeWaitingGoals) — into the
+   * file of the day it was made on, whichever day that start is, unless that
+   * file was written after it (goalFor). Only a device that keeps nothing
+   * (storage full or blocked) loses it.
    */
   dispose() {
     if (this.currentSession) this.saveOpenSession();
@@ -716,6 +744,8 @@ export class LogManager {
     this.renameTimers.forEach((timer) => window.clearTimeout(timer));
     this.renameTimers.clear();
     this.pendingRenames.clear();
+    if (this.goalTimer !== null) window.clearTimeout(this.goalTimer);
+    this.goalTimer = null;
   }
 
   /** A log line's link as a vault path (resolveLogLink). */
@@ -1205,23 +1235,26 @@ export class LogManager {
    * `retry`: lines kept from a failed write, which skip any line the file
    * already holds, wherever it is.
    *
-   * Today's file records today's goal in the same write (goalFor): no write
-   * of its own, nothing while the timer runs, nothing when the setting
-   * changes. The adapter's append cannot — it adds to the end — so the next
-   * session's write does.
+   * Today's file records the goal as it is set now in the same write
+   * (goalFor): written or updated while the goal is on, taken out while it is
+   * off (recordLogGoal). A past day's file keeps what it has, a change kept
+   * for that day apart, and one created now gets one (goalFor). The adapter's
+   * append cannot — it adds to the end — so the next write does: a session's,
+   * or a change of the setting (goalChanged).
    */
   private async appendLines(filePath: string, lines: string[], retry = false) {
     const app = this.plugin.app;
-    const goal = this.goalFor(filePath);
     const existing = app.vault.getAbstractFileByPath(filePath);
+    const goal = this.goalFor(filePath, existing instanceof TFile ? existing : null);
+    const record = (data: string) => (goal === null ? data : recordLogGoal(data, goal));
     if (existing instanceof TFile) {
       await app.vault.process(existing, (data) =>
-        withLogGoal(appendToLog(data, retry ? linesNotIn(data, lines) : lines), goal)
+        record(appendToLog(data, retry ? linesNotIn(data, lines) : lines))
       );
       return;
     }
     try {
-      await app.vault.create(filePath, withLogGoal(appendToLog("", lines), goal));
+      await app.vault.create(filePath, record(appendToLog("", lines)));
     } catch (e) {
       if (!isAlreadyExists(e) && !(await app.vault.adapter.exists(filePath))) throw e;
       const data = await app.vault.adapter.read(filePath);
@@ -1233,21 +1266,153 @@ export class LogManager {
   }
 
   /**
-   * The goal to record in the log file at `filePath` (logFrontmatter.ts): the
-   * daily goal setting when it is the file of the day it is now — "Day starts
-   * at" counted — and 0, which records nothing, for any other. A past day's
-   * file keeps the goal that day had: a session that started before midnight
-   * and is written after it goes into yesterday's file, and leaves its goal
-   * alone.
+   * The goal to record in the log file at `filePath` (logFrontmatter.ts), the
+   * one at `file` — null when there is none yet, and the write creates it:
+   *
+   * - the file of the day it is now ("Day starts at" counted): the daily goal
+   *   setting, 0 when that goal is off, which takes a recorded one out;
+   * - a past day's file with a change kept for that day (goalChanged): that
+   *   change — unless the file was written after it was made. Another device
+   *   may have changed the goal later that day and written it there, and a
+   *   change this device could not write in time (a quit, a phone that
+   *   suspended the app) must not go over it the next morning: the later
+   *   write had the day's last word. The file's modification time tells,
+   *   which Obsidian Sync carries over from the device that wrote it. Any
+   *   later write counts, as the file cannot say which kind it was — a
+   *   session's line this device wrote after the change took it in already
+   *   (here, in that write);
+   * - a past day's file being created: the change kept for that day, else
+   *   the setting as it is now. It recorded none while it was today, as it
+   *   was not there: its only session ran past midnight, or a failed write
+   *   is being retried. The setting now is the nearest this device knows of
+   *   the goal that day ended with — off by a change made since, which a
+   *   file that did not exist could not keep apart;
+   * - any other: null, which leaves the file's goal as it is. A past day's
+   *   file keeps the goal that day had: a session that started before
+   *   midnight and is written after it goes into yesterday's file, and leaves
+   *   its goal alone.
    */
-  private goalFor(filePath: string): number {
+  private goalFor(filePath: string, file: TFile | null): number | null {
+    const setting = resolveGoalMinutes(this.plugin.settings.dailyFocusGoalMinutes);
+    if (filePath === this.todayLogPath()) return setting;
+    const kept = this.pendingGoals.get(filePath);
+    if (file === null) return kept?.minutes ?? setting;
+    return kept !== undefined && file.stat.mtime <= kept.at ? kept.minutes : null;
+  }
+
+  /** Today's log file, "Day starts at" counted; null with no log folder. */
+  private todayLogPath(): string | null {
     const settings = this.plugin.settings;
-    if (!settings.logFolderPath) return 0;
-    const today = dailyLogPath(
-      settings.logFolderPath,
-      logicalDate(moment(), settings.dayStartHour)
+    if (!settings.logFolderPath) return null;
+    return dailyLogPath(settings.logFolderPath, logicalDate(moment(), settings.dayStartHour));
+  }
+
+  /**
+   * The daily goal setting changed (the settings tab): the file of the day it
+   * changed on records the value set last that day — so a goal changed after
+   * the day's last session is the one the day keeps once it is past, not the
+   * number its last session wrote. One write, LOG_GOAL_WRITE_DELAY_MS after
+   * the last change: the settings commit every keystroke before 1.13.
+   *
+   * The day is taken now, at the change, never when the write runs: a phone
+   * suspends the app, and a timer set at 22:00 can fire the next morning,
+   * when today's file is another — which held nothing of the change (it may
+   * not exist yet), while the day it was made on kept the old goal for good.
+   * A change in the last moment of a day goes into that day's file for the
+   * same reason: it is the goal that day ended with. The new day's own file
+   * is given the setting by its first session's write (goalFor).
+   *
+   * Kept on this device at once (PENDING_GOALS_KEY), so a quit inside the
+   * delay loses nothing either: the next start writes it (writeWaitingGoals)
+   * — unless the day's file was written after the change, by then (goalFor).
+   */
+  goalChanged(): void {
+    if (this.disposed) return;
+    const path = this.todayLogPath();
+    if (path === null) return;
+    this.pendingGoals.set(path, {
+      minutes: resolveGoalMinutes(this.plugin.settings.dailyFocusGoalMinutes),
+      at: Date.now(),
+    });
+    this.savePendingGoals();
+    if (this.goalTimer !== null) window.clearTimeout(this.goalTimer);
+    this.goalTimer = window.setTimeout(() => {
+      this.goalTimer = null;
+      void this.writeWaitingGoals();
+    }, LOG_GOAL_WRITE_DELAY_MS);
+  }
+
+  /**
+   * Write the goal changes still waiting (goalChanged) — at startup the ones
+   * an earlier run kept on this device, a quit or an update having cut it
+   * short. On the rename walks' chain, one write at a time. Never rejects:
+   * writeGoal reports its own failures, and nobody awaits this at startup.
+   */
+  writeWaitingGoals(): Promise<void> {
+    return this.queueWalk(() => this.writePendingGoals());
+  }
+
+  /**
+   * Each waiting change into its day's file (writeGoal): TODAY's file the
+   * setting as it is now (goalFor) — it may have moved since, on another
+   * device — and an earlier day's the value set last on that day, unless the
+   * file was written after it (goalFor). Let go of once settled, and only if
+   * no newer change for that day came meanwhile: that one waits for its own
+   * write. A write that failed stays, for the next start. Never after dispose
+   * (F19): what is left stays kept, for the reloaded plugin to write.
+   */
+  private async writePendingGoals(): Promise<void> {
+    for (const [path, change] of [...this.pendingGoals]) {
+      const settled = await this.writeGoal(path);
+      if (this.disposed) return;
+      if (!settled || this.pendingGoals.get(path) !== change) continue;
+      this.pendingGoals.delete(path);
+      this.savePendingGoals();
+    }
+  }
+
+  private savePendingGoals() {
+    this.device?.storage.save(
+      PENDING_GOALS_KEY,
+      this.pendingGoals.size > 0
+        ? [...this.pendingGoals].map(([path, change]) => ({ path, ...change }))
+        : null
     );
-    return filePath === today ? resolveGoalMinutes(settings.dailyFocusGoalMinutes) : 0;
+  }
+
+  /**
+   * Give the log file at `path` the goal goalFor gives it (recordLogGoal) —
+   * none when it gives null, a later write to a past day's file having had
+   * the last word. Only a file that is there: none is created for a goal. A
+   * file whose properties
+   * the timer leaves alone — one that starts with a byte order mark — stays
+   * as it is, and so does one that already says it: read first, written only
+   * when it would change, and then through Vault.process, as a session being
+   * appended at the same moment must not be lost. Never after dispose:
+   * checked once the file is read, the last moment before the write. Today's
+   * total does not move — it counts the body's lines, never the properties —
+   * and today's goal is the setting itself, read fresh by every display and
+   * by the template API's getDay, so nothing is re-read.
+   *
+   * Resolves to whether that is settled: written, or nothing to write. False
+   * when the read or the write failed (reported), or the plugin was unloaded.
+   */
+  private async writeGoal(path: string): Promise<boolean> {
+    const app = this.plugin.app;
+    try {
+      const file = app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return true;
+      const minutes = this.goalFor(path, file);
+      if (minutes === null) return true;
+      const content = await app.vault.read(file);
+      if (this.disposed) return false;
+      if (recordLogGoal(content, minutes) === content) return true;
+      await app.vault.process(file, (data) => recordLogGoal(data, minutes));
+      return true;
+    } catch (e) {
+      logger.warn(`Could not record the daily goal in "${path}"`, e);
+      return false;
+    }
   }
 
   /**

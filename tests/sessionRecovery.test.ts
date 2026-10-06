@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { TFile } from "obsidian";
 import { Modal } from "../__mocks__/obsidian";
 import { LogManager, taskLinkAfterMove } from "../logManager";
 import { loggedTotalSeconds, parseLogLine, logSeconds } from "../logLine";
@@ -268,9 +269,10 @@ describe("LogManager keeps the open session on this device (F23)", () => {
 
   function setup(
     storage = memoryStorage(),
-    planned: number | null | (() => number | null) = 25 * ONE_MINUTE_MS
+    planned: number | null | (() => number | null) = 25 * ONE_MINUTE_MS,
+    notes: Record<string, string> = {}
   ) {
-    const vault = fakeVault({ [LOG]: "" });
+    const vault = fakeVault({ [LOG]: "", ...notes });
     Object.assign(vault, {
       adapter: { exists: () => Promise.resolve(true) },
       createFolder: () => Promise.resolve(),
@@ -746,7 +748,7 @@ describe("LogManager keeps the open session on this device (F23)", () => {
       // lines carry the path Obsidian moved the note to, never a dead link.
       const storage = memoryStorage();
       storage.save(UNFINISHED_SESSIONS_KEY, [split]);
-      const first = setup(storage).lm;
+      const first = setup(storage, undefined, { "Archived/Docs.md": "" }).lm;
       await first.offerUnfinishedSessions(() => Promise.resolve("later"));
       first.taskNoteMoved("Projects/Docs.md", "Archived/Docs.md");
       first.dispose();
@@ -762,7 +764,8 @@ describe("LogManager keeps the open session on this device (F23)", () => {
     it("follows a folder above the note, and the dialog already open logs the new path", async () => {
       const storage = memoryStorage();
       storage.save(UNFINISHED_SESSIONS_KEY, [split]);
-      const { lm, vault } = setup(storage);
+      // At the folder's word the note is still where it was (taskNoteMoved).
+      const { lm, vault } = setup(storage, undefined, { "Projects/Docs.md": "" });
       await lm.offerUnfinishedSessions(() => {
         lm.taskNoteMoved("Projects", "Done");
         return Promise.resolve("log");
@@ -770,18 +773,44 @@ describe("LogManager keeps the open session on this device (F23)", () => {
       expect(linked(vault)).toEqual(["[[Done/Docs.md|Plan]]", "[[Done/Docs.md|Write docs]]"]);
     });
 
-    it("logs the name with no link once the note is deleted", async () => {
-      const storage = memoryStorage();
-      storage.save(UNFINISHED_SESSIONS_KEY, [split]);
-      setup(storage).lm.taskNoteDeleted("Projects/Docs.md");
-      expect(readSavedSessions(storage.load(UNFINISHED_SESSIONS_KEY))[0]).toMatchObject({
-        taskPath: undefined,
-        segments: [{ taskName: "Plan", taskPath: undefined }],
-      });
-      const { lm, vault } = setup(storage);
-      await lm.offerUnfinishedSessions(() => Promise.resolve("log"));
-      expect(linked(vault)).toEqual(["Plan", "Write docs"]);
-    });
+    /** Obsidian's delete event, as main.ts passes it on: to the timer alone. */
+    const deleted = (plugin: GentlePomoPlugin, path: string) => {
+      const timer = new TimerEngine(plugin);
+      timer.onFileDelete(Object.assign(new TFile(), { path }));
+      timer.dispose();
+    };
+
+    it.each([
+      ["the note", "Projects/Docs.md"],
+      ["a folder above it", "Projects"],
+    ])(
+      "keeps an unfinished session's link as it was once %s is deleted, its segments too",
+      async (_label, path) => {
+        // A deleted note is not followed: the lines keep the link they were
+        // linked with, as Obsidian leaves the log's older lines of the task.
+        const storage = memoryStorage();
+        storage.save(UNFINISHED_SESSIONS_KEY, [split]);
+        const save = vi.spyOn(storage, "save");
+        const { lm, vault, plugin } = setup(storage);
+        await lm.offerUnfinishedSessions(() => {
+          deleted(plugin, path);
+          return Promise.resolve("later");
+        });
+        deleted(plugin, path);
+        expect(save).not.toHaveBeenCalledWith(UNFINISHED_SESSIONS_KEY, expect.anything());
+        expect(readSavedSessions(storage.load(UNFINISHED_SESSIONS_KEY))).toEqual([split]);
+        lm.dispose();
+
+        const next = setup(storage);
+        await next.lm.offerUnfinishedSessions(() => Promise.resolve("log"));
+        expect(linked(next.vault)).toEqual([
+          "[[Projects/Docs.md|Plan]]",
+          "[[Projects/Docs.md|Write docs]]",
+        ]);
+        expect(lines(next.vault)[1]).toContain("[Task:: [[Projects/Docs.md|Write docs]]]");
+        expect(lines(vault)).toEqual([]);
+      }
+    );
 
     it("leaves the stored list alone when no session's note moved", () => {
       const storage = memoryStorage();
@@ -789,7 +818,6 @@ describe("LogManager keeps the open session on this device (F23)", () => {
       const save = vi.spyOn(storage, "save");
       const { lm } = setup(storage);
       lm.taskNoteMoved("Projects/Other.md", "Archived/Other.md");
-      lm.taskNoteDeleted("Projects/Other.md");
       expect(save).not.toHaveBeenCalledWith(UNFINISHED_SESSIONS_KEY, expect.anything());
       expect(save).not.toHaveBeenCalledWith(UNWRITTEN_LINES_KEY, expect.anything());
     });
@@ -808,7 +836,10 @@ describe("LogManager keeps the open session on this device (F23)", () => {
     it("writes a line a write failed on with the note's new path", async () => {
       const storage = memoryStorage();
       storage.save(UNWRITTEN_LINES_KEY, [kept("[[Projects/Docs.md|Write docs]]")]);
-      setup(storage).lm.taskNoteMoved("Projects/Docs.md", "Archived/Docs.md");
+      setup(storage, undefined, { "Archived/Docs.md": "" }).lm.taskNoteMoved(
+        "Projects/Docs.md",
+        "Archived/Docs.md"
+      );
       expect(readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY))[0].lines).toEqual([
         keptLine("[[Archived/Docs.md|Write docs]]"),
       ]);
@@ -822,9 +853,39 @@ describe("LogManager keeps the open session on this device (F23)", () => {
     it("leaves a line a write failed on as it is when the note is deleted, as Obsidian leaves the log's", () => {
       const storage = memoryStorage();
       storage.save(UNWRITTEN_LINES_KEY, [kept("[[Projects/Docs.md|Write docs]]")]);
-      setup(storage).lm.taskNoteDeleted("Projects/Docs.md");
+      deleted(setup(storage).plugin, "Projects/Docs.md");
       expect(readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY))[0].lines).toEqual([
         keptLine("[[Projects/Docs.md|Write docs]]"),
+      ]);
+    });
+
+    // Obsidian updates no link to a note that is gone: once the note is
+    // deleted, a folder it was in renamed after leads its link nowhere new.
+    it("keeps a deleted note's link when a folder above it is renamed after: unfinished sessions and kept lines alike", async () => {
+      const storage = memoryStorage();
+      storage.save(UNFINISHED_SESSIONS_KEY, [split]);
+      storage.save(UNWRITTEN_LINES_KEY, [kept("[[Projects/Docs.md|Write docs]]")]);
+      const save = vi.spyOn(storage, "save");
+      // The note is gone; another note of the folder moves with it — the
+      // folder's word first, then the note's own (taskNoteMoved).
+      const { lm, vault } = setup(storage, undefined, { "Projects/Other.md": "" });
+      lm.taskNoteMoved("Projects", "Archive");
+      vault.move(vault.getAbstractFileByPath("Projects/Other.md") as TFile, "Archive/Other.md");
+      lm.taskNoteMoved("Projects/Other.md", "Archive/Other.md");
+      expect(save).not.toHaveBeenCalled();
+      expect(readSavedSessions(storage.load(UNFINISHED_SESSIONS_KEY))).toEqual([split]);
+      expect(readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY))[0].lines).toEqual([
+        keptLine("[[Projects/Docs.md|Write docs]]"),
+      ]);
+      lm.dispose();
+
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const next = setup(storage);
+      await next.lm.offerUnfinishedSessions(() => Promise.resolve("log"));
+      expect(linked(next.vault)).toEqual([
+        "[[Projects/Docs.md|Write docs]]",
+        "[[Projects/Docs.md|Plan]]",
+        "[[Projects/Docs.md|Write docs]]",
       ]);
     });
   });

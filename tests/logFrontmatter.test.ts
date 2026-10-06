@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   LOG_GOAL_KEY,
   frontmatterRowCount,
   logFrontmatter,
   readLogGoal,
+  recordLogGoal,
   resolveGoalMinutes,
   withLogGoal,
+  withoutLogGoal,
 } from "../logFrontmatter";
 import { parseFocusTotalSeconds } from "../logLine";
 import { insertSessionLine, loggedLines, replaceSessionLine } from "../logEditor";
@@ -19,15 +23,26 @@ import {
 } from "../logConvert";
 import { refreshLogContent, refreshTargets, renameLogContent } from "../logRename";
 import { LogManager } from "../logManager";
+import { LOG_GOAL_WRITE_DELAY_MS } from "../constants";
+import { PENDING_GOALS_KEY, UNWRITTEN_LINES_KEY, readPendingGoals } from "../sessionRecovery";
+import type { DeviceStorage } from "../deviceStorage";
 import type GentlePomoPlugin from "../main";
 import { memoryStorage } from "./memoryStorage";
 import { fakeVault, linkCache } from "./fakeVault";
+import { callbackBody } from "./sourceText";
+
+/** The goal changes kept on a device, path → minutes, their times left out. */
+function keptMinutes(storage: DeviceStorage): Map<string, number> {
+  const kept = readPendingGoals(storage.load(PENDING_GOALS_KEY));
+  return new Map([...kept].map(([path, change]) => [path, change.minutes]));
+}
 
 /**
  * The daily log file's properties (0.6.9): the day's goal, `goal_minutes`,
- * recorded in the file of the day it was — by the timer's own write to TODAY's
- * file, and never on a past day's — and every reader of the log passing over
- * the properties as no part of it. Lines are made up; none is copied from a
+ * recorded in the file of the day it was — by the timer's own writes, to
+ * TODAY's file, to the day a goal change was made on and to a past day's file
+ * it creates, never otherwise to a past day's — and every reader of the log
+ * passing over the properties as no part of it. Lines are made up; none is copied from a
  * real log.
  */
 
@@ -219,6 +234,194 @@ describe("recording the goal in a file's text", () => {
   });
 });
 
+describe("taking the goal out of a file's text (the goal turned off)", () => {
+  it("takes out the block the timer wrote, in either line ending", () => {
+    expect(withoutLogGoal(`---\ngoal_minutes: 120\n---\n${V2}\n`)).toBe(`${V2}\n`);
+    expect(withoutLogGoal(`---\r\ngoal_minutes: 120\r\n---\r\n${V2}\r\n`)).toBe(`${V2}\r\n`);
+    // A file that is only the block, as it can be at the end of the file.
+    expect(withoutLogGoal("---\ngoal_minutes: 120\n---\n")).toBe("");
+    expect(withoutLogGoal("---\ngoal_minutes: 120\n---")).toBe("");
+    // And undoes withLogGoal on a file that had no properties, byte for byte.
+    for (const body of [`${V2}\n`, `${V2}\r\n${V1}\r\n`, ""]) {
+      expect(withoutLogGoal(withLogGoal(body, 120))).toBe(body);
+    }
+  });
+
+  it("takes out only the goal's own row when the file has other properties", () => {
+    expect(withoutLogGoal(`---\ntags: [log]\ngoal_minutes: 90\nnext: 1\n---\n${V2}\n`)).toBe(
+      `---\ntags: [log]\nnext: 1\n---\n${V2}\n`
+    );
+    expect(withoutLogGoal(`---\r\ngoal_minutes: 90\r\ntags: [log]\r\n---\r\n${V2}\r\n`)).toBe(
+      `---\r\ntags: [log]\r\n---\r\n${V2}\r\n`
+    );
+    expect(withoutLogGoal(`---\ntags: [log]\ngoal_minutes: 90\n---\n${V2}\n`)).toBe(
+      `---\ntags: [log]\n---\n${V2}\n`
+    );
+  });
+
+  it("takes out the row however its value is written, a number or not", () => {
+    for (const row of [
+      'goal_minutes: "120"   # set by the timer',
+      "goal_minutes: '90'",
+      "goal_minutes: 90.5",
+      "goal_minutes: soon",
+      "goal_minutes:",
+    ]) {
+      expect(withoutLogGoal(`---\n${row}\ntags: [log]\n---\n${V2}\n`), row).toBe(
+        `---\ntags: [log]\n---\n${V2}\n`
+      );
+    }
+  });
+
+  it("takes out a value that runs on over the rows below it as a whole", () => {
+    const shapes = [
+      "goal_minutes:\n  - 90",
+      "goal_minutes:\n- 90",
+      "goal_minutes: >\n  90",
+      "goal_minutes: |\n  90\n\n  more",
+      "goal_minutes: 90\n  more",
+    ];
+    for (const shape of shapes) {
+      const content = `---\ntags: [log]\n${shape}\nnext: 1\n---\n${V2}\n`;
+      expect(withoutLogGoal(content), shape).toBe(`---\ntags: [log]\nnext: 1\n---\n${V2}\n`);
+      const crlf = content.replace(/\n/g, "\r\n");
+      expect(withoutLogGoal(crlf), shape).toBe(`---\r\ntags: [log]\r\nnext: 1\r\n---\r\n${V2}\r\n`);
+    }
+  });
+
+  it("takes out every copy of the key, so none is left to read", () => {
+    const twice = `---\ngoal_minutes: 90\ntags: [log]\ngoal_minutes: 100\n---\n${V2}\n`;
+    expect(withoutLogGoal(twice)).toBe(`---\ntags: [log]\n---\n${V2}\n`);
+    expect(readLogGoal(withoutLogGoal(twice))).toBeNull();
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\ngoal_minutes: 100\n---\n${V2}\n`)).toBe(
+      `${V2}\n`
+    );
+  });
+
+  it("never touches another key: one indented under another, a comment, the body", () => {
+    for (const content of [
+      `---\nday:\n  goal_minutes: 60\n---\n${V2}\n`,
+      `---\n# goal_minutes: 60\n---\n${V2}\n`,
+      `---\ngoal_minutes_old: 60\n---\n${V2}\n`,
+      `${V2}\ngoal_minutes: 60\n`,
+      `---\ntags: [log]\n---\n${V2}\ngoal_minutes: 60\n`,
+    ]) {
+      expect(withoutLogGoal(content), content).toBe(content);
+    }
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n---\n${V2}\ngoal_minutes: 60\n`)).toBe(
+      `${V2}\ngoal_minutes: 60\n`
+    );
+  });
+
+  it("keeps a block that still holds anything, however little", () => {
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n\n---\n${V2}\n`)).toBe(`---\n\n---\n${V2}\n`);
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n# mine\n---\n${V2}\n`)).toBe(
+      `---\n# mine\n---\n${V2}\n`
+    );
+    // A blank row and an indented comment after a plain value are not its own.
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n\n  # mine\nnext: 1\n---\n`)).toBe(
+      `---\n\n  # mine\nnext: 1\n---\n`
+    );
+  });
+
+  it("keeps an emptied block the timer never writes: a closing line that is not '---' alone", () => {
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n--- \n${V2}\n`)).toBe(`---\n--- \n${V2}\n`);
+    expect(withoutLogGoal(`---\ngoal_minutes: 90\n----\n${V2}\n`)).toBe(`---\n----\n${V2}\n`);
+    expect(withoutLogGoal(`---\r\ngoal_minutes: 90\r\n---x\r\n${V2}\r\n`)).toBe(
+      `---\r\n---x\r\n${V2}\r\n`
+    );
+  });
+
+  it("keeps an emptied block whose body starts with '---': without it, that row would open properties", () => {
+    const content = `---\ngoal_minutes: 90\n---\n---\nnote: x\n---\n${V2}\n`;
+    expect(withoutLogGoal(content)).toBe(`---\n---\n---\nnote: x\n---\n${V2}\n`);
+    expect(frontmatterRowCount(withoutLogGoal(content))).toBe(2);
+  });
+
+  it("changes nothing in a file with no goal_minutes row among its properties, an empty block included", () => {
+    for (const content of [
+      `${V2}\n`,
+      "",
+      `---\ntags: [log]\n---\n${V2}\n`,
+      `---\n---\n${V2}\n`,
+      `---\ngoal_minutes: 90\n${V2}\n`,
+    ]) {
+      expect(withoutLogGoal(content), content).toBe(content);
+    }
+  });
+
+  it("leaves a file that starts with a byte order mark alone: another program wrote it", () => {
+    const own = `﻿---\ngoal_minutes: 90\n---\n${V2}\n`;
+    expect(withoutLogGoal(own)).toBe(own);
+    expect(withoutLogGoal(`﻿${V2}\n`)).toBe(`﻿${V2}\n`);
+  });
+});
+
+describe("recording the goal setting in a file's text", () => {
+  const recorded = `---\ntags: [log]\ngoal_minutes: 90\n---\n${V2}\n`;
+
+  it("writes it while the goal is on", () => {
+    expect(recordLogGoal(recorded, 120)).toBe(`---\ntags: [log]\ngoal_minutes: 120\n---\n${V2}\n`);
+    expect(recordLogGoal(`${V2}\r\n`, 120)).toBe(withLogGoal(`${V2}\r\n`, 120));
+    expect(recordLogGoal(recorded, 90)).toBe(recorded);
+  });
+
+  it("takes it out while the goal is off, whatever reads as off", () => {
+    for (const off of [0, -5, Number.NaN, Infinity]) {
+      expect(recordLogGoal(recorded, off), String(off)).toBe(`---\ntags: [log]\n---\n${V2}\n`);
+      expect(recordLogGoal(`---\ngoal_minutes: 90\n---\n${V2}\n`, off)).toBe(`${V2}\n`);
+      expect(recordLogGoal(`${V2}\n`, off)).toBe(`${V2}\n`);
+    }
+  });
+
+  it("turned on and off again, leaves a file that records no goal as it was — an empty block and a goal_minutes row with no number apart", () => {
+    for (const content of [
+      `${V2}\n`,
+      `${V2}\r\n`,
+      "",
+      `---\ntags: [log]\n---\n${V2}\n`,
+      `---\r\ntags: [log]\r\n---\r\n${V2}\r\n`,
+      `---\n\n---\n${V2}\n`,
+      `---\n# mine\n---\n${V2}\n`,
+      `---\n--- \n${V2}\n`,
+      `---\n---\n---\nnote: x\n---\n${V2}\n`,
+      `---\ngoal_minutes: 90\n${V2}\n`,
+      `\uFEFF---\n---\n${V2}\n`,
+    ]) {
+      expect(recordLogGoal(recordLogGoal(content, 120), 0), content).toBe(content);
+    }
+
+    // A goal_minutes row holding no number records no goal either. The key is
+    // the timer's: the goal is written in its place, and the off write takes
+    // the key out, so the row goes whatever it held.
+    const noNumber: [string, string][] = [
+      [`---\ngoal_minutes:\ntags: [log]\n---\n${V2}\n`, `---\ntags: [log]\n---\n${V2}\n`],
+      [`---\ngoal_minutes: soon\n---\n${V2}\n`, `${V2}\n`],
+      [`---\ngoal_minutes:\n  - 90\nnext: 1\n---\n${V2}\n`, `---\nnext: 1\n---\n${V2}\n`],
+    ];
+    for (const [content, back] of noNumber) {
+      expect(readLogGoal(content), content).toBeNull();
+      expect(recordLogGoal(content, 120), content).toContain("goal_minutes: 120");
+      expect(recordLogGoal(recordLogGoal(content, 120), 0), content).toBe(back);
+      // The goal off alone takes it out too.
+      expect(withoutLogGoal(content), content).toBe(back);
+    }
+  });
+
+  it("takes out an empty block that was there before the goal went in: it cannot tell it from its own", () => {
+    // `---` over `---`, nothing between — which withoutLogGoal alone leaves
+    // be — is filled by the goal exactly as a file with no properties is, so
+    // no way of taking the goal out can give each its own back. The block the
+    // timer writes goes; so does this one, which held nothing.
+    for (const eol of ["\n", "\r\n"]) {
+      const empty = `---${eol}---${eol}${V2}${eol}`;
+      expect(withoutLogGoal(empty)).toBe(empty);
+      expect(recordLogGoal(empty, 120)).toBe(recordLogGoal(`${V2}${eol}`, 120));
+      expect(recordLogGoal(recordLogGoal(empty, 120), 0)).toBe(`${V2}${eol}`);
+    }
+  });
+});
+
 describe("every reader of the log passes over the file's properties", () => {
   it("today's total counts only the body's sessions", () => {
     expect(parseFocusTotalSeconds(FILE)).toBe(1500 + 1200);
@@ -371,7 +574,8 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
 
   function setup(
     files: Record<string, string> = {},
-    settings: { dailyFocusGoalMinutes?: number; dayStartHour?: number } = {}
+    settings: { dailyFocusGoalMinutes?: number; dayStartHour?: number } = {},
+    storage: DeviceStorage | null = null
   ) {
     const vault = fakeVault(files);
     const created: { path: string; data: string }[] = [];
@@ -399,7 +603,8 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       app: { vault, metadataCache: linkCache(vault) },
       invalidateFocusTotalCache: vi.fn(),
     } as unknown as GentlePomoPlugin;
-    return { vault, created, appended, onDisk, plugin, lm: new LogManager(plugin) };
+    const device = storage ? { storage, plannedMs: () => null } : null;
+    return { vault, created, appended, onDisk, plugin, lm: new LogManager(plugin, device) };
   }
 
   /** One 25-minute focus, 10:00 to 10:25 on 2 October. */
@@ -474,6 +679,35 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
     expect(created).toEqual([{ path: TODAY, data: `${LINE}\n` }]);
   });
 
+  it("takes a recorded goal out of today's file while it is off, in the write that appends the line", async () => {
+    // The day reads as one with no goal once it is past, never the number it
+    // had before the goal was turned off.
+    const { vault, lm } = setup(
+      { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+      { dailyFocusGoalMinutes: 0 }
+    );
+    await session(lm);
+    expect(vault.writes).toEqual([TODAY]);
+    expect(vault.contents[TODAY]).toBe(`${V2}\n${LINE}\n`);
+
+    const other = setup(
+      { [TODAY]: `---\r\ntags: [log]\r\ngoal_minutes: 120\r\n---\r\n${V2}\r\n` },
+      { dailyFocusGoalMinutes: 0 }
+    );
+    await session(other.lm);
+    expect(other.vault.contents[TODAY]).toBe(`---\r\ntags: [log]\r\n---\r\n${V2}\r\n${LINE}\r\n`);
+  });
+
+  it("never takes a past day's goal out: a session begun before midnight leaves yesterday's as it is", async () => {
+    const recorded = `---\ngoal_minutes: 90\n---\n${V2}\n`;
+    const { vault, lm } = setup({ [LOG("2026-10-01")]: recorded }, { dailyFocusGoalMinutes: 0 });
+    at(1, 23, 40);
+    lm.startSession("focus", "No Task", 25);
+    at(2, 0, 10);
+    await lm.endSession("finished");
+    expect(vault.contents[LOG("2026-10-01")].startsWith(`${recorded}- 🍅 Focus`)).toBe(true);
+  });
+
   it("keeps a CRLF file CRLF", async () => {
     const { vault, lm } = setup({ [TODAY]: `${V2}\r\n` });
     await session(lm);
@@ -486,6 +720,478 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
     await session(lm);
     expect(created).toEqual([]);
     expect(appended).toEqual([{ path: TODAY, data: `${LINE}\n` }]);
+  });
+
+  describe("and gives today's file the goal when the setting changes", () => {
+    beforeEach(() => {
+      vi.useRealTimers();
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      at(2, 20, 0);
+    });
+
+    /** Change the setting as the settings tab does: the value, then the call. */
+    function change(plugin: GentlePomoPlugin, lm: LogManager, minutes: number) {
+      plugin.settings.dailyFocusGoalMinutes = minutes;
+      lm.goalChanged();
+    }
+
+    /** Wait out the delay, then for the write it starts. */
+    async function settle(lm: LogManager) {
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS);
+      await lm.walksSettled();
+    }
+
+    it("once the typing stops: one write, of the last value", async () => {
+      const { vault, plugin, lm } = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` });
+      // Typing 150 over 120, as settings before 1.13 commit it: 1, 15, 150.
+      for (const minutes of [1, 15, 150]) {
+        change(plugin, lm, minutes);
+        vi.advanceTimersByTime(500);
+      }
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS - 500 - 1);
+      await lm.walksSettled();
+      expect(vault.writes).toEqual([]);
+      vi.advanceTimersByTime(1);
+      await lm.walksSettled();
+      expect(vault.writes).toEqual([TODAY]);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 150\n---\n${V2}\n`);
+      // Nothing re-read: the total counts the body, which did not move.
+      expect(plugin.invalidateFocusTotalCache).not.toHaveBeenCalled();
+    });
+
+    it("updates only the goal's row, and keeps a CRLF file CRLF", async () => {
+      const { vault, plugin, lm } = setup({
+        [TODAY]: `---\r\ntags: [log]\r\ngoal_minutes: 120\r\n---\r\n${V2}\r\n`,
+      });
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(vault.contents[TODAY]).toBe(
+        `---\r\ntags: [log]\r\ngoal_minutes: 90\r\n---\r\n${V2}\r\n`
+      );
+    });
+
+    it("adds the goal to today's file that has none", async () => {
+      const { vault, plugin, lm } = setup({ [TODAY]: `${V2}\n` }, { dailyFocusGoalMinutes: 0 });
+      change(plugin, lm, 60);
+      await settle(lm);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 60\n---\n${V2}\n`);
+    });
+
+    it("takes the goal out when it is turned off, and the block the timer wrote with it", async () => {
+      const { vault, plugin, lm } = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` });
+      change(plugin, lm, 0);
+      await settle(lm);
+      expect(vault.contents[TODAY]).toBe(`${V2}\n`);
+
+      const kept = setup({ [TODAY]: `---\ntags: [log]\ngoal_minutes: 120\n---\n${V2}\n` });
+      change(kept.plugin, kept.lm, 0);
+      await settle(kept.lm);
+      expect(kept.vault.contents[TODAY]).toBe(`---\ntags: [log]\n---\n${V2}\n`);
+    });
+
+    it("creates no file for a goal", async () => {
+      const { vault, created, appended, plugin, lm } = setup();
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(created).toEqual([]);
+      expect(appended).toEqual([]);
+      expect(vault.writes).toEqual([]);
+      expect(TODAY in vault.contents).toBe(false);
+    });
+
+    it("writes nothing when today's file already says it, however it is written", async () => {
+      const head = `---\ngoal_minutes: "120"  # mine\ntags: [log]\n---\n`;
+      const { vault, plugin, lm } = setup(
+        { [TODAY]: `${head}${V2}\n` },
+        { dailyFocusGoalMinutes: 90 }
+      );
+      change(plugin, lm, 120);
+      await settle(lm);
+      expect(vault.writes).toEqual([]);
+
+      const off = setup({ [TODAY]: `---\ntags: [log]\n---\n${V2}\n` });
+      change(off.plugin, off.lm, 0);
+      await settle(off.lm);
+      expect(off.vault.writes).toEqual([]);
+    });
+
+    it("leaves a file that starts with a byte order mark alone", async () => {
+      const own = `﻿---\ngoal_minutes: 90\n---\n${V2}\n`;
+      for (const minutes of [120, 0]) {
+        const { vault, plugin, lm } = setup({ [TODAY]: own });
+        change(plugin, lm, minutes);
+        await settle(lm);
+        expect(vault.writes, String(minutes)).toEqual([]);
+        expect(vault.contents[TODAY]).toBe(own);
+      }
+    });
+
+    it("changes only the file of the day it was made on, as 'Day starts at' counts it", async () => {
+      const recorded = `---\ngoal_minutes: 90\n---\n${V2}\n`;
+      const files = {
+        [LOG("2026-10-01")]: recorded,
+        [TODAY]: recorded,
+        [LOG("2026-10-03")]: recorded,
+      };
+      // At 01:30 on 3 October with a 4:00 start, today is 2 October.
+      const { vault, plugin, lm } = setup(files, { dayStartHour: 4 });
+      at(3, 1, 30);
+      change(plugin, lm, 45);
+      await settle(lm);
+      expect(vault.writes).toEqual([TODAY]);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 45\n---\n${V2}\n`);
+      expect(vault.contents[LOG("2026-10-01")]).toBe(recorded);
+      expect(vault.contents[LOG("2026-10-03")]).toBe(recorded);
+    });
+
+    it("writes to the day the change was made on: one just before midnight lands in that day's file, after it", async () => {
+      // The goal a day keeps is the one set at its end — and a change made in
+      // its last moment was that.
+      const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded });
+      vi.setSystemTime(new Date(2026, 9, 2, 23, 59, 59));
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(new Date().getDate()).toBe(3);
+      expect(vault.writes).toEqual([TODAY]);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 90\n---\n${V2}\n`);
+    });
+
+    it("lands in its own day's file when a phone suspends the app and the write runs the next morning", async () => {
+      const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded });
+      // The day's last session, written at 10:25: before the change.
+      await session(lm);
+      at(2, 22, 0);
+      change(plugin, lm, 240);
+      // Suspended: the timer fires when the app wakes, the day after.
+      at(3, 8, 0);
+      await settle(lm);
+      expect(vault.writes).toEqual([TODAY, TODAY]);
+      expect(readLogGoal(vault.contents[TODAY])).toBe(240);
+    });
+
+    /** A second device on the same vault: its own settings, and its own storage. */
+    function otherDevice(vault: ReturnType<typeof setup>["vault"], minutes: number) {
+      const plugin = {
+        settings: { logFolderPath: "Logs", dayStartHour: 0, dailyFocusGoalMinutes: minutes },
+        app: { vault, metadataCache: linkCache(vault) },
+        invalidateFocusTotalCache: vi.fn(),
+      } as unknown as GentlePomoPlugin;
+      return {
+        plugin,
+        lm: new LogManager(plugin, { storage: memoryStorage(), plannedMs: () => null }),
+      };
+    }
+
+    it("never puts a change it kept over a later one another device wrote into that day's file", async () => {
+      // 22:00 on the phone: 60, and the phone quits (or locks) within the
+      // delay. 23:00 on the laptop: 90, written. 2 October ended with 90.
+      const storage = memoryStorage();
+      const phone = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` }, {}, storage);
+      const laptop = otherDevice(phone.vault, 120);
+      at(2, 22, 0);
+      change(phone.plugin, phone.lm, 60);
+      vi.advanceTimersByTime(1000);
+      phone.lm.dispose();
+      at(2, 23, 0);
+      change(laptop.plugin, laptop.lm, 90);
+      await settle(laptop.lm);
+      expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
+
+      // The phone's next start, the next morning: the later write stays.
+      at(3, 8, 0);
+      const next = new LogManager(phone.plugin, { storage, plannedMs: () => null });
+      await next.writeWaitingGoals();
+      expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+    });
+
+    it("nor when its own timer fires the next morning, the app having been suspended", async () => {
+      const phone = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` });
+      const laptop = otherDevice(phone.vault, 120);
+      at(2, 22, 0);
+      change(phone.plugin, phone.lm, 60);
+      at(2, 23, 0);
+      change(laptop.plugin, laptop.lm, 90);
+      // The laptop's timer, alone: the phone's is still waiting for its wake.
+      await laptop.lm.writeWaitingGoals();
+      expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
+      at(3, 8, 0);
+      await settle(phone.lm);
+      await laptop.lm.walksSettled();
+      expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
+    });
+
+    it("puts a kept change into its day's file with this device's own retried line, whichever is written first", async () => {
+      // An earlier run: a line for 2 October its write failed on, and a goal
+      // change made after it, both kept. Its own line is no later word.
+      for (const goalFirst of [false, true]) {
+        const storage = memoryStorage();
+        at(2, 22, 0);
+        storage.save(UNWRITTEN_LINES_KEY, [
+          { path: TODAY, folder: "Logs", lines: [LINE], focus: true },
+        ]);
+        storage.save(PENDING_GOALS_KEY, [{ path: TODAY, minutes: 60, at: Date.now() }]);
+        const { vault, lm } = setup(
+          { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+          {},
+          storage
+        );
+        at(3, 8, 0);
+        if (goalFirst) await lm.writeWaitingGoals();
+        await lm.retryUnwrittenLines();
+        await lm.writeWaitingGoals();
+        expect(vault.contents[TODAY], String(goalFirst)).toBe(
+          `---\ngoal_minutes: 60\n---\n${V2}\n${LINE}\n`
+        );
+        expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+      }
+    });
+
+    it("gives a day's file created after that day the goal it ended with: its only session ran past midnight", async () => {
+      // Changed during the session, at 23:50: no file for 2 October yet, so
+      // nothing to write then, and the change is let go.
+      const { created, plugin, lm } = setup();
+      at(2, 23, 40);
+      lm.startSession("focus", "No Task", 25);
+      at(2, 23, 50);
+      change(plugin, lm, 90);
+      await settle(lm);
+      at(3, 0, 10);
+      await lm.endSession("finished");
+      expect(created.map((c) => c.path)).toEqual([TODAY]);
+      expect(readLogGoal(created[0].data)).toBe(90);
+
+      // Unchanged that day: the setting; with the goal off, none.
+      for (const minutes of [120, 0]) {
+        const other = setup({}, { dailyFocusGoalMinutes: minutes });
+        at(2, 23, 40);
+        other.lm.startSession("focus", "No Task", 25);
+        at(3, 0, 10);
+        await other.lm.endSession("finished");
+        expect(other.created.map((c) => c.path)).toEqual([TODAY]);
+        expect(readLogGoal(other.created[0].data), String(minutes)).toBe(minutes || null);
+      }
+    });
+
+    it("gives a day's file created later the change kept for that day, over the setting as it is now", async () => {
+      const storage = memoryStorage();
+      at(2, 22, 0);
+      storage.save(UNWRITTEN_LINES_KEY, [
+        { path: TODAY, folder: "Logs", lines: [LINE], focus: true },
+      ]);
+      storage.save(PENDING_GOALS_KEY, [{ path: TODAY, minutes: 60, at: Date.now() }]);
+      const { created, lm } = setup({}, { dailyFocusGoalMinutes: 45 }, storage);
+      at(3, 8, 0);
+      await lm.retryUnwrittenLines();
+      expect(created).toEqual([{ path: TODAY, data: `---\ngoal_minutes: 60\n---\n${LINE}\n` }]);
+    });
+
+    it("gives each day the value set last on it, when changes on two days wait for one write", async () => {
+      const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
+      const NEXT = LOG("2026-10-03");
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded, [NEXT]: recorded });
+      vi.setSystemTime(new Date(2026, 9, 2, 23, 59, 59));
+      change(plugin, lm, 90);
+      vi.setSystemTime(new Date(2026, 9, 3, 0, 0, 0));
+      change(plugin, lm, 60);
+      await settle(lm);
+      expect(readLogGoal(vault.contents[TODAY])).toBe(90);
+      expect(readLogGoal(vault.contents[NEXT])).toBe(60);
+    });
+
+    it("waits for a change made while its write runs, and writes that one after", async () => {
+      const { vault, plugin, lm } = setup(
+        { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+        {},
+        memoryStorage()
+      );
+      let finishRead: (() => void) | null = null;
+      const read = vault.read.bind(vault);
+      vault.read = (file) =>
+        new Promise((resolve) => {
+          finishRead = () => {
+            void read(file).then(resolve);
+          };
+        });
+      change(plugin, lm, 90);
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS);
+      await vi.waitFor(() => {
+        expect(finishRead).not.toBeNull();
+      });
+      vault.read = read;
+      change(plugin, lm, 60);
+      finishRead!();
+      await settle(lm);
+      expect(readLogGoal(vault.contents[TODAY])).toBe(60);
+    });
+
+    it("keeps a session appended between its read and its write", async () => {
+      const { vault, plugin, lm } = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` });
+      const read = vault.read.bind(vault);
+      vault.read = async (file) => {
+        const content = await read(file);
+        // The timer's append lands while the goal write is between steps.
+        vault.contents[file.path] += `${LINE}\n`;
+        return content;
+      };
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 90\n---\n${V2}\n${LINE}\n`);
+    });
+
+    it("writes nothing at unload and leaves no timer behind; the next start writes the change, kept on this device", async () => {
+      // Esc, then Cmd+Q a second later, or a plugin update: no vault write
+      // from a plugin being turned off (F19), and none lost either.
+      const storage = memoryStorage();
+      const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded }, {}, storage);
+      change(plugin, lm, 90);
+      vi.advanceTimersByTime(1000);
+      lm.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      // And takes none after it.
+      change(plugin, lm, 60);
+      expect(vi.getTimerCount()).toBe(0);
+      await settle(lm);
+      expect(vault.writes).toEqual([]);
+      expect(keptMinutes(storage)).toEqual(new Map([[TODAY, 90]]));
+
+      // The next start is the next day, with no session on the day the change
+      // was made: that day's file still gets it, and this device lets it go.
+      at(3, 9, 0);
+      const next = new LogManager(plugin, { storage, plannedMs: () => null });
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS * 10);
+      await next.walksSettled();
+      expect(vault.writes).toEqual([]);
+      await next.writeWaitingGoals();
+      expect(vault.writes).toEqual([TODAY]);
+      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 90\n---\n${V2}\n`);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+    });
+
+    it("keeps a change on this device until it is written, and only that long", async () => {
+      const storage = memoryStorage();
+      const { plugin, lm } = setup(
+        { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+        {},
+        storage
+      );
+      change(plugin, lm, 90);
+      expect(keptMinutes(storage)).toEqual(new Map([[TODAY, 90]]));
+      await settle(lm);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+
+      // A day with no file has nothing to write: let go too, none created.
+      const kept = memoryStorage();
+      const none = setup({}, {}, kept);
+      change(none.plugin, none.lm, 90);
+      await settle(none.lm);
+      expect(none.vault.writes).toEqual([]);
+      expect(none.created).toEqual([]);
+      expect(kept.load(PENDING_GOALS_KEY)).toBeNull();
+    });
+
+    it("writes a kept change for today as the setting is now: it may have moved since, on another device", async () => {
+      const storage = memoryStorage();
+      storage.save(PENDING_GOALS_KEY, [{ path: TODAY, minutes: 60, at: Date.now() }]);
+      const { vault, lm } = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` }, {}, storage);
+      await lm.writeWaitingGoals();
+      expect(readLogGoal(vault.contents[TODAY])).toBe(120);
+      expect(vault.writes).toEqual([]);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+    });
+
+    it("keeps a change whose write failed, for the next start", async () => {
+      const storage = memoryStorage();
+      const { vault, plugin, lm } = setup(
+        { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+        {},
+        storage
+      );
+      const process = vault.process;
+      vault.process = () => Promise.reject(new Error("locked"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+      expect(keptMinutes(storage)).toEqual(new Map([[TODAY, 90]]));
+
+      vault.process = process;
+      const next = new LogManager(plugin, { storage, plannedMs: () => null });
+      await next.writeWaitingGoals();
+      expect(readLogGoal(vault.contents[TODAY])).toBe(90);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+    });
+
+    it("writes nothing after unload, even once its read has started", async () => {
+      const storage = memoryStorage();
+      const { vault, plugin, lm } = setup(
+        { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+        {},
+        storage
+      );
+      let finishRead: (() => void) | null = null;
+      const read = vault.read.bind(vault);
+      vault.read = (file) =>
+        new Promise((resolve) => {
+          finishRead = () => {
+            void read(file).then(resolve);
+          };
+        });
+      change(plugin, lm, 90);
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS);
+      await vi.waitFor(() => {
+        expect(finishRead).not.toBeNull();
+      });
+      lm.dispose();
+      finishRead!();
+      await lm.walksSettled();
+      expect(vault.writes).toEqual([]);
+      // Still kept on this device, for the next start (the reloaded plugin).
+      expect(keptMinutes(storage)).toEqual(new Map([[TODAY, 90]]));
+    });
+
+    it("leaves this device's list alone after unload, even once its write has landed (F19)", async () => {
+      // By then the list may be the reloaded plugin's.
+      const storage = memoryStorage();
+      const { vault, plugin, lm } = setup(
+        { [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` },
+        {},
+        storage
+      );
+      let finishWrite: (() => void) | null = null;
+      const process = vault.process.bind(vault);
+      vault.process = (file, fn) =>
+        new Promise((resolve) => {
+          finishWrite = () => {
+            void process(file, fn).then(resolve);
+          };
+        });
+      change(plugin, lm, 90);
+      vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS);
+      await vi.waitFor(() => {
+        expect(finishWrite).not.toBeNull();
+      });
+      lm.dispose();
+      const save = vi.spyOn(storage, "save");
+      finishWrite!();
+      await lm.walksSettled();
+      expect(readLogGoal(vault.contents[TODAY])).toBe(90);
+      expect(save).not.toHaveBeenCalled();
+    });
+
+    it("reports a failed write and goes on", async () => {
+      const { vault, plugin, lm } = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` });
+      vault.process = () => Promise.reject(new Error("locked"));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      change(plugin, lm, 90);
+      await settle(lm);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    });
   });
 
   describe("and its readers pass over the properties", () => {
@@ -536,5 +1242,52 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
         { taskId: "abc123", path: "Projects/Docs.md" },
       ]);
     });
+  });
+});
+
+describe("the goal changes kept on this device (PENDING_GOALS_KEY)", () => {
+  const LOG = "Logs/2026-10-02-gentle-pomodoro-log.md";
+
+  it("read back defensively: only a daily log's path, with minutes that read as a goal or none, and the time it was made at", () => {
+    const at = 1_790_000_000_000;
+    const raw: unknown = [
+      { path: LOG, minutes: 90, at },
+      { path: "Logs/2026-10-01-gentle-pomodoro-log.md", minutes: 0, at: 0 },
+      { path: "Notes/Ideas.md", minutes: 90, at },
+      { path: LOG.replace("02", "03"), minutes: -5, at },
+      { path: LOG.replace("02", "04"), minutes: Number.NaN, at },
+      { path: LOG.replace("02", "06"), minutes: Infinity, at },
+      { path: LOG.replace("02", "05"), minutes: "90", at },
+      { path: 5, minutes: 90, at },
+      // No time, or none that is one: a later write could not be told apart.
+      { path: LOG.replace("02", "07"), minutes: 90 },
+      { path: LOG.replace("02", "08"), minutes: 90, at: "1790000000000" },
+      { path: LOG.replace("02", "09"), minutes: 90, at: Number.NaN },
+      { path: LOG.replace("02", "10"), minutes: 90, at: -1 },
+      null,
+      "x",
+    ];
+    // Read as given: a device storage hands back what JSON holds, but the
+    // reader takes nothing on trust.
+    expect(readPendingGoals(raw)).toEqual(
+      new Map([
+        [LOG, { minutes: 90, at }],
+        ["Logs/2026-10-01-gentle-pomodoro-log.md", { minutes: 0, at: 0 }],
+      ])
+    );
+    expect(readPendingGoals({ [LOG]: 90 })).toEqual(new Map());
+    expect(readPendingGoals(null)).toEqual(new Map());
+  });
+
+  it("are written at startup, after layout-ready, without holding anything up", () => {
+    const main = readFileSync(resolve(__dirname, "..", "main.ts"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\s+/g, " ");
+    // Inside the callback itself: before layout-ready the vault index is not
+    // complete, a day's file is not found, and its change is let go.
+    const ready = callbackBody(main, "this.app.workspace.onLayoutReady(() => {");
+    expect(ready).toContain("void this.logManager.writeWaitingGoals();");
+    expect(main.match(/\.writeWaitingGoals\(/g)).toHaveLength(1);
   });
 });

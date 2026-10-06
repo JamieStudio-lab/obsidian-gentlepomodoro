@@ -1260,41 +1260,110 @@ describe("LogManager — a note moved or deleted mid-session (C1)", () => {
     ]);
   });
 
-  it("logs the name with no dead link when the note was deleted", async () => {
-    const { lm, tasks } = logging({});
+  // A deleted note is not followed: its lines keep the link as it was, to the
+  // note now gone — what Obsidian leaves in the log's older lines of that
+  // task. Its 🆔 lookup finds no note to read, and keeps the linked name.
+  it("keeps the link as it was when the note is deleted, reading no missing note", async () => {
+    const { lm, tasks, vault } = logging({ [DOCS]: "- [ ] Write the docs 🆔 abc123\n" });
     lm.startSession("focus", "Write docs", 25, DOCS, "abc123");
     vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
-    lm.taskNoteDeleted(DOCS);
+    vault.remove(vault.getAbstractFileByPath(DOCS) as TFile);
 
     await lm.endSession("finished");
 
-    expect(tasks()).toEqual([{ raw: "Write docs", id: "abc123" }]);
+    expect(tasks()).toEqual([{ raw: `[[${DOCS}|Write docs]]`, id: "abc123" }]);
+    expect(DOCS in vault.contents).toBe(false);
   });
 
-  it("drops a deleted note's path from the segments a split closed, too", async () => {
-    // The segment closed by the switch to Task B is written only at the end;
-    // left with its path it would log a dead link to a note that is gone.
-    const { lm, tasks } = logging({ "Projects/B.md": "" }, "split");
+  it("keeps a deleted note's link in the segments a split closed, too", async () => {
+    // The segment closed by the switch to Task B is written only at the end,
+    // with the link it was closed with.
+    const { lm, tasks, vault } = logging(
+      { "Projects/A.md": "- [ ] Task A 🆔 aaa111\n", "Projects/B.md": "" },
+      "split"
+    );
     lm.startSession("focus", "Task A", 25, "Projects/A.md", "aaa111");
     vi.setSystemTime(new Date(2026, 9, 2, 9, 10, 0));
     lm.updateTask("Task B", "Projects/B.md", "bbb222");
     vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
-    lm.taskNoteDeleted("Projects/A.md");
+    vault.remove(vault.getAbstractFileByPath("Projects/A.md") as TFile);
 
     await lm.endSession("finished");
 
     expect(tasks()).toEqual([
-      { raw: "Task A", id: "aaa111" },
+      { raw: "[[Projects/A.md|Task A]]", id: "aaa111" },
       { raw: "[[Projects/B.md|Task B]]", id: "bbb222" },
     ]);
   });
 
-  it("leaves a session alone when another note moves or goes", async () => {
+  // A folder renamed, as Obsidian says so (FileSystemAdapter.rename, app.js
+  // 1.13.7): the folder's own word first, its notes still at their old
+  // paths; then each note in it, moved, says so for itself.
+  const folderRenamed = (vault: FakeVault, lm: LogManager, from: string, to: string) => {
+    lm.taskNoteMoved(from, to);
+    for (const path of Object.keys(vault.contents)) {
+      if (!path.startsWith(`${from}/`)) continue;
+      const moved = to + path.slice(from.length);
+      vault.move(vault.getAbstractFileByPath(path) as TFile, moved);
+      lm.taskNoteMoved(path, moved);
+    }
+  };
+
+  it("keeps a deleted note's link as it was when a folder above it is renamed after", async () => {
+    // Obsidian updates no link to a note that is gone, older lines included:
+    // the line keeps the path it was linked with, never one that never held
+    // the note.
+    const { lm, tasks, vault } = logging({
+      [DOCS]: "- [ ] Write the docs 🆔 abc123\n",
+      "Projects/Other.md": "x\n",
+    });
+    lm.startSession("focus", "Write docs", 25, DOCS, "abc123");
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
+    vault.remove(vault.getAbstractFileByPath(DOCS) as TFile);
+    folderRenamed(vault, lm, "Projects", "Projects 2");
+
+    await lm.endSession("finished");
+
+    expect(tasks()).toEqual([{ raw: `[[${DOCS}|Write docs]]`, id: "abc123" }]);
+  });
+
+  it("in a split, follows the moved segment's note and keeps the deleted one's link", async () => {
+    const { lm, tasks, vault } = logging(
+      { "Projects/A.md": "- [ ] Task A 🆔 aaa111\n", "Projects/B.md": "" },
+      "split"
+    );
+    lm.startSession("focus", "Task A", 25, "Projects/A.md", "aaa111");
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 10, 0));
+    lm.updateTask("Task B", "Projects/B.md", "bbb222");
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
+    vault.remove(vault.getAbstractFileByPath("Projects/A.md") as TFile);
+    folderRenamed(vault, lm, "Projects", "Archive");
+
+    await lm.endSession("finished");
+
+    expect(tasks()).toEqual([
+      { raw: "[[Projects/A.md|Task A]]", id: "aaa111" },
+      { raw: "[[Archive/B.md|Task B]]", id: "bbb222" },
+    ]);
+  });
+
+  it("follows a folder renamed at the folder's own word, before its notes say they moved", async () => {
+    // A session that ends in between is written with the new path.
+    const { lm, tasks } = logging({ [DOCS]: "- [ ] Write the docs 🆔 abc123\n" });
+    lm.startSession("focus", "Write docs", 25, DOCS, "abc123");
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
+    lm.taskNoteMoved("Projects", "Archive");
+
+    await lm.endSession("finished");
+
+    expect(tasks()).toEqual([{ raw: "[[Archive/Docs.md|Write docs]]", id: "abc123" }]);
+  });
+
+  it("leaves a session alone when another note moves", async () => {
     const { lm, tasks } = logging({ [DOCS]: "- [ ] Write docs 🆔 abc123\n" });
     lm.startSession("focus", "Write docs", 25, DOCS, "abc123");
     vi.setSystemTime(new Date(2026, 9, 2, 9, 25, 0));
     lm.taskNoteMoved("Projects/Doc", "Projects/Other");
-    lm.taskNoteDeleted("Projects/Docs");
 
     await lm.endSession("finished");
 
