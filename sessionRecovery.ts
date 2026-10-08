@@ -32,11 +32,18 @@ export const UNWRITTEN_LINES_KEY = "gentle-pomodoro-unwritten-lines";
  * Goal changes not yet written to their day's log file (LogManager.goalChanged):
  * `{ path, minutes, at }` for each day a change was made on — the value set
  * last on it, and when (ms). Kept so a quit within the write's delay, or a
- * phone that suspends the app, loses none: the next start writes them.
+ * phone that suspends the app, loses none while that day lasts: the next
+ * start writes the day's file if it is still today, with the setting as it
+ * is then. A day that is over keeps the goal it has (LogManager.goalFor).
  */
 export const PENDING_GOALS_KEY = "gentle-pomodoro-pending-goals";
 
-/** A goal change kept for its day's log file: the minutes set, and when (ms). */
+/**
+ * A goal change kept for its day's log file: the minutes set, and when (ms) —
+ * the record of the change. The write takes the setting as it is then
+ * (LogManager.goalFor), and a newer change for the day is a new record, so a
+ * write that ran meanwhile does not let it go (writePendingGoals).
+ */
 export interface PendingGoal {
   minutes: number;
   at: number;
@@ -172,8 +179,7 @@ export function readUnwrittenLines(raw: unknown): UnwrittenLines[] {
  * The stored goal changes, by log file path; anything unreadable is left out
  * — a path that is no daily log's (the write must never reach another note),
  * minutes that are no number of them (a goal, or 0 for none), or no time it
- * was made at: without one, a later write to its file could not be told from
- * an earlier one (LogManager.goalFor).
+ * was made at: a record that cannot say what it records is no change.
  */
 export function readPendingGoals(raw: unknown): Map<string, PendingGoal> {
   const out = new Map<string, PendingGoal>();

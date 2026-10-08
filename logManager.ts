@@ -270,9 +270,9 @@ export class LogManager {
   // The log rewrites, chained so that one runs at a time.
   private walks: Promise<void> = Promise.resolve();
   private refreshInFlight = false;
-  // The goal setting changed: the file of each day it changed on is given the
-  // value set last that day once the typing stops (goalChanged), kept on this
-  // device until it is, with the time it was made at.
+  // The goal setting changed: the file of the day it changed on is given the
+  // setting once the typing stops (goalChanged), the change kept on this
+  // device until it is written or its day is over.
   private goalTimer: number | null = null;
   private pendingGoals = new Map<string, PendingGoal>();
   private disposed = false;
@@ -733,10 +733,10 @@ export class LogManager {
    * A goal change still waiting for its write (goalChanged) is not written
    * either, for the renames' reason: a vault write after unload would race
    * the reloaded plugin's own. It is kept on this device from the moment it
-   * is made, and the next start writes it (writeWaitingGoals) — into the
-   * file of the day it was made on, whichever day that start is, unless that
-   * file was written after it (goalFor). Only a device that keeps nothing
-   * (storage full or blocked) loses it.
+   * is made, and the next start writes it (writeWaitingGoals) while the day
+   * it was made on is still today; a day that is over by then keeps the goal
+   * it has (goalFor says why). Only a device that keeps nothing (storage
+   * full or blocked) loses it the same day.
    */
   dispose() {
     if (this.currentSession) this.saveOpenSession();
@@ -1237,8 +1237,8 @@ export class LogManager {
    *
    * Today's file records the goal as it is set now in the same write
    * (goalFor): written or updated while the goal is on, taken out while it is
-   * off (recordLogGoal). A past day's file keeps what it has, a change kept
-   * for that day apart, and one created now gets one (goalFor). The adapter's
+   * off (recordLogGoal). A past day's file keeps what it has, and one created
+   * now gets the setting (goalFor). The adapter's
    * append cannot — it adds to the end — so the next write does: a session's,
    * or a change of the setting (goalChanged).
    */
@@ -1271,33 +1271,33 @@ export class LogManager {
    *
    * - the file of the day it is now ("Day starts at" counted): the daily goal
    *   setting, 0 when that goal is off, which takes a recorded one out;
-   * - a past day's file with a change kept for that day (goalChanged): that
-   *   change — unless the file was written after it was made. Another device
-   *   may have changed the goal later that day and written it there, and a
-   *   change this device could not write in time (a quit, a phone that
-   *   suspended the app) must not go over it the next morning: the later
-   *   write had the day's last word. The file's modification time tells,
-   *   which Obsidian Sync carries over from the device that wrote it. Any
-   *   later write counts, as the file cannot say which kind it was — a
-   *   session's line this device wrote after the change took it in already
-   *   (here, in that write);
-   * - a past day's file being created: the change kept for that day, else
-   *   the setting as it is now. It recorded none while it was today, as it
-   *   was not there: its only session ran past midnight, or a failed write
-   *   is being retried. The setting now is the nearest this device knows of
-   *   the goal that day ended with — off by a change made since, which a
-   *   file that did not exist could not keep apart;
+   * - a past day's file being created: the setting as it is now. It recorded
+   *   none while it was today, as it was not there: its only session ran past
+   *   midnight, or a failed write is being retried. The setting now is the
+   *   nearest this device knows of the goal that day ended with — off by a
+   *   change made since;
    * - any other: null, which leaves the file's goal as it is. A past day's
    *   file keeps the goal that day had: a session that started before
-   *   midnight and is written after it goes into yesterday's file, and leaves
-   *   its goal alone.
+   *   midnight and is written after it goes into yesterday's file and leaves
+   *   its goal alone; and a goal change kept for a day that is over is let go
+   *   unwritten (writePendingGoals — the maintainer's call). That write would
+   *   run late, at the next start or when a suspended phone wakes, and so
+   *   usually before Obsidian Sync has pulled what another device wrote into
+   *   that file since. Sync then merges the two texts, and its merge of two
+   *   different numbers keeps the stale one or makes a third (a kept 240 over
+   *   a later 90 gave 490, through 1.13.7's own merge); no file time can tell,
+   *   as the later write is not on this device yet. What a day loses instead
+   *   is a change made after its last session in the moment before a quit or
+   *   a suspend — and only when the next start is on a later day.
+   *
+   * Two devices whose settings differ, each writing the same day's file
+   * before Sync carries the other's version over, can still leave such a
+   * number in today's file: nothing on one device can see a write that has
+   * not reached it.
    */
   private goalFor(filePath: string, file: TFile | null): number | null {
-    const setting = resolveGoalMinutes(this.plugin.settings.dailyFocusGoalMinutes);
-    if (filePath === this.todayLogPath()) return setting;
-    const kept = this.pendingGoals.get(filePath);
-    if (file === null) return kept?.minutes ?? setting;
-    return kept !== undefined && file.stat.mtime <= kept.at ? kept.minutes : null;
+    if (filePath !== this.todayLogPath() && file !== null) return null;
+    return resolveGoalMinutes(this.plugin.settings.dailyFocusGoalMinutes);
   }
 
   /** Today's log file, "Day starts at" counted; null with no log folder. */
@@ -1316,15 +1316,15 @@ export class LogManager {
    *
    * The day is taken now, at the change, never when the write runs: a phone
    * suspends the app, and a timer set at 22:00 can fire the next morning,
-   * when today's file is another — which held nothing of the change (it may
-   * not exist yet), while the day it was made on kept the old goal for good.
-   * A change in the last moment of a day goes into that day's file for the
-   * same reason: it is the goal that day ended with. The new day's own file
+   * when today's file is another, which held nothing of the change (it may
+   * not exist yet). A write that runs once the day it was made on is over
+   * writes nothing — that day keeps the goal it has (goalFor says why) — and
+   * a change in a day's last moment is no exception. The new day's own file
    * is given the setting by its first session's write (goalFor).
    *
    * Kept on this device at once (PENDING_GOALS_KEY), so a quit inside the
-   * delay loses nothing either: the next start writes it (writeWaitingGoals)
-   * — unless the day's file was written after the change, by then (goalFor).
+   * delay loses nothing while the day lasts: the next start writes it
+   * (writeWaitingGoals) if it is still that day.
    */
   goalChanged(): void {
     if (this.disposed) return;
@@ -1353,10 +1353,11 @@ export class LogManager {
   }
 
   /**
-   * Each waiting change into its day's file (writeGoal): TODAY's file the
-   * setting as it is now (goalFor) — it may have moved since, on another
-   * device — and an earlier day's the value set last on that day, unless the
-   * file was written after it (goalFor). Let go of once settled, and only if
+   * Each waiting change into its day's file (writeGoal) while that day is
+   * still today, as the setting is now (goalFor) — it may have moved since,
+   * on another device. A change for a day that is over writes nothing and is
+   * let go: that day keeps the goal it has (goalFor says why). Let go of once
+   * settled, and only if
    * no newer change for that day came meanwhile: that one waits for its own
    * write. A write that failed stays, for the next start. Never after dispose
    * (F19): what is left stays kept, for the reloaded plugin to write.
@@ -1382,9 +1383,8 @@ export class LogManager {
 
   /**
    * Give the log file at `path` the goal goalFor gives it (recordLogGoal) —
-   * none when it gives null, a later write to a past day's file having had
-   * the last word. Only a file that is there: none is created for a goal. A
-   * file whose properties
+   * none when it gives null: a past day's file keeps the goal it has. Only a
+   * file that is there: none is created for a goal. A file whose properties
    * the timer leaves alone — one that starts with a byte order mark — stays
    * as it is, and so does one that already says it: read first, written only
    * when it would change, and then through Vault.process, as a session being

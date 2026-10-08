@@ -15,7 +15,7 @@ import { DEFAULT_SETTINGS, LOG_FORMAT_NOTICE_MS } from "../constants";
 import { classifyPluginData, coerceToDefaults } from "../settingsStore";
 import type { GentlePomoSettings } from "../types";
 import { fakeVault, type FakeVault } from "./fakeVault";
-import { callbackBody } from "./sourceText";
+import { callbackBody, topLevelStatements } from "./sourceText";
 
 /**
  * The one notice after upgrading to 0.6.9: old-format lines left in the log,
@@ -189,6 +189,14 @@ describe("hasOldLogLine", () => {
     const content = `---\ngoal_minutes: 120\nquoted:\n  ${V1_FOCUS}\n---\n${V2_FOCUS}\n`;
     expect(hasOldLogLine(content)).toBe(false);
   });
+
+  it("counts only the lines Convert rewrites, as Check log does: one it leaves as it is is no reason for the notice", () => {
+    // A "]" in the link's path: Convert leaves the line, Check log lists it as
+    // one it can't read. The notice would promise a rewrite that never comes.
+    const inexact = V1_FOCUS.replace("Projects/Garden.md", "Projects/Gar]den.md");
+    expect(hasOldLogLine(`${V2_FOCUS}\n${inexact}\n`)).toBe(false);
+    expect(hasOldLogLine(`${inexact}\n${V1_REST}\n`)).toBe(true);
+  });
 });
 
 describe("offerLogFormatNotice", () => {
@@ -313,11 +321,26 @@ describe("offerLogFormatNotice", () => {
     }
   });
 
-  it("with a folder set that has no log files yet: nothing old, the look is over", async () => {
-    const h = harness({ "Notes/a.md": "x" }, { logFolderPath: "Logs" });
-    expect(await offerLogFormatNotice(h.host)).toBe("none");
-    expect(h.notices).toEqual([]);
-    expect(h.saves).toEqual([false]);
+  it("with a folder set that has no log files yet: waits for one, so a device the logs have not reached spends nothing", async () => {
+    // data.json syncs; the logs may not have arrived here yet, or this device
+    // leaves the folder out of its sync. Missing, empty, or other notes only.
+    const cases: Record<string, string>[] = [
+      { "Notes/a.md": "x" },
+      { "Logs/readme.md": `${V1_FOCUS}\n` },
+    ];
+    for (const files of cases) {
+      const h = harness(files, { logFolderPath: "Logs" });
+      expect(await offerLogFormatNotice(h.host)).toBe("no-logs");
+      expect(h.reads).toEqual([]);
+      expect(h.notices).toEqual([]);
+      expect(h.saves).toEqual([]);
+      expect(h.settings.logFormatNoticePending).toBe(true);
+
+      // The logs arrive: the next start looks.
+      const later = harness({ ...files, [LOG("2026-10-01")]: `${V1_FOCUS}\n` }, h.settings);
+      expect(await offerLogFormatNotice(later.host)).toBe("shown");
+      expect(later.saves).toEqual([false]);
+    }
   });
 
   it("reads only files named like a daily log, as Check log and Convert do", async () => {
@@ -401,6 +424,9 @@ describe("offerLogFormatNotice", () => {
       expect(await look).toBe("unloaded");
       expect(h.notices).toEqual([]);
       expect(h.saves).toEqual([]);
+      // Nor cleared in memory: the check is the last moment before anything
+      // is said, saved or changed.
+      expect(h.settings.logFormatNoticePending).toBe(true);
     });
 
     it("reads no further file", async () => {
@@ -481,8 +507,10 @@ describe("the plugin's wiring", () => {
   });
 
   it("looks after layout-ready, without holding anything up", () => {
+    // A statement of its own there: not behind a condition, nor put off into
+    // a nested timer.
     const block = callbackBody(main, "this.app.workspace.onLayoutReady(() => {");
-    expect(block).toContain(
+    expect(topLevelStatements(block)).toContain(
       "void offerLogFormatNotice({ app: this.app, settings: () => this.settings, save: () => this.saveSettings(), notice: (message, durationMs) => { new Notice(message, durationMs); }, unloaded: () => this.unloaded, });"
     );
     expect(main.match(/offerLogFormatNotice\(/g)).toHaveLength(1);

@@ -31,7 +31,8 @@ the `|` between them — see the first entry under **Changed**.
   first, writes only the files that change, and a second run changes
   nothing. On the way it tidies
   what early versions left in task names (a broken character, a priority
-  emoji, a 🆔, which moves to its own ID field), writes dates in other digits
+  emoji, a 🆔, which moves to its own ID field, brackets or `::` in a name),
+  takes a checkbox off the front of a session line, writes dates in other digits
   with 0-9, and renames a log file whose name used other digits. When that
   day already has a 0-9 file, it merges the old file's lines into it instead,
   each session where its start time belongs, and then moves the old file to
@@ -80,8 +81,10 @@ the `|` between them — see the first entry under **Changed**.
   a goal changed after the day's last session is recorded too — in the file
   of the day you changed it on, even when Obsidian is closed or your phone
   locks a moment later (the change is kept on that device, and the next start
-  writes it — unless another device has written that day's file since, whose
-  later write stays). That update goes to the day's file only if it exists;
+  writes it if that is still the same day; once the day is over it is let go
+  and that day keeps the goal it has, since a late write could reach the file
+  before Obsidian Sync brings in another device's change, and Sync's merge of
+  two numbers can garble the goal). That update goes to the day's file only if it exists;
   none is made for a goal, and a day whose file is first written after it
   ended — its only session ran past midnight — gets the goal as it is set
   then. With the goal off, the property is taken out of today's
@@ -96,12 +99,17 @@ the `|` between them — see the first entry under **Changed**.
   lines in the old format: it says where **Convert old log lines** is, and
   that **Check log** counts them first and changes nothing. The plugin looks
   once, at the first start after updating, through the daily log files in
-  your log folder, and never again; a new install or a reinstall, which
-  keeps your logs, looks once too; with no log folder set it waits until
-  there is one, and nothing is written to the log.
+  your log folder (counting the lines Convert would rewrite, as Check log
+  does); a new install or a reinstall, which keeps your logs, looks once too.
+  With no log folder set, one Check log can't list, or no log file in it yet
+  — the logs still syncing to that device, say — it waits until there is one.
+  An older version still open on another device can make it look once more.
+  Nothing is written to the log.
 - **A read-only API for your own templates**, so a `dataviewjs` review no
   longer needs its own copy of the log's format:
-  `app.plugins.plugins["gentle-pomo"]?.api`. `getDay("2026-10-04")` and
+  `app.plugins.plugins["gentle-pomo"]?.api` (version 1: `dailyGoalMinutes()`,
+  `dayStartHour()`, `logPath(date)`, `getDay(date)` and `getDays(from, to)`,
+  at most 400 days). `getDay("2026-10-04")` and
   `getDays(from, to)` give each day's sessions as the plugin reads them (both
   line formats), its focus total as the daily goal counts it, and its goal —
   the setting for today, the goal its file recorded for an earlier day, or

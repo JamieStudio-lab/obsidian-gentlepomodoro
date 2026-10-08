@@ -29,7 +29,7 @@ import type { DeviceStorage } from "../deviceStorage";
 import type GentlePomoPlugin from "../main";
 import { memoryStorage } from "./memoryStorage";
 import { fakeVault, linkCache } from "./fakeVault";
-import { callbackBody } from "./sourceText";
+import { callbackBody, topLevelStatements } from "./sourceText";
 
 /** The goal changes kept on a device, path → minutes, their times left out. */
 function keptMinutes(storage: DeviceStorage): Map<string, number> {
@@ -757,6 +757,20 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 150\n---\n${V2}\n`);
       // Nothing re-read: the total counts the body, which did not move.
       expect(plugin.invalidateFocusTotalCache).not.toHaveBeenCalled();
+      // "A moment": long enough for a number typed a digit at a time, short
+      // enough that a quit right after it is rare (the changelog's words).
+      expect(LOG_GOAL_WRITE_DELAY_MS).toBeGreaterThanOrEqual(1000);
+      expect(LOG_GOAL_WRITE_DELAY_MS).toBeLessThanOrEqual(2000);
+    });
+
+    it("keeps nothing and sets no timer with no log folder: there is no day's file to write", async () => {
+      const storage = memoryStorage();
+      const save = vi.spyOn(storage, "save");
+      const { plugin, lm } = setup({}, {}, storage);
+      plugin.settings.logFolderPath = "";
+      change(plugin, lm, 90);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(save).not.toHaveBeenCalled();
     });
 
     it("updates only the goal's row, and keeps a CRLF file CRLF", async () => {
@@ -844,20 +858,24 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       expect(vault.contents[LOG("2026-10-03")]).toBe(recorded);
     });
 
-    it("writes to the day the change was made on: one just before midnight lands in that day's file, after it", async () => {
-      // The goal a day keeps is the one set at its end — and a change made in
-      // its last moment was that.
+    it("writes nothing once the day it was made on is over: one in a day's last moment is let go, and the new day's file is not touched", async () => {
+      // The maintainer's call: a past day's file is never written from a kept
+      // change, as a late write races Obsidian Sync's merge (goalFor).
+      const storage = memoryStorage();
       const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
-      const { vault, plugin, lm } = setup({ [TODAY]: recorded });
+      const NEXT = LOG("2026-10-03");
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded, [NEXT]: recorded }, {}, storage);
       vi.setSystemTime(new Date(2026, 9, 2, 23, 59, 59));
       change(plugin, lm, 90);
       await settle(lm);
       expect(new Date().getDate()).toBe(3);
-      expect(vault.writes).toEqual([TODAY]);
-      expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 90\n---\n${V2}\n`);
+      expect(vault.writes).toEqual([]);
+      expect(vault.contents[TODAY]).toBe(recorded);
+      expect(vault.contents[NEXT]).toBe(recorded);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
     });
 
-    it("lands in its own day's file when a phone suspends the app and the write runs the next morning", async () => {
+    it("lets a change go when a phone suspends the app and the write runs the next morning: that day keeps its goal", async () => {
       const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
       const { vault, plugin, lm } = setup({ [TODAY]: recorded });
       // The day's last session, written at 10:25: before the change.
@@ -867,8 +885,17 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       // Suspended: the timer fires when the app wakes, the day after.
       at(3, 8, 0);
       await settle(lm);
-      expect(vault.writes).toEqual([TODAY, TODAY]);
-      expect(readLogGoal(vault.contents[TODAY])).toBe(240);
+      expect(vault.writes).toEqual([TODAY]);
+      expect(readLogGoal(vault.contents[TODAY])).toBe(120);
+
+      // Woken the same day instead, it writes.
+      const same = setup({ [TODAY]: recorded });
+      await session(same.lm);
+      at(2, 22, 0);
+      change(same.plugin, same.lm, 240);
+      at(2, 23, 30);
+      await settle(same.lm);
+      expect(readLogGoal(same.vault.contents[TODAY])).toBe(240);
     });
 
     /** A second device on the same vault: its own settings, and its own storage. */
@@ -884,7 +911,7 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       };
     }
 
-    it("never puts a change it kept over a later one another device wrote into that day's file", async () => {
+    it("never puts a change it kept over a later one another device wrote into that day's file, pulled or not", async () => {
       // 22:00 on the phone: 60, and the phone quits (or locks) within the
       // delay. 23:00 on the laptop: 90, written. 2 October ended with 90.
       const storage = memoryStorage();
@@ -905,6 +932,21 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       await next.writeWaitingGoals();
       expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
       expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+
+      // The usual order: the phone starts before Sync has pulled the laptop's
+      // version, so its own copy still holds 120. It must write nothing
+      // there, or Sync would merge its 60 with the laptop's 90 (goalFor).
+      const kept = memoryStorage();
+      const alone = setup({ [TODAY]: `---\ngoal_minutes: 120\n---\n${V2}\n` }, {}, kept);
+      at(2, 22, 0);
+      change(alone.plugin, alone.lm, 60);
+      vi.advanceTimersByTime(1000);
+      alone.lm.dispose();
+      at(3, 8, 0);
+      const started = new LogManager(alone.plugin, { storage: kept, plannedMs: () => null });
+      await started.writeWaitingGoals();
+      expect(alone.vault.writes).toEqual([]);
+      expect(kept.load(PENDING_GOALS_KEY)).toBeNull();
     });
 
     it("nor when its own timer fires the next morning, the app having been suspended", async () => {
@@ -917,15 +959,17 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       // The laptop's timer, alone: the phone's is still waiting for its wake.
       await laptop.lm.writeWaitingGoals();
       expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
+      const written = phone.vault.writes.length;
       at(3, 8, 0);
       await settle(phone.lm);
       await laptop.lm.walksSettled();
+      expect(phone.vault.writes.length).toBe(written);
       expect(readLogGoal(phone.vault.contents[TODAY])).toBe(90);
     });
 
-    it("puts a kept change into its day's file with this device's own retried line, whichever is written first", async () => {
+    it("lets a kept change for a day that is over go, and writes this device's retried line there as it is, whichever runs first", async () => {
       // An earlier run: a line for 2 October its write failed on, and a goal
-      // change made after it, both kept. Its own line is no later word.
+      // change made after it, both kept. The next start is on 3 October.
       for (const goalFirst of [false, true]) {
         const storage = memoryStorage();
         at(2, 22, 0);
@@ -943,13 +987,13 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
         await lm.retryUnwrittenLines();
         await lm.writeWaitingGoals();
         expect(vault.contents[TODAY], String(goalFirst)).toBe(
-          `---\ngoal_minutes: 60\n---\n${V2}\n${LINE}\n`
+          `---\ngoal_minutes: 120\n---\n${V2}\n${LINE}\n`
         );
         expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
       }
     });
 
-    it("gives a day's file created after that day the goal it ended with: its only session ran past midnight", async () => {
+    it("gives a day's file created after that day the goal as it is set then: its only session ran past midnight", async () => {
       // Changed during the session, at 23:50: no file for 2 October yet, so
       // nothing to write then, and the change is let go.
       const { created, plugin, lm } = setup();
@@ -975,30 +1019,47 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       }
     });
 
-    it("gives a day's file created later the change kept for that day, over the setting as it is now", async () => {
-      const storage = memoryStorage();
-      at(2, 22, 0);
-      storage.save(UNWRITTEN_LINES_KEY, [
-        { path: TODAY, folder: "Logs", lines: [LINE], focus: true },
-      ]);
-      storage.save(PENDING_GOALS_KEY, [{ path: TODAY, minutes: 60, at: Date.now() }]);
-      const { created, lm } = setup({}, { dailyFocusGoalMinutes: 45 }, storage);
-      at(3, 8, 0);
-      await lm.retryUnwrittenLines();
-      expect(created).toEqual([{ path: TODAY, data: `---\ngoal_minutes: 60\n---\n${LINE}\n` }]);
+    it("gives a day's file created later the setting as it is now, not a change kept for that day", async () => {
+      // As every kept change for a day that is over: let go (goalFor). Off
+      // either way round, too: an off setting writes no goal, a kept 0 none.
+      for (const [kept, setting, goal] of [
+        [60, 45, 45],
+        [60, 0, null],
+        [0, 45, 45],
+      ] as const) {
+        const storage = memoryStorage();
+        at(2, 22, 0);
+        storage.save(UNWRITTEN_LINES_KEY, [
+          { path: TODAY, folder: "Logs", lines: [LINE], focus: true },
+        ]);
+        storage.save(PENDING_GOALS_KEY, [{ path: TODAY, minutes: kept, at: Date.now() }]);
+        const { created, lm } = setup({}, { dailyFocusGoalMinutes: setting }, storage);
+        at(3, 8, 0);
+        await lm.retryUnwrittenLines();
+        expect(created.map((c) => c.path)).toEqual([TODAY]);
+        expect(readLogGoal(created[0].data), `${kept} ${setting}`).toBe(goal);
+      }
     });
 
-    it("gives each day the value set last on it, when changes on two days wait for one write", async () => {
+    it("writes the new day's change and lets the old day's go, when changes on two days wait for one write", async () => {
+      const storage = memoryStorage();
       const recorded = `---\ngoal_minutes: 120\n---\n${V2}\n`;
       const NEXT = LOG("2026-10-03");
-      const { vault, plugin, lm } = setup({ [TODAY]: recorded, [NEXT]: recorded });
+      const { vault, plugin, lm } = setup({ [TODAY]: recorded, [NEXT]: recorded }, {}, storage);
       vi.setSystemTime(new Date(2026, 9, 2, 23, 59, 59));
       change(plugin, lm, 90);
       vi.setSystemTime(new Date(2026, 9, 3, 0, 0, 0));
       change(plugin, lm, 60);
+      expect(keptMinutes(storage)).toEqual(
+        new Map([
+          [TODAY, 90],
+          [NEXT, 60],
+        ])
+      );
       await settle(lm);
-      expect(readLogGoal(vault.contents[TODAY])).toBe(90);
+      expect(vault.contents[TODAY]).toBe(recorded);
       expect(readLogGoal(vault.contents[NEXT])).toBe(60);
+      expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
     });
 
     it("waits for a change made while its write runs, and writes that one after", async () => {
@@ -1058,9 +1119,10 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       expect(vault.writes).toEqual([]);
       expect(keptMinutes(storage)).toEqual(new Map([[TODAY, 90]]));
 
-      // The next start is the next day, with no session on the day the change
-      // was made: that day's file still gets it, and this device lets it go.
-      at(3, 9, 0);
+      // The next start, the same day: it writes the change, and this device
+      // lets it go. The setting is 90 there — the 60 came after unload.
+      plugin.settings.dailyFocusGoalMinutes = 90;
+      at(2, 21, 0);
       const next = new LogManager(plugin, { storage, plannedMs: () => null });
       vi.advanceTimersByTime(LOG_GOAL_WRITE_DELAY_MS * 10);
       await next.walksSettled();
@@ -1069,6 +1131,22 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
       expect(vault.writes).toEqual([TODAY]);
       expect(vault.contents[TODAY]).toBe(`---\ngoal_minutes: 90\n---\n${V2}\n`);
       expect(storage.load(PENDING_GOALS_KEY)).toBeNull();
+
+      // The next start the day after: that day keeps its goal, the change is
+      // let go — with the goal turned off too, the row stays.
+      for (const minutes of [90, 0]) {
+        const kept = memoryStorage();
+        const later = setup({ [TODAY]: recorded }, {}, kept);
+        at(2, 20, 0);
+        change(later.plugin, later.lm, minutes);
+        later.lm.dispose();
+        at(3, 9, 0);
+        const started = new LogManager(later.plugin, { storage: kept, plannedMs: () => null });
+        await started.writeWaitingGoals();
+        expect(later.vault.writes, String(minutes)).toEqual([]);
+        expect(later.vault.contents[TODAY]).toBe(recorded);
+        expect(kept.load(PENDING_GOALS_KEY)).toBeNull();
+      }
     });
 
     it("keeps a change on this device until it is written, and only that long", async () => {
@@ -1286,8 +1364,10 @@ describe("the goal changes kept on this device (PENDING_GOALS_KEY)", () => {
       .replace(/\s+/g, " ");
     // Inside the callback itself: before layout-ready the vault index is not
     // complete, a day's file is not found, and its change is let go.
+    // A statement of its own there: not behind a condition, nor put off into
+    // a nested timer.
     const ready = callbackBody(main, "this.app.workspace.onLayoutReady(() => {");
-    expect(ready).toContain("void this.logManager.writeWaitingGoals();");
+    expect(topLevelStatements(ready)).toContain("void this.logManager.writeWaitingGoals();");
     expect(main.match(/\.writeWaitingGoals\(/g)).toHaveLength(1);
   });
 });

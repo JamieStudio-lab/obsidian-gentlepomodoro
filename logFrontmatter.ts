@@ -154,13 +154,12 @@ export function readLogGoal(content: string): number | null {
  *
  * LogManager runs this, through recordLogGoal (LogManager.goalFor): on
  * TODAY's file in the Vault.process callback that appends a session to it;
- * when the goal setting changes, on the file of the day it changed on — the
- * goal that day ended with, even when the write lands after it
- * (goalChanged), unless that file was written after the change, by another
- * device that changed the goal later that day, say; and on a past day's file
- * the timer creates — its only session ran past midnight — which recorded no
+ * when the goal setting changes, on today's file, while the day the change
+ * was made on is still today (goalChanged); and on a past day's file the
+ * timer creates — its only session ran past midnight — which recorded no
  * goal while it was today. Never otherwise on a past day's file, whose goal
- * is the one that day had.
+ * is the one that day had: a late write there would race Obsidian Sync's
+ * merge (LogManager.goalFor).
  */
 export function withLogGoal(content: string, minutes: number): string {
   if (resolveGoalMinutes(minutes) === 0 || content.startsWith("﻿")) return content;

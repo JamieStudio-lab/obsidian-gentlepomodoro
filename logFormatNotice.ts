@@ -7,16 +7,16 @@
  *
  * Once per data.json, through `logFormatNoticePending` in it: loadSettings
  * sets it the one time it reads a data.json that has no such field, or none
- * at all (deriveLogFormatNotice), and the look clears it, old lines found or
- * not. It only reads: nothing is written to the log. A plugin unloaded while
+ * at all (deriveLogFormatNotice), and the look clears it once it has had a
+ * daily log file to read, old lines found or not. It only reads: nothing is
+ * written to the log. A plugin unloaded while
  * it reads stops there, as LogManager does (F19): the reloaded one looks for
  * itself.
  */
 import type { App } from "obsidian";
 import { LOG_FORMAT_NOTICE_MS } from "./constants";
 import { dailyLogFiles, logFolderProblem } from "./logFolder";
-import { frontmatterRowCount } from "./logFrontmatter";
-import { parseLogLine } from "./logLine";
+import { convertLogContent } from "./logConvert";
 import { logger } from "./logger";
 import type { GentlePomoSettings } from "./types";
 
@@ -63,16 +63,14 @@ export function deriveLogFormatNotice(
 
 /**
  * Whether a log file holds a session line in the old format (version 1,
- * `| Key:: value`), as parseLogLine reads one — the first found ends the
- * read. The file's properties are skipped, as every reader of the log skips
- * them. A line Convert would leave as it is ("inexact") counts too: it is
- * old, and Check log lists it.
+ * `| Key:: value`) that Convert rewrites — counted as Check log counts them
+ * (convertLogContent), the file's properties skipped as every reader of the
+ * log skips them. An old line Convert leaves as it is ("inexact": a `]` in
+ * its link's path, say) does not count: the notice says Convert rewrites
+ * them, and Check log lists that one as a line it can't read, not as old.
  */
 export function hasOldLogLine(content: string): boolean {
-  return content
-    .split(/\r?\n/)
-    .slice(frontmatterRowCount(content))
-    .some((line) => parseLogLine(line)?.format === "v1");
+  return convertLogContent(content).counts.converted > 0;
 }
 
 /** What the look needs from the plugin. */
@@ -88,7 +86,13 @@ export interface LogFormatNoticeHost {
 }
 
 /** What happened, for the tests: the look skipped, put off, made, or cut short by an unload. */
-export type LogFormatNoticeOutcome = "not-pending" | "no-folder" | "shown" | "none" | "unloaded";
+export type LogFormatNoticeOutcome =
+  | "not-pending"
+  | "no-folder"
+  | "no-logs"
+  | "shown"
+  | "none"
+  | "unloaded";
 
 /**
  * At layout-ready, never awaited by it: when the flag is pending and the log
@@ -106,6 +110,13 @@ export type LogFormatNoticeOutcome = "not-pending" | "no-folder" | "shown" | "no
  * start costs a lookup and no read. Convert stays in the settings beside the
  * folder row in any case.
  *
+ * A folder with no daily log file in it leaves the flag pending too ("no-logs"),
+ * for the same reason: data.json syncs, and the logs may not have reached this
+ * device yet — still downloading, or a folder this device leaves out of its
+ * sync. Its look would read nothing and spend the one notice another device,
+ * the one with the old lines, needed. Until a log file is there, a start costs
+ * a walk of the folder and no read.
+ *
  * Unloaded while it reads — a disable and enable, an update — it stops: no
  * further read, no notice, no save, the flag left pending on disk. The
  * reloaded plugin reads that flag and looks for itself, so the old one's
@@ -121,7 +132,7 @@ export async function offerLogFormatNotice(
   if (folder.trim() === "" || logFolderProblem(folder, host.app.vault) !== null) {
     return "no-folder";
   }
-  let found = false;
+  let found: boolean | null = false;
   try {
     found = await findOldLogLine(host, folder);
   } catch (e) {
@@ -129,6 +140,7 @@ export async function offerLogFormatNotice(
     // or it would throw again at every start.
     logger.warn("Could not look for old log lines", e);
   }
+  if (found === null) return "no-logs";
   // The last moment before anything is said or saved.
   if (host.unloaded()) return "unloaded";
   host.settings().logFormatNoticePending = false;
@@ -138,7 +150,8 @@ export async function offerLogFormatNotice(
 }
 
 /**
- * Whether any daily log in `folder` holds an old line. The files Check log
+ * Whether any daily log in `folder` holds an old line — null when the folder
+ * has no daily log file at all, before anything is read. The files Check log
  * and Convert list (dailyLogFiles), each through cachedRead, stopping at the
  * first old line.
  *
@@ -152,9 +165,11 @@ export async function offerLogFormatNotice(
  * Stops, finding nothing, once the plugin is unloaded: what it would find is
  * no longer this plugin's to say (offerLogFormatNotice).
  */
-async function findOldLogLine(host: LogFormatNoticeHost, folder: string): Promise<boolean> {
+async function findOldLogLine(host: LogFormatNoticeHost, folder: string): Promise<boolean | null> {
   const app = host.app;
-  for (const file of dailyLogFiles(app, folder)) {
+  const files = dailyLogFiles(app, folder);
+  if (files.length === 0) return null;
+  for (const file of files) {
     if (host.unloaded()) return false;
     let content: string;
     try {
