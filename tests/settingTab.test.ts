@@ -14,9 +14,16 @@ import {
 } from "../__mocks__/obsidian";
 import {
   BREAK_END_CUE_NAME,
+  CHECK_LOG_NAME,
+  CONVERT_LOG_NAME,
   CUE_MUTED_NOTICE,
+  DAY_START_NAME,
   FOCUS_END_CUE_NAME,
   GentlePomoSettingTab,
+  LONG_SESSION_NAME,
+  OPEN_LOG_NAME,
+  REFRESH_NAMES_NAME,
+  TASK_SWITCH_NAME,
 } from "../GentlePomoSettingTab";
 import { DEFAULT_SETTINGS } from "../constants";
 import {
@@ -32,7 +39,20 @@ import { VOLUME_OPTIONS } from "../segmentedChoice";
 import { SESSION_END_NOTIFICATION_LABEL } from "../sessionEndNotice";
 import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import { DEFAULT_THEME } from "../themes";
+import { TimerEngine } from "../TimerEngine";
 import type { GentlePomoSettings } from "../types";
+import { fakeVault } from "./fakeVault";
+import {
+  LOG_FOLDER_DESC,
+  LOG_FOLDER_NAME,
+  folderIgnoringCase,
+  logFolderAdoptedMessage,
+  logFolderLeftMessage,
+  logFolderProblem,
+  logFolderProblemNote,
+  logFolderRootMessage,
+  resolveLogFolderInput,
+} from "../logFolder";
 
 /**
  * The pre-1.13 `display()` path cannot be exercised on a machine running a
@@ -59,7 +79,7 @@ interface Call {
   args: unknown[];
 }
 
-function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
+function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<string, string> = {}) {
   const calls: Call[] = [];
   const settings: GentlePomoSettings = { ...DEFAULT_SETTINGS, ...overrides };
   const plugin = {
@@ -90,6 +110,9 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
     refreshStatusBar: () => calls.push({ method: "refreshStatusBar", args: [] }),
     refreshGoalDisplays: () => calls.push({ method: "refreshGoalDisplays", args: [] }),
     logFolderChanged: () => calls.push({ method: "logFolderChanged", args: [] }),
+    logManager: {
+      goalChanged: () => calls.push({ method: "goalChanged", args: [] }),
+    },
     clearAllMusicPositions: () => calls.push({ method: "clearAllMusicPositions", args: [] }),
     previewSessionEndNotification: () =>
       calls.push({ method: "previewSessionEndNotification", args: [] }),
@@ -109,6 +132,22 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
       calls.push({ method: "removeAllPomodoroMarkers", args: [] });
       return Promise.resolve();
     },
+    openTodayLog: () => {
+      calls.push({ method: "openTodayLog", args: [] });
+      return Promise.resolve();
+    },
+    checkLog: () => {
+      calls.push({ method: "checkLog", args: [] });
+      return Promise.resolve();
+    },
+    convertLog: () => {
+      calls.push({ method: "convertLog", args: [] });
+      return Promise.resolve();
+    },
+    refreshLogTaskNames: () => {
+      calls.push({ method: "refreshLogTaskNames", args: [] });
+      return Promise.resolve();
+    },
     app_workspace: null,
   };
   // The tab reaches app.workspace only through applySettingsToOpenViews. Give
@@ -118,6 +157,8 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}) {
   // keeping an open gear panel from showing a stale toggle. applySettingsToOpenViews
   // duck-types on `"applySettings" in view`, so this stub is enough.
   (plugin as unknown as { app: unknown }).app = {
+    // The log folder row looks folders up as it is typed.
+    vault: fakeVault(files),
     workspace: {
       getLeavesOfType: () => [
         { view: { applySettings: () => calls.push({ method: "applySettings", args: [] }) } },
@@ -236,6 +277,8 @@ describe("the two settings paths cannot drift", () => {
       "Notifications",
       "Music",
       "Long break",
+      // 0.6.9: the folder, the log's three choices and its four commands.
+      "Daily log",
       "Daily focus goal",
       "Task picker",
       "Task integration",
@@ -941,6 +984,33 @@ describe("Task source (issue #4)", () => {
 
       expect(calls, source).toEqual([]);
       expect(timer.currentTaskName, source).toBe("Write docs");
+    }
+  });
+
+  it("turning the picker off unlinks a linked task, whatever it is called (F36)", async () => {
+    // Linked is "has a note": a task can be called "No Task", and the name
+    // test this replaced left exactly that one linked. A task whose note was
+    // deleted mid-session has no note but is held by name for that session,
+    // and hiding the picker — the only control that could clear it with the
+    // picker gone — must unlink it too (F28). The engine's own predicate,
+    // run on this stand-in's fields.
+    const cases: [string | undefined, boolean, string[]][] = [
+      ["Projects/A.md", false, ["setTask"]],
+      [undefined, true, ["setTask"]],
+      [undefined, false, []],
+    ];
+    for (const [path, held, expected] of cases) {
+      const c = makeTab();
+      const calls: string[] = [];
+      (c.tab as unknown as { plugin: { timer: unknown } }).plugin.timer = {
+        currentTaskName: "No Task",
+        currentTaskPath: path,
+        unlinkAtSessionEnd: held,
+        holdsTask: TimerEngine.prototype.holdsTask,
+        setTask: () => calls.push("setTask"),
+      };
+      await c.tab.setControlValue("showTaskSelector", false);
+      expect(calls, `${String(path)} held ${String(held)}`).toEqual(expected);
     }
   });
 
@@ -1881,10 +1951,31 @@ describe("the status bar group (0.6.8)", () => {
     expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
   });
 
+  it("hands a goal change to today's log file, after saving, and nothing it refuses", async () => {
+    // Today's file records the goal as it is set now (0.6.9): without this a
+    // goal changed after the day's last session left the old number, and the
+    // day read it once it was past. The manager waits out the typing itself.
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "0");
+    const methods = ctx.calls.map((c) => c.method);
+    expect(methods.filter((m) => m === "goalChanged")).toHaveLength(1);
+    expect(methods.indexOf("goalChanged")).toBeGreaterThan(methods.indexOf("saveSettings"));
+    // A value the setting refuses changes nothing, so nothing is written.
+    ctx.calls.length = 0;
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "-5");
+    await ctx.tab.setControlValue("dailyFocusGoalMinutes", "soon");
+    expect(ctx.calls).toEqual([]);
+    // No other setting asks for it.
+    await ctx.tab.setControlValue("goalNoticeEnabled", false);
+    await ctx.tab.setControlValue("dayStartHour", "4");
+    expect(ctx.calls.map((c) => c.method)).not.toContain("goalChanged");
+  });
+
   it("re-reads today's total from a new log folder, after saving", async () => {
     // The total's cache is keyed on the date alone, so it kept serving the old
     // folder's number; and nothing repaints while idle.
-    await ctx.tab.setControlValue("logFolderPath", "logs/elsewhere");
+    ctx.tab.display();
+    componentOf(ctx.el, LOG_FOLDER_NAME).change?.("logs/elsewhere" as never);
+    await flushTab();
     expect(ctx.settings.logFolderPath).toBe("logs/elsewhere");
     const methods = ctx.calls.map((c) => c.method);
     expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
@@ -1899,5 +1990,333 @@ describe("the status bar group (0.6.8)", () => {
     const methods = ctx.calls.map((c) => c.method);
     expect(methods.indexOf("saveSettings")).toBeGreaterThanOrEqual(0);
     expect(methods.indexOf("refreshStatusBar")).toBeGreaterThan(methods.indexOf("saveSettings"));
+  });
+});
+
+const flushTab = async () => {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+};
+
+// 0.6.9 — the log folder row checks what is typed (F5, F37, F61).
+describe("the log folder row", () => {
+  const LOGS = {
+    "Pomodoro_logs/2026-10-01-gentle-pomodoro-log.md": "",
+    "Notes/a.md": "",
+  };
+  /** Type `value` into the row, as each keystroke commits. */
+  async function type(c: ReturnType<typeof makeTab>, value: string) {
+    componentOf(c.el, LOG_FOLDER_NAME).change?.(value as never);
+    await flushTab();
+  }
+  const note = (c: ReturnType<typeof makeTab>) =>
+    rowFor(c.el, LOG_FOLDER_NAME).infoEl.children.find((child) =>
+      child.classes.includes("gp-setting-note")
+    );
+
+  it("says that an empty folder keeps no log, and what the goal then counts", () => {
+    expect(LOG_FOLDER_DESC).toMatch(/empty to keep no log/);
+    expect(LOG_FOLDER_DESC).toMatch(/counts only the session that is running/);
+    const c = makeTab();
+    c.tab.display();
+    expect(rowFor(c.el, LOG_FOLDER_NAME).desc).toBe(LOG_FOLDER_DESC);
+  });
+
+  it("is a render row on both paths: a control row has nowhere to say anything", () => {
+    const group = ctx.tab.getSettingDefinitions().find((g) => {
+      return (g as { heading?: string }).heading === "Daily log";
+    }) as unknown as { items: Record<string, unknown>[] };
+    const row = group.items.find((item) => item.name === LOG_FOLDER_NAME);
+    expect(typeof row?.render).toBe("function");
+  });
+
+  it("stores the folder without the spaces around it", async () => {
+    // normalizePath trims slashes, not spaces: " Pomodoro_logs" was a second
+    // folder on macOS, and a trailing space failed every write on Windows.
+    const c = makeTab({}, LOGS);
+    c.tab.display();
+    await type(c, "  Logs/Focus ");
+    expect(c.settings.logFolderPath).toBe("Logs/Focus");
+  });
+
+  it("refuses the vault's top level, keeps what was saved, and says why", async () => {
+    // Lines written there could not be listed again: Refresh, renames and
+    // Check found nothing.
+    const c = makeTab({ logFolderPath: "Pomodoro_logs" }, LOGS);
+    c.tab.display();
+    for (const value of ["/", " // ", "\\"]) {
+      c.calls.length = 0;
+      await type(c, value);
+      expect(c.settings.logFolderPath).toBe("Pomodoro_logs");
+      expect(c.calls.map((call) => call.method)).not.toContain("saveSettings");
+      expect(note(c)?.text).toBe(logFolderRootMessage("Pomodoro_logs"));
+      expect(note(c)?.classes).not.toContain("gp-setting-note-info");
+    }
+    // Typing on clears it.
+    await type(c, "Pomodoro_logs");
+    expect(note(c)?.text).toBe("");
+  });
+
+  it("says, when it refuses the top level, which folder is still in use — none after an emptied box (F32)", async () => {
+    // Each keystroke saves: select all and Delete stores "" (no log), so a
+    // "/" typed next must not read as if the old folder were still used.
+    const c = makeTab({ logFolderPath: "Pomodoro_logs" }, LOGS);
+    c.tab.display();
+    await type(c, "/");
+    expect(note(c)?.text).toBe(
+      'Pick a folder inside the vault, not its top level. Not saved — logs still go to "Pomodoro_logs".'
+    );
+    await type(c, "");
+    expect(c.settings.logFolderPath).toBe("");
+    await type(c, "/");
+    expect(c.settings.logFolderPath).toBe("");
+    expect(note(c)?.text).toBe(
+      "Pick a folder inside the vault, not its top level. Not saved — no log is kept."
+    );
+    expect(logFolderRootMessage("/")).toBe(
+      "Pick a folder inside the vault, not its top level. Not saved — logs still go to the vault's top level."
+    );
+  });
+
+  it("says as the tab opens that a stored top level or capitalisation can't be listed, and saves nothing (F29)", () => {
+    // Saved before 0.6.9 checked the box: the timer writes there, while Check,
+    // Convert and today's total look in the folder the setting names.
+    const root = makeTab({ logFolderPath: "/" }, LOGS);
+    root.tab.display();
+    expect(note(root)?.text).toBe(logFolderProblemNote({ kind: "root" }));
+    expect(note(root)?.text).toContain("top level");
+    const cased = makeTab({ logFolderPath: "pomodoro_logs" }, LOGS);
+    cased.tab.display();
+    expect(note(cased)?.text).toBe(logFolderProblemNote({ kind: "case", real: "Pomodoro_logs" }));
+    expect(note(cased)?.text).toContain('"Pomodoro_logs"');
+    for (const c of [root, cased]) {
+      expect(note(c)?.classes).not.toContain("gp-setting-note-info");
+      expect(c.calls.map((call) => call.method)).not.toContain("saveSettings");
+    }
+    // A folder that exists as stored says nothing.
+    const fine = makeTab({ logFolderPath: "Pomodoro_logs" }, LOGS);
+    fine.tab.display();
+    expect(note(fine)?.text).toBe("");
+  });
+
+  it('says logs stay at the top level when the folder moves away from a stored "/"', async () => {
+    // The top level is no folder the walk lists, so it seemed to hold no logs.
+    const c = makeTab({ logFolderPath: "/" }, { "2026-10-01-gentle-pomodoro-log.md": "" });
+    c.tab.display();
+    await type(c, "Logs");
+    expect(note(c)?.text).toBe(logFolderLeftMessage("/"));
+    expect(note(c)?.text).toContain("at the vault's top level");
+  });
+
+  it("takes an existing folder's own capitalisation, and says so", async () => {
+    // Writes went to the real folder (the disk ignores case), while today's
+    // total, Refresh and renames looked for the typed spelling and found none.
+    const c = makeTab({}, LOGS);
+    c.tab.display();
+    await type(c, "pomodoro_LOGS/");
+    expect(c.settings.logFolderPath).toBe("Pomodoro_logs");
+    expect(note(c)?.text).toBe(logFolderAdoptedMessage("Pomodoro_logs"));
+    expect(note(c)?.classes).toContain("gp-setting-note-info");
+  });
+
+  it("keeps what was typed when it is the folder's own spelling, or no folder yet", async () => {
+    const c = makeTab({}, LOGS);
+    c.tab.display();
+    await type(c, "Pomodoro_logs/");
+    expect(c.settings.logFolderPath).toBe("Pomodoro_logs/");
+    await type(c, "New logs");
+    expect(c.settings.logFolderPath).toBe("New logs");
+    expect(note(c)?.text).toBe("");
+  });
+
+  it("says that logs already kept stay in the folder it moves away from", async () => {
+    const c = makeTab({ logFolderPath: "Pomodoro_logs/" }, LOGS);
+    c.tab.display();
+    await type(c, "Logs");
+    expect(note(c)?.text).toBe(logFolderLeftMessage("Pomodoro_logs/"));
+    // Back to the same folder, however it is spelt: nothing to say.
+    await type(c, "Pomodoro_logs");
+    expect(note(c)?.text).toBe("");
+  });
+
+  it("says nothing about a folder that held no logs", async () => {
+    const c = makeTab({ logFolderPath: "Notes" }, LOGS);
+    c.tab.display();
+    await type(c, "Logs");
+    expect(note(c)?.text).toBe("");
+  });
+
+  it("takes a stored folder that exists as stored, spaces and all, as no problem (F29)", () => {
+    // Stored values are not trimmed: " Pomodoro_logs" really is a folder on
+    // macOS, and the timer writes there, whatever else the trimmed name matches.
+    const vault = fakeVault({}, [" Pomodoro_logs", "pomodoro_logs"]);
+    expect(logFolderProblem(" Pomodoro_logs", vault)).toBeNull();
+    expect(logFolderProblem("POMODORO_LOGS", vault)).toEqual({
+      kind: "case",
+      real: "pomodoro_logs",
+    });
+    expect(logFolderProblem("", vault)).toBeNull();
+    expect(logFolderProblem(" // ", vault)).toEqual({ kind: "root" });
+  });
+
+  it("walks the folders on the way, never the whole vault", () => {
+    const vault = fakeVault({ "A/B/c.md": "", "a/x.md": "" });
+    expect(folderIgnoringCase(vault.getRoot(), "a/b")?.path).toBe("A/B");
+    // An exact name wins at each level, where the file system tells them apart.
+    expect(folderIgnoringCase(vault.getRoot(), "a")?.path).toBe("a");
+    expect(folderIgnoringCase(vault.getRoot(), "a/c")).toBeNull();
+    expect(resolveLogFolderInput("a/b", vault)).toEqual({
+      kind: "ok",
+      value: "A/B",
+      adopted: "A/B",
+    });
+    expect(vault.getFiles).not.toHaveBeenCalled();
+  });
+});
+
+// 0.6.9 — the log's own group: the folder, three choices and four commands (F56).
+describe("the Daily log group", () => {
+  it("holds the folder, the log's choices and its commands, in that order", () => {
+    const rows = declarativeRows(ctx.tab).filter((r) => r.heading === "Daily log");
+    expect(rows.map((r) => r.name)).toEqual([
+      LOG_FOLDER_NAME,
+      DAY_START_NAME,
+      TASK_SWITCH_NAME,
+      LONG_SESSION_NAME,
+      OPEN_LOG_NAME,
+      CHECK_LOG_NAME,
+      CONVERT_LOG_NAME,
+      REFRESH_NAMES_NAME,
+    ]);
+    // Moved, not copied: the folder was under "Display & behavior".
+    expect(declarativeRows(ctx.tab).filter((r) => r.name === LOG_FOLDER_NAME)).toHaveLength(1);
+    // Short, as every description in the tab.
+    for (const row of rows) {
+      expect(row.desc.split(/(?<=\.) /).length, row.name).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("does not promise that Convert keeps every value: it tidies task names (F31)", () => {
+    const c = makeTab();
+    c.tab.display();
+    const desc = rowFor(c.el, CONVERT_LOG_NAME).desc;
+    expect(desc).not.toMatch(/every value/i);
+    expect(desc).toMatch(/keeping every start, end and total/);
+  });
+
+  it("is on every device: nothing in it needs the desktop app", () => {
+    Platform.isDesktopApp = false;
+    try {
+      const rows = declarativeRows(makeTab().tab).filter((r) => r.heading === "Daily log");
+      expect(rows).toHaveLength(8);
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("offers midnight to 6:00 for the day's start, and shows the stored hour", () => {
+    const c = makeTab({ dayStartHour: 4 });
+    c.tab.display();
+    const row = componentOf(c.el, DAY_START_NAME);
+    expect(row.options).toEqual([
+      { value: "0", label: "Midnight" },
+      { value: "1", label: "1:00" },
+      { value: "2", label: "2:00" },
+      { value: "3", label: "3:00" },
+      { value: "4", label: "4:00" },
+      { value: "5", label: "5:00" },
+      { value: "6", label: "6:00" },
+    ]);
+    expect(row.value).toBe("4");
+    // An hour the row cannot show reads as midnight, not as an empty box.
+    const odd = makeTab({ dayStartHour: 9 });
+    odd.tab.display();
+    expect(componentOf(odd.el, DAY_START_NAME).value).toBe("0");
+  });
+
+  it("stores the day's start as a number, and reads today's total again", async () => {
+    ctx.tab.display();
+    componentOf(ctx.el, DAY_START_NAME).change?.("3" as never);
+    await flushTab();
+    expect(ctx.settings.dayStartHour).toBe(3);
+    // Today may be another file now; the timer is silent while idle.
+    expect(ctx.calls.map((x) => x.method)).toEqual(["saveSettings", "logFolderChanged"]);
+  });
+
+  it("refuses an hour the row does not offer", async () => {
+    await ctx.tab.setControlValue("dayStartHour", "7");
+    await ctx.tab.setControlValue("dayStartHour", "");
+    expect(ctx.settings.dayStartHour).toBe(0);
+    expect(ctx.calls).toEqual([]);
+  });
+
+  it("offers the two ways to log a task switch, and stores the choice", async () => {
+    const c = makeTab({ taskSwitchLogging: "nonsense" });
+    c.tab.display();
+    const row = componentOf(c.el, TASK_SWITCH_NAME);
+    expect(row.options).toEqual([
+      { value: "last-task", label: "Last task gets the whole session" },
+      { value: "split", label: "Split at the switch" },
+    ]);
+    expect(row.value).toBe("last-task");
+    row.change?.("split" as never);
+    await flushTab();
+    expect(c.settings.taskSwitchLogging).toBe("split");
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    // Anything else is stored as what every earlier version did.
+    await c.tab.setControlValue("taskSwitchLogging", "per-task");
+    expect(c.settings.taskSwitchLogging).toBe("last-task");
+  });
+
+  it("offers Off and 2 to 8 hours for the long-session question, and stores a number", async () => {
+    const c = makeTab({ longSessionPromptHours: 8 });
+    c.tab.display();
+    const row = componentOf(c.el, LONG_SESSION_NAME);
+    expect(row.options).toEqual([
+      { value: "0", label: "Off" },
+      { value: "2", label: "2 hours" },
+      { value: "4", label: "4 hours" },
+      { value: "6", label: "6 hours" },
+      { value: "8", label: "8 hours" },
+    ]);
+    expect(row.value).toBe("8");
+    row.change?.("0" as never);
+    await flushTab();
+    expect(c.settings.longSessionPromptHours).toBe(0);
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    await c.tab.setControlValue("longSessionPromptHours", "5");
+    expect(c.settings.longSessionPromptHours).toBe(0);
+    const odd = makeTab({ longSessionPromptHours: 5 });
+    odd.tab.display();
+    expect(componentOf(odd.el, LONG_SESSION_NAME).value).toBe("6");
+  });
+
+  it.each([
+    [OPEN_LOG_NAME, "Open", "openTodayLog"],
+    [CHECK_LOG_NAME, "Check", "checkLog"],
+    [CONVERT_LOG_NAME, "Convert", "convertLog"],
+    [REFRESH_NAMES_NAME, "Refresh", "refreshLogTaskNames"],
+  ] as const)('renders "%s" as a button that runs its command', (name, label, method) => {
+    ctx.tab.display();
+    const button = componentOf(ctx.el, name);
+    expect(button.kind).toBe("button");
+    expect(button.buttonText).toBe(label);
+    expect(button.destructive).toBe(false);
+    button.click?.();
+    expect(ctx.calls.map((x) => x.method)).toEqual([method]);
+  });
+
+  it("runs the same commands from the 1.13 definitions", () => {
+    const group = ctx.tab.getSettingDefinitions().find((g) => {
+      return (g as { heading?: string }).heading === "Daily log";
+    }) as unknown as { items: { name: string; action?: () => void }[] };
+    for (const name of [OPEN_LOG_NAME, CHECK_LOG_NAME, CONVERT_LOG_NAME, REFRESH_NAMES_NAME]) {
+      group.items.find((item) => item.name === name)?.action?.();
+    }
+    expect(ctx.calls.map((x) => x.method)).toEqual([
+      "openTodayLog",
+      "checkLog",
+      "convertLog",
+      "refreshLogTaskNames",
+    ]);
   });
 });

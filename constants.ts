@@ -7,6 +7,34 @@ export const VIEW_TYPE_GENTLE_POMO = "gentle-pomo-view";
 export const NO_TASK_LABEL = "No Task";
 export const ONE_MINUTE_MS = 60_000;
 
+// A session shorter than this — active time, as its line's Total would say —
+// is not a session (0.6.9, F59): no line, no 🍅, no step of the long-break
+// count. Stop, Skip and the zero crossing alike; almost always a mis-click or
+// a test, and the reviews counted every one of them.
+export const MIN_SESSION_SECONDS = 60;
+
+// A gap this long between two ticks of a running timer means the computer was
+// asleep (0.6.9, F48): the timer pauses as it stood at the last tick and the
+// gap is logged as a pause. Desktop only — a phone suspends a backgrounded app
+// as a matter of course, and its sessions must survive that. Far above the
+// once-a-minute tick Chromium allows a covered window, which must never count.
+export const SLEEP_GAP_MS = 10 * ONE_MINUTE_MS;
+
+// How long after the last rename of a linked task its past log lines are
+// rewritten (0.6.9, F26). Obsidian saves a note every 2 s while it is typed
+// in; each save renamed the whole history, half-typed names included.
+export const TASK_RENAME_DELAY_MS = 3000;
+
+// How long after the last change of the daily goal setting today's log file
+// is given the new goal (0.6.9). Settings on Obsidian before 1.13 commit every
+// keystroke, so typing 120 sets 1, then 12, then 120: one write, of 120.
+export const LOG_GOAL_WRITE_DELAY_MS = 1500;
+
+// How long the one-time notice about old log lines stays up (0.6.9,
+// logFormatNotice.ts). Longer than Obsidian's default: it names a setting and
+// two buttons to find, and it never comes back.
+export const LOG_FORMAT_NOTICE_MS = 15_000;
+
 // How long the tapped-to-peek countdown stays revealed on touch before auto-hiding.
 export const PEEK_REVEAL_MS = 2000;
 
@@ -19,6 +47,20 @@ export const FOCUS_TOTAL_CACHE_TTL_MS = 30_000;
 // midnight keeps yesterday's "Today X / Y" on screen until the first
 // interaction of the new day. Quiet beats are two compares (TTL + date stamp).
 export const FOCUS_TOTAL_HEARTBEAT_MS = 60_000;
+
+// How long a read of today's log may take before it counts as failed (0.6.9,
+// C4). A read that never settles — an iCloud placeholder, a stuck read on a
+// phone — otherwise held the tracker's in-flight guard for good, and the
+// meter and the goal notice stopped until Obsidian restarted.
+export const FOCUS_TOTAL_READ_TIMEOUT_MS = 10_000;
+
+// How often a running session is saved on this device, so a quit, a crash or
+// an iOS background kill can offer it back (0.6.9, F23). A recovered session
+// ends where it was last seen, so a quit or a crash on a computer loses at
+// most this. A phone that suspends Obsidian in the background runs no timer,
+// so its saves stop when the app is left and the session ends at about then,
+// however long the phone stayed away.
+export const OPEN_SESSION_SAVE_MS = 60_000;
 
 // Delay between the music iframe's load event and the "listening" handshake.
 // The embed isn't ready to register listeners the instant it loads (Vidstack
@@ -155,6 +197,11 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   sessionEndNotification: false,
   tasksPath: "",
   logFolderPath: "",
+  // Midnight, so an upgrading user's days and file names do not move.
+  dayStartHour: 0,
+  // What every earlier version did, so no upgrader's lines change.
+  taskSwitchLogging: "last-task",
+  longSessionPromptHours: 6,
   showTaskSelector: true,
   // "folder" reproduces every pre-0.6.4 picker exactly, which is what this
   // object owes an upgrading user (see GentlePomoSettings.taskSource).
@@ -178,6 +225,11 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastGoalHitDate: null,
   sessionsSinceLongBreak: 0,
   sessionCounterDate: null,
+  // Never looked at as it stands: loadSettings derives it once when data.json
+  // has none (deriveLogFormatNotice) — true, an upgrade, a damaged data.json,
+  // a first install or a reinstall over old logs alike. false here so that
+  // nothing that falls back to this object ever starts a scan.
+  logFormatNoticePending: false,
   // Frozen: the shallow Object.assign in loadSettings copies this REFERENCE, so
   // an in-place push here would corrupt the default for the life of the process
   // (and leak between vitest cases that spread DEFAULT_SETTINGS). Freezing turns

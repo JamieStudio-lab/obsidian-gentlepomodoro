@@ -15,6 +15,9 @@ import {
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
 import { STATUS_BAR_TIMES, resolveStatusBarTime } from "./statusBar";
+import { DAY_START_HOURS, resolveDayStartHour } from "./logLine";
+import { TASK_SWITCH_OPTIONS, resolveTaskSwitchLogging } from "./logSegments";
+import { LONG_SESSION_PROMPT_HOURS, resolveLongSessionPromptHours } from "./sessionGaps";
 import {
   AUTO_START_BREAK_LABEL,
   AUTO_START_FOCUS_LABEL,
@@ -46,6 +49,18 @@ import {
 } from "./timerCues";
 import type GentlePomoPlugin from "./main";
 import { NO_TASK_LABEL, VIEW_TYPE_GENTLE_POMO } from "./constants";
+import {
+  LOG_FOLDER_DESC,
+  LOG_FOLDER_NAME,
+  holdsLogs,
+  logFolderAdoptedMessage,
+  logFolderLeftMessage,
+  logFolderProblem,
+  logFolderProblemNote,
+  logFolderRootMessage,
+  resolveLogFolderInput,
+  sameLogFolder,
+} from "./logFolder";
 import type { GentlePomoSettings } from "./types";
 import {
   validateMusicUrl,
@@ -93,6 +108,28 @@ const FOCUS_END_CUE_DESC = `Plays when you stop or skip focus, and when focus ti
 const BREAK_END_CUE_DESC =
   "Plays when you stop or skip a break, and when break time is up if the switch below is on.";
 export const CUE_MUTED_NOTICE = "Timer sounds are off.";
+// The Daily log group (0.6.9).
+export const DAY_START_NAME = "Day starts at";
+const DAY_START_DESC =
+  "For night owls: a session that starts before this hour counts for the day before — in its log file, today's total and the goal.";
+export const TASK_SWITCH_NAME = "Task switch";
+const TASK_SWITCH_DESC =
+  "When you pick another task during a focus: give the whole session to the last task, or end a line at each switch.";
+export const LONG_SESSION_NAME = "Ask about long sessions";
+const LONG_SESSION_DESC =
+  "When you stop a focus this long that ran past its planned end, ask whether to log all of it or end it at the planned end.";
+export const OPEN_LOG_NAME = "Open today's log";
+const OPEN_LOG_DESC =
+  "Opens today's log file. Also in the status bar's menu, and on phones and tablets behind today's total in the timer panel.";
+export const CHECK_LOG_NAME = "Check log";
+const CHECK_LOG_DESC =
+  "Counts lines in the old format and anything that looks wrong, changing nothing. Details are in the developer console.";
+export const CONVERT_LOG_NAME = "Convert old log lines";
+const CONVERT_LOG_DESC =
+  "Rewrites lines from before 0.6.9 in the format Dataview reads, keeping every start, end and total. Asks first, and lists what else it tidies.";
+export const REFRESH_NAMES_NAME = "Refresh task names";
+const REFRESH_NAMES_DESC =
+  "Gives logged sessions their task's current name, found by its 🆔. Asks first.";
 
 // How long to wait after the last keystroke before asking YouTube about a link.
 // Both settings paths commit on every keystroke, so an un-debounced check would
@@ -615,6 +652,66 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   }
 
   /**
+   * The log folder row (0.6.9): a text box that checks what is typed and says
+   * what it did under the row — the vault's top level refused, an existing
+   * folder's own capitalisation used, and, once the folder moves away from
+   * one holding logs, that those stay where they are (F37, F61). A render row
+   * on both paths, like the music links, because a control row has nowhere to
+   * say any of it.
+   *
+   * The stored value is checked too, as the tab opens: one saved before 0.6.9
+   * can be the top level or another folder's capitalisation, and nothing else
+   * would say so until it is retyped (F29). Said, not changed — opening the
+   * tab writes nothing.
+   */
+  private buildLogFolderRow(setting: Setting): void {
+    // The folder as the tab found it: moving away from it leaves its logs
+    // behind, whatever is typed on the way.
+    const opened = this.plugin.settings.logFolderPath;
+    const openedHoldsLogs = holdsLogs(this.app, opened);
+    const note = setting.infoEl.createDiv("gp-setting-note");
+    const problem = logFolderProblem(opened, this.app.vault);
+    if (problem !== null) note.setText(logFolderProblemNote(problem));
+    setting.addText((text) =>
+      text
+        .setPlaceholder("Example: pomodoro_logs")
+        .setValue(opened)
+        .onChange((value) => {
+          void this.writeLogFolder(value, opened, openedHoldsLogs, note);
+        })
+    );
+  }
+
+  /** Check and store a typed log folder, and say what happened under the row. */
+  private async writeLogFolder(
+    value: string,
+    opened: string,
+    openedHoldsLogs: boolean,
+    note: HTMLElement
+  ): Promise<void> {
+    const result = resolveLogFolderInput(value, this.app.vault);
+    if (result.kind === "root") {
+      // Not stored: what was saved before stays, and keeps being used — and
+      // that may be the empty box of the keystroke before, so say which (F32).
+      note.setText(logFolderRootMessage(this.plugin.settings.logFolderPath));
+      note.toggleClass("gp-setting-note-info", false);
+      return;
+    }
+    const messages: string[] = [];
+    if (result.adopted !== null) messages.push(logFolderAdoptedMessage(result.adopted));
+    if (openedHoldsLogs && !sameLogFolder(opened, result.value)) {
+      messages.push(logFolderLeftMessage(opened));
+    }
+    note.setText(messages.join(" "));
+    note.toggleClass("gp-setting-note-info", true);
+    this.plugin.settings.logFolderPath = result.value;
+    await this.plugin.saveSettings();
+    // Today's total, the goal ring and the panels' goal line all come from
+    // the log folder, and nothing else would re-read it while idle.
+    this.plugin.logFolderChanged();
+  }
+
+  /**
    * The live outcome line closing each moment's group — the same sentence the
    * timer panel shows, for the same reason: "Play it when focus time is up" does
    * not say whether it still applies when the break starts on its own, and that
@@ -680,11 +777,6 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       {
         heading: "Display & behavior",
         rows: [
-          {
-            name: "Pomodoro logs folder",
-            desc: "Folder to store daily log files (e.g., 'pomodoro_logs').",
-            control: { type: "text", key: "logFolderPath", placeholder: "Example: pomodoro_logs" },
-          },
           {
             name: "Auto-open on startup",
             desc: "Open the timer panel in the right sidebar when Obsidian starts.",
@@ -897,6 +989,91 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           },
         ],
       },
+      // Everything about the log in one place (0.6.9, F56). The folder row
+      // lived under "Display & behavior", where nothing said it switched the
+      // log on, and the log's one command was in the palette alone. Right
+      // above the goal, which is counted from the log.
+      {
+        heading: "Daily log",
+        rows: [
+          {
+            name: LOG_FOLDER_NAME,
+            desc: LOG_FOLDER_DESC,
+            render: (setting: Setting) => {
+              this.buildLogFolderRow(setting);
+            },
+          },
+          {
+            name: DAY_START_NAME,
+            desc: DAY_START_DESC,
+            control: {
+              type: "dropdown",
+              key: "dayStartHour",
+              options: Object.fromEntries(
+                DAY_START_HOURS.map((hour) => [
+                  String(hour),
+                  hour === 0 ? "Midnight" : `${String(hour)}:00`,
+                ])
+              ),
+            },
+          },
+          {
+            name: TASK_SWITCH_NAME,
+            desc: TASK_SWITCH_DESC,
+            control: {
+              type: "dropdown",
+              key: "taskSwitchLogging",
+              options: Object.fromEntries(TASK_SWITCH_OPTIONS.map((o) => [o.value, o.label])),
+            },
+          },
+          {
+            name: LONG_SESSION_NAME,
+            desc: LONG_SESSION_DESC,
+            control: {
+              type: "dropdown",
+              key: "longSessionPromptHours",
+              options: Object.fromEntries(
+                LONG_SESSION_PROMPT_HOURS.map((hours) => [
+                  String(hours),
+                  hours === 0 ? "Off" : `${String(hours)} hours`,
+                ])
+              ),
+            },
+          },
+          {
+            name: OPEN_LOG_NAME,
+            desc: OPEN_LOG_DESC,
+            action: () => {
+              void this.plugin.openTodayLog();
+            },
+            buttonText: "Open",
+          },
+          {
+            name: CHECK_LOG_NAME,
+            desc: CHECK_LOG_DESC,
+            action: () => {
+              void this.plugin.checkLog();
+            },
+            buttonText: "Check",
+          },
+          {
+            name: CONVERT_LOG_NAME,
+            desc: CONVERT_LOG_DESC,
+            action: () => {
+              void this.plugin.convertLog();
+            },
+            buttonText: "Convert",
+          },
+          {
+            name: REFRESH_NAMES_NAME,
+            desc: REFRESH_NAMES_DESC,
+            action: () => {
+              void this.plugin.refreshLogTaskNames();
+            },
+            buttonText: "Refresh",
+          },
+        ],
+      },
       {
         heading: "Daily focus goal",
         rows: [
@@ -1044,6 +1221,17 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // Same again: any string survives the load, and an unknown one would show
     // an empty dropdown while the status bar quietly showed no time.
     if (key === "statusBarTime") return resolveStatusBarTime(this.plugin.settings.statusBarTime);
+    // The Daily log's three choices (0.6.9): numbers or strings stored, string
+    // option keys shown, and each read through its resolver for the same
+    // reason as the three above.
+    if (key === "dayStartHour")
+      return String(resolveDayStartHour(this.plugin.settings.dayStartHour));
+    if (key === "taskSwitchLogging") {
+      return resolveTaskSwitchLogging(this.plugin.settings.taskSwitchLogging);
+    }
+    if (key === "longSessionPromptHours") {
+      return String(resolveLongSessionPromptHours(this.plugin.settings.longSessionPromptHours));
+    }
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -1089,7 +1277,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const show = Boolean(value);
         settings.showTaskSelector = show;
         await this.plugin.saveSettings();
-        if (!show && this.plugin.timer.currentTaskName !== NO_TASK_LABEL) {
+        // Linked is "has a note", never the name: a task can be called "No Task".
+        // A task whose note was deleted mid-session is held by name for that
+        // session, and hiding the picker unlinks it too (F28).
+        if (!show && this.plugin.timer.holdsTask()) {
           this.plugin.timer.setTask(NO_TASK_LABEL);
         }
         this.applySettingsToOpenViews();
@@ -1103,13 +1294,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         this.applySettingsToOpenViews();
         return;
       }
-      case "logFolderPath":
-        settings.logFolderPath = String(value);
-        await this.plugin.saveSettings();
-        // Today's total, the goal ring and the panels' goal line all come from
-        // the log folder, and nothing else would re-read it while idle.
-        this.plugin.logFolderChanged();
-        return;
+      // The log folder is a render row on both paths (buildLogFolderRow), which
+      // owns its check, its message and its write; a case here would be dead
+      // code that skipped the check.
       case "autoOpenOnStartup":
         settings.autoOpenOnStartup = Boolean(value);
         break;
@@ -1261,11 +1448,37 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         // The ring, its tooltip and the panel's goal line all read this, and
         // the timer emits nothing while idle — which is when this tab is open.
         this.plugin.refreshGoalDisplays();
+        // Today's log file records the goal as it is set now (0.6.9), so the
+        // day keeps this one once it is past; written once the typing stops,
+        // into the file of the day it changed on (kept until then).
+        this.plugin.logManager.goalChanged();
         return;
       }
       case "goalNoticeEnabled":
         settings.goalNoticeEnabled = Boolean(value);
         break;
+      case "dayStartHour": {
+        // Only an hour the row offers: a value it cannot show must not be
+        // stored and then read back as midnight.
+        const hour = numericSetting(value);
+        if (hour === null || !DAY_START_HOURS.some((h) => h === hour)) return;
+        settings.dayStartHour = hour;
+        await this.plugin.saveSettings();
+        // "Today" may be another file now: its total, the goal ring and the
+        // panels' goal line are read again — the timer is silent while idle.
+        this.plugin.logFolderChanged();
+        return;
+      }
+      case "taskSwitchLogging":
+        // Read at the next switch; nothing on screen shows it.
+        settings.taskSwitchLogging = resolveTaskSwitchLogging(value);
+        break;
+      case "longSessionPromptHours": {
+        const hours = numericSetting(value);
+        if (hours === null || !LONG_SESSION_PROMPT_HOURS.some((h) => h === hours)) return;
+        settings.longSessionPromptHours = hours;
+        break;
+      }
       case "incrementPomodoroCountOnFinish":
         settings.incrementPomodoroCountOnFinish = Boolean(value);
         break;

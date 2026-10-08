@@ -70,6 +70,20 @@ export interface GentlePomoSettings {
   // Paths
   tasksPath: string;
   logFolderPath: string;
+  // The hour (0-6) a day starts at, for night owls (0.6.9): with 4, a session
+  // at 01:30 belongs to the day before — its log file, today's total, the goal
+  // notice and the long-break counter alike. 0 = midnight, which is what every
+  // earlier version did. Read through logLine.ts's resolveDayStartHour.
+  dayStartHour: number;
+  // A task picked mid-focus (0.6.9, F52): "last-task" gives the whole session
+  // to the task linked at the end, as every earlier version did; "split" ends
+  // a line at the switch. A plain string, read through logSegments.ts's
+  // resolveTaskSwitchLogging, which falls back to "last-task".
+  taskSwitchLogging: string;
+  // Stop asks how to log a focus this many hours long that ran past its
+  // planned end (0.6.9): 0 = never, else 2, 4, 6 or 8. Read through
+  // sessionGaps.ts's resolveLongSessionPromptHours.
+  longSessionPromptHours: number;
 
   // Show the task picker (button + dropdown) in the timer panel.
   showTaskSelector: boolean;
@@ -129,6 +143,11 @@ export interface GentlePomoSettings {
   lastGoalHitDate: string | null;
   sessionsSinceLongBreak: number;
   sessionCounterDate: string | null;
+  // The one look, after upgrading to 0.6.9, for log lines in the old format,
+  // and the notice pointing to Convert when there are some
+  // (logFormatNotice.ts). true = that look is still to happen. Set once by
+  // loadSettings, true, when data.json has none: an upgrade, or an install.
+  logFormatNoticePending: boolean;
   // Remembered music positions (see musicResume), one per station URL. Keyed by
   // the `url` stamp each entry carries — the music-URL setting string it was
   // recorded under — so a position follows its link across slots and is dropped
@@ -154,6 +173,9 @@ export interface TimerState {
   remainingMs: number;
   totalMs: number;
   taskName: string;
+  // The linked task's note; undefined when no task is linked. THIS is what
+  // "linked" means — never the name: a task can be called "No Task" (F36).
+  taskPath?: string;
   // null when mode is "focus"; otherwise indicates short vs long break.
   breakType: "short" | "long" | null;
 }

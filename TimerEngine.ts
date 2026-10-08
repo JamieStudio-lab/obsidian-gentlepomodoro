@@ -1,14 +1,30 @@
-import { TAbstractFile, TFile } from "obsidian";
+import { Platform, TAbstractFile, TFile } from "obsidian";
 import type GentlePomoPlugin from "./main";
 import type { PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
-import { NO_TASK_LABEL, ONE_MINUTE_MS } from "./constants";
+import type { SessionEnd } from "./logManager";
+import { NO_TASK_LABEL, ONE_MINUTE_MS, SLEEP_GAP_MS } from "./constants";
 import { logger } from "./logger";
+import { logicalDate } from "./logLine";
+import {
+  isLongSession,
+  plannedSessionEnd,
+  type LongSessionAnswer,
+  type LongSessionQuestion,
+} from "./sessionGaps";
 import {
   TASK_LINE_REGEX,
-  findTaskNameById,
+  findIdTaskLine,
+  idTaskDone,
   incrementPomodoroCount,
-  normalizeTaskText,
+  isPathGone,
+  linkedLineIndex,
+  pathAfterMove,
+  taskCreatedDate,
+  taskIdOf,
+  taskNameAfterEdit,
+  taskLineKey,
+  taskMatchKey,
 } from "./taskLoader";
 import { AUDIO_URLS } from "./audioAssets";
 import {
@@ -22,11 +38,6 @@ import {
 } from "./timerCues";
 
 declare const moment: MomentFactory;
-
-const TASK_ID_REGEX = /🆔\s*([A-Za-z0-9_-]+)/;
-
-// Local-timezone YYYY-MM-DD; matches the format LogManager uses for daily log filenames.
-const todayLocalStr = (): string => moment().format("YYYY-MM-DD");
 
 /** The settings that hold a session's length — see durationSetting(). */
 export type DurationSetting = "focusMinutes" | "breakMinutes" | "longBreakMinutes";
@@ -64,6 +75,15 @@ interface PlayingPreview {
   edge: CueEdge;
   source: AudioBufferSourceNode;
   gain: GainNode;
+}
+
+/** A linked task, as one vault round trip saw it when it started. */
+interface TaskLink {
+  name: string;
+  path: string | undefined;
+  id: string | undefined;
+  /** The line's raw text after the checkbox (TimerEngine.currentTaskLineText). */
+  lineText: string;
 }
 
 export class TimerEngine {
@@ -126,6 +146,15 @@ export class TimerEngine {
   // a double fire a no-op. Re-armed wherever targetTime moves while running.
   private endWakeId: number | null = null;
 
+  // When the tick last ran (or the loop started), for the sleep check in
+  // tick(). Null while the loop is stopped.
+  private lastTickAt: number | null = null;
+
+  // True while Stop's long-session question is open. The end is NOT claimed
+  // meanwhile (see finish), so this is what keeps a second Stop from asking
+  // again on top of it.
+  private askingLongSession = false;
+
   // Set by dispose() and never cleared: a disposed engine never arms a timer
   // again. Clearing the loop at dispose is not enough on its own, because an
   // async continuation can outlive it — a zero crossing with auto-start on
@@ -180,6 +209,27 @@ export class TimerEngine {
 
   public currentTaskId: string | undefined;
 
+  /**
+   * The linked line's raw text (after the checkbox) as the 🍅 counter last
+   * left it: what a task with no 🆔 is found by, compared through
+   * taskMatchKey. It starts as the line the picker linked and follows every
+   * count this engine writes ("Write docs ⏳ …" → "Write docs 🍅 1 ⏳ …"),
+   * because that write changes the very text the line is matched on —
+   * matching on the linked name found the line once and never again. For a
+   * task with a 🆔 it also follows
+   * whatever `onFileModify` reads off the line, a count made elsewhere
+   * included. A match key only, never logged or shown: the log, the status bar
+   * and the "Current task" button keep `currentTaskName`, the name the task
+   * was linked by, so counting can never rename a task in anyone's log.
+   */
+  public currentTaskLineText: string = NO_TASK_LABEL;
+
+  // The linked task's note was deleted while a session was under way: the
+  // timer holds the task by name for that session — its line keeps the link
+  // as it was (onFileDelete) — and unlinks it when it ends (F28). Any new
+  // link — a pick, or the unlink itself — clears it.
+  private unlinkAtSessionEnd = false;
+
   constructor(plugin: GentlePomoPlugin) {
     this.plugin = plugin;
     const total = plugin.settings.focusMinutes * ONE_MINUTE_MS;
@@ -193,20 +243,53 @@ export class TimerEngine {
     };
   }
 
-  /** Update the active task and notify LogManager so future log lines reflect the change. */
-  setTask(name: string, path?: string, taskId?: string) {
+  /**
+   * Update the active task and notify LogManager so future log lines reflect
+   * the change. `lineText` is the line's raw text after the checkbox, which a
+   * task with no 🆔 is found by; it defaults to the name. It may be older than
+   * the line — a picker list opened before a count still offers the old text —
+   * which is why linkedLineIndex falls back to the count-free key.
+   */
+  setTask(name: string, path?: string, taskId?: string, lineText: string = name) {
+    this.linkTask(name, path, taskId, lineText, false);
+  }
+
+  /** `renamed`: the same task under a new name, which is never a task switch
+   *  (LogManager.updateTask) — the open segment keeps going. */
+  private linkTask(
+    name: string,
+    path: string | undefined,
+    taskId: string | undefined,
+    lineText: string,
+    renamed: boolean
+  ) {
     this.currentTaskName = name;
+    this.currentTaskLineText = lineText;
     this.currentTaskPath = path;
     this.currentTaskId = taskId;
+    this.unlinkAtSessionEnd = false;
     this.state.taskName = name;
-    this.plugin.logManager.updateTask(name, path, taskId);
+    this.state.taskPath = path;
+    this.plugin.logManager.updateTask(name, path, taskId, renamed);
     this.emit();
   }
 
   /**
    * Reaction to vault file changes. If the modified file holds the active task,
    * refreshes the task name (when ID is known) and auto-unlinks if it's now
-   * completed (only while not currently running).
+   * completed (only while no session is under way — see step 4).
+   *
+   * The refresh is how a rename reaches the log: the timer takes the new name
+   * at once, and the past log lines with the ID follow once the typing has
+   * stopped (LogManager.scheduleTaskRename). The 🍅 counter's count is not a
+   * rename (`taskNameAfterEdit`) — taken as one, every count rewrote the
+   * task's whole history (to 0.6.8) — and nor is a field or spacing change.
+   * It only moves `currentTaskLineText`, kept current although a 🆔 task is
+   * found by its ID everywhere (the counter, the unlink, the picker's tick and
+   * pin). When several lines carry the 🆔, that text is also how the line is
+   * told apart — and when it names none of them, or only ticked ones, the one
+   * open copy is the task (F2, resolveIdLine): a task copied forward, its old
+   * copy ticked, keeps the timer on the new one.
    */
   async onFileModify(file: TAbstractFile) {
     // A chosen sound file changed — edited, or updated by sync. Decode the new
@@ -214,34 +297,158 @@ export class TimerEngine {
     // loads. Before the task checks, which return early when no task is linked.
     if (this.isEndCueFile(file.path)) void this.loadCustomCue(file.path);
 
-    // 1. Basic checks
-    if (this.currentTaskName === NO_TASK_LABEL || !this.currentTaskPath) return;
+    // 1. Basic checks. Linked is "has a note", never the name (F36).
+    if (!this.currentTaskPath) return;
 
     // 2. Check if modified file matches current task file
     if (file.path !== this.currentTaskPath) return;
 
-    // 3. Refresh task name by ID (if available)
-    if (this.currentTaskId) {
-      const latestName = await findTaskNameById(
-        this.plugin.app,
-        this.currentTaskPath,
-        this.currentTaskId
-      );
-      if (latestName && latestName !== this.currentTaskName) {
-        this.setTask(latestName, this.currentTaskPath, this.currentTaskId);
-        await this.plugin.logManager.updateLoggedTaskName(
-          this.currentTaskId,
-          latestName,
-          this.currentTaskPath
-        );
-      }
+    // 3. Refresh task name by ID (if available) — or adopt a 🆔 the line has
+    // gained since it was linked (C3). A read that fails skips this step
+    // only: the unlink check below still runs (F41).
+    try {
+      if (this.currentTaskId) await this.followRename();
+      else await this.adoptAddedId(file);
+    } catch (e) {
+      logger.warn("Could not read the linked task's note", e);
     }
 
-    // 4. If timer is running, do NOT unlink automatically (per requirements)
-    if (this.state.isRunning) return;
+    // 4. Not while a session is under way — running OR paused part-way (F6).
+    // Unlinking renames the open session's task, so a task ticked while its
+    // session was paused was logged as "No Task" and lost its 🍅. Every end
+    // runs this check once the session is logged (Stop, Skip, the crossing,
+    // a Reset of a paused session).
+    if (this.sessionInProgress()) return;
 
     // 5. Check completion
     await this.checkTaskCompletionAndUnlink();
+  }
+
+  /** Step 3 for a task with a 🆔: take a rename off its line. */
+  private async followRename() {
+    const link = this.currentLink();
+    if (!link.id || !link.path) return;
+    const found = await findIdTaskLine(this.plugin.app, link.path, link.id, link.lineText);
+    // The read awaited: a task linked meanwhile is not this line's.
+    if (found === null || this.currentTaskId !== link.id || this.currentTaskPath !== link.path) {
+      return;
+    }
+    const text = found.text;
+    const latestName = taskNameAfterEdit(this.currentTaskName, text);
+    if (latestName === this.currentTaskName) {
+      this.currentTaskLineText = text;
+      return;
+    }
+    this.linkTask(latestName, link.path, link.id, text, true);
+    this.plugin.logManager.scheduleTaskRename({
+      taskId: link.id,
+      name: latestName,
+      taskPath: link.path,
+      createdDate: taskCreatedDate(text),
+      line: found.line,
+      copies: found.copies,
+    });
+  }
+
+  /**
+   * Step 3 for a task with no 🆔: if its line has one now, take it (C3). The
+   * Tasks plugin gives a task an ID when it becomes another's dependency, and
+   * until the task was picked again its sessions were logged with no ID — out
+   * of the reviews' per-task table, and out of every later rename. The name is
+   * kept, and the open session takes the ID.
+   */
+  private async adoptAddedId(file: TAbstractFile) {
+    if (!(file instanceof TFile)) return;
+    const link = this.currentLink();
+    const content = await this.plugin.app.vault.read(file);
+    if (!this.isCurrentLink(link)) return;
+    // Read only, so CRLF-safe.
+    const lines = content.split(/\r?\n/);
+    const index = linkedLineIndex(lines, undefined, link.lineText);
+    const text = index === -1 ? undefined : lines[index].match(TASK_LINE_REGEX)?.[2];
+    const taskId = text === undefined ? undefined : taskIdOf(text);
+    if (text === undefined || taskId === undefined) return;
+    this.linkTask(link.name, link.path, taskId, text, true);
+  }
+
+  /**
+   * A note was renamed or moved — the linked task's, or a folder above it:
+   * the link follows it, the open session too (C1). Every later session was
+   * written as a link to the old path, which nothing repaired: Obsidian had
+   * already updated its links, and the counter, the rename and the unlink all
+   * looked for the note where it no longer was.
+   */
+  onFileRename(file: TAbstractFile, oldPath: string) {
+    this.plugin.logManager.taskNoteMoved(oldPath, file.path);
+    const moved = pathAfterMove(this.currentTaskPath, oldPath, file.path);
+    if (moved === null) return;
+    this.currentTaskPath = moved;
+    this.state.taskPath = moved;
+    this.emit();
+  }
+
+  /**
+   * A note was deleted — the linked task's, or a folder above it. A session
+   * under way keeps its task: the log's open session, the segments a split
+   * closed and the sessions an earlier run left are not told, so their lines
+   * keep the link as it was, to the note now gone — what 0.6.8 wrote, and
+   * what Obsidian leaves in the log's older lines of that task. Reviews count
+   * only linked sessions and take the area from the link's alias; the bare
+   * name 0.6.9 first wrote dropped that session to "No Task". The timer lets
+   * go of the note itself — the 🍅 counter and the completion check have
+   * nothing to read or write — holds the task by name, and unlinks it once
+   * that session ends (checkTaskCompletionAndUnlink, which every end runs).
+   * With none under way — or one already ending, whose line has its task — it
+   * goes at once. Kept on, it was given every later session while the panel
+   * and the status bar showed no task, and with the picker hidden nothing
+   * could clear it (F28).
+   */
+  onFileDelete(file: TAbstractFile) {
+    if (!isPathGone(this.currentTaskPath, file.path)) return;
+    if (!this.sessionInProgress() || this.ending) {
+      this.setTask(NO_TASK_LABEL);
+      return;
+    }
+    this.currentTaskPath = undefined;
+    this.state.taskPath = undefined;
+    this.unlinkAtSessionEnd = true;
+    this.emit();
+  }
+
+  /**
+   * A task is on the timer: linked to its note, or held by name for the
+   * session its note was deleted during (F28). What hiding the picker unlinks.
+   */
+  holdsTask(): boolean {
+    return this.currentTaskPath !== undefined || this.unlinkAtSessionEnd;
+  }
+
+  /**
+   * A session is under way: running, or paused part-way through. A timer that
+   * was never started — or was reset — shows its full length.
+   */
+  private sessionInProgress(): boolean {
+    return this.state.isRunning || this.state.remainingMs !== this.state.totalMs;
+  }
+
+  /** The linked task as it stands now, for a vault round trip to hold on to. */
+  private currentLink(): TaskLink {
+    return {
+      name: this.currentTaskName,
+      path: this.currentTaskPath,
+      id: this.currentTaskId,
+      lineText: this.currentTaskLineText,
+    };
+  }
+
+  /** Is `link` still the linked task, with the line text it was taken with? */
+  private isCurrentLink(link: TaskLink): boolean {
+    return (
+      this.currentTaskName === link.name &&
+      this.currentTaskPath === link.path &&
+      this.currentTaskId === link.id &&
+      this.currentTaskLineText === link.lineText
+    );
   }
 
   getState(): TimerState {
@@ -267,6 +474,7 @@ export class TimerEngine {
       window.clearInterval(this.intervalId);
       this.intervalId = null;
     }
+    this.lastTickAt = null;
     this.clearEndWake();
   }
 
@@ -303,6 +511,7 @@ export class TimerEngine {
       this.targetTime = Date.now() + this.state.remainingMs;
     }
 
+    this.lastTickAt = Date.now();
     this.intervalId = window.setInterval(() => this.tick(), 50);
     this.armEndWake();
   }
@@ -312,6 +521,11 @@ export class TimerEngine {
 
     // Calculate remaining time based on system clock
     const now = Date.now();
+    // Before the crossing below: a laptop that slept through its session's
+    // end must not wake to end it (F48) — unless the next session starts by
+    // itself, which ends it at its planned end (F11).
+    if (this.pausedForSleep(now)) return;
+    this.lastTickAt = now;
     const prev = this.state.remainingMs;
     this.state.remainingMs = this.targetTime - now;
 
@@ -328,10 +542,13 @@ export class TimerEngine {
     // when the next mode's auto-start toggle is on — otherwise fall through
     // and let the timer count up into overtime (unchanged behavior).
     if (prev > 0 && this.state.remainingMs <= 0) {
-      const autoStart =
-        this.state.mode === "focus"
-          ? this.plugin.settings.autoStartBreak
-          : this.plugin.settings.autoStartFocus;
+      // The instant the clock reached zero. The tick that sees it can be late
+      // — a covered window, a sleep, a phone holding the app — and the
+      // session that auto-starts the next one ends HERE, not then (F3). A
+      // desktop that slept through it gets here only with auto-start on
+      // (F11); with it off, pausedForSleep above paused the session.
+      const crossedAt = this.targetTime;
+      const autoStart = this.autoStartsNext();
       // The opt-in system notification (0.6.6). Placed ABOVE the branch so
       // both paths post it, and read here because state.mode is still the
       // mode that ENDED — completeNaturally() switches it. It is silent and
@@ -346,7 +563,7 @@ export class TimerEngine {
         // theirs either way.
         if (!this.beginEnding()) return;
         this.emit();
-        void this.completeNaturally();
+        void this.completeNaturally(crossedAt);
         return;
       }
       // Auto-start is off, so the session deliberately slides into overtime
@@ -358,6 +575,71 @@ export class TimerEngine {
     }
 
     this.emit();
+  }
+
+  /**
+   * On the desktop app, a tick more than SLEEP_GAP_MS after the last one means
+   * the computer was asleep: nothing runs while it is, and on waking the tick
+   * and the end wake-up fire at once. Until 0.6.9 the sleep counted as focus,
+   * and Stop the next morning logged the whole night as finished (F48). Now
+   * the timer pauses as it stood at the last tick, the log records the pause
+   * from then, and the user is told how long was not counted.
+   *
+   * Desktop only: a phone suspends a backgrounded or locked app as a matter of
+   * course, and the wall-clock timer is built to run through that — a locked
+   * phone's 25 minutes would otherwise log as nothing. The gap is far above
+   * Chromium's once-a-minute tick for a covered window, which must not count.
+   *
+   * Two sleeps are not paused:
+   * - One before the session's first tick (F15) — an auto-started session the
+   *   lid closed on at once. Paused from its own start, it looked never
+   *   started: the next Start played the drum as for a fresh session and
+   *   resumed this one, its old Start and a night's pause included, filed
+   *   under the day before. It had no time to keep, so it is thrown away and
+   *   the timer waits at full length. `remainingMs` is written by the tick
+   *   alone, so while it still equals the total no tick has run since the
+   *   session began at full length (a Start, an auto-start, a running Reset).
+   * - One through the planned end with the next session's auto-start on
+   *   (F11): that session ends at its planned end, as on a phone (F3), and
+   *   the next one starts now — the tick's crossing does both, so this
+   *   returns false. Paused instead, it woke with time left and no break.
+   */
+  private pausedForSleep(now: number): boolean {
+    const last = this.lastTickAt;
+    if (!Platform.isDesktopApp || last === null || this.targetTime === null) return false;
+    if (now - last <= SLEEP_GAP_MS) return false;
+    if (this.state.remainingMs === this.state.totalMs) {
+      this.discardUnstarted();
+      this.plugin.notifySleepPause(now - last);
+      return true;
+    }
+    if (last < this.targetTime && this.targetTime <= now && this.autoStartsNext()) return false;
+    this.state.remainingMs = this.targetTime - last;
+    this.halt(last);
+    this.plugin.notifySleepPause(now - last);
+    return true;
+  }
+
+  /** F15: the session on the clock never ticked. Throw it away and wait at
+   *  full length, as a Reset of a paused session does. */
+  private discardUnstarted() {
+    this.plugin.logManager.discardSession();
+    // The session on the clock is gone; a menu opened for it must not act on
+    // whatever comes next (as in reset()).
+    this.sessionSerial += 1;
+    this.state.isRunning = false;
+    this.targetTime = null;
+    this.clearLoop();
+    this.emit();
+    // The session that held an unlink back is gone (see onFileModify).
+    void this.checkTaskCompletionAndUnlink();
+  }
+
+  /** Whether the session that follows this one starts by itself. */
+  private autoStartsNext(): boolean {
+    return this.state.mode === "focus"
+      ? this.plugin.settings.autoStartBreak
+      : this.plugin.settings.autoStartFocus;
   }
 
   /**
@@ -460,43 +742,67 @@ export class TimerEngine {
    * No `endCueSounded` stamp is needed: handleFinished() runs switchMode(),
    * which clears the flag and starts a fresh session with positive time, so a
    * later Stop is stopping something else entirely.
+   *
+   * The session ends at `crossedAt`, its planned end, with no overtime: the
+   * app ended it, not the user, so however late the tick ran the line is the
+   * session's planned length. Before 0.6.9 a crossing seen on waking a laptop
+   * logged the whole night as finished focus (F3). The next session starts now.
    */
-  private async completeNaturally() {
+  private async completeNaturally(crossedAt: number) {
     try {
       if (this.endChimeWanted()) this.playEndCue();
       // Natural completion only fires when the toggle is on → auto-start the next.
-      await this.handleFinished(true);
+      await this.handleFinished(true, { endAt: crossedAt, overtimeSeconds: 0 });
     } finally {
       this.ending = false;
     }
   }
 
-  private async handleFinished(autoStartNext: boolean) {
-    // Log the finished session
-    await this.plugin.logManager.endSession("finished");
+  private async handleFinished(autoStartNext: boolean, end: SessionEnd) {
+    // The task this session was for, taken before the first await: logging it
+    // reads and writes the vault, and a task picked meanwhile — at the zero
+    // crossing, when people choose what comes next — is not the one that
+    // earned this 🍅. The log line is the session's; so is its count.
+    const link = this.currentLink();
+    // The day the session is filed under — its START (F24). Read now: ending
+    // it closes the log's session, and the day of the end put a focus from
+    // 23:50 to 00:15 on the next day's count while its line went in today's.
+    const sessionDay =
+      this.plugin.logManager.openSessionDay() ??
+      logicalDate(moment(), this.plugin.settings.dayStartHour);
+
+    // Log the finished session. False when it was under a minute (F59): no
+    // line, and below, no 🍅 and no step of the long-break count.
+    const counted = await this.plugin.logManager.endSession("finished", end);
 
     // For focus sessions: optionally increment the task's pomodoro count
     // BEFORE the unlink check so we don't skip on a just-completed task.
-    if (this.state.mode === "focus") {
-      await this.maybeIncrementTaskPomodoroCount();
+    if (counted && this.state.mode === "focus") {
+      await this.maybeIncrementTaskPomodoroCount(link);
     }
 
     // Check if task is completed and unlink if so
     await this.checkTaskCompletionAndUnlink();
 
     if (this.state.mode === "focus") {
-      // Advance the long-break counter, resetting at local-midnight rollover.
-      const today = todayLocalStr();
-      const counter =
-        this.plugin.settings.sessionCounterDate === today
-          ? this.plugin.settings.sessionsSinceLongBreak + 1
-          : 1;
-      this.plugin.settings.sessionsSinceLongBreak = counter;
-      this.plugin.settings.sessionCounterDate = today;
-      await this.plugin.saveSettings();
+      // A session that did not count earns no break of its own: short, since
+      // the count it would have moved may already sit on a long one.
+      let isLongBreak = false;
+      if (counted) {
+        // Advance the long-break counter, resetting when the day turns — the
+        // day the log files this session under, so "Day starts at" moves this
+        // rollover with the file's.
+        const counter =
+          this.plugin.settings.sessionCounterDate === sessionDay
+            ? this.plugin.settings.sessionsSinceLongBreak + 1
+            : 1;
+        this.plugin.settings.sessionsSinceLongBreak = counter;
+        this.plugin.settings.sessionCounterDate = sessionDay;
+        await this.plugin.saveSettings();
 
-      const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
-      const isLongBreak = counter % longBreakEvery === 0;
+        const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
+        isLongBreak = counter % longBreakEvery === 0;
+      }
       this.switchMode("break", autoStartNext, isLongBreak);
     } else {
       this.switchMode("focus", autoStartNext);
@@ -508,93 +814,96 @@ export class TimerEngine {
    * lifetime `🍅 N` marker on the linked task line. Best-effort: failures are
    * logged but never throw.
    */
-  private async maybeIncrementTaskPomodoroCount() {
+  private async maybeIncrementTaskPomodoroCount(link: TaskLink) {
     if (!this.plugin.settings.incrementPomodoroCountOnFinish) return;
-    if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
+    if (!link.path) return;
 
-    const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
+    const file = this.plugin.app.vault.getAbstractFileByPath(link.path);
     if (!(file instanceof TFile)) return;
+
+    // Count the session's task, as it was linked when the session ended —
+    // never whatever is linked once the vault answers. A task linked
+    // meanwhile must get neither this 🍅 nor this line's text.
+    let counted = "";
 
     try {
       // Atomic read-modify-write: `process` locks the file, so a concurrent
       // sync/plugin write can't be clobbered between our read and write.
       await this.plugin.app.vault.process(file, (content) => {
         const lines = content.split("\n");
-        let updatedIndex = -1;
+        const index = linkedLineIndex(lines, link.id, link.lineText);
+        if (index === -1) return content;
 
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          // Prefer ID match when available.
-          if (this.currentTaskId) {
-            const idMatch = line.match(TASK_ID_REGEX);
-            if (idMatch && idMatch[1] === this.currentTaskId) {
-              updatedIndex = i;
-              break;
-            }
-            continue;
-          }
-          // Fallback: match by normalized text on a task line (open or completed).
-          const taskMatch = line.match(TASK_LINE_REGEX);
-          if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
-            updatedIndex = i;
-            break;
-          }
-        }
-
-        if (updatedIndex === -1) return content;
-
-        lines[updatedIndex] = incrementPomodoroCount(lines[updatedIndex]);
+        lines[index] = incrementPomodoroCount(lines[index]);
+        counted = lines[index].match(TASK_LINE_REGEX)?.[2] ?? "";
         return lines.join("\n");
       });
     } catch (e) {
       logger.warn("Failed to increment task pomodoro count", e);
+      return;
     }
+
+    // Follow the line: the count just changed the text a task with no 🆔 is
+    // found by. Only after the write landed, and only for the same link.
+    if (counted && this.isCurrentLink(link)) this.currentTaskLineText = counted;
   }
 
   private async checkTaskCompletionAndUnlink() {
-    if (!this.currentTaskPath || this.currentTaskName === NO_TASK_LABEL) return;
+    // A task whose note was deleted mid-session: that session has ended, and
+    // the task goes with it (F28; see onFileDelete). Every end runs this.
+    if (this.unlinkAtSessionEnd) {
+      this.setTask(NO_TASK_LABEL);
+      return;
+    }
+    if (!this.currentTaskPath) return;
 
     const file = this.plugin.app.vault.getAbstractFileByPath(this.currentTaskPath);
     if (!(file instanceof TFile)) return;
 
+    // The link this check is about. A task linked while the note is being read
+    // is another task, perhaps in another note: checking it against this note
+    // could find a done line with its text and unlink it.
+    const link = this.currentLink();
+
     try {
       const content = await this.plugin.app.vault.read(file);
+      if (!this.isCurrentLink(link)) return;
       // CRLF-safe split: this path only reads, and the $-anchored
       // TASK_LINE_REGEX can't match a line with a trailing \r. Write paths
       // (marker increment/repair) must keep split("\n") — they rejoin on "\n".
       const lines = content.split(/\r?\n/);
 
-      let foundIncomplete = false;
-      let foundComplete = false;
-
-      for (const line of lines) {
-        // If current task has ID, match by ID
-        if (this.currentTaskId) {
-          const idMatch = line.match(TASK_ID_REGEX);
-          if (idMatch && idMatch[1] === this.currentTaskId) {
-            const taskMatch = line.match(TASK_LINE_REGEX);
-            if (taskMatch?.[1] === " ") {
-              foundIncomplete = true;
-              break;
-            }
-            if (taskMatch) {
-              foundComplete = true;
-            }
-          }
-          continue;
-        }
-
-        // Fallback: match by normalized text
-        const taskMatch = line.match(TASK_LINE_REGEX);
-        if (taskMatch && normalizeTaskText(taskMatch[2]) === this.currentTaskName) {
-          if (taskMatch[1] === " ") {
-            foundIncomplete = true;
-            break;
-          }
-          foundComplete = true;
-        }
+      // A task with a 🆔: done exactly when the line the 🍅 counter counts is
+      // ticked (idTaskDone) — one rule for which copy is the task (F2).
+      if (link.id) {
+        if (idTaskDone(lines, link.id, link.lineText) === true) this.setTask(NO_TASK_LABEL);
+        return;
       }
 
+      // A task with no 🆔: as linkedLineIndex finds it, by the exact text or
+      // without the count — and any open line on either keeps it linked: a
+      // done copy of a recurring task can match the exact text while the
+      // task itself, a count ahead, matches only without the count.
+      const exactKey = taskMatchKey(link.lineText);
+      const looseKey = taskLineKey(link.lineText);
+      const exact = { open: false, done: false };
+      const loose = { open: false, done: false };
+
+      for (const line of lines) {
+        const taskMatch = line.match(TASK_LINE_REGEX);
+        if (!taskMatch) continue;
+        const tier =
+          taskMatchKey(taskMatch[2]) === exactKey
+            ? exact
+            : taskLineKey(taskMatch[2]) === looseKey
+              ? loose
+              : null;
+        if (tier && taskMatch[1] === " ") tier.open = true;
+        else if (tier) tier.done = true;
+      }
+
+      const foundIncomplete = exact.open || loose.open;
+      const foundComplete = exact.done || loose.done;
       if (!foundIncomplete && foundComplete) {
         this.setTask(NO_TASK_LABEL);
       }
@@ -1021,6 +1330,11 @@ export class TimerEngine {
     this.endCueSounded = false;
     this.sessionSerial += 1;
     this.ending = false;
+    // Whatever the log still holds open is not the session beginning here: a
+    // Start that slipped in while the last end was writing opened one in the
+    // OLD mode, and the next start resumed it (F21). Every end has closed its
+    // own session by now, so this drops only a stray.
+    this.plugin.logManager.discardSession();
 
     this.state = {
       mode,
@@ -1028,6 +1342,7 @@ export class TimerEngine {
       remainingMs: total,
       totalMs: total,
       taskName: this.currentTaskName,
+      taskPath: this.currentTaskPath,
       breakType,
     };
     this.emit();
@@ -1051,12 +1366,22 @@ export class TimerEngine {
 
   /** Start or resume the timer. Opens a session in LogManager and begins the 50ms tick loop. */
   start() {
-    if (this.state.isRunning) return;
+    // Not while a session is ending (F21, and the same for pause, reset and
+    // the two length changes below): the end awaits vault writes before the
+    // next session exists, and a Start in that window opened a session in the
+    // old mode that the next break then resumed — logged as a 🍅 Focus line.
+    if (this.state.isRunning || this.ending) return;
 
     // Check if this is a fresh start (not a resume)
     const isFreshStart = this.state.remainingMs === this.state.totalMs;
 
     this.state.isRunning = true;
+
+    // A fresh start is a new session, so nothing the log still holds open is
+    // resumed into it. A Start and a Pause inside one tick leave the clock at
+    // full length with a session open in the log; resumed, the next Start
+    // logged that old Start and the pause since (F15).
+    if (isFreshStart) this.plugin.logManager.discardSession();
 
     // Start or Resume Logging
     const minutes = this.sessionMinutes(this.state.mode, this.state.breakType);
@@ -1083,11 +1408,14 @@ export class TimerEngine {
 
   /** Pause the timer without ending the session — pause is logged for accounting. */
   pause() {
-    if (!this.state.isRunning) return;
+    if (!this.state.isRunning || this.ending) return;
+    this.halt();
+  }
 
-    // Log Pause
-    this.plugin.logManager.pauseSession();
-
+  /** Stop the clock and open a pause in the log, from `pausedAt` (ms) or now.
+   *  Pause, and the sleep check, which pauses from the last tick. */
+  private halt(pausedAt?: number) {
+    this.plugin.logManager.pauseSession(pausedAt);
     this.state.isRunning = false;
     this.targetTime = null;
     this.clearLoop();
@@ -1100,15 +1428,71 @@ export class TimerEngine {
    * the auto-start toggle is on — that's what Skip / natural completion are for.
    */
   async finish() {
+    if (this.ending || this.askingLongSession) return;
+    let end = this.endedByHand();
+    const question = this.longSessionQuestion(end);
+    if (question !== null) {
+      // The end is claimed only once the answer lands, never while the
+      // question is open: a claim held across it would leave every other
+      // gesture — Pause, Skip, Reset, from the panel, a hotkey or the menu —
+      // dead behind a dialog. (A second Stop asks nothing: the open question
+      // answers it.) So the timer may have moved on meanwhile, and the answer
+      // counts only for the session it was asked about.
+      const askedFor = this.sessionSerial;
+      const answer = await this.askLongSession(question);
+      // Unloaded meanwhile (F19): the reloaded plugin offers the session.
+      if (this.disposed || answer === "cancel" || this.sessionSerial !== askedFor) return;
+      if (answer === "planned") end = plannedSessionEnd(question);
+    }
     if (!this.beginEnding()) return;
     try {
-      await this.finishClaimed();
+      await this.finishClaimed(end);
     } finally {
       this.ending = false;
     }
   }
 
-  private async finishClaimed() {
+  /**
+   * Stop asks before logging a focus that ran `longSessionPromptHours` or
+   * more of active time AND past its planned end — a timer left running
+   * overnight on a machine that never slept, which the sleep check cannot
+   * see (F48). Null for anything else: a break, a session within its plan,
+   * the question turned off. The rule is isLongSession, which the startup
+   * question about a session an earlier run left asks by too (F18).
+   */
+  private longSessionQuestion(end: Required<SessionEnd>): LongSessionQuestion | null {
+    const logManager = this.plugin.logManager;
+    const active = logManager.openSessionActiveSeconds(end.endAt);
+    const hours = this.plugin.settings.longSessionPromptHours;
+    if (active === null || !isLongSession(this.state.mode, active, end.overtimeSeconds, hours)) {
+      return null;
+    }
+    // The planned length off the clock, which allows for every ±5 (F20).
+    // Not `active - overtime`: active counts whole-second stamps and overtime
+    // the milliseconds past the end time, so about half of all answers ended
+    // a second past the plan — End 09:25:01, Total 1501 beside Scheduled 1500.
+    const planned = Math.floor(this.state.totalMs / 1000);
+    const plannedEndAt = logManager.openSessionReachedAt(planned, end.endAt);
+    if (plannedEndAt === null) return null;
+    return { activeSeconds: active, overtimeSeconds: end.overtimeSeconds, plannedEndAt };
+  }
+
+  /** Ask through the plugin, one question at a time. A dialog that cannot be
+   *  shown keeps the whole session, as every earlier version did — answering
+   *  "cancel" instead would leave a Stop that could never stop. */
+  private async askLongSession(question: LongSessionQuestion): Promise<LongSessionAnswer> {
+    this.askingLongSession = true;
+    try {
+      return await this.plugin.askAboutLongSession(question);
+    } catch (e) {
+      logger.error("Could not ask about a long session; keeping all of it", e);
+      return "keep";
+    } finally {
+      this.askingLongSession = false;
+    }
+  }
+
+  private async finishClaimed(end: SessionEnd) {
     // Stop the tick FIRST. handleFinished() below awaits four vault round trips
     // before switchMode() replaces the state, and the 50ms loop keeps running
     // through all of them — so a Stop pressed a few hundred ms before zero used
@@ -1121,7 +1505,22 @@ export class TimerEngine {
     if (this.shouldPlayManualEndCue()) {
       this.playEndCue();
     }
-    await this.handleFinished(false);
+    await this.handleFinished(false, end);
+  }
+
+  /**
+   * Where a session the user ends — Stop, Skip — ends: now, with its active
+   * time past the planned end (0 before zero). While running that is read off
+   * the end time, which already allows for every pause and every ±5; while
+   * paused, off the time the pause froze.
+   */
+  private endedByHand(): Required<SessionEnd> {
+    const endAt = Date.now();
+    const remaining =
+      this.state.isRunning && this.targetTime !== null
+        ? this.targetTime - endAt
+        : this.state.remainingMs;
+    return { endAt, overtimeSeconds: remaining < 0 ? Math.floor(-remaining / 1000) : 0 };
   }
 
   /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
@@ -1148,30 +1547,36 @@ export class TimerEngine {
     }
 
     const status = this.state.mode === "focus" ? "cancelled" : "finished";
-    await this.plugin.logManager.endSession(status);
+    await this.plugin.logManager.endSession(status, this.endedByHand());
 
     await this.checkTaskCompletionAndUnlink();
 
     // Skip respects the auto-start toggle: with it on, the next session starts
     // running; with it off, it switches paused (same as Stop).
-    const autoStart =
-      this.state.mode === "focus"
-        ? this.plugin.settings.autoStartBreak
-        : this.plugin.settings.autoStartFocus;
+    const autoStart = this.autoStartsNext();
     const nextMode: PomoMode = this.state.mode === "focus" ? "break" : "focus";
     this.switchMode(nextMode, autoStart);
   }
 
-  // Cancel current session without switching modes; not in use currently
-  async cancel() {
-    await this.plugin.logManager.endSession("cancelled");
-    await this.checkTaskCompletionAndUnlink();
-    this.switchMode(this.state.mode, false);
-  }
-
+  /**
+   * Put the full length back on the clock and throw the session away (F7): no
+   * line, no 🍅, no long-break step. Running, a fresh session begins at this
+   * instant — new Start, no pauses, the war drum as for any fresh focus.
+   * Paused part-way, the timer stops at full length with no session open.
+   * Until 0.6.9 Reset touched only the clock: the log kept the old session,
+   * and the next Start resumed it, old Start and hours-long pause included.
+   * Skip is the other gesture: it logs what was done.
+   */
   reset() {
+    if (this.ending) return;
     const minutes = this.sessionMinutes(this.state.mode, this.state.breakType);
     const total = minutes * ONE_MINUTE_MS;
+    const discarded = this.sessionInProgress();
+
+    this.plugin.logManager.discardSession();
+    // The session on the clock is gone; a status bar menu opened for it must
+    // not act on the one that follows.
+    if (discarded) this.sessionSerial += 1;
 
     this.state.remainingMs = total;
     this.state.totalMs = total;
@@ -1179,8 +1584,24 @@ export class TimerEngine {
     // chimed" flag would silence the cue for that second crossing's Stop.
     this.endCueSounded = false;
 
+    // The session that held the unlink back is gone (see onFileModify) — on
+    // every Reset that throws one away, running too (F12): a task ticked done
+    // during a running session stayed linked, and the fresh session below was
+    // logged to it and 🍅'd its done line. Called before that session opens;
+    // the note is read first, so a done task still leaves it a moment later.
+    if (discarded) void this.checkTaskCompletionAndUnlink();
+
     if (this.state.isRunning) {
+      this.plugin.logManager.startSession(
+        this.state.mode,
+        this.currentTaskName,
+        minutes,
+        this.currentTaskPath,
+        this.currentTaskId,
+        this.state.breakType
+      );
       this.targetTime = Date.now() + total;
+      if (this.state.mode === "focus") void this.playSound("war-drum_short.mp3");
       this.armEndWake();
     } else {
       this.targetTime = null;
@@ -1192,6 +1613,7 @@ export class TimerEngine {
 
   /** Adjust total and remaining by `delta` minutes (clamped to a 1-minute minimum total). */
   addMinutes(delta: number) {
+    if (this.ending) return;
     const deltaMs = delta * ONE_MINUTE_MS;
 
     // 1. Update the Total Duration
@@ -1207,6 +1629,8 @@ export class TimerEngine {
 
     this.state.totalMs = newTotal;
     this.state.remainingMs = newRemaining;
+    // A recovered focus counts its Overtime past this length (F16).
+    this.plugin.logManager.plannedLengthChanged();
 
     // Same rule as reset(): once the clock is positive again it can cross zero
     // a second time, and a stale flag would silence that crossing's Stop. The
@@ -1226,14 +1650,17 @@ export class TimerEngine {
   /**
    * A length setting changed (write it first). Only the session that reads
    * that setting follows it — so "Break (m)" leaves a long break alone — and
-   * its remaining time moves only if it is fresh-stopped.
+   * only while it has not begun. A session under way keeps its length and the
+   * next one takes the new one (F17): moving the total alone made the meter,
+   * the ring and the sky jump by the difference, while the session still ran
+   * out at its old time and logged its old Scheduled.
    */
   updateDuration(setting: DurationSetting) {
+    if (this.ending) return;
     if (this.durationSetting(this.state.mode, this.state.breakType) !== setting) return;
+    if (this.sessionInProgress()) return;
     const newTotal = this.plugin.settings[setting] * ONE_MINUTE_MS;
-    if (!this.state.isRunning && this.state.remainingMs === this.state.totalMs) {
-      this.state.remainingMs = newTotal;
-    }
+    this.state.remainingMs = newTotal;
     this.state.totalMs = newTotal;
     this.emit();
   }

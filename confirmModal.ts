@@ -4,6 +4,8 @@ import type { App, ButtonComponent } from "obsidian";
 export interface ConfirmOptions {
   title: string;
   body: string;
+  /** Lines shown as a list under the body — examples of what will change. */
+  list?: string[];
   /** Label of the confirming button, e.g. "Repair 12 marker(s)". */
   ctaText: string;
   /** Style the confirming button as destructive (red). */
@@ -36,6 +38,10 @@ class ConfirmModal extends Modal {
     this.modalEl.addClass("gp-confirm-modal");
     this.titleEl.setText(this.options.title);
     this.contentEl.createEl("p", { text: this.options.body });
+    if (this.options.list && this.options.list.length > 0) {
+      const list = this.contentEl.createEl("ul");
+      for (const item of this.options.list) list.createEl("li", { text: item });
+    }
 
     new Setting(this.contentEl)
       .addButton((btn) =>

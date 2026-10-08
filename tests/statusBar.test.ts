@@ -22,6 +22,7 @@ import {
   type StatusMenuEntry,
 } from "../statusBar";
 import { formatEndTime } from "../endTime";
+import { NO_LOG_FOLDER_HINT, logFolderHint } from "../focusTotals";
 import { DEFAULT_SETTINGS } from "../constants";
 import type { MomentFactory } from "../momentTypes";
 import type { TimerState } from "../types";
@@ -254,6 +255,7 @@ describe("the hover text", () => {
     todayText: "1h 24m",
     goalText: "4h 0m",
     goalMet: false,
+    logFolderHint: null,
   };
 
   it("says what the item leaves out, one fact per line", () => {
@@ -290,6 +292,29 @@ describe("the hover text", () => {
       "Today: 1h 24m of 4h 0m (goal met)"
     );
   });
+
+  it("says there is no log folder, as the panel's goal line does — hidden on the desktop (F30)", () => {
+    // The ring fills during a focus and empties at Stop: nothing is logged.
+    const hint = logFolderHint("");
+    expect(hint).toBe(NO_LOG_FOLDER_HINT);
+    expect(statusTooltip({ ...base, state: idle, logFolderHint: hint }).split("\n")).toEqual([
+      "Focus: not started (25 min)",
+      `Today: 1h 24m of 4h 0m · ${NO_LOG_FOLDER_HINT}`,
+      "Click for timer controls",
+    ]);
+    expect(statusTooltip({ ...base, state: idle, goalText: null, logFolderHint: hint })).toContain(
+      `Today: 1h 24m · ${NO_LOG_FOLDER_HINT}`
+    );
+    expect(statusTooltip({ ...base, state: idle, logFolderHint: logFolderHint("Logs") })).toContain(
+      "Today: 1h 24m of 4h 0m\n"
+    );
+  });
+
+  it("names a task called 'No Task' like any other (F36)", () => {
+    // Whether a task is linked is main.ts's call, made on the task's note;
+    // the text only ever drops the line for a null name.
+    expect(statusTooltip({ ...base, state: idle, taskName: "No Task" })).toContain("Task: No Task");
+  });
 });
 
 describe("the menu", () => {
@@ -301,6 +326,7 @@ describe("the menu", () => {
       "Skip to next",
       "—",
       "Open timer",
+      "Open today's log",
       "—",
       "Hide time",
       "Show minutes left",
@@ -357,7 +383,14 @@ describe("the menu's guard against a timer that moved on", () => {
     for (const a of ["start", "resume", "pause", "finish", "skip"] as const) {
       expect(isTimerAction(a), a).toBe(true);
     }
-    for (const a of ["open", "time:hidden", "time:minutes", "time:clock", "time:end"] as const) {
+    for (const a of [
+      "open",
+      "log",
+      "time:hidden",
+      "time:minutes",
+      "time:clock",
+      "time:end",
+    ] as const) {
       expect(isTimerAction(a), a).toBe(false);
     }
   });
@@ -533,6 +566,32 @@ describe("the plugin's wiring", () => {
     expect(derive).toBeLessThan(merge);
   });
 
+  it("names a task in the hover text only when one is linked, judged by its note (F36)", () => {
+    // "No Task" is a name a task can have. An unlinked timer shows no task
+    // line; a linked task called "No Task" shows one. Dropping the check,
+    // dropping the name, or comparing the name with "No Task" all fail here.
+    const update = method(
+      "private updateStatusBar(state: TimerState, force = false): void {",
+      "private currentFocusSeconds("
+    );
+    const tooltip = update.slice(update.indexOf("const tooltip = statusTooltip({"));
+    expect(tooltip).toContain(
+      "taskName: state.taskPath !== undefined ? linkedTaskDisplayName(state.taskName) : null,"
+    );
+    expect(update.match(/taskName:/g)).toHaveLength(1);
+  });
+
+  it("gives the hover text the no-log-folder hint off the setting itself (F30)", () => {
+    // A folder change repaints through logFolderChanged (refreshGoalDisplays,
+    // forced), so the setting needs no entry in the repaint key.
+    const update = method(
+      "private updateStatusBar(state: TimerState, force = false): void {",
+      "private currentFocusSeconds("
+    );
+    const tooltip = update.slice(update.indexOf("const tooltip = statusTooltip({"));
+    expect(tooltip).toContain("logFolderHint: logFolderHint(this.settings.logFolderPath),");
+  });
+
   it("repaints when anything the item shows changes, not just the second", () => {
     const update = main.slice(
       main.indexOf("private updateStatusBar(state: TimerState, force = false)")
@@ -561,6 +620,9 @@ describe("the plugin's wiring", () => {
         "state.isRunning",
         "state.totalMs",
         "state.taskName",
+        // Linked or not: a task can be called "No Task", so the name alone
+        // does not move when one is linked while idle (F36).
+        "state.taskPath !== undefined",
         "time",
         "showTotal",
         "goalMinutes",

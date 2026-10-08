@@ -4,6 +4,336 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.9] — 2026-10-08
+
+**The daily log has a new line format, which Dataview can read.** It is
+breaking only for your own queries or scripts that find the log's fields by
+the `|` between them — see the first entry under **Changed**.
+
+### Added
+
+- **A Daily log group in the settings**, with everything about the log in one
+  place: the log folder (moved here from **Display & behavior**), the three
+  new choices below, and buttons for **Open today's log**, **Check log**,
+  **Convert old log lines** and **Refresh task names**.
+- **Open today's log** — a command, a settings button, an entry in the status
+  bar's menu, and on phones and tablets a tap on today's total in the timer
+  panel. It never makes an empty file: with nothing logged yet today, a notice
+  says so.
+- **Check log** — counts the lines still in the old format and points out
+  anything that looks wrong: a Total that doesn't match its own times,
+  sessions that overlap, a session over 12 hours, an end before its start, one
+  🆔 logged under different names, and a 🆔 on more than one task line when
+  none of those lines, or more than one, is open. It changes nothing; the
+  details are in the developer console.
+- **Convert old log lines** — rewrites lines from before 0.6.9 in the new
+  format, every start, end and total kept. It shows exact counts and asks
+  first, writes only the files that change, and a second run changes
+  nothing. On the way it tidies
+  what early versions left in task names (a broken character, a priority
+  emoji, a 🆔, which moves to its own ID field, brackets or `::` in a name),
+  takes a checkbox off the front of a session line, writes dates in other digits
+  with 0-9, and renames a log file whose name used other digits. When that
+  day already has a 0-9 file, it merges the old file's lines into it instead,
+  each session where its start time belongs, and then moves the old file to
+  the trash (your own trash setting) — only once the merged file is written,
+  so a merge that fails leaves both files as they were. Check log and the
+  dialog list each merge with its number of lines. Lines it can't read stay
+  as they are and are listed in the developer console.
+- **Add a session** — log a session you did away from the timer: focus or
+  break, task, date, start, length and status. It goes into that day's file in
+  time order, and adds no 🍅.
+- **Fix a logged session** — pick a day and one of its lines, then change it or
+  delete it. If the line changed meanwhile, nothing is written; a change that
+  would move it to another day asks you to delete it here and add it there.
+  On the night the clocks go back, a session in the repeated hour is read in
+  the passes its own total fits — a pause across the moment the clocks go back
+  included — and a new start in the pass the line's start was in, so moving its
+  start moves its end and its pauses by the same amount.
+- **Day starts at** (midnight to 6:00), for night owls: a session that starts
+  before this hour counts for the day before — in its log file, today's total,
+  the goal notice and the long-break count alike. Midnight by default, so
+  nothing moves unless you choose.
+- **Task switch** — what the log does when you pick another task during a
+  focus. By default the whole session still goes to the last task. **Split at
+  the switch** writes a line for each task instead. A part under a minute
+  joins the next part, or the one before it if it is the last, and the 🍅
+  goes to the task linked at the end, even when its part was too short for a
+  line.
+- **Ask about long sessions** — when you stop a focus that ran 6 hours or more
+  _and_ past its planned end (a timer left running overnight), you choose
+  **Keep it all** or **End at planned end**. Closing the dialog cancels the
+  Stop. Off, 2, 4, 6 (the default) or 8 hours.
+- **An unfinished session is offered back.** If Obsidian quits, crashes or
+  updates mid-session, the next start asks: **Log it** (up to where the timer
+  was last seen running) or **Discard**. A focus that ran past its planned end
+  for as long as **Ask about long sessions** asks about also offers **Log up
+  to planned end**, which logs it as Stop's **End at planned end** would.
+  Close the dialog to be asked again next time. The session is kept on that device only, never in the synced
+  settings file. A quit or a crash on a computer loses at most a minute; a
+  phone that closes Obsidian in the background ends the session at about when
+  it was locked or left, however long it stayed away.
+- **Focus lines record `Overtime`**: the active time past the planned end, in
+  seconds.
+- **Each day's log keeps that day's goal.** Today's log file gets the daily
+  goal as a property at its top, `goal_minutes: 120`: written when the timer
+  logs a session, and again a moment after you stop changing the setting, so
+  a goal changed after the day's last session is recorded too — in the file
+  of the day you changed it on, even when Obsidian is closed or your phone
+  locks a moment later (the change is kept on that device, and the next start
+  writes it if that is still the same day; once the day is over it is let go
+  and that day keeps the goal it has, since a late write could reach the file
+  before Obsidian Sync brings in another device's change, and Sync's merge of
+  two numbers can garble the goal). That update goes to the day's file only if it exists;
+  none is made for a goal, and a day whose file is first written after it
+  ended — its only session ran past midnight — gets the goal as it is set
+  then. With the goal off, the property is taken out of today's
+  file (and its block of properties with it, when nothing else is in it), so
+  that day reads as one with no goal, never the number it had before. An
+  earlier day's file is never otherwise changed, so a review of an old day
+  still shows the goal it had. Properties
+  you keep there are read as Obsidian reads them, so the goal goes in among
+  them, never as a second block. The property doesn't change any line, so
+  queries and scripts that read the lines read them as before.
+- **A one-time notice after you update**, only when your log still holds
+  lines in the old format: it says where **Convert old log lines** is, and
+  that **Check log** counts them first and changes nothing. The plugin looks
+  once, at the first start after updating, through the daily log files in
+  your log folder (counting the lines Convert would rewrite, as Check log
+  does); a new install or a reinstall, which keeps your logs, looks once too.
+  With no log folder set, one Check log can't list, or no log file in it yet
+  — the logs still syncing to that device, say — it waits until there is one.
+  An older version still open on another device can make it look once more.
+  Nothing is written to the log.
+- **A read-only API for your own templates**, so a `dataviewjs` review no
+  longer needs its own copy of the log's format:
+  `app.plugins.plugins["gentle-pomo"]?.api` (version 1: `dailyGoalMinutes()`,
+  `dayStartHour()`, `logPath(date)`, `getDay(date)` and `getDays(from, to)`,
+  at most 400 days). `getDay("2026-10-04")` and
+  `getDays(from, to)` give each day's sessions as the plugin reads them (both
+  line formats), its focus total as the daily goal counts it, and its goal —
+  the setting for today, the goal its file recorded for an earlier day, or
+  nothing for a day logged before 0.6.9, so a template can fall back to its
+  own. It never writes anything, and it is versioned. See "Reading your log
+  from templates" in the README.
+
+### Changed
+
+- **BREAKING for your own log queries and scripts: the log's line format.**
+  Lines are now
+  `- 🍅 Focus [Task:: …] [Start:: …] … [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]`
+  instead of `- 🍅 Focus | Task:: … | Start:: … | Total:: 1500 | …`, from which
+  Dataview read nothing although the README said it could. The field names,
+  their order and the values are unchanged; `Overtime` is new at the end of
+  focus lines. A pattern for a number or a fixed word (`Total::\s*(\d+)`,
+  `Status::\s*cancelled`) still works. A pattern that ends a text value at a
+  `|` or at the end of the line (`[^|]+`, `.*`) must also stop at `]` —
+  `Task::\s*(?:…|([^|]+))`, on a task with no note, takes the rest of a new
+  line — and one that splits a line on `|`, or looks for `| Key::`, reads
+  only the old lines. Your existing logs are not touched: the plugin reads
+  both kinds, and **Convert old log lines** brings the old ones over when
+  you're ready — a notice after you update says where it is, if your log has
+  old lines.
+- **A session shorter than a minute is no longer a session.** Stop, Skip or
+  the time running out after less than a minute of active time — almost always
+  a mis-click — writes no line, adds no 🍅 and doesn't move the long-break
+  count. The timer still moves on to the next session.
+- **Reset throws the session away**: no line, no 🍅, no step of the long-break
+  count. Running, a fresh session starts at that moment; paused, the timer
+  goes back to full and stops. Before, the log kept the old session and the
+  next Start carried on with it, old start time and hours-long pause included.
+  A task you ticked off during the session, or whose note you deleted, is
+  unlinked then, as when a session ends — so the fresh session isn't logged
+  to it. To end a session and keep the time, use Stop or Skip.
+- **On a computer, sleep is no longer counted as focus.** When the computer
+  sleeps for more than 10 minutes with the timer running, the timer pauses
+  where it stood when it went to sleep, the log records the pause, and a
+  notice says how long was not counted. Two exceptions: if the session's
+  planned end passed during the sleep and the next session starts on its own,
+  the session ends at its planned time and the next one starts when the
+  computer wakes; and a session the computer slept on before it had really
+  begun (an auto-started one, the lid closed at once) is thrown away and the
+  timer waits at full length. Phones and tablets keep timing through a lock or
+  the app in the background, as before.
+- **A session that ends by itself ends at its planned time.** With auto-start
+  on, a session whose end the app noticed late — a covered window, a computer
+  that slept through it, a phone holding the app — was logged up to that late
+  moment, sometimes a whole night; it now ends at its planned end, and the
+  next session starts when the app notices.
+- **Task names in the log are tidied so the line stays readable**: a link
+  inside a name becomes its text, square brackets become round ones, and `::`
+  becomes `:`. Tags are kept, so a session can still be sorted by area.
+- **Dates and log file names are always written with the digits 0-9**,
+  whatever language Obsidian is in. In Arabic, Persian, Bengali or Nepali they
+  used that language's digits, which queries could not read, and changing the
+  language mid-day started a second file for the day. On the day you update,
+  today's total still counts the file named the old way.
+- **Renaming a linked task waits until you stop typing** (about 3 seconds)
+  before it rewrites past lines, instead of rewriting them at every save while
+  you type. It now changes only lines whose link leads to that task's note,
+  keeps each line's own tags, and is not set off by a change to a Tasks field
+  or to spacing alone.
+- **Refresh log task names by ID asks first**, with the number of lines and a
+  few examples, and leaves alone a session from before its task was created (a
+  reused 🆔). When a 🆔 is on more than one line, a session keeps the name of
+  the copy it is logged under, and one under no copy's name takes the name of
+  the one copy still open; with none open, or two, it is left alone. It says
+  what it left alone.
+- **Changing the focus or break length during a session** now applies to the
+  next session; the one under way keeps its length. Before, the meter and the
+  sky jumped while the session still ended at its old time.
+- The log folder setting now says that leaving it empty keeps no log, and with
+  no folder set today's total says so — in the timer panel, and on the desktop
+  in the status bar's hover text. It drops spaces
+  around the name, refuses the vault's top level (`/`), uses an existing
+  folder's own capitals when you type them differently, and reminds you that
+  logs already in the old folder stay there.
+- If you add words after the counter's `🍅 N` (Edit Task puts them there), the
+  counter now reads that marker as your text and starts a new count beside it
+  on the next session — it can't tell those words from a `🍅 N` you typed
+  yourself. Nothing is deleted; remove the old marker by hand if you like.
+
+### Fixed
+
+- **The opt-in 🍅 counter now counts every session on a task without a 🆔.**
+  It found such a task by its text, and its own `🍅 N` changed that text, so
+  it counted the first session and then silently stopped. Tasks with a 🆔
+  were not affected. The same fix brings back two things for those tasks:
+  ticking the task off unlinks it again, and the task picker keeps its tick
+  and its **Linked task** entry after a count.
+- When a recurring task leaves done copies **above** the open one (the Tasks
+  setting "Next recurrence appears on the line below"), the counter now counts
+  the open task, not a done copy with the same text.
+- Your daily log is unchanged: a task keeps the name it was linked by, so the
+  count never renames it there or on the **Current task** button.
+- **A task with a 🆔 is no longer renamed by its own count.** With the counter
+  on, every finished session took the new `🍅 N` into the task's logged name
+  and rewrote every past log line for that task, in every daily log, to the
+  new number. A change that is only the count — the counter's, one synced from
+  another device, or the count removed — now keeps the name. A real rename
+  still updates your logs, and so does **Refresh log task names by ID**, which
+  now leaves the count alone too. A `🍅 N` you typed inside a task's text is
+  still part of its name. Log lines already rewritten keep the name they have.
+- **The 🍅 counter no longer rewrites a `🍅 N` you typed into a task.** It took
+  the first `🍅 N` on the line as its count, so the first counted session
+  turned `Buy 🍅 2 kg ⏳ 2026-10-01` into `Buy kg 🍅 3 ⏳ 2026-10-01`: your text
+  lost its `🍅 2` and the count started from your number. Now your text stays
+  as it is and the count starts at 1 beside it:
+  `Buy 🍅 2 kg 🍅 1 ⏳ 2026-10-01`. Tasks with and without a 🆔 alike.
+- The 🍅 recovery actions had the same blind spot: a `🍅 N` you typed in front
+  of the counter's marker hid that marker from **Check**, **Repair**,
+  **Remove** and **Remove all**. They now find it.
+- **Repair**, **Remove** and **Remove all** no longer move or delete a `🍅 N`
+  you typed in the task's own text: after an emoji the Tasks plugin also uses
+  (`Fix ❌ login, then 🍅 2 ✅ tests`), glued to a word (`复习🍅2`), or followed
+  by a closing bracket or `**`.
+- **Remove all** now also removes a counter marker with a tag right behind it,
+  which is where the Tasks plugin moves your tags when it rewrites a line —
+  for example when you tick the task off.
+- **The 🍅 counter no longer deletes a note in brackets after a `🍅 N` you
+  typed** (`Call mum 🍅 2 (Sunday)`). It read any `(…)` there as part of an
+  old marker format; now only a date in brackets is, which is all that format
+  ever held.
+- **Tasks' other date emoji — ⌛ for scheduled, 📆 and 🗓 for due — now count as
+  Tasks fields.** The counter wrote its marker after them, which hid the date
+  from the Tasks plugin (the same breakage as GitHub issue #2); it now writes
+  it in front, and **Repair** moves a marker that sits after such a date. A
+  count written by an earlier version after one of these emoji is still found.
+- **The counter no longer splits a tag with an emoji in it** (`#✅done`,
+  `#📅meeting`) when it writes its count; it used to write it inside the tag.
+- **Check, Repair, Remove** and **Remove all** now also reach tasks the Tasks
+  plugin has cancelled (`[-]`) or marked in progress (`[/]`).
+- A line with two counter markers (after a sync merge, or an edit) is settled
+  in one run: the count is the first one's, the counter and **Repair** leave
+  one marker, **Remove** deletes the misplaced ones (a correctly placed one
+  stays), and **Remove all** deletes them all. The
+  confirmation dialogs now count markers rather than lines, so their numbers
+  are exact, and a second run finds nothing.
+- **A task without a 🆔 is still recognised after the Tasks plugin rewrites its
+  line** — when you tick it, edit it, or the next recurrence starts — even
+  when that moves its tags, ⛔ or 🏁 fields, or writes 🗓 back as 📅. Before,
+  the timer lost track of it: no count, no unlink, no tick in the picker. And
+  in the picker, a task with a 🆔 is ticked and pinned by its ID, never
+  together with another task that differs only in its fields.
+- Picking or clearing a task while a session is ending no longer gives that
+  session's 🍅 to the new task, or loses it; a session counts the task it was
+  for. Picking the already linked task again — from a list opened before a
+  count, or after you removed its count — no longer stops the counting.
+- **No more square box behind the timer in the sidebar.** The colour behind the
+  timer square — there to hide the list as it scrolls under the rounded
+  corners — was always the main editor's background, so in a sidebar, which
+  Obsidian paints a slightly different shade, a square box showed behind the
+  rounded timer: darker in dark mode, white on light grey in light mode. The
+  same happened in a phone or tablet sidebar in dark mode and in a translucent
+  window. It now takes the colour of whatever the panel sits in — sidebar, main
+  area, pop-out window, phone or tablet sidebar — and follows themes that
+  restyle panels. (Minimal hid it on the right sidebar, which it paints in the
+  main colour.)
+- **Pausing, then ticking the task off, no longer logs the session as "No
+  Task".** A task ticked while its session was paused was unlinked at once, so
+  the session lost its task and its 🍅. The task now stays linked until the
+  session is logged.
+- **A session running past midnight no longer makes today's total jump, then
+  drop.** It counted toward the new day while it ran, then went into the
+  previous day's file at Stop. It now counts toward the day it started, where
+  it is filed.
+- **A task renamed to a name with `$` in it** (`$1`, `$&`) is written into the
+  log as typed.
+- **A task whose note you move or rename stays linked**, and its sessions link
+  to the note where it is now; deleting the note leaves the session under way
+  linked as it was, to the note now gone — as Obsidian leaves the log's older
+  lines of that task, and so that reviews still count it and file it under its
+  area — and the timer lets go of the task when that session ends (at once if
+  none is under way). Past lines are renamed even when Obsidian has shortened
+  their link after a move.
+- **Two task lines sharing a 🆔** — a copied line, a done copy of a recurring
+  task — no longer rename each other's sessions, and the 🍅 goes to the copy
+  you linked. When the text no longer says which copy that is — you copied a
+  task forward, ticked the old copy and renamed the new one — the one copy
+  still open is the task: the rename is followed and the 🍅 goes to it, while
+  the ticked copy's sessions keep their name. The same when the copy you
+  linked is the one you ticked: with exactly one copy still open, the timer
+  stays with it, and renaming it later never renames the ticked copy's
+  sessions. With **Split at the switch**, the part of a session worked on the
+  old copy before you picked the new one keeps the old copy's name. With no
+  copy open, or two, the ticked copy you linked is the task: it gets its 🍅
+  and the timer unlinks it. When the text names no copy and two are open,
+  nothing is renamed or counted.
+- **A 🆔 added to a task after you linked it is picked up** (the Tasks plugin
+  adds one when a task becomes a dependency), so the session is logged with
+  its ID.
+- **A note with Windows line endings no longer hides a task's 🆔** from the
+  rename.
+- **Pressing Start while a session was being logged** could log the following
+  break as a focus session that counted toward the goal. Start, Pause, Reset
+  and +5/−5 are now ignored while the end is being written, a fraction of a
+  second; press again once the next session shows. A new focus or break
+  length is kept, and the next session uses it.
+- **A session is no longer lost when its task's note can't be read at that
+  moment** (an iCloud file not downloaded yet); it is logged under the linked
+  name.
+- **No doubled line** after a write that timed out but landed anyway, **no
+  blank line** when an editor or a sync tool ended the file with a line break,
+  and a file with Windows line endings keeps them. Adding a line and renaming
+  each write the file in one step, so a session logged during a rename is
+  never lost.
+- **A line that can't be written is no longer lost.** It is kept on that
+  device, written before the next session's line and when Obsidian starts,
+  and the notice says it will try again.
+- **A rename that can't reach one log file** (deleted, or not downloaded yet)
+  no longer stops there; the other files are renamed, and you're told to run
+  **Refresh log task names by ID**.
+- **A task literally named "No Task"** is now logged and linked like any other
+  task.
+- **Each line's Total matches its own times exactly**, and is never negative
+  after the computer's clock steps back.
+- **Today's total no longer stops updating** after a read of the log hangs (a
+  placeholder file on iCloud, a stuck read on a phone): a read gives up after
+  10 seconds and is tried again later.
+- **The daily-goal notice no longer shows twice** when you work on two
+  devices: before it shows, it checks whether the other device already did
+  today.
+
 ## [0.6.8] — 2026-09-29
 
 ### Added

@@ -3,7 +3,9 @@ import {
   TASK_LINE_REGEX,
   normalizeTaskText,
   normalizeTaskTextForDisplay,
-  findTaskNameByIdInContent,
+  findTaskTextByIdInContent,
+  taskLineName,
+  taskNameAfterEdit,
   parsePomodoroCount,
   incrementPomodoroCount,
   repairPomodoroMarkerPlacement,
@@ -12,6 +14,7 @@ import {
   removeMisplacedPomodoroMarkersInContent,
   removeAnyPomodoroMarker,
   removeAllPomodoroMarkersInContent,
+  taskMatchKey,
 } from "../taskLoader";
 
 describe("normalizeTaskText", () => {
@@ -96,7 +99,13 @@ describe("TASK_LINE_REGEX", () => {
   });
 });
 
-describe("findTaskNameByIdInContent", () => {
+describe("findTaskTextByIdInContent", () => {
+  // The line's text; taskLineName makes the name the picker would link it by.
+  const findTaskNameByIdInContent = (content: string, taskId: string) => {
+    const text = findTaskTextByIdInContent(content, taskId);
+    return text === null ? null : taskLineName(text);
+  };
+
   const content = [
     "Some notes about the project.",
     "",
@@ -139,6 +148,105 @@ describe("findTaskNameByIdInContent", () => {
   });
 });
 
+describe("taskNameAfterEdit", () => {
+  // The name a task with a 🆔 goes by once its line changes: the line's name,
+  // unless all that changed is the 🍅 counter's count.
+  const name = (text: string) => normalizeTaskText(text);
+
+  it.each([
+    ["the first count", "Write docs", "Write docs 🍅 1 ⏳ 2026-10-01 🆔 x"],
+    ["a count going up", "Write docs 🍅 3", "Write docs 🍅 4 ⏳ 2026-10-01 🆔 x"],
+    ["the count removed", "Write docs 🍅 3", "Write docs ⏳ 2026-10-01 🆔 x"],
+    ["a count set by hand", "Write docs 🍅 3", "Write docs 🍅 12 🆔 x"],
+    [
+      "a tag after the fields",
+      name("Write docs 🍅 3 ⏳ 2026-10-01 #task/research/docs 🆔 x"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 #task/research/docs 🆔 x",
+    ],
+    [
+      "text after the fields",
+      name("Write docs ⏳ 2026-10-01 see notes 🆔 x"),
+      "Write docs 🍅 1 ⏳ 2026-10-01 see notes 🆔 x",
+    ],
+    [
+      "a ≤0.5.0 marker moved in front of the fields",
+      name("Write docs ⏳ 2026-10-01 🆔 x 🍅 3"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 🆔 x",
+    ],
+    [
+      "a count with text after the fields",
+      name("Write docs 🍅 3 ⏳ 2026-10-01 see notes 🆔 x"),
+      "Write docs 🍅 4 ⏳ 2026-10-01 see notes 🆔 x",
+    ],
+    // A name has lost the fields that tell the counter's 🍅 from a typed one,
+    // so each 🍅 in it is tried as the count.
+    ["a count beside a typed 🍅", "Buy 🍅 2 kg 🍅 1", "Buy 🍅 2 kg 🍅 2 ⏳ 2026-10-01 🆔 x"],
+    ["a block reference", "Write docs ^ref1", "Write docs 🍅 1 🆔 x ^ref1"],
+    ["no Tasks fields at all", "Write docs", "Write docs 🍅 1"],
+  ])("keeps the name through %s", (_label, previous, text) => {
+    expect(taskNameAfterEdit(previous, text)).toBe(previous);
+  });
+
+  it.each([
+    ["a new name", "Write docs 🍅 3", "Write the docs 🍅 4 🆔 x", "Write the docs 🍅 4"],
+    ["a new name, no count", "Write docs", "Write the docs 🆔 x", "Write the docs"],
+    ["a new name, count removed", "Write docs 🍅 3", "Write the docs 🆔 x", "Write the docs"],
+    ["a new tag", "Write docs 🍅 3", "Write docs #urgent 🍅 4 🆔 x", "Write docs #urgent 🍅 4"],
+    // A 🍅 typed into the description is text, not the count.
+    ["a typed 🍅 changed", "Buy 🍅 2 kg", "Buy 🍅 3 kg 🆔 x", "Buy 🍅 3 kg"],
+    ["a typed 🍅 removed", "Buy 🍅 2 kg", "Buy kg 🆔 x", "Buy kg"],
+    [
+      "a typed 🍅 changed beside a count",
+      "Buy 🍅 2 kg 🍅 1",
+      "Buy 🍅 3 kg 🍅 1 🆔 x",
+      "Buy 🍅 3 kg 🍅 1",
+    ],
+    ["a 🍅 typed in", "Buy kg", "Buy 🍅 2 kg 🆔 x", "Buy 🍅 2 kg"],
+  ])("renames on %s", (_label, previous, text, renamed) => {
+    expect(taskNameAfterEdit(previous, text)).toBe(renamed);
+  });
+
+  it("reads alike when only the spacing differs, as a count rewrites it", () => {
+    expect(taskNameAfterEdit("Write  docs", "Write docs 🍅 1 🆔 x")).toBe("Write  docs");
+  });
+
+  it("reads alike when only the spacing differs and no count is involved (F63)", () => {
+    // Until 0.6.9 any change with no count on either side was a rename, so a
+    // double space a moved field left behind rewrote the task's history.
+    expect(taskNameAfterEdit("Write  docs", "Write docs 🆔 x")).toBe("Write  docs");
+    // Tasks moving a tag in front of the fields as it ticks the line.
+    const before = normalizeTaskText("Write draft ⏳ 2026-10-01 #task/research/x");
+    expect(before).toBe("Write draft  #task/research/x");
+    expect(
+      taskNameAfterEdit(before, "Write draft #task/research/x ⏳ 2026-10-01 ✅ 2026-10-02 🆔 x")
+    ).toBe(before);
+  });
+
+  it.each([
+    ["a dependency added", "Write docs ⛔ xyz789 🆔 abc"],
+    ["an on-completion action added", "Write docs 🏁 delete 🆔 abc"],
+    ["an ⌛ reschedule", "Write docs ⌛ 2026-10-05 🆔 abc"],
+    ["a 📆 due date", "Write docs 📆 2026-10-03 🆔 abc"],
+    ["a 🗓 due date", "Write docs 🗓️ 2026-10-03 🆔 abc"],
+    ["a cancelled date", "Write docs ❌ 2026-10-03 🆔 abc"],
+  ])("keeps the name when only a Tasks field changed — %s (F34)", (_label, text) => {
+    expect(taskNameAfterEdit("Write docs", text)).toBe("Write docs");
+    // The name keeps its own format: an old field stays as it was logged.
+    expect(taskNameAfterEdit("Write docs ⌛ 2026-10-01", text)).toBe("Write docs ⌛ 2026-10-01");
+  });
+
+  it("still renames on words, and on a tag (future sessions log the new one)", () => {
+    expect(taskNameAfterEdit("Write docs", "Write the docs ⛔ xyz789 🆔 abc")).toBe(
+      "Write the docs ⛔ xyz789"
+    );
+    expect(taskNameAfterEdit("Write docs #a", "Write docs #b 🆔 abc")).toBe("Write docs #b");
+  });
+
+  it("is the line's own name when nothing changed", () => {
+    expect(taskNameAfterEdit("Write docs 🍅 2", "Write docs 🍅 2 🆔 x")).toBe("Write docs 🍅 2");
+  });
+});
+
 describe("parsePomodoroCount", () => {
   it("returns 0 when no marker is present", () => {
     expect(parsePomodoroCount("- [ ] Write docs ⏳ 2025-12-23")).toBe(0);
@@ -152,8 +260,11 @@ describe("parsePomodoroCount", () => {
     expect(parsePomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01)")).toBe(5);
   });
 
-  it("tolerates arbitrary content inside the legacy parens", () => {
-    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (anything)")).toBe(7);
+  it("reads only a date in the legacy parens — anything else in brackets is the user's", () => {
+    // The dated build only ever wrote `(YYYY-MM-DD)`. Taking any `(…)` as part
+    // of the marker made "🍅 7 (anything)" the counter and deleted the note.
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (anything)")).toBe(0);
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 7 (2024-01-01, at work)")).toBe(0);
   });
 });
 
@@ -430,5 +541,716 @@ describe("removeMisplacedPomodoroMarkersInContent", () => {
         "Plain prose mentioning 🍅 3 stays as is.",
       ].join("\n")
     );
+  });
+});
+
+describe("a 🍅 the user typed is never the counter", () => {
+  // The counter's marker sits where the plugin writes it: nothing but tags
+  // between it and the Tasks fields, a trailing block reference, or the end of
+  // the line. A `🍅 N` with ordinary text after it is the user's own text.
+  // Every reader used to take the FIRST `🍅 N` on the line, so a typed one in
+  // front of the counter was rewritten ("Buy 🍅 2 kg" became "Buy kg 🍅 3"),
+  // hid the counter from Remove all, and hid a misplaced counter from Repair.
+  const TYPED = "- [ ] Buy 🍅 2 kg ⏳ 2026-10-01";
+  const TYPED_AND_COUNTER = "- [ ] Buy 🍅 2 kg 🍅 3 ⏳ 2026-10-01";
+  const TYPED_AND_MISPLACED = "- [ ] Buy 🍅 2 kg ⏳ 2026-10-01 🍅 3";
+  const TYPED_AND_AFTER_BLOCK_REF = "- [ ] Buy 🍅 2 kg ^abc123 🍅 1";
+  // Your own vault has field emoji inside task text ("Add 🔺 watchlist — all
+  // ⏫/🔺 tasks"), so "after the first field emoji" does not mean "after the
+  // fields": a 🍅 typed after one is still the user's.
+  const AFTER_EMOJI_IN_TEXT = "- [ ] Fix ❌ login, then 🍅 2 tests ⏳ 2026-10-01";
+  // The Tasks plugin moves tags that sit among the fields to the end of the
+  // description when it rewrites a line (ticking it, Edit Task, the next
+  // recurrence), so a tag can end up between the counter and the fields.
+  const TAG_MOVED_BY_TASKS = "- [ ] Write docs 🍅 1 #task/research/docs 🔁 every day ⏳ 2026-10-01";
+
+  describe("parsePomodoroCount", () => {
+    it("reads 0 when the only 🍅 is the user's", () => {
+      expect(parsePomodoroCount(TYPED)).toBe(0);
+      expect(parsePomodoroCount("- [ ] Buy 🍅 2 kg of tomatoes")).toBe(0);
+      expect(parsePomodoroCount(AFTER_EMOJI_IN_TEXT)).toBe(0);
+    });
+
+    it("reads the counter, not a typed 🍅 in front of it", () => {
+      expect(parsePomodoroCount(TYPED_AND_COUNTER)).toBe(3);
+      expect(parsePomodoroCount(TYPED_AND_MISPLACED)).toBe(3);
+      expect(parsePomodoroCount(TYPED_AND_AFTER_BLOCK_REF)).toBe(1);
+    });
+
+    it("reads a counter that has tags after it", () => {
+      expect(parsePomodoroCount(TAG_MOVED_BY_TASKS)).toBe(1);
+      expect(parsePomodoroCount("- [ ] Write docs 🍅 4 #inbox #later")).toBe(4);
+      expect(parsePomodoroCount("- [ ] Write docs 🍅 4 #paper📅 2026-10-01")).toBe(4);
+    });
+  });
+
+  describe("incrementPomodoroCount", () => {
+    it("leaves a typed 🍅 alone and starts the counter at 1 beside it", () => {
+      expect(incrementPomodoroCount(TYPED)).toBe("- [ ] Buy 🍅 2 kg 🍅 1 ⏳ 2026-10-01");
+      expect(incrementPomodoroCount("- [ ] Buy 🍅 2 kg of tomatoes")).toBe(
+        "- [ ] Buy 🍅 2 kg of tomatoes 🍅 1"
+      );
+      expect(incrementPomodoroCount("- [ ] Buy 🍅 2 kg ^abc123")).toBe(
+        "- [ ] Buy 🍅 2 kg 🍅 1 ^abc123"
+      );
+    });
+
+    it("keeps counting its own marker on later sessions, not the typed one", () => {
+      const once = incrementPomodoroCount(TYPED);
+      const twice = incrementPomodoroCount(once);
+      const thrice = incrementPomodoroCount(twice);
+      expect(thrice).toBe("- [ ] Buy 🍅 2 kg 🍅 3 ⏳ 2026-10-01");
+      expect([once, twice, thrice].map(parsePomodoroCount)).toEqual([1, 2, 3]);
+    });
+
+    it("heals a misplaced counter without touching the typed 🍅", () => {
+      expect(incrementPomodoroCount(TYPED_AND_MISPLACED)).toBe(
+        "- [ ] Buy 🍅 2 kg 🍅 4 ⏳ 2026-10-01"
+      );
+      expect(incrementPomodoroCount(TYPED_AND_AFTER_BLOCK_REF)).toBe(
+        "- [ ] Buy 🍅 2 kg 🍅 2 ^abc123"
+      );
+    });
+
+    it("leaves a 🍅 typed after a field emoji in the task text alone", () => {
+      const once = incrementPomodoroCount(AFTER_EMOJI_IN_TEXT);
+      expect(once).toContain("then 🍅 2 tests ⏳ 2026-10-01");
+      expect(parsePomodoroCount(once)).toBe(1);
+      const twice = incrementPomodoroCount(once);
+      expect(twice).toContain("then 🍅 2 tests ⏳ 2026-10-01");
+      expect(parsePomodoroCount(twice)).toBe(2);
+    });
+
+    it("still takes its counter when the Tasks plugin moved a tag behind it", () => {
+      // Not a second `🍅 1` in front of the fields: the marker IS the counter.
+      expect(incrementPomodoroCount(TAG_MOVED_BY_TASKS)).toBe(
+        "- [ ] Write docs #task/research/docs 🍅 2 🔁 every day ⏳ 2026-10-01"
+      );
+    });
+
+    it.each([
+      TYPED,
+      TYPED_AND_COUNTER,
+      TYPED_AND_MISPLACED,
+      TYPED_AND_AFTER_BLOCK_REF,
+      AFTER_EMOJI_IN_TEXT,
+      TAG_MOVED_BY_TASKS,
+      "- [ ] Buy 🍅 2 kg of tomatoes",
+      "- [ ] Write docs ⏳ 2025-12-23 📅 2025-12-24 🍅 3",
+      "- [ ] Write docs 🍅 5 (2024-01-01)",
+    ])("adds exactly one to what parsePomodoroCount reads — %s", (line) => {
+      expect(parsePomodoroCount(incrementPomodoroCount(line))).toBe(parsePomodoroCount(line) + 1);
+    });
+  });
+
+  describe("Remove all", () => {
+    it("removes the counter behind a typed 🍅 and keeps the typed one", () => {
+      expect(removeAnyPomodoroMarker(TYPED_AND_COUNTER)).toBe(TYPED);
+      expect(removeAnyPomodoroMarker(TYPED_AND_MISPLACED)).toBe(TYPED);
+      expect(removeAnyPomodoroMarker("- [ ] Buy 🍅 2 kg of tomatoes 🍅 4")).toBe(
+        "- [ ] Buy 🍅 2 kg of tomatoes"
+      );
+    });
+
+    it("removes a counter that has tags after it", () => {
+      expect(removeAnyPomodoroMarker(TAG_MOVED_BY_TASKS)).toBe(
+        "- [ ] Write docs #task/research/docs 🔁 every day ⏳ 2026-10-01"
+      );
+      expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 4 #inbox #later")).toBe(
+        "- [ ] Write docs #inbox #later"
+      );
+      expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 4 #paper📅 2026-10-01")).toBe(
+        "- [ ] Write docs #paper📅 2026-10-01"
+      );
+    });
+
+    it("keeps a typed 🍅 that only looks like a tag would follow", () => {
+      const line = "- [ ] Buy 🍅 2 # of tomatoes";
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    });
+
+    it.each([TYPED, "- [ ] Buy 🍅 2 kg of tomatoes", "- [ ] Buy 🍅 2 kg ^abc123"])(
+      "undoes the counter exactly, and a second run changes nothing — %s",
+      (line) => {
+        const counted = incrementPomodoroCount(incrementPomodoroCount(line));
+        const removed = removeAnyPomodoroMarker(counted);
+        expect(removed).toBe(line);
+        expect(removeAnyPomodoroMarker(removed)).toBe(line);
+      }
+    );
+
+    it("counts those lines in a note", () => {
+      const content = [TYPED_AND_COUNTER, TYPED_AND_MISPLACED, TYPED, AFTER_EMOJI_IN_TEXT].join(
+        "\n"
+      );
+      const result = removeAllPomodoroMarkersInContent(content);
+      expect(result.linesChanged).toBe(2);
+      expect(result.content).toBe([TYPED, TYPED, TYPED, AFTER_EMOJI_IN_TEXT].join("\n"));
+    });
+  });
+
+  describe("a note in brackets after a typed 🍅", () => {
+    // Only `(YYYY-MM-DD)` belongs to a marker — the 13-minute dated build from
+    // before 0.1.0 wrote nothing else. Any other `(…)` is ordinary text, so the
+    // 🍅 in front of it is the user's.
+    const NOTE = "- [ ] Buy 🍅 2 (big ones) ⏳ 2026-10-01";
+    const NOTE_AT_END = "- [ ] Call mum 🍅 2 (Sunday)";
+
+    it("is not read as a count", () => {
+      expect(parsePomodoroCount(NOTE)).toBe(0);
+      expect(parsePomodoroCount(NOTE_AT_END)).toBe(0);
+      expect(parsePomodoroCount("- [ ] Push-ups 🍅 2 (10-15)")).toBe(0);
+      expect(parsePomodoroCount("- [ ] Buy 🍅 2 (big ones) 🍅 4 ⏳ 2026-10-01")).toBe(4);
+    });
+
+    it("keeps its note when the counter counts", () => {
+      expect(incrementPomodoroCount(NOTE)).toBe("- [ ] Buy 🍅 2 (big ones) 🍅 1 ⏳ 2026-10-01");
+      expect(incrementPomodoroCount(NOTE_AT_END)).toBe("- [ ] Call mum 🍅 2 (Sunday) 🍅 1");
+      expect(incrementPomodoroCount("- [ ] Push-ups 🍅 2 (10-15)")).toBe(
+        "- [ ] Push-ups 🍅 2 (10-15) 🍅 1"
+      );
+      expect(incrementPomodoroCount("- [ ] Write 🍅 1 (2024-01-01, at work)")).toBe(
+        "- [ ] Write 🍅 1 (2024-01-01, at work) 🍅 1"
+      );
+    });
+
+    it("is left alone by Remove all, which takes only the counter beside it", () => {
+      expect(removeAnyPomodoroMarker(NOTE)).toBe(NOTE);
+      expect(removeAnyPomodoroMarker(NOTE_AT_END)).toBe(NOTE_AT_END);
+      expect(removeAnyPomodoroMarker(incrementPomodoroCount(NOTE))).toBe(NOTE);
+    });
+
+    it("is never called misplaced, even after the fields", () => {
+      const line = "- [ ] Buy ⏳ 2026-10-01 🍅 2 (big ones)";
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+    });
+
+    it("still treats a dated marker as the counter, date dropped on write", () => {
+      expect(parsePomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(5);
+      expect(incrementPomodoroCount("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(
+        "- [ ] Write docs 🍅 6 ⏳ 2026-10-01"
+      );
+      expect(removeAnyPomodoroMarker("- [ ] Write docs 🍅 5 (2024-01-01) ⏳ 2026-10-01")).toBe(
+        "- [ ] Write docs ⏳ 2026-10-01"
+      );
+    });
+  });
+
+  describe("Check, Repair and Remove misplaced", () => {
+    it("repair moves a misplaced counter behind a typed 🍅, keeping both", () => {
+      expect(repairPomodoroMarkerPlacement(TYPED_AND_MISPLACED)).toBe(TYPED_AND_COUNTER);
+      expect(repairPomodoroMarkerPlacement(TYPED_AND_AFTER_BLOCK_REF)).toBe(
+        "- [ ] Buy 🍅 2 kg 🍅 1 ^abc123"
+      );
+    });
+
+    it("remove-misplaced deletes that counter and keeps the typed 🍅", () => {
+      expect(removeMisplacedPomodoroMarker(TYPED_AND_MISPLACED)).toBe(TYPED);
+      expect(removeMisplacedPomodoroMarker(TYPED_AND_AFTER_BLOCK_REF)).toBe(
+        "- [ ] Buy 🍅 2 kg ^abc123"
+      );
+    });
+
+    it("never calls a 🍅 typed after a field emoji in the task text misplaced", () => {
+      expect(repairPomodoroMarkerPlacement(AFTER_EMOJI_IN_TEXT)).toBe(AFTER_EMOJI_IN_TEXT);
+      expect(removeMisplacedPomodoroMarker(AFTER_EMOJI_IN_TEXT)).toBe(AFTER_EMOJI_IN_TEXT);
+    });
+
+    it("still repairs a misplaced counter that has tags after it", () => {
+      expect(repairPomodoroMarkerPlacement("- [ ] Buy 📅 2026-10-01 🍅 3 #shopping")).toBe(
+        "- [ ] Buy 🍅 3 📅 2026-10-01 #shopping"
+      );
+    });
+
+    it("leaves a typed 🍅 beside a correctly placed counter alone", () => {
+      expect(repairPomodoroMarkerPlacement(TYPED_AND_COUNTER)).toBe(TYPED_AND_COUNTER);
+      expect(removeMisplacedPomodoroMarker(TYPED_AND_COUNTER)).toBe(TYPED_AND_COUNTER);
+    });
+
+    it("finds those lines in a note, and only those", () => {
+      const content = [TYPED_AND_MISPLACED, TYPED_AND_COUNTER, AFTER_EMOJI_IN_TEXT, TYPED].join(
+        "\n"
+      );
+      const result = repairPomodoroMarkersInContent(content);
+      expect(result.linesChanged).toBe(1);
+      expect(result.content).toBe(
+        [TYPED_AND_COUNTER, TYPED_AND_COUNTER, AFTER_EMOJI_IN_TEXT, TYPED].join("\n")
+      );
+      expect(repairPomodoroMarkersInContent(result.content).linesChanged).toBe(0);
+    });
+  });
+});
+
+describe("which 🍅 is the counter's — review round 1", () => {
+  it("needs a genuine Tasks field behind it, not just a field emoji, once one stands before it", () => {
+    // ✅ followed by a word is not a done date, and 🔥 is not a Tasks field.
+    for (const line of [
+      "- [ ] Fix ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01",
+      "- [ ] 🔥 Sauce: roast 🍅 4 🔥 chilies ⏳ 2026-10-01",
+      "- [ ] Add ⏫ review, plus 🍅 3 🔺 watchlist ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] Fix ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01")).toBe(
+      "- [ ] Fix 🍅 1 ❌ login, then 🍅 2 ✅ tests ⏳ 2026-10-01"
+    );
+  });
+
+  it("still counts its own marker in front of an emoji in the task text", () => {
+    // Where the counter writes when the line's first field emoji is in the text.
+    const line = "- [ ] Add 🍅 1 🔺 watchlist ⏳ 2026-10-01";
+    expect(parsePomodoroCount(line)).toBe(1);
+    expect(incrementPomodoroCount(line)).toBe("- [ ] Add 🍅 2 🔺 watchlist ⏳ 2026-10-01");
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it.each([
+    ["a priority", "⏫"],
+    ["a recurrence", "🔁 every week"],
+    ["an on-completion", "🏁 delete"],
+    ["a depends-on list", "⛔ abc, def"],
+    ["an ID", "🆔 abc123"],
+    ["a date with a variation selector", "📅️ 2026-10-05"],
+    ["a cancelled date", "❌ 2026-10-02"],
+    ["a tag and a done date", "#done ✅ 2026-10-02"],
+  ])("still finds a ≤0.5.0 marker with %s written after it", (_label, field) => {
+    const line = `- [ ] Write docs ⏳ 2026-10-01 🍅 3 ${field}`;
+    expect(parsePomodoroCount(line)).toBe(3);
+    expect(repairPomodoroMarkerPlacement(line)).toBe(
+      `- [ ] Write docs 🍅 3 ⏳ 2026-10-01 ${field}`
+    );
+  });
+
+  it("takes only Tasks tag characters as a tag behind the marker", () => {
+    for (const line of [
+      "- [ ] Ask about it (🍅 2 #garden)",
+      "- [ ] Discuss 🍅 2 #standup.",
+      "- [ ] Bold **🍅 2 #x** ⏳ 2026-10-01",
+      "- [ ] Mark ==🍅 2 #x== ⏳ 2026-10-01",
+      "- [ ] Note [[Log|🍅 2 #x]] ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+  });
+
+  it("never takes a 🍅 glued to the text in front of it", () => {
+    // Every version wrote a space before the marker.
+    for (const line of [
+      "- [ ] Work #pomo🍅2 ⏳ 2026-10-01",
+      "- [ ] 复习🍅2 ⏳ 2026-10-01",
+      "- [ ] Read https://example.com/🍅2",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] 复习🍅2 ⏳ 2026-10-01")).toBe(
+      "- [ ] 复习🍅2 🍅 1 ⏳ 2026-10-01"
+    );
+  });
+
+  it("needs a space before a block reference, as Obsidian and Tasks do", () => {
+    expect(parsePomodoroCount("- [ ] Compute 🍅 2^10")).toBe(0);
+    expect(incrementPomodoroCount("- [ ] Compute 🍅 2^10")).toBe("- [ ] Compute 🍅 2^10 🍅 1");
+    expect(removeAnyPomodoroMarker("- [ ] Compute 🍅 2^10")).toBe("- [ ] Compute 🍅 2^10");
+  });
+
+  it("knows Tasks' other date emoji: ⌛ scheduled, 📆 and 🗓 due", () => {
+    expect(parsePomodoroCount("- [ ] Write docs 🍅 1 🗓️ 2026-10-05")).toBe(1);
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 1 🗓️ 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 2 🗓️ 2026-10-05"
+    );
+    expect(incrementPomodoroCount("- [ ] Write docs 🍅 1 ⌛ 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 2 ⌛ 2026-10-05"
+    );
+    // Written in front of them, not after (which hid the date from Tasks).
+    expect(incrementPomodoroCount("- [ ] Write docs 📆 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 1 📆 2026-10-05"
+    );
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs ⏳ 2026-10-01 🍅 3 📆 2026-10-05")).toBe(
+      "- [ ] Write docs 🍅 3 ⏳ 2026-10-01 📆 2026-10-05"
+    );
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs 📆 2026-10-05 🍅 3")).toBe(
+      "- [ ] Write docs 🍅 3 📆 2026-10-05"
+    );
+  });
+
+  describe("two counter markers on one line", () => {
+    const PLACED_AND_APPENDED = "- [ ] Write docs 🍅 3 ⏳ 2026-10-01 🍅 1";
+    const BOTH_APPENDED = "- [ ] Write docs ⏳ 2026-10-01 🍅 3 🍅 1";
+
+    it("reads the first one's count", () => {
+      expect(parsePomodoroCount(PLACED_AND_APPENDED)).toBe(3);
+      expect(parsePomodoroCount(BOTH_APPENDED)).toBe(3);
+    });
+
+    it("settles them in one write, keeping the first count", () => {
+      for (const line of [PLACED_AND_APPENDED, BOTH_APPENDED]) {
+        expect(repairPomodoroMarkerPlacement(line)).toBe("- [ ] Write docs 🍅 3 ⏳ 2026-10-01");
+        expect(incrementPomodoroCount(line)).toBe("- [ ] Write docs 🍅 4 ⏳ 2026-10-01");
+        expect(removeAnyPomodoroMarker(line)).toBe("- [ ] Write docs ⏳ 2026-10-01");
+      }
+      expect(removeMisplacedPomodoroMarker(PLACED_AND_APPENDED)).toBe(
+        "- [ ] Write docs 🍅 3 ⏳ 2026-10-01"
+      );
+      expect(removeMisplacedPomodoroMarker(BOTH_APPENDED)).toBe("- [ ] Write docs ⏳ 2026-10-01");
+    });
+
+    it("needs one run of each action, and counts each marker it acts on", () => {
+      const content = [PLACED_AND_APPENDED, BOTH_APPENDED].join("\n");
+      for (const run of [
+        repairPomodoroMarkersInContent,
+        removeMisplacedPomodoroMarkersInContent,
+        removeAllPomodoroMarkersInContent,
+      ]) {
+        const once = run(content);
+        expect(once.linesChanged).toBe(2);
+        expect(run(once.content).linesChanged).toBe(0);
+      }
+      // Lines and markers differ here — what the confirmation dialogs count.
+      expect(removeAllPomodoroMarkersInContent(content).markersChanged).toBe(4);
+      expect(removeMisplacedPomodoroMarkersInContent(content).markersChanged).toBe(3);
+      expect(repairPomodoroMarkersInContent(content).markersChanged).toBe(3);
+      if (content) {
+      }
+    });
+  });
+});
+
+describe("the 🍅 readers agree with each other on generated lines", () => {
+  // A seeded generator (no Math.random: a failure must replay) over the
+  // pieces a task line is made of, glued with and without spaces.
+  const PIECES = [
+    "Buy",
+    "kg",
+    "tests",
+    "(big)",
+    "**",
+    "==",
+    "[[Log|x]]",
+    "https://a.io/#x",
+    "🍅 2",
+    "🍅 3",
+    "🍅2",
+    "🍅 4 (2024-01-01)",
+    "🍅 5 (Sunday)",
+    "⏳ 2026-10-01",
+    "📅 2026-10-05",
+    "🗓️ 2026-10-06",
+    "⌛ 2026-10-07",
+    "✅ 2026-10-02",
+    "❌ 2026-10-03",
+    "⏫",
+    "🔺",
+    "🔁 every day",
+    "🆔 abc123",
+    "⛔ abc",
+    "🏁 delete",
+    "#a",
+    "#task/x/y",
+    "#x)",
+    "❌",
+    "✅",
+    "🔥",
+    "^10",
+    "#🍅",
+    "#✅done",
+    "#paper📅 2026-10-04",
+  ];
+  function lines(count: number): string[] {
+    // mulberry32: 32-bit integer arithmetic only. A plain LCG multiply loses
+    // its low bits past 2^53 in a double, and its "random" lines repeat.
+    let seed = 20261002;
+    const next = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) % n;
+    };
+    const out: string[] = [];
+    for (let i = 0; i < count; i++) {
+      let text = "";
+      const length = 1 + next(7);
+      for (let j = 0; j < length; j++) {
+        const piece = PIECES[next(PIECES.length)];
+        // A `^id` after a space is a block reference only at the line's end;
+        // mid-line, the markers behind it decide what it is. Real notes have
+        // one only at the end (added below), so mid-line `^` stays glued.
+        // A `🍅 N` glued onto a field emoji is the one shape the counter's
+        // own write can turn into a count (CANONICAL_TAIL_REGEX), so it is
+        // left to the targeted tests rather than to the invariants here.
+        const afterMarker = /🍅\s*\d+(?:\s*\([^)]*\))?$/u.test(text);
+        const fieldEmoji = /^[⏳⌛📅📆🗓🛫➕✅❌⛔🏁🔺🔽🔥⏫⏬🔼🔁🆔]/u.test(piece);
+        const glue =
+          j === 0 || piece.startsWith("^") || (next(5) === 0 && !(afterMarker && fieldEmoji));
+        text += (glue ? "" : " ") + piece;
+      }
+      if (next(6) === 0) text += " ^blk1";
+      out.push(`- [${next(4) === 0 ? "x" : " "}] ${text}`);
+    }
+    return out;
+  }
+  // Whitespace aside: the counter has always put a space on each side of the
+  // marker it writes. Every other character must survive every write.
+  const squash = (text: string) => text.replace(/\s+/g, "");
+
+  /**
+   * The `🍅 N`s on a line that are surely the user's, worked out WITHOUT the
+   * code under test: glued to the text before it (kept with that character),
+   * or followed by a word or a bracket (kept with its first character).
+   */
+  function typedSnippets(line: string): string[] {
+    const out: string[] = [];
+    for (const match of line.matchAll(/🍅\s*\d+(?:\s*\(\d{4}-\d{2}-\d{2}\))?/gu)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (start > 0 && !/\s/u.test(line[start - 1])) out.push(line.slice(start - 1, end));
+      const word = /^\s*[A-Za-z(*=[]/u.exec(line.slice(end));
+      if (word) out.push(line.slice(start, end + word[0].length));
+    }
+    return out;
+  }
+
+  it("never changes a 🍅 that is surely the user's", () => {
+    let checked = 0;
+    for (const line of lines(30000)) {
+      const snippets = typedSnippets(line);
+      if (snippets.length === 0) continue;
+      checked++;
+      for (const written of [
+        incrementPomodoroCount(line),
+        repairPomodoroMarkerPlacement(line),
+        removeMisplacedPomodoroMarker(line),
+        removeAnyPomodoroMarker(line),
+      ]) {
+        for (const snippet of snippets) expect(written, `line: ${line}`).toContain(snippet);
+      }
+    }
+    expect(checked).toBeGreaterThan(5000);
+  });
+
+  it("writes touch only the counter's markers, and every action settles in one run", () => {
+    for (const line of lines(30000)) {
+      const count = parsePomodoroCount(line);
+      const text = squash(removeAnyPomodoroMarker(line));
+      const incremented = incrementPomodoroCount(line);
+      const repaired = repairPomodoroMarkerPlacement(line);
+      const trimmed = removeMisplacedPomodoroMarker(line);
+      const context = `line: ${line}`;
+
+      expect(parsePomodoroCount(incremented), context).toBe(count + 1);
+      expect(parsePomodoroCount(repaired), context).toBe(count);
+      expect(parsePomodoroCount(removeAnyPomodoroMarker(line)), context).toBe(0);
+      for (const written of [incremented, repaired, trimmed]) {
+        expect(squash(removeAnyPomodoroMarker(written)), context).toBe(text);
+      }
+      expect(repairPomodoroMarkerPlacement(repaired), context).toBe(repaired);
+      expect(removeMisplacedPomodoroMarker(trimmed), context).toBe(trimmed);
+      expect(removeMisplacedPomodoroMarker(incremented), context).toBe(incremented);
+      expect(repairPomodoroMarkerPlacement(incremented), context).toBe(incremented);
+    }
+  });
+});
+
+describe("which 🍅 is the counter's — review round 2", () => {
+  it.each(["#🍅", "#pomodoro🍅", "#✅done", "#📅meeting", "#⏳waiting"])(
+    "still finds the counter after Tasks moved a tag like %s behind it",
+    (tag) => {
+      // Tasks' own tag pattern takes emoji, and it moves a tag that sat after
+      // the fields in front of them when it ticks the task.
+      const ticked = `- [x] Write docs 🍅 3 ${tag} ⏳ 2026-10-01 ✅ 2026-10-02`;
+      expect(parsePomodoroCount(ticked)).toBe(3);
+      expect(incrementPomodoroCount(ticked)).toBe(
+        `- [x] Write docs ${tag} 🍅 4 ⏳ 2026-10-01 ✅ 2026-10-02`
+      );
+      expect(removeAnyPomodoroMarker(ticked)).toBe(
+        `- [x] Write docs ${tag} ⏳ 2026-10-01 ✅ 2026-10-02`
+      );
+      expect(repairPomodoroMarkerPlacement(`- [ ] Write docs ⏳ 2026-10-01 🍅 3 ${tag}`)).toBe(
+        `- [ ] Write docs 🍅 3 ⏳ 2026-10-01 ${tag}`
+      );
+    }
+  );
+
+  it.each([
+    ["- [ ] 🗓️ Plan 🍅 2 ⏫ quarterly goals 📅 2026-10-05"],
+    ["- [ ] ⌛ Waiting on Bob's review 🍅 2 🔥 ⏳ 2026-10-01"],
+    ["- [ ] Plan 📆 week, 🍅 2 ✅ review ⏳ 2026-10-01"],
+  ])("still finds a marker 0.6.8 wrote after an ⌛ 📆 🗓 in the text — %s", (line) => {
+    // 0.6.8 did not know ⌛ 📆 🗓 and wrote in front of the first emoji it did.
+    expect(parsePomodoroCount(line)).toBe(2);
+    expect(parsePomodoroCount(incrementPomodoroCount(line))).toBe(3);
+    expect(removeAnyPomodoroMarker(line)).not.toContain("🍅 2");
+    // In the text, not a field: nothing to repair.
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+  });
+
+  it("never splits a tag with a field emoji in it when it writes the count", () => {
+    expect(incrementPomodoroCount("- [ ] Write docs #✅done ⏳ 2026-10-01")).toBe(
+      "- [ ] Write docs #✅done 🍅 1 ⏳ 2026-10-01"
+    );
+    expect(incrementPomodoroCount("- [ ] Write docs #📅meeting")).toBe(
+      "- [ ] Write docs #📅meeting 🍅 1"
+    );
+    // A tag glued to a whole date is a tag and a date to Tasks: in front of the date.
+    expect(incrementPomodoroCount("- [ ] Write #paper📅 2026-09-30")).toBe(
+      "- [ ] Write #paper 🍅 1 📅 2026-09-30"
+    );
+  });
+
+  it.each([
+    ["a priority", "- [ ] Call Bob #⏫ 📅 2026-10-02", "- [ ] Call Bob #⏫ 🍅 1 📅 2026-10-02"],
+    ["a ⛔", "- [ ] Plan launch #x⛔y ⏳ 2026-10-01", "- [ ] Plan launch #x⛔y 🍅 1 ⏳ 2026-10-01"],
+    ["an 🆔", "- [ ] Write #🆔draft ⏳ 2026-10-01", "- [ ] Write #🆔draft 🍅 1 ⏳ 2026-10-01"],
+    ["a 🔁", "- [ ] Water #daily🔁 ⏳ 2026-10-01", "- [ ] Water #daily🔁 🍅 1 ⏳ 2026-10-01"],
+  ])(
+    "never writes into a tag with %s in it — Tasks reads the tag, not a field",
+    (_l, line, after) => {
+      // Written in front of the emoji, the split handed the task a priority, a
+      // dependency or an ID it did not have.
+      expect(incrementPomodoroCount(line)).toBe(after);
+      expect(repairPomodoroMarkerPlacement(after)).toBe(after);
+    }
+  );
+
+  it.each([
+    ["#⏫", "- [ ] Write report #⏫ 📅 2026-10-05 #work"],
+    ["#x⛔y", "- [ ] Ship it #x⛔y ⏳ 2026-10-02 #work"],
+    ["#🔺", "- [ ] Write report #🔺 📅 2026-10-05 #work"],
+  ])(
+    "keeps a tag like %s whole after Tasks moves the counter's marker in front of it",
+    (_t, line) => {
+      // The first count is right. Tasks then rewrites the line, moving #work in
+      // front of the date, and the emoji tag ends up just before the marker:
+      // without the marker Tasks would read the emoji as a field, with it a tag.
+      const once = incrementPomodoroCount(line);
+      const rewritten = once.replace(/^(.*🍅 1)( [📅⏳] \d{4}-\d{2}-\d{2})( #work)$/u, "$1$3$2");
+      expect(rewritten).not.toBe(once);
+      const tag = line.split(" ").find((word) => word.startsWith("#") && word !== "#work") ?? "";
+
+      const twice = incrementPomodoroCount(rewritten);
+
+      expect(twice.split(" ")).toContain(tag);
+      expect(parsePomodoroCount(twice)).toBe(2);
+      expect(repairPomodoroMarkerPlacement(rewritten)).toBe(rewritten);
+    }
+  );
+
+  it("still splits a tag where Tasks itself reads a field off its end", () => {
+    // Tasks reads "#urgent⏫" at the end as #urgent plus a priority; writing
+    // in front of the ⏫ keeps that reading.
+    expect(incrementPomodoroCount("- [ ] Ship #urgent⏫")).toBe("- [ ] Ship #urgent 🍅 1 ⏫");
+    // A ≤0.5.0 marker behind a date glued to a tag: still repaired.
+    expect(repairPomodoroMarkerPlacement("- [ ] Write #paper📅 2026-09-30 🍅 3")).toBe(
+      "- [ ] Write #paper 🍅 3 📅 2026-09-30"
+    );
+  });
+
+  it("never takes a typed 🍅 in front of a tag with a field emoji in it as the count", () => {
+    for (const line of [
+      "- [ ] Read 🍅 3 #work🔥 notes",
+      "- [ ] Practice 🍅 2 #habit🔥 daily ⏳ 2026-10-01",
+    ]) {
+      expect(parsePomodoroCount(line)).toBe(0);
+      expect(removeAnyPomodoroMarker(line)).toBe(line);
+    }
+    expect(incrementPomodoroCount("- [ ] Read 🍅 3 #work🔥 notes")).toBe(
+      "- [ ] Read 🍅 3 #work🔥 notes 🍅 1"
+    );
+  });
+
+  it("leaves two markers alone when both stand in front of the fields", () => {
+    const line = "- [ ] Task 🍅 2 🍅 3 📅 2026-10-01";
+    expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+    expect(repairPomodoroMarkersInContent(line).markersChanged).toBe(0);
+  });
+
+  it("calls a marker misplaced only where it stops Tasks reading the fields", () => {
+    // Behind an emoji in the text, the fields Tasks reads are still behind it.
+    for (const line of [
+      "- [ ] Add 🔺 watchlist 🍅 2 ⏳ 2026-10-01",
+      "- [ ] Write #🔺urgent 🍅 3 ⏳ 2026-10-01",
+      "- [ ] Write ⏳ 2026-10-01 words 🍅 3",
+    ]) {
+      expect(repairPomodoroMarkerPlacement(line)).toBe(line);
+      expect(removeMisplacedPomodoroMarker(line)).toBe(line);
+    }
+  });
+
+  it("repairs a marker 0.6.8 left behind a real 📆 date", () => {
+    expect(repairPomodoroMarkerPlacement("- [ ] Write docs 📆 2026-10-05 🍅 3 🆔 abc123")).toBe(
+      "- [ ] Write docs 🍅 3 📆 2026-10-05 🆔 abc123"
+    );
+  });
+
+  it("reaches a task Tasks cancelled or put in progress", () => {
+    const content = [
+      "- [-] Write docs 🍅 2 ⏳ 2026-10-01 ❌ 2026-10-02",
+      "- [/] Draft 🍅 3 ⏳ 2026-10-01",
+      "- [[Not a task]] 🍅 2",
+    ].join("\n");
+    expect(removeAllPomodoroMarkersInContent(content).content).toBe(
+      [
+        "- [-] Write docs ⏳ 2026-10-01 ❌ 2026-10-02",
+        "- [/] Draft ⏳ 2026-10-01",
+        "- [[Not a task]] 🍅 2",
+      ].join("\n")
+    );
+    expect(
+      repairPomodoroMarkersInContent("- [-] Write docs ⏳ 2026-10-01 🍅 3 ❌ 2026-10-02").content
+    ).toBe("- [-] Write docs 🍅 3 ⏳ 2026-10-01 ❌ 2026-10-02");
+  });
+});
+
+describe("taskMatchKey — a task's text as the Tasks plugin reads it", () => {
+  it.each([
+    [
+      "a tag moved in front of the dates",
+      "Write docs ⏳ 2026-10-01 #a",
+      "Write docs #a ⏳ 2026-10-01",
+    ],
+    [
+      "two tags among the fields",
+      "Write ⏳ 2026-10-01 #a 📅 2026-10-05 #b",
+      "Write #a #b ⏳ 2026-10-01 📅 2026-10-05",
+    ],
+    ["⛔ and 🏁 reordered", "Write 🏁 delete ⛔ abc #w", "Write #w ⛔ abc 🏁 delete"],
+    ["🗓️ written back as 📅", "Write 🗓️ 2026-10-01", "Write 📅 2026-10-01"],
+    [
+      "a recurrence with a comma",
+      "Gym 🔁 every week on Monday, Friday 📅 2026-10-05 #health",
+      "Gym #health 🔁 every week on Monday, Friday 📅 2026-10-09",
+    ],
+    ["a block reference", "Write docs ⏳ 2026-10-01 ^abc", "Write docs ⏳ 2026-10-02"],
+    ["spacing", "Write   docs  ⏳ 2026-10-01", "Write docs"],
+  ])("is the same for one task rewritten — %s", (_label, a, b) => {
+    expect(taskMatchKey(a)).toBe(taskMatchKey(b));
+  });
+
+  it.each([
+    ["⛔ inside the words", "Fix ⛔ login page", "Fix ⛔ signup page"],
+    ["🏁 inside the words", "Release 🏁 alpha build", "Release 🏁 beta build"],
+    ["a ❌ date inside the words", "Refund ❌ 2026-09-30 order", "Refund ❌ 2026-10-02 order"],
+    ["a typed 🍅", "Buy 🍅 2 kg", "Buy kg"],
+    ["the count", "Write docs 🍅 1 ⏳ 2026-10-01", "Write docs 🍅 2 ⏳ 2026-10-01"],
+  ])("tells two tasks apart — %s", (_label, a, b) => {
+    expect(taskMatchKey(a)).not.toBe(taskMatchKey(b));
+  });
+});
+
+describe("taskMatchKey reads tags as Tasks does", () => {
+  it("keeps a tag with a no-break space in it whole, as Tasks does", () => {
+    expect(taskMatchKey("Write docs ⏫ #a\u00a0b 📅 2026-10-01")).toBe(
+      taskMatchKey("Write docs #a\u00a0b ⏫ 📅 2026-10-01 ✅ 2026-10-02")
+    );
+  });
+
+  it("takes a tag before an 🆔 or ⛔ at the end, as Tasks does", () => {
+    expect(taskMatchKey("Plan launch #x⛔y ⏳ 2026-10-01")).toBe("Plan launch #x⛔y");
+    expect(taskMatchKey("Write #paper📅 2026-09-30")).toBe("Write #paper");
   });
 });

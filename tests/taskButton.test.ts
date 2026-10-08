@@ -97,9 +97,8 @@ describe("linkedTaskDisplayName", () => {
 
 describe("the timer's own name keeps its tags", () => {
   // The display fix must never move into normalizeTaskText. That form is the
-  // key the picker, the 🆔 refresh, the completion unlink and the 🍅 counter
-  // compare against, and the name written into `Task:: [[path|name]]` — a
-  // Dataview query can read the tag straight off the log line.
+  // name written into `Task:: [[path|name]]` — a Dataview query can read the
+  // tag straight off the log line — and the name the 🆔 rename rule compares.
   it("normalizeTaskText still returns the #tag", () => {
     expect(normalizeTaskText(textOf(LINES[2]))).toBe(
       "Register for CPR/AED and First Aid Training at Recwell #task/other/xx"
@@ -108,9 +107,11 @@ describe("the timer's own name keeps its tags", () => {
 
   it("and it is the name the view links, not the row's display text", () => {
     // The likeliest regression of all: "fixing" the button by linking the
-    // display form. That strips the tag from the key and from the log line,
-    // and every other test here would still pass.
-    expect(code).toContain("this.timer.setTask(task.cleanText, task.path, task.taskId);");
+    // display form. That strips the tag from the log line, and every other
+    // test here would still pass.
+    expect(code).toContain(
+      "this.timer.setTask(task.cleanText, task.path, task.taskId, task.text);"
+    );
     expect(code).not.toMatch(/setTask\(\s*task\.displayText/);
   });
 });
@@ -121,10 +122,12 @@ describe("the view's task button", () => {
    * load-bearing: the text and the tooltip both come from the display form,
    * and BOTH guard fields are written before the measure — drop either
    * assignment and the guard is always true, which means a DOM write and a
-   * forced layout read on every tick (the iPhone-flicker shape).
+   * forced layout read on every tick (the iPhone-flicker shape). "Linked" is
+   * the task's note being set, never its name: a task can be called "No Task"
+   * (0.6.9, F36).
    */
   const TICK_BLOCK = squash(`
-    const linked = state.taskName !== NO_TASK_LABEL;
+    const linked = state.taskPath !== undefined;
     const taskText = linked ? linkedTaskDisplayName(state.taskName) : "Select a task...";
     const fullText = linked ? taskText : "";
     if (taskText !== this.lastTaskBtnText || fullText !== this.taskBtnFullText) {

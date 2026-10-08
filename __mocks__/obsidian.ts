@@ -9,6 +9,9 @@ export class TAbstractFile {
 export class TFile extends TAbstractFile {
   extension: string = "";
   basename: string = "";
+  // Obsidian's FileStats. tests/fakeVault.ts moves mtime on each write that
+  // changes a file, as Obsidian's does; 0 is a file last written long ago.
+  stat = { ctime: 0, mtime: 0, size: 0 };
 }
 
 export class TFolder extends TAbstractFile {
@@ -45,7 +48,31 @@ export class PluginSettingTab {
   }
   hide(): void {}
 }
-export class Modal {}
+/**
+ * Enough of a modal for the plugin's dialogs to open, be read and be closed
+ * the way Obsidian closes them: `close()` runs `onClose`, as Esc, the close
+ * button and a click outside all do. `opened` is the last one opened, and its
+ * `contentEl.settings` the button rows it built.
+ */
+export class Modal {
+  static opened: Modal | null = null;
+  app: unknown;
+  readonly modalEl = stubEl();
+  readonly titleEl = stubEl();
+  readonly contentEl = modalContent();
+  constructor(app: unknown) {
+    this.app = app;
+  }
+  open(): void {
+    Modal.opened = this;
+    this.onOpen();
+  }
+  close(): void {
+    this.onClose();
+  }
+  onOpen(): void {}
+  onClose(): void {}
+}
 
 /**
  * Enough of the suggest modal for the sound picker to be constructed and
@@ -105,6 +132,12 @@ export function normalizePath(path: string): string {
 
 export function setIcon(_el: HTMLElement, _icon: string): void {}
 
+/** Obsidian's: a link's text up to its `#heading` or `#^block`. */
+export function getLinkpath(linktext: string): string {
+  const hash = linktext.indexOf("#");
+  return hash === -1 ? linktext : linktext.slice(0, hash);
+}
+
 export function debounce<A extends unknown[]>(fn: (...args: A) => void, _ms?: number) {
   return (...args: A) => {
     fn(...args);
@@ -134,6 +167,8 @@ export interface RecordedComponent {
   buttonText?: string;
   options: { value: string; label: string }[];
   destructive: boolean;
+  /** Styled as the dialog's call to action (setCta). */
+  cta?: boolean;
   change?: (value: never) => void;
   click?: () => void;
 }
@@ -202,6 +237,10 @@ class ButtonStub {
     this.rec.destructive = true;
     return this;
   }
+  setCta(): this {
+    this.rec.cta = true;
+    return this;
+  }
 }
 
 class ExtraButtonStub {
@@ -229,6 +268,7 @@ export interface StubEl {
   children: StubEl[];
   text: string;
   addClass: (cls: string) => void;
+  toggleClass: (cls: string, on: boolean) => void;
   createDiv: (cls?: string) => StubEl;
   setText: (text: string) => void;
 }
@@ -239,6 +279,11 @@ export function stubEl(cls = ""): StubEl {
     children: [],
     text: "",
     addClass: (c: string) => el.classes.push(c),
+    toggleClass: (c: string, on: boolean) => {
+      const at = el.classes.indexOf(c);
+      if (on && at === -1) el.classes.push(c);
+      if (!on && at !== -1) el.classes.splice(at, 1);
+    },
     createDiv: (c = "") => {
       const child = stubEl(c);
       el.children.push(child);
@@ -249,6 +294,50 @@ export function stubEl(cls = ""): StubEl {
     },
   };
   return el;
+}
+
+/** An element inside a modal's content; its own children's text is recorded too. */
+export interface ModalChild extends StubEl {
+  createEl: (tag: string, options?: { text?: string }) => ModalChild;
+}
+
+/** A modal's content: an element, the text written into it (paragraphs and
+ *  list items, in order), and the Setting rows built on it (Setting pushes
+ *  itself onto `settings`). A div made inside it is one too, with its own
+ *  rows and text, so a list a dialog fills and empties can be read back. */
+export interface ModalContent extends StubEl {
+  paragraphs: string[];
+  settings: Setting[];
+  createEl: (tag: string, options?: { text?: string }) => ModalChild;
+  createDiv: (cls?: string) => ModalContent;
+  children: ModalContent[];
+  empty: () => void;
+}
+
+function modalContent(cls = ""): ModalContent {
+  const child = (options?: { text?: string }): ModalChild => {
+    if (options?.text !== undefined) content.paragraphs.push(options.text);
+    return Object.assign(stubEl(), {
+      createEl: (_tag: string, inner?: { text?: string }) => child(inner),
+    });
+  };
+  const content: ModalContent = Object.assign(stubEl(cls), {
+    paragraphs: [] as string[],
+    settings: [] as Setting[],
+    children: [] as ModalContent[],
+    createEl: (_tag: string, options?: { text?: string }) => child(options),
+    createDiv: (c = "") => {
+      const div = modalContent(c);
+      content.children.push(div);
+      return div;
+    },
+    // Divs stay listed: a test may read a dialog's note after it closed.
+    empty: () => {
+      content.paragraphs.length = 0;
+      content.settings.length = 0;
+    },
+  });
+  return content;
 }
 
 export class Setting {

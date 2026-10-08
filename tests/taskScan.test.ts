@@ -331,7 +331,7 @@ describe("loadTasks — the note scopes (0.6.4)", () => {
 });
 
 describe("loadTasks — the pinned (linked) task", () => {
-  const pinned = { path: "elsewhere/linked.md", cleanText: "The linked task" };
+  const pinned = { path: "elsewhere/linked.md", lineText: "The linked task 📅 2026-09-05" };
 
   it("reads the linked task's own note even when the scope excludes it", async () => {
     const app = fakeApp({
@@ -438,6 +438,50 @@ describe("loadTasks — the pinned (linked) task", () => {
 
     expect(tasks.map((t) => t.cleanText).sort()).toEqual(["In folder", "The linked task"]);
     expect(tasks.find((t) => t.cleanText === "The linked task")?.pinned).toBe(true);
+  });
+
+  it("pins a task with a 🆔 by its ID, never another whose text differs only by fields", async () => {
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/prs.md": "- [ ] Review PR ⛔ w1 🆔 r1\n- [ ] Review PR ⛔ w2 🆔 r2",
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: notes("a.md"),
+      pin: { path: "elsewhere/prs.md", lineText: "Review PR ⛔ w1 🆔 r1", taskId: "r1" },
+    });
+
+    expect(tasks.filter((t) => t.pinned).map((t) => t.taskId)).toEqual(["r1"]);
+  });
+
+  it("still pins the linked line after a count the timer has not seen", async () => {
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task 🍅 2 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, { scope: notes("a.md"), pin: pinned });
+
+    expect(tasks.find((t) => t.pinned)?.cleanText).toBe("The linked task 🍅 2");
+  });
+
+  it("still finds the linked line after the Tasks plugin rewrote it", async () => {
+    // Linked as "- [ ] The linked task 📅 2026-09-05 #work ⛔ abc". Tasks then
+    // moved the tag and the ⛔ in front of the date when it rewrote the line.
+    const app = fakeApp({
+      "a.md": "- [ ] In scope 📅 2026-09-05",
+      "elsewhere/linked.md": "- [ ] The linked task #work ⛔ abc 📅 2026-09-05",
+    });
+
+    const tasks = await loadTasks(app, {
+      scope: notes("a.md"),
+      pin: { path: "elsewhere/linked.md", lineText: "The linked task 📅 2026-09-05 #work ⛔ abc" },
+    });
+
+    expect(tasks.map((t) => [t.cleanText, t.pinned])).toContainEqual([
+      "The linked task #work ⛔ abc",
+      true,
+    ]);
   });
 });
 

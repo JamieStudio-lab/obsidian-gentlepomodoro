@@ -168,6 +168,8 @@ export interface StatusTooltipInput {
   /** "4h 0m", or null when no goal is set. */
   goalText: string | null;
   goalMet: boolean;
+  /** focusTotals.ts's logFolderHint: "no log folder set", or null. */
+  logFolderHint: string | null;
 }
 
 /**
@@ -194,13 +196,14 @@ export function statusTooltip(input: StatusTooltipInput): string {
 
   const lines = [session];
   if (input.taskName) lines.push(`Task: ${input.taskName}`);
-  if (input.goalText === null) {
-    lines.push(`Today: ${input.todayText}`);
-  } else {
-    lines.push(
-      `Today: ${input.todayText} of ${input.goalText}${input.goalMet ? " (goal met)" : ""}`
-    );
+  let today = `Today: ${input.todayText}`;
+  if (input.goalText !== null) {
+    today += ` of ${input.goalText}${input.goalMet ? " (goal met)" : ""}`;
   }
+  // As the panel's goal line says it: on the desktop that line is hidden, and
+  // this is the one place the ring that empties at every Stop is explained.
+  if (input.logFolderHint !== null) today += ` · ${input.logFolderHint}`;
+  lines.push(today);
   lines.push("Click for timer controls");
   return lines.join("\n");
 }
@@ -212,10 +215,11 @@ export type StatusMenuAction =
   | "finish"
   | "skip"
   | "open"
+  | "log"
   | `time:${StatusBarTime}`;
 
-/** The actions that change the timer. The rest (open the panel, choose the
- *  time display) are safe whatever the timer has done since. */
+/** The actions that change the timer. The rest (open the panel or today's
+ *  log, choose the time display) are safe whatever the timer has done since. */
 export function isTimerAction(action: StatusMenuAction): boolean {
   return (
     action === "start" ||
@@ -279,6 +283,9 @@ export function statusMenuEntries(
   entries.push({ action: "skip", title: "Skip to next", icon: "skip-forward" });
   entries.push(null);
   entries.push({ action: "open", title: "Open timer", icon: "clock" });
+  // The log is where a session goes once it ends (0.6.9, F56) — and the
+  // hover over the item cannot open anything, so the menu is the way in.
+  entries.push({ action: "log", title: "Open today's log", icon: "file-text" });
   entries.push(null);
   for (const id of STATUS_BAR_TIME_IDS) {
     entries.push({
