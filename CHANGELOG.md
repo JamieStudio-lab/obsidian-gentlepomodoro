@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.9] — 2026-10-02
+## [0.6.9] — 2026-10-08
 
 **The daily log has a new line format, which Dataview can read.** It is
 breaking only for your own queries or scripts that find the log's fields by
