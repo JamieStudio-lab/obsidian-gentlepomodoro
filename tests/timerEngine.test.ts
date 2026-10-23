@@ -517,6 +517,8 @@ describe("TimerEngine → LogManager — what each end tells the log (F19, F20, 
       "startSession",
       "pauseSession",
     ]);
+    // Opened by the auto-start, as its line will say (StartedBy, 0.7.0); the
+    // focus before it by Start.
     expect(starts(stub.calls)[1]).toEqual([
       "break",
       NO_TASK_LABEL,
@@ -524,7 +526,9 @@ describe("TimerEngine → LogManager — what each end tells the log (F19, F20, 
       undefined,
       undefined,
       "short",
+      "auto",
     ]);
+    expect(starts(stub.calls)[0][6]).toBe("start");
   });
 
   it("an auto-started long break is logged as long, with the long length", async () => {
@@ -542,7 +546,30 @@ describe("TimerEngine → LogManager — what each end tells the log (F19, F20, 
     await (timer as unknown as { completeNaturally: () => Promise<void> }).completeNaturally();
     timer.pause();
     expect(starts(stub.calls)).toEqual([
-      ["break", NO_TASK_LABEL, 15, undefined, undefined, "long"],
+      ["break", NO_TASK_LABEL, 15, undefined, undefined, "long", "auto"],
+    ]);
+  });
+
+  it("hands the log how each end ended, its plan, and a counted focus's place — a break none (0.7.0)", async () => {
+    const stub = makePluginStub({ sessionsSinceLongBreak: 1, sessionCounterDate: TODAY });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    timer.start();
+    await timer.finish(); // the focus: Stop
+    timer.start();
+    await timer.finish(); // the break: Stop
+    timer.start();
+    await timer.skip(); // a focus: Skip
+    const tails = stub.calls
+      .filter((c) => c.name === "endSession")
+      .map((c) => {
+        const { endedBy, plannedSeconds, cycle } = c.args[1] as Record<string, unknown>;
+        return { endedBy, plannedSeconds, cycle };
+      });
+    expect(tails).toEqual([
+      { endedBy: "stop", plannedSeconds: 1500, cycle: 2 },
+      { endedBy: "stop", plannedSeconds: 300, cycle: undefined },
+      { endedBy: "skip", plannedSeconds: 1500, cycle: undefined },
     ]);
   });
 
@@ -4265,6 +4292,7 @@ describe("TimerEngine + LogManager — the session lifecycle", () => {
           activeSeconds: 35_220,
           overtimeSeconds: 33_720,
           plannedEndAt: new Date(2026, 9, 2, 9, 25).getTime(),
+          plannedSeconds: 1500,
         },
       ]);
       const [line] = t.lines();
@@ -4724,6 +4752,264 @@ describe("TimerEngine + LogManager — the session lifecycle", () => {
     const lines = t.lines();
     expect(lines.map((l) => t.field(l, "Scheduled"))).toEqual(["1500", "3000"]);
     expect(lines.map((l) => t.field(l, "Overtime"))).toEqual(["0", "0"]);
+  });
+
+  describe("the line's tail (0.7.0)", () => {
+    // The tail a line ends with, Session and Offset apart: Session is a new
+    // ID per session, Offset the host zone's (checked on their own).
+    const tail = (line: string, start = new Date(2026, 9, 2, 9, 0)) => {
+      const parsed = parseLogLine(line);
+      if (!parsed) throw new Error("not a session line");
+      const from = parsed.fields.findIndex((f) => f.key === "Session");
+      expect(from, "no tail").toBeGreaterThan(0);
+      const fields = Object.fromEntries(parsed.fields.slice(from).map((f) => [f.key, f.value]));
+      expect(fields.Session).toMatch(/^s[0-9abcdefghjkmnpqrstvwxyz]{9}$/);
+      expect(fields.Offset).toBe(String(-start.getTimezoneOffset() || 0));
+      delete fields.Session;
+      delete fields.Offset;
+      return fields;
+    };
+    const ending = async () => {
+      vi.advanceTimersByTime(100);
+      await vi.advanceTimersByTimeAsync(0);
+    };
+
+    it("time-up with the break starting by itself: the plan as it ran out, its place; the break says the auto-start opened it", async () => {
+      const t = lifecycle();
+      t.stub.settings.autoStartBreak = true;
+      t.timer.start();
+      t.timer.addMinutes(5); // the plan is 30 minutes now; Scheduled stays 25
+      minutes(30);
+      await ending();
+      expect(tail(t.lines()[0])).toEqual({
+        StartedBy: "start",
+        EndedBy: "time-up",
+        Planned: "1800",
+        Cycle: "1",
+      });
+      expect(t.field(t.lines()[0], "Scheduled")).toBe("1500");
+
+      minutes(2);
+      await t.timer.finish();
+      expect(tail(t.lines()[1], new Date(2026, 9, 2, 9, 30))).toEqual({
+        StartedBy: "auto",
+        EndedBy: "stop",
+        Planned: "300",
+      });
+    });
+
+    it("Stop: the plan at the press and the focus's place; a break stopped has none", async () => {
+      const t = lifecycle();
+      t.timer.start();
+      t.timer.addMinutes(5);
+      minutes(20);
+      await t.timer.finish();
+      expect(tail(t.lines()[0])).toEqual({
+        StartedBy: "start",
+        EndedBy: "stop",
+        Planned: "1800",
+        Cycle: "1",
+      });
+      t.timer.start();
+      minutes(3);
+      await t.timer.finish();
+      expect(tail(t.lines()[1], new Date(2026, 9, 2, 9, 20))).toEqual({
+        StartedBy: "start",
+        EndedBy: "stop",
+        Planned: "300",
+      });
+    });
+
+    it("Stop reads the plan as it pressed: a ±5 while its question is open changes nothing", async () => {
+      const t = lifecycle();
+      let answer: (value: LongSessionAnswer) => void = () => undefined;
+      asking(t, new Promise<LongSessionAnswer>((resolve) => (answer = resolve)));
+      t.timer.start();
+      at(17, 0);
+      const stopping = t.timer.finish();
+      t.timer.addMinutes(5);
+      answer("keep");
+      await stopping;
+      const [line] = t.lines();
+      expect(tail(line)).toMatchObject({ EndedBy: "stop", Planned: "1500" });
+      // Overtime past that same plan: Total − Planned.
+      expect(Number(t.field(line, "Total")) - 1500).toBe(Number(t.field(line, "Overtime")));
+    });
+
+    it("End at planned end: planned-end, and Dropped the active time it left out", async () => {
+      const t = lifecycle();
+      asking(t, "planned");
+      t.timer.start();
+      at(19, 0);
+      await t.timer.finish();
+      const [line] = t.lines();
+      expect(t.field(line, "Total")).toBe("1500");
+      expect(tail(line)).toEqual({
+        StartedBy: "start",
+        EndedBy: "planned-end",
+        Planned: "1500",
+        Cycle: "1",
+        Dropped: String(10 * 3600 - 1500),
+      });
+    });
+
+    it("Skip: skip and the plan, with no place: a skipped focus moves no count", async () => {
+      const t = lifecycle();
+      t.timer.start();
+      minutes(3);
+      await t.timer.skip();
+      expect(t.field(t.lines()[0], "Status")).toBe("cancelled");
+      expect(tail(t.lines()[0])).toEqual({ StartedBy: "start", EndedBy: "skip", Planned: "1500" });
+      expect(t.stub.settings.sessionsSinceLongBreak).toBe(0);
+      t.timer.start();
+      minutes(2);
+      await t.timer.skip();
+      expect(tail(t.lines()[1], new Date(2026, 9, 2, 9, 3))).toEqual({
+        StartedBy: "start",
+        EndedBy: "skip",
+        Planned: "300",
+      });
+    });
+
+    it("a Reset while running writes nothing; the session after it says a Reset opened it", async () => {
+      const t = lifecycle();
+      t.timer.start();
+      minutes(10);
+      t.timer.reset();
+      minutes(20);
+      await t.timer.finish();
+      const lines = t.lines();
+      expect(lines).toHaveLength(1);
+      expect(t.field(lines[0], "Start")).toBe("2026-10-02 09:10:00");
+      expect(tail(lines[0], new Date(2026, 9, 2, 9, 10))).toMatchObject({ StartedBy: "reset" });
+    });
+
+    it("Cycle is the place the stored count moves to: 1 to 4, a long break, then 1 again", async () => {
+      const t = lifecycle();
+      const cycles: (string | undefined)[] = [];
+      const breaks: (string | null | undefined)[] = [];
+      for (let n = 0; n < 5; n++) {
+        t.timer.start();
+        minutes(20);
+        await t.timer.finish();
+        cycles.push(t.field(t.lines()[t.lines().length - 1], "Cycle"));
+        breaks.push(t.timer.getState().breakType);
+        t.timer.start();
+        minutes(2);
+        await t.timer.skip();
+      }
+      expect(cycles).toEqual(["1", "2", "3", "4", "1"]);
+      expect(breaks).toEqual(["short", "short", "short", "long", "short"]);
+      // The count itself is never reset after the long break.
+      expect(t.stub.settings.sessionsSinceLongBreak).toBe(5);
+    });
+
+    it("Cycle starts again at 1 on a new day, and follows the cycle's length as set", async () => {
+      const t = lifecycle();
+      t.stub.settings.sessionsSinceLongBreak = 3;
+      t.stub.settings.sessionCounterDate = "2026-10-01";
+      t.timer.start();
+      minutes(20);
+      await t.timer.finish();
+      expect(t.field(t.lines()[0], "Cycle")).toBe("1");
+      t.stub.settings.sessionsSinceLongBreak = 6;
+      t.stub.settings.sessionCounterDate = "2026-10-02";
+      t.stub.settings.longBreakEvery = 3;
+      t.timer.start();
+      minutes(2);
+      await t.timer.skip();
+      t.timer.start();
+      minutes(20);
+      await t.timer.finish();
+      // The 7th focus of a day of 3-and-a-long-break is the 1st of its cycle.
+      expect(t.field(t.lines()[2], "Cycle")).toBe("1");
+      expect(t.stub.settings.sessionsSinceLongBreak).toBe(7);
+    });
+
+    it("a focus under a minute writes no line and takes no place in the cycle", async () => {
+      const t = lifecycle();
+      t.timer.start();
+      vi.advanceTimersByTime(30_000);
+      await t.timer.finish();
+      expect(t.lines()).toEqual([]);
+      t.timer.start();
+      minutes(2);
+      await t.timer.skip();
+      t.timer.start();
+      minutes(20);
+      await t.timer.finish();
+      expect(t.field(t.lines()[1], "Cycle")).toBe("1");
+    });
+
+    it("a computer asleep is the line's Slept: the gap between the ticks around the sleep", async () => {
+      const t = lifecycle();
+      at(22, 0);
+      t.timer.start();
+      minutes(10); // the last tick: 22:10
+      at(6, 0, 0, 3); // the lid opens
+      vi.advanceTimersByTime(50);
+      t.timer.start();
+      minutes(5);
+      t.timer.pause(); // an ordinary pause: not sleep
+      minutes(3);
+      t.timer.start();
+      minutes(10);
+      await t.timer.finish();
+      const [line] = t.lines();
+      expect(JSON.parse(t.field(line, "Pauses") ?? "[]")).toEqual([
+        "2026-10-02 22:10:00 - 2026-10-03 06:00:00",
+        "2026-10-03 06:05:00 - 2026-10-03 06:08:00",
+      ]);
+      expect(tail(line, new Date(2026, 9, 2, 22, 0))).toEqual({
+        StartedBy: "start",
+        EndedBy: "stop",
+        Planned: "1500",
+        Cycle: "1",
+        Slept: String(7 * 3600 + 50 * 60),
+      });
+    });
+
+    it("split: every line has the session's ID, plan and place; Dropped goes on the last", async () => {
+      const t = lifecycle("- [ ] Write docs 🆔 abc123\n- [ ] Review 🆔 rev456\n");
+      t.stub.settings.taskSwitchLogging = "split";
+      asking(t, "planned");
+      t.timer.setTask("Write docs", PATH, "abc123");
+      t.timer.start();
+      minutes(20);
+      t.timer.setTask("Review", PATH, "rev456");
+      at(16, 0);
+      await t.timer.finish();
+      const lines = t.lines();
+      expect(lines.map((line) => t.field(line, "Total"))).toEqual(["1200", "300"]);
+      expect(lines.map((line) => t.field(line, "Session"))).toEqual(
+        Array(2).fill(t.field(lines[0], "Session"))
+      );
+      expect(tail(lines[0])).toEqual({
+        StartedBy: "start",
+        EndedBy: "planned-end",
+        Planned: "1500",
+        Cycle: "1",
+      });
+      expect(tail(lines[1], new Date(2026, 9, 2, 9, 20))).toEqual({
+        StartedBy: "start",
+        EndedBy: "planned-end",
+        Planned: "1500",
+        Cycle: "1",
+        Dropped: String(7 * 3600 - 1500),
+      });
+    });
+
+    it("two sessions never share an ID", async () => {
+      const t = lifecycle();
+      t.timer.start();
+      minutes(20);
+      await t.timer.finish();
+      t.timer.start();
+      minutes(2);
+      await t.timer.finish();
+      const [first, second] = t.lines().map((line) => t.field(line, "Session"));
+      expect(first).not.toBe(second);
+    });
   });
 
   it("cancel() is gone: it ended a session without claiming the end (F60)", () => {

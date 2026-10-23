@@ -4,10 +4,11 @@ import {
   Platform,
   PluginSettingTab,
   Setting,
+  ExtraButtonComponent,
+  ToggleComponent,
   debounce,
   requestUrl,
   type ButtonComponent,
-  type ExtraButtonComponent,
   type SettingDefinitionItem,
   type SettingControl,
   type SettingGroupItem,
@@ -15,7 +16,31 @@ import {
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
 import { STATUS_BAR_TIMES, resolveStatusBarTime } from "./statusBar";
-import { DAY_START_HOURS, resolveDayStartHour } from "./logLine";
+import { DAY_START_HOURS, resolveDayStartHour, sanitizeDevice } from "./logLine";
+import { deviceStorage, readDeviceName, saveDeviceName } from "./deviceStorage";
+import { copyText } from "./clipboard";
+import { NO_LOG_FOLDER_NOTICE } from "./logTools";
+import {
+  QUERY_COLUMNS,
+  QUERY_KINDS,
+  QUERY_RANGES,
+  QUERY_SORTS,
+  formatQueryColumns,
+  moveQueryColumn,
+  presetColumns,
+  queryCode,
+  queryFolder,
+  queryOptions,
+  resolveQueryColumns,
+  resolveQueryKinds,
+  resolveQueryRange,
+  resolveQuerySort,
+  switchQueryColumn,
+  type ColumnChoice,
+  type QueryColumnId,
+  type QueryCopyKind,
+  type QueryPreset,
+} from "./logQueries";
 import { TASK_SWITCH_OPTIONS, resolveTaskSwitchLogging } from "./logSegments";
 import { LONG_SESSION_PROMPT_HOURS, resolveLongSessionPromptHours } from "./sessionGaps";
 import {
@@ -57,6 +82,7 @@ import {
   logFolderLeftMessage,
   logFolderProblem,
   logFolderProblemNote,
+  logFolderProblemNotice,
   logFolderRootMessage,
   resolveLogFolderInput,
   sameLogFolder,
@@ -130,6 +156,83 @@ const CONVERT_LOG_DESC =
 export const REFRESH_NAMES_NAME = "Refresh task names";
 const REFRESH_NAMES_DESC =
   "Gives logged sessions their task's current name, found by its 🆔. Asks first.";
+export const EXPORT_SESSIONS_NAME = "Export sessions";
+const EXPORT_SESSIONS_DESC =
+  "Saves your sessions as a CSV or JSON Lines file, for a spreadsheet or your own scripts. Writes a new file and never changes your log.";
+// This device's name (0.7.0): in device storage, never data.json.
+export const DEVICE_NAME_NAME = "This device's name";
+const DEVICE_NAME_DESC =
+  "Optional. Each session this device's timer logs carries it as Device, to tell your devices apart; kept on this device only, never synced.";
+// The Dataview tables group (0.7.0).
+export const QUERY_GROUP_HEADING = "Dataview tables";
+export const QUERY_COLUMNS_NAME = "Columns";
+const QUERY_COLUMNS_DESC =
+  "The sessions table's columns and their order. The Copy buttons below give code to paste into any note, which the Dataview plugin draws.";
+export const QUERY_RANGE_NAME = "Days";
+const QUERY_RANGE_DESC =
+  "Which days the copied tables show. This note's day is the date in the name of the note you paste into.";
+export const QUERY_KINDS_NAME = "Sessions";
+const QUERY_KINDS_DESC = "Focus only, or breaks too, in the sessions table.";
+export const QUERY_SKIPPED_NAME = "Include skipped focus";
+const QUERY_SKIPPED_DESC =
+  "Shows skipped focus in the sessions table. Daily totals and time by task leave it out, as the daily goal does.";
+export const QUERY_SORT_NAME = "Order";
+const QUERY_SORT_DESC = "Newest or oldest first, in the sessions table and the daily totals.";
+export const QUERY_CODE_SUMMARY = "Show the code";
+export const QUERY_NO_FOLDER_PREVIEW =
+  "Choose a log folder inside the vault under Daily log, and the code shows here.";
+export const COLUMN_LAST_ON_TOOLTIP = "At least one column stays on.";
+// Searched for as well as the names: "copy dataview" finds all four.
+const QUERY_COPY_ALIASES = ["dataview", "query", "copy"];
+
+/** The four Copy buttons, in the order the group shows them. */
+export const QUERY_COPIES: readonly {
+  kind: QueryCopyKind;
+  name: string;
+  desc: string;
+  copied: string;
+}[] = [
+  {
+    kind: "sessions",
+    name: "Copy sessions table",
+    desc: "A Dataview table with the columns above. Your log folder is filled in.",
+    copied: "Gentle pomodoro: sessions table copied. Paste it into any note.",
+  },
+  {
+    kind: "sessions-js",
+    name: "Copy sessions table for DataviewJS",
+    desc: "The same table as DataviewJS code, to change as you like. Needs JavaScript queries on in Dataview's settings.",
+    copied: "Gentle pomodoro: DataviewJS sessions table copied. Paste it into any note.",
+  },
+  {
+    kind: "totals",
+    name: "Copy daily totals",
+    desc: "Focus minutes, sessions and the goal for each day.",
+    copied: "Gentle pomodoro: daily totals copied. Paste them into any note.",
+  },
+  {
+    kind: "by-task",
+    name: "Copy time by task",
+    desc: "Focus minutes and sessions for each task, most first.",
+    copied: "Gentle pomodoro: time by task copied. Paste it into any note.",
+  },
+];
+
+/**
+ * What the note under the device name says: the name as a line will write
+ * it, when cleaning changes it (sanitizeDevice: no 🍅, ☕ or #, at most 40
+ * characters, no brackets). Typing is never rewritten under the caret — the
+ * name is cleaned when each line is written — so this is where the change
+ * shows.
+ */
+export function deviceNameNote(typed: string): string {
+  const text = typed.trim();
+  if (text === "") return "";
+  const written = sanitizeDevice(text);
+  if (written === "")
+    return "Nothing is left once 🍅, ☕ and # are taken out, so no Device is written.";
+  return written === text ? "" : `Written as "${written}".`;
+}
 
 // How long to wait after the last keystroke before asking YouTube about a link.
 // Both settings paths commit on every keystroke, so an un-debounced check would
@@ -182,7 +285,7 @@ function controlText(value: unknown): string {
  * our own type means the imperative path is a projection rather than a
  * re-statement.
  */
-type SettingRowSpec =
+type SettingRowSpec = (
   | { name: string; desc: string; control: SettingControl<SettingsKey> }
   | { name: string; desc: string; render: (setting: Setting) => void | (() => void) }
   | {
@@ -191,7 +294,11 @@ type SettingRowSpec =
       action: (el: HTMLElement, index: number) => void;
       buttonText: string;
       destructive?: boolean;
-    };
+    }
+) & {
+  /** More words 1.13's settings search finds the row by. */
+  aliases?: string[];
+};
 
 /** A `.setHeading()` row and the settings under it. */
 interface SettingGroupSpec {
@@ -263,6 +370,15 @@ interface MusicSlotUi {
   probe: ((url: string, target: MusicTarget, token: number) => void) | null;
 }
 
+/** One row of the column list: its node, and the three controls on it. */
+interface ColumnItemUi {
+  id: QueryColumnId;
+  el: HTMLElement;
+  toggle: ToggleComponent;
+  up: ExtraButtonComponent;
+  down: ExtraButtonComponent;
+}
+
 export class GentlePomoSettingTab extends PluginSettingTab {
   plugin: GentlePomoPlugin;
 
@@ -273,6 +389,17 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * detached node would only be written to, never shown.
    */
   private readonly endSummaryEls = new Map<SessionEndEdge, HTMLElement>();
+
+  /**
+   * The Dataview tables group's live parts: the code preview, rewritten in
+   * place after every change the code depends on (1.13 re-renders nothing
+   * after setControlValue, as for the outcome lines above), and the column
+   * list with its rows in their current order. Set by each render, cleared
+   * by the 1.13 teardown.
+   */
+  private queryCodeEl: HTMLElement | null = null;
+  private columnListEl: HTMLElement | null = null;
+  private columnItems: ColumnItemUi[] = [];
 
   constructor(app: App, plugin: GentlePomoPlugin) {
     super(app, plugin);
@@ -709,6 +836,221 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // Today's total, the goal ring and the panels' goal line all come from
     // the log folder, and nothing else would re-read it while idle.
     this.plugin.logFolderChanged();
+    // The copied code names the folder.
+    this.refreshQueryPreview();
+  }
+
+  /**
+   * This device's name (0.7.0): each line this device's timer or a recovery
+   * writes carries it as Device. Kept in device storage, never data.json — a
+   * name typed on the laptop must not reach the phone — so it is a render row
+   * on both paths: a control row reads and writes a settings key. Stored as
+   * typed (trimmed), at every keystroke like the tab's other text rows; the
+   * note under it shows what a line will write when cleaning changes it.
+   */
+  private buildDeviceNameRow(setting: Setting): void {
+    const storage = deviceStorage(this.app);
+    const stored = readDeviceName(storage);
+    const note = setting.infoEl.createDiv("gp-setting-note gp-setting-note-info");
+    note.setText(deviceNameNote(stored));
+    setting.addText((text) =>
+      text
+        .setPlaceholder("Example: Work laptop")
+        .setValue(stored)
+        .onChange((value) => {
+          saveDeviceName(storage, value);
+          note.setText(deviceNameNote(value));
+        })
+    );
+  }
+
+  /**
+   * The Columns row (0.7.0): the Simple and Detailed buttons, and under the
+   * name a list of every column, each with a switch and ↑ / ↓ — no drag, which
+   * is 1.13-only and leaves a keyboard or a phone with nothing. A render row on
+   * both paths. Every change is written at once, as the tab's other rows are.
+   */
+  private buildColumnsRow(setting: Setting): () => void {
+    setting.settingEl.addClass("gp-setting-wide");
+    for (const preset of ["simple", "detailed"] as const) {
+      setting.addButton((btn) =>
+        btn.setButtonText(preset === "simple" ? "Simple" : "Detailed").onClick(() => {
+          void this.applyColumnPreset(preset);
+        })
+      );
+    }
+    const list = setting.settingEl.createDiv("gp-column-list");
+    this.columnListEl = list;
+    this.paintColumnList();
+    // Only this render's own list: a teardown that runs after the next
+    // render must not take that one's away.
+    return () => {
+      if (this.columnListEl !== list) return;
+      this.columnListEl = null;
+      this.columnItems = [];
+    };
+  }
+
+  /** The column list built afresh from the stored order. */
+  private paintColumnList(): void {
+    const list = this.columnListEl;
+    if (list === null) return;
+    list.empty();
+    this.columnItems = resolveQueryColumns(this.plugin.settings.queryColumns).map((choice) =>
+      this.buildColumnItem(list, choice)
+    );
+    this.paintColumnStates();
+  }
+
+  private buildColumnItem(list: HTMLElement, choice: ColumnChoice): ColumnItemUi {
+    const label = QUERY_COLUMNS.find((column) => column.id === choice.id)?.label ?? choice.id;
+    const el = list.createDiv("gp-column-item");
+    // The value first, then the handler: setValue calls it when the value moves.
+    const toggle = new ToggleComponent(el).setValue(choice.on).onChange((on) => {
+      void this.switchColumn(choice.id, on);
+    });
+    el.createSpan({ cls: "gp-column-name", text: label });
+    // setTooltip is also each arrow's accessible name: they are icons only.
+    const up = new ExtraButtonComponent(el)
+      .setIcon("arrow-up")
+      .setTooltip(`Move ${label} up`)
+      .onClick(() => {
+        void this.moveColumn(choice.id, -1);
+      });
+    const down = new ExtraButtonComponent(el)
+      .setIcon("arrow-down")
+      .setTooltip(`Move ${label} down`)
+      .onClick(() => {
+        void this.moveColumn(choice.id, 1);
+      });
+    return { id: choice.id, el, toggle, up, down };
+  }
+
+  /**
+   * Which controls can be used: ↑ not on the first column, ↓ not on the last,
+   * and the switch not on the one column left on — a table needs one.
+   */
+  private paintColumnStates(): void {
+    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
+    const onCount = columns.filter((c) => c.on).length;
+    this.columnItems.forEach((item, index) => {
+      const choice = columns.find((c) => c.id === item.id);
+      const label = QUERY_COLUMNS.find((column) => column.id === item.id)?.label ?? item.id;
+      const last = onCount === 1 && choice?.on === true;
+      item.toggle.setDisabled(last);
+      item.toggle.setTooltip(last ? COLUMN_LAST_ON_TOOLTIP : `Show ${label}`);
+      item.up.setDisabled(index === 0);
+      item.down.setDisabled(index === this.columnItems.length - 1);
+    });
+  }
+
+  private async switchColumn(id: QueryColumnId, on: boolean): Promise<void> {
+    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
+    // Already so: the switch put back below calls this again.
+    if (columns.find((c) => c.id === id)?.on === on) return;
+    const next = switchQueryColumn(columns, id, on);
+    if (next === null) {
+      // The last column on: its switch is disabled, so only a keyboard or a
+      // race gets here. Put it back on, writing nothing.
+      this.columnItems.find((item) => item.id === id)?.toggle.setValue(true);
+      return;
+    }
+    this.plugin.settings.queryColumns = formatQueryColumns(next);
+    this.paintColumnStates();
+    this.refreshQueryPreview();
+    await this.plugin.saveSettings();
+  }
+
+  /**
+   * Swap a column with its neighbour. The NEIGHBOUR's node is moved, never the
+   * pressed one: moving the node that holds focus drops focus to the page in
+   * Chromium, and pressing ↑ again must keep going. When that arrow has just
+   * been disabled (the column reached the top), focus goes to the other one.
+   */
+  private async moveColumn(id: QueryColumnId, delta: -1 | 1): Promise<void> {
+    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
+    const from = columns.findIndex((c) => c.id === id);
+    const next = moveQueryColumn(columns, from, delta);
+    if (next === null) return;
+    this.plugin.settings.queryColumns = formatQueryColumns(next);
+    const item = this.columnItems.find((i) => i.id === id);
+    const at = item === undefined ? -1 : this.columnItems.indexOf(item);
+    const other = this.columnItems[at + delta];
+    if (item !== undefined && other !== undefined) {
+      if (delta < 0) item.el.after(other.el);
+      else item.el.before(other.el);
+      this.columnItems[at] = other;
+      this.columnItems[at + delta] = item;
+      this.paintColumnStates();
+      const pressed = delta < 0 ? item.up : item.down;
+      const reachedEnd = delta < 0 ? at + delta === 0 : at + delta === this.columnItems.length - 1;
+      (reachedEnd ? (delta < 0 ? item.down : item.up) : pressed).extraSettingsEl.focus();
+    } else {
+      this.paintColumnList();
+    }
+    this.refreshQueryPreview();
+    await this.plugin.saveSettings();
+  }
+
+  /** Simple or Detailed: a starting point the list is rewritten to, not a mode kept. */
+  private async applyColumnPreset(preset: QueryPreset): Promise<void> {
+    this.plugin.settings.queryColumns = formatQueryColumns(presetColumns(preset));
+    this.paintColumnList();
+    this.refreshQueryPreview();
+    await this.plugin.saveSettings();
+  }
+
+  /**
+   * The Code row: a closed "Show the code" holding the sessions table as the
+   * first Copy button gives it, kept in step with the rows above it. No name:
+   * the summary says what it is.
+   */
+  private buildQueryCodeRow(setting: Setting): () => void {
+    setting.settingEl.addClass("gp-setting-code");
+    const details = setting.settingEl.createEl("details", { cls: "gp-query-code" });
+    details.createEl("summary", { text: QUERY_CODE_SUMMARY });
+    const pre = details.createEl("pre", { cls: "gp-query-code-text" });
+    this.queryCodeEl = pre;
+    this.refreshQueryPreview();
+    return () => {
+      if (this.queryCodeEl === pre) this.queryCodeEl = null;
+    };
+  }
+
+  /** Rewrite the code preview from the settings as they are now. Safe before it renders. */
+  private refreshQueryPreview(): void {
+    if (this.queryCodeEl === null) return;
+    const made = this.queryCodeFor("sessions");
+    this.queryCodeEl.setText("code" in made ? made.code : QUERY_NO_FOLDER_PREVIEW);
+  }
+
+  /**
+   * One Copy button's code, from the settings alone — nothing awaited, so the
+   * clipboard is reached inside the click (copyText) — or the notice saying
+   * why there is none: no log folder, or the vault's top level, which
+   * Dataview's folder lookup cannot name.
+   */
+  private queryCodeFor(kind: QueryCopyKind): { code: string } | { notice: string } {
+    const stored = this.plugin.settings.logFolderPath;
+    const where = queryFolder(stored, logFolderProblem(stored, this.app.vault));
+    if ("refused" in where) {
+      return {
+        notice:
+          where.refused === "root"
+            ? logFolderProblemNotice(stored, { kind: "root" })
+            : NO_LOG_FOLDER_NOTICE,
+      };
+    }
+    return { code: queryCode(kind, queryOptions(this.plugin.settings, where.folder)) };
+  }
+
+  private copyQuery(copy: (typeof QUERY_COPIES)[number]): void {
+    const made = this.queryCodeFor(copy.kind);
+    if ("notice" in made) {
+      new Notice(made.notice);
+      return;
+    }
+    copyText(this.app, made.code, copy.copied);
   }
 
   /**
@@ -1041,6 +1383,13 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             },
           },
           {
+            name: DEVICE_NAME_NAME,
+            desc: DEVICE_NAME_DESC,
+            render: (setting: Setting) => {
+              this.buildDeviceNameRow(setting);
+            },
+          },
+          {
             name: OPEN_LOG_NAME,
             desc: OPEN_LOG_DESC,
             action: () => {
@@ -1072,6 +1421,78 @@ export class GentlePomoSettingTab extends PluginSettingTab {
             },
             buttonText: "Refresh",
           },
+          // 0.7.0: with the log's other one-off buttons.
+          {
+            name: EXPORT_SESSIONS_NAME,
+            desc: EXPORT_SESSIONS_DESC,
+            action: () => {
+              void this.plugin.exportSessions();
+            },
+            buttonText: "Export",
+          },
+        ],
+      },
+      // Code to paste into a note, which Dataview draws (0.7.0). Right after
+      // the log it reads; the plugin itself draws nothing in a note.
+      {
+        heading: QUERY_GROUP_HEADING,
+        rows: [
+          {
+            name: QUERY_COLUMNS_NAME,
+            desc: QUERY_COLUMNS_DESC,
+            render: (setting: Setting) => this.buildColumnsRow(setting),
+          },
+          {
+            name: QUERY_RANGE_NAME,
+            desc: QUERY_RANGE_DESC,
+            control: {
+              type: "dropdown",
+              key: "queryRange",
+              options: Object.fromEntries(QUERY_RANGES.map((o) => [o.value, o.label])),
+            },
+          },
+          {
+            name: QUERY_KINDS_NAME,
+            desc: QUERY_KINDS_DESC,
+            control: {
+              type: "dropdown",
+              key: "queryKinds",
+              options: Object.fromEntries(QUERY_KINDS.map((o) => [o.value, o.label])),
+            },
+          },
+          {
+            name: QUERY_SKIPPED_NAME,
+            desc: QUERY_SKIPPED_DESC,
+            control: { type: "toggle", key: "querySkipped" },
+          },
+          {
+            name: QUERY_SORT_NAME,
+            desc: QUERY_SORT_DESC,
+            control: {
+              type: "dropdown",
+              key: "querySort",
+              options: Object.fromEntries(QUERY_SORTS.map((o) => [o.value, o.label])),
+            },
+          },
+          {
+            // Text, not a control: the summary names it, so the row has no name.
+            name: "",
+            desc: "",
+            render: (setting: Setting) => this.buildQueryCodeRow(setting),
+          },
+          ...QUERY_COPIES.map(
+            (copy): SettingRowSpec => ({
+              name: copy.name,
+              desc: copy.desc,
+              aliases: QUERY_COPY_ALIASES,
+              // Synchronous to the clipboard: the click is the gesture iOS
+              // asks for (copyText).
+              action: () => {
+                this.copyQuery(copy);
+              },
+              buttonText: "Copy",
+            })
+          ),
         ],
       },
       {
@@ -1197,9 +1618,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       type: "group" as const,
       heading: group.heading,
       items: group.rows.map((row): SettingGroupItem<SettingsKey> => {
-        if ("control" in row) return { name: row.name, desc: row.desc, control: row.control };
-        if ("render" in row) return { name: row.name, desc: row.desc, render: row.render };
-        return { name: row.name, desc: row.desc, action: row.action };
+        const base = {
+          name: row.name,
+          desc: row.desc,
+          ...(row.aliases && { aliases: row.aliases }),
+        };
+        if ("control" in row) return { ...base, control: row.control };
+        if ("render" in row) return { ...base, render: row.render };
+        return { ...base, action: row.action };
       }),
     }));
   }
@@ -1232,6 +1658,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     if (key === "longSessionPromptHours") {
       return String(resolveLongSessionPromptHours(this.plugin.settings.longSessionPromptHours));
     }
+    // The Dataview tables' three choices (0.7.0), for the same reason again.
+    if (key === "queryRange") return resolveQueryRange(this.plugin.settings.queryRange);
+    if (key === "queryKinds") return resolveQueryKinds(this.plugin.settings.queryKinds);
+    if (key === "querySort") return resolveQuerySort(this.plugin.settings.querySort);
     return this.plugin.settings[key as SettingsKey];
   }
 
@@ -1463,6 +1893,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const hour = numericSetting(value);
         if (hour === null || !DAY_START_HOURS.some((h) => h === hour)) return;
         settings.dayStartHour = hour;
+        // The copied code's "today" takes the hour back too.
+        this.refreshQueryPreview();
         await this.plugin.saveSettings();
         // "Today" may be another file now: its total, the goal ring and the
         // panels' goal line are read again — the timer is silent while idle.
@@ -1481,6 +1913,25 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       }
       case "incrementPomodoroCountOnFinish":
         settings.incrementPomodoroCountOnFinish = Boolean(value);
+        break;
+      // The Dataview tables group (0.7.0): only the copied code reads these,
+      // so each repaints its preview — 1.13 re-renders nothing after this.
+      // Stored resolved, so a value no row offers is never kept.
+      case "queryRange":
+        settings.queryRange = resolveQueryRange(value);
+        this.refreshQueryPreview();
+        break;
+      case "queryKinds":
+        settings.queryKinds = resolveQueryKinds(value);
+        this.refreshQueryPreview();
+        break;
+      case "querySkipped":
+        settings.querySkipped = Boolean(value);
+        this.refreshQueryPreview();
+        break;
+      case "querySort":
+        settings.querySort = resolveQuerySort(value);
+        this.refreshQueryPreview();
         break;
       default:
         return;

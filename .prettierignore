@@ -4,3 +4,5 @@ node_modules
 package-lock.json
 data.json
 .claude
+# A copy of Dataview's bundle, kept byte for byte (tests/dataviewEngine.ts)
+tests/fixtures/dataview

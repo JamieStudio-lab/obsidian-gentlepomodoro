@@ -22,10 +22,12 @@ import {
   looksLikeLogLine,
   parseLogLine,
   readLogPauses,
+  readLogTail,
   readLogTime,
   repeatedReading,
   sanitizeAlias,
   type LogLineKind,
+  type LogTail,
   type LogTaskRef,
   type ParsedLogLine,
 } from "./logLine";
@@ -429,8 +431,28 @@ export const LONG_SESSION_SECONDS = 12 * 60 * 60;
  * lines on that night; they are not errors.
  * - idNames: one 🆔 logged under different task names (tags, the 🍅 count and
  *   the leftovers the converter cleans do not count as a difference).
+ *
+ * On a line with the 0.7.0 tail (readLogTail), what a 0.6.9 device's "Fix a
+ * logged session" leaves behind — it keeps every field it does not know, so
+ * a field its edit made untrue stays:
+ * - slept: Slept longer than the line's pauses, by more than the second a
+ *   written time is cut by (a sleep is always inside a pause). Not on a line
+ *   with no Pauses field — a Rest line's paused time is unknown, not 0.
+ * - cycle: a Cycle on a break, or on a skipped (cancelled) focus: neither
+ *   moves the long-break count.
+ * EndedBy skip on a focus marked finished is NOT one: 0.7.0's own Fix keeps
+ * EndedBy as written when a skipped session is changed to finished, so that
+ * line says what happened.
  */
-export const LOG_ANOMALY_KINDS = ["total", "overlap", "long", "endBeforeStart", "idNames"] as const;
+export const LOG_ANOMALY_KINDS = [
+  "total",
+  "overlap",
+  "long",
+  "endBeforeStart",
+  "idNames",
+  "slept",
+  "cycle",
+] as const;
 export type LogAnomalyKind = (typeof LOG_ANOMALY_KINDS)[number];
 
 export interface LogAnomaly {
@@ -498,6 +520,34 @@ export function describeSeconds(seconds: number): string {
   return `${String(Math.floor(seconds / 3600))}h ${String(Math.floor((seconds % 3600) / 60))}m`;
 }
 
+/**
+ * A line's written pauses in whole seconds, and how much more they may add up
+ * to: a pause's end in the hour a fall-back repeats may be its second pass
+ * (repeatedReading). Null when the line has no Pauses field, or one that
+ * cannot be read.
+ */
+function pausedRange(parsed: ParsedLogLine): { paused: number; most: number } | null {
+  const text = parsed.values.get("Pauses");
+  const pauses = text === undefined ? null : readLogPauses(text);
+  if (pauses === null) return null;
+  let paused = 0;
+  let later = 0;
+  for (const [from, to] of pauses) {
+    paused += to - from;
+    later += repeatedReading(to);
+  }
+  return { paused, most: paused + later };
+}
+
+/** A line with the tail, where Check found it. */
+interface TailedLine {
+  path: string;
+  file: number;
+  line: number;
+  parsed: ParsedLogLine;
+  tail: LogTail;
+}
+
 function readSession(
   path: string,
   file: number,
@@ -547,18 +597,27 @@ function readSession(
 export function scanLogAnomalies(files: readonly LogFileText[]): LogAnomaly[] {
   const anomalies: (LogAnomaly & { file: number })[] = [];
   const sessions: LoggedSession[] = [];
+  const tailed: TailedLine[] = [];
   files.forEach(({ path, content }, file) => {
     const body = frontmatterRowCount(content);
     content.split(/\r?\n/).forEach((text, index) => {
       if (index < body) return;
       const parsed = parseLogLine(text);
-      const session = parsed && readSession(path, file, index + 1, parsed);
+      if (!parsed) return;
+      const session = readSession(path, file, index + 1, parsed);
       if (session) sessions.push(session);
+      // Its times play no part in what the tail says, so a line whose Start
+      // cannot be read is still looked at here.
+      const tail = readLogTail(parsed);
+      if (tail) tailed.push({ path, file, line: index + 1, parsed, tail });
     });
   });
 
-  const flag = (session: LoggedSession, kind: LogAnomalyKind, detail: string) =>
-    anomalies.push({ kind, path: session.path, file: session.file, line: session.line, detail });
+  const flag = (
+    at: Pick<LoggedSession, "path" | "file" | "line">,
+    kind: LogAnomalyKind,
+    detail: string
+  ) => anomalies.push({ kind, path: at.path, file: at.file, line: at.line, detail });
   // Whether `diff` is within `tolerance` of 0 — or, on a line with times in a
   // repeated hour, of a whole number of repeats, one per such time at most.
   const fits = (s: LoggedSession, diff: number, tolerance: number): boolean => {
@@ -635,6 +694,29 @@ export function scanLogAnomalies(files: readonly LogFileText[]): LogAnomaly[] {
     }
   }
 
+  // The tail against the line it ends (LOG_ANOMALY_KINDS: slept, cycle).
+  // Last, so on one line the older kinds are listed first.
+  for (const at of tailed) {
+    const { parsed, tail } = at;
+    const status = parsed.values.get("Status");
+    const pauses = pausedRange(parsed);
+    if (tail.slept !== null && pauses !== null && tail.slept > pauses.most + 1) {
+      flag(
+        at,
+        "slept",
+        `Slept is ${String(tail.slept)} s, but its pauses add up to ${String(pauses.paused)} s.`
+      );
+    }
+    if (tail.cycle !== null && (parsed.kind === "rest" || status === "cancelled")) {
+      const what = parsed.kind === "rest" ? "a break" : "a skipped session (Status cancelled)";
+      flag(
+        at,
+        "cycle",
+        `Cycle ${String(tail.cycle)} on ${what}; only a focus that counts has a Cycle.`
+      );
+    }
+  }
+
   return anomalies
     .sort((a, b) => a.file - b.file || a.line - b.line)
     .map(({ kind, path, line, detail }) => ({ kind, path, line, detail }));
@@ -648,6 +730,8 @@ export function countAnomalies(anomalies: readonly LogAnomaly[]): Record<LogAnom
     long: 0,
     endBeforeStart: 0,
     idNames: 0,
+    slept: 0,
+    cycle: 0,
   };
   for (const anomaly of anomalies) counts[anomaly.kind]++;
   return counts;

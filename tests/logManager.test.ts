@@ -9,14 +9,18 @@ import {
   effectiveFocusBaseSeconds,
   lastLogLine,
   shouldFireGoalNotice,
+  taskLinkAfterMove,
   LogManager,
 } from "../logManager";
+import { convertLogContent, scanLogAnomalies } from "../logConvert";
 import { UNWRITTEN_LINES_KEY, UNWRITTEN_LINE_NOTICE, readUnwrittenLines } from "../sessionRecovery";
+import { DEVICE_NAME_KEY, saveDeviceName } from "../deviceStorage";
 import { memoryStorage } from "./memoryStorage";
 import { formatLogLine, parseFocusTotalSeconds, parseLogLine, type SessionLog } from "../logLine";
 import type GentlePomoPlugin from "../main";
 import type { MomentLike } from "../momentTypes";
 import { fakeVault, linkCache, type FakeVault } from "./fakeVault";
+import { ZERO_SESSION_ID, offsetAt, zeroSessionIds } from "./logTail";
 
 // Minimal moment-like stub with what logLine.ts uses. UTC throughout, so test
 // output doesn't depend on the host timezone; `locale` is recorded but, like
@@ -43,6 +47,10 @@ class TestMoment implements MomentLike {
   }
   hour(): number {
     return this.date.getUTCHours();
+  }
+  // UTC throughout: a tail's Offset is 0.
+  utcOffset(): number {
+    return 0;
   }
   clone(): MomentLike {
     return new TestMoment(new Date(this.date.getTime()));
@@ -412,6 +420,7 @@ describe("LogManager.writeLog — daily-log write robustness", () => {
   beforeEach(() => {
     (globalThis as unknown as { moment: (at?: number) => MomentLike }).moment = (at?: number) =>
       new TestMoment(at === undefined ? FIXED : new Date(at));
+    zeroSessionIds();
   });
 
   afterEach(() => {
@@ -431,9 +440,12 @@ describe("LogManager.writeLog — daily-log write robustness", () => {
     await lm.endSession("finished", { endAt: END });
   };
 
+  // With the tail 0.7.0 writes on every line LogManager writes: this end
+  // says nothing of how it ended, and TestMoment is UTC.
   const expectedLine =
     "- ☕ Rest [Start:: 2025-12-23 10:00:00] [End:: 2025-12-23 10:05:00] " +
-    "[Scheduled:: 300] [Total:: 300] [Type:: short-break]";
+    "[Scheduled:: 300] [Total:: 300] [Type:: short-break] " +
+    `[Session:: ${ZERO_SESSION_ID}] [StartedBy:: start] [Offset:: 0]`;
 
   it("appends through Vault.process when the file is in the index (F39)", async () => {
     const file = Object.assign(new TFile(), {
@@ -609,6 +621,7 @@ describe("LogManager — writing the log through failures (F38, F53)", () => {
     (globalThis as unknown as { moment: (at?: number) => MomentLike }).moment = (at?: number) =>
       new TestMoment(at === undefined ? FIXED : new Date(at));
     Notice.shown.length = 0;
+    zeroSessionIds();
   });
   afterEach(() => {
     delete (globalThis as unknown as { moment?: () => MomentLike }).moment;
@@ -666,7 +679,8 @@ describe("LogManager — writing the log through failures (F38, F53)", () => {
   }
   const restLine = (minute: number) =>
     `- ☕ Rest [Start:: 2026-10-02 10:${String(minute - 5).padStart(2, "0")}:00] ` +
-    `[End:: 2026-10-02 10:${String(minute).padStart(2, "0")}:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break]`;
+    `[End:: 2026-10-02 10:${String(minute).padStart(2, "0")}:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] ` +
+    `[Session:: ${ZERO_SESSION_ID}] [StartedBy:: start] [Offset:: 0]`;
 
   it("keeps a CRLF file CRLF when it appends to it", async () => {
     const vault = disk({ [PATH]: "- earlier\r\n" });
@@ -1103,6 +1117,34 @@ describe("LogManager.updateLoggedTaskName — both formats", () => {
     const after = await rename([v2("Old", "abc123")], "No Task");
     expect(after).toEqual([v2("No Task", "abc123")]);
   });
+
+  // A 0.7.0 line: every rewrite changes the Task value by its span alone, so
+  // the tail after it stays byte for byte (0.7.0).
+  const TAIL =
+    " [Session:: s7k2m9qx4w] [StartedBy:: auto] [EndedBy:: stop] [Planned:: 1800] [Cycle:: 2] [Offset:: -240] [Slept:: 60] [Device:: Work laptop]";
+
+  it("renames a 0.7.0 line's task and keeps its tail as written", async () => {
+    const after = await rename([v2("Old", "abc123") + TAIL], "New name");
+    expect(after).toEqual([v2("New name", "abc123") + TAIL]);
+  });
+
+  it("leaves a 0.7.0 line alone in Convert and Check, and its tail through a moved note", () => {
+    const file = `${v2("Old", "abc123")}${TAIL}\n${REST} [Session:: s3n8d1wa2b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 300] [Offset:: -240]\n`;
+    const converted = convertLogContent(file);
+    expect(converted.content).toBe(file);
+    expect(converted.counts.alreadyV2).toBe(2);
+    // Check holds the tail to its line: TAIL's 60 s of Slept needs a pause to
+    // lie in, and `Pauses:: []` has none — what a 0.6.9 Fix can leave.
+    expect(scanLogAnomalies([{ path: LOG, content: file }]).map((a) => a.kind)).toEqual(["slept"]);
+    const paused = file.replace(
+      "[Pauses:: []] [Total:: 1500]",
+      '[Pauses:: ["2026-10-02 09:10:00 - 2026-10-02 09:11:00"]] [Total:: 1440]'
+    );
+    expect(scanLogAnomalies([{ path: LOG, content: paused }])).toEqual([]);
+    const moved = taskLinkAfterMove(v2("Old", "abc123") + TAIL, "Projects/Docs.md", "Done/Docs.md");
+    expect(moved.endsWith(TAIL)).toBe(true);
+    expect(moved).toContain("[[Done/Docs.md|Old]]");
+  });
 });
 
 describe("LogManager — the day a session is filed under (real moment)", () => {
@@ -1122,6 +1164,7 @@ describe("LogManager — the day a session is filed under (real moment)", () => 
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
     realMoment.locale("en");
   });
@@ -1171,18 +1214,23 @@ describe("LogManager — the day a session is filed under (real moment)", () => 
   });
 
   it("names the file and stamps the line in English digits whatever the app language", async () => {
+    zeroSessionIds();
     const { vault, created, lm } = writable();
     realMoment.locale("ar");
     at(2, 10, 0);
     lm.startSession("focus", "No Task", 25);
     at(2, 10, 25);
-    await lm.endSession("finished", { overtimeSeconds: 0 });
+    await lm.endSession("finished", { overtimeSeconds: 0, plannedSeconds: 1500 });
 
     expect(created).toEqual(["Logs/2026-10-02-gentle-pomodoro-log.md"]);
+    // The tail's numbers too (0.7.0): a negative Offset's digits included.
     expect(vault.contents[created[0]]).toBe(
       "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:25:00] " +
-        "[Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]\n"
+        "[Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0] " +
+        `[Session:: ${ZERO_SESSION_ID}] [StartedBy:: start] [Planned:: 1500] ` +
+        `[Offset:: ${offsetAt(new Date(2026, 9, 2, 10, 0))}]\n`
     );
+    expect(vault.contents[created[0]]).toMatch(/^[\x20-\x7E🍅\n]*$/u);
   });
 
   it("writes the overtime endSession is given", async () => {
@@ -1191,8 +1239,9 @@ describe("LogManager — the day a session is filed under (real moment)", () => 
     lm.startSession("focus", "No Task", 25);
     at(2, 10, 30);
     await lm.endSession("finished", { overtimeSeconds: 300 });
+    // Overtime is no longer last (0.7.0): the tail follows it.
     expect(vault.contents[created[0]]).toMatch(
-      /\[Total:: 1800\] \[Status:: finished\] \[Type:: focus\] \[Overtime:: 300\]\n$/
+      /\[Total:: 1800\] \[Status:: finished\] \[Type:: focus\] \[Overtime:: 300\] \[Session:: /
     );
   });
 
@@ -1702,5 +1751,277 @@ describe("LogManager on a real clock — what a session writes (F18, F27–F30, 
       expect(confirm).not.toHaveBeenCalled();
       expect(Notice.shown).toEqual(["Gentle pomodoro: log folder path is not set."]);
     });
+  });
+});
+
+describe("LogManager on a real clock — the tail it writes (0.7.0)", () => {
+  let previousMoment: unknown;
+  beforeEach(() => {
+    const g = globalThis as unknown as { moment?: unknown };
+    previousMoment = g.moment;
+    g.moment = createRequire(import.meta.url)("moment");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    Notice.shown.length = 0;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
+  });
+
+  const LOG = "Logs/2026-10-02-gentle-pomodoro-log.md";
+  const at = (h: number, mi: number, s = 0) => vi.setSystemTime(new Date(2026, 9, 2, h, mi, s));
+  const ms = (h: number, mi: number) => new Date(2026, 9, 2, h, mi).getTime();
+
+  /** A LogManager writing today's log in a fake vault, with this device's storage. */
+  function writable(storage: ReturnType<typeof memoryStorage> | null = memoryStorage()) {
+    const vault = fakeVault({ [LOG]: "" });
+    Object.assign(vault, {
+      adapter: { exists: () => Promise.resolve(true) },
+      create: vi.fn((path: string, data: string) => {
+        vault.contents[path] = data;
+        return Promise.resolve();
+      }),
+      createFolder: () => Promise.resolve(),
+    });
+    const plugin = {
+      settings: { logFolderPath: "Logs", dayStartHour: 0, taskSwitchLogging: "last-task" },
+      app: { vault, metadataCache: linkCache(vault) },
+      invalidateFocusTotalCache: vi.fn(),
+    } as unknown as GentlePomoPlugin;
+    const device = storage ? { storage, plannedMs: () => null } : null;
+    return { vault, plugin, storage, lm: new LogManager(plugin, device) };
+  }
+  /** Each session line `vault` holds, read. */
+  const read = (vault: FakeVault, path = LOG) =>
+    (vault.contents[path] ?? "")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const parsed = parseLogLine(line);
+        if (!parsed) throw new Error(`not a session line: ${line}`);
+        return parsed.values;
+      });
+  async function focus(lm: LogManager, from: [number, number], to: [number, number]) {
+    at(...from);
+    lm.startSession("focus", "No Task", 25);
+    at(...to);
+    await lm.endSession("finished");
+  }
+
+  it("gives each session an ID of its own, minted when it opens", async () => {
+    const { vault, lm } = writable();
+    await focus(lm, [9, 0], [9, 25]);
+    await focus(lm, [10, 0], [10, 25]);
+    const [first, second] = read(vault).map((line) => line.get("Session"));
+    expect(first).toMatch(/^s[0-9abcdefghjkmnpqrstvwxyz]{9}$/);
+    expect(second).toMatch(/^s[0-9abcdefghjkmnpqrstvwxyz]{9}$/);
+    expect(first).not.toBe(second);
+  });
+
+  it("shares one ID across a split session's lines", async () => {
+    const { vault, plugin, lm } = writable();
+    plugin.settings.taskSwitchLogging = "split";
+    at(9, 0);
+    lm.startSession("focus", "A", 25, "Projects/A.md");
+    at(9, 10);
+    lm.updateTask("B", "Projects/B.md");
+    at(9, 25);
+    await lm.endSession("finished");
+    const ids = read(vault).map((line) => line.get("Session"));
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).toBe(ids[0]);
+  });
+
+  it("says what opened a session, and a resume keeps it", async () => {
+    const { vault, lm } = writable();
+    at(9, 0);
+    lm.startSession("focus", "No Task", 25, undefined, undefined, null, "reset");
+    at(9, 5);
+    lm.pauseSession();
+    at(9, 6);
+    lm.startSession("focus", "No Task", 25, undefined, undefined, null, "start");
+    at(9, 26);
+    await lm.endSession("finished");
+    expect(read(vault)[0].get("StartedBy")).toBe("reset");
+  });
+
+  it("writes how it ended as the engine says, and leaves out what it does not", async () => {
+    const { vault, lm } = writable();
+    at(9, 0);
+    lm.startSession("focus", "No Task", 25);
+    at(9, 30);
+    await lm.endSession("finished", {
+      overtimeSeconds: 300,
+      endedBy: "stop",
+      plannedSeconds: 1500,
+      cycle: 3,
+      droppedSeconds: 0,
+    });
+    at(10, 0);
+    lm.startSession("focus", "No Task", 25);
+    at(10, 25);
+    await lm.endSession("finished");
+    const [stopped, bare] = read(vault);
+    // After the nine fields an unlinked focus has (no ID).
+    expect([...stopped.keys()].slice(9)).toEqual([
+      "Session",
+      "StartedBy",
+      "EndedBy",
+      "Planned",
+      "Cycle",
+      "Offset",
+    ]);
+    expect(stopped.get("EndedBy")).toBe("stop");
+    expect(stopped.get("Planned")).toBe("1500");
+    expect(stopped.get("Cycle")).toBe("3");
+    expect([...bare.keys()].slice(9)).toEqual(["Session", "StartedBy", "Offset"]);
+  });
+
+  it("keeps a sleep the engine paused for as Slept, and an ordinary pause as none", async () => {
+    const { vault, storage, lm } = writable();
+    at(9, 0);
+    lm.startSession("focus", "No Task", 25);
+    at(9, 30);
+    // The sleep check, waking at 09:40: paused from the last tick, 09:10.
+    lm.pauseSession(ms(9, 10), ms(9, 40));
+    expect(storage?.load("gentle-pomodoro-open-session")).toMatchObject({
+      sleeps: [[ms(9, 10), ms(9, 40)]],
+    });
+    at(9, 45); // resumed five minutes after waking
+    lm.startSession("focus", "No Task", 25);
+    at(9, 50);
+    lm.pauseSession(); // a pause of the user's own
+    at(9, 55);
+    lm.startSession("focus", "No Task", 25);
+    at(10, 0);
+    await lm.endSession("finished");
+    const [line] = read(vault);
+    expect(line.get("Pauses")).toBe(
+      JSON.stringify([
+        "2026-10-02 09:10:00 - 2026-10-02 09:45:00",
+        "2026-10-02 09:50:00 - 2026-10-02 09:55:00",
+      ])
+    );
+    expect(line.get("Slept")).toBe("1800");
+    expect(line.get("Total")).toBe(String(60 * 60 - 40 * 60));
+  });
+
+  it("keeps no sleep without both ends, or with a wake before the pause", async () => {
+    const { vault, storage, lm } = writable();
+    at(9, 0);
+    lm.startSession("focus", "No Task", 25);
+    lm.pauseSession(undefined, ms(9, 30));
+    at(9, 5);
+    lm.startSession("focus", "No Task", 25);
+    lm.pauseSession(ms(9, 10), ms(9, 10));
+    expect(storage?.load("gentle-pomodoro-open-session")).toMatchObject({ sleeps: [] });
+    at(9, 15);
+    lm.startSession("focus", "No Task", 25);
+    at(9, 45);
+    await lm.endSession("finished");
+    expect(read(vault)[0].has("Slept")).toBe(false);
+  });
+
+  it("writes this device's name as Device, cleaned, as it is at each write", async () => {
+    const { vault, storage, lm } = writable();
+    if (!storage) throw new Error("no storage");
+    saveDeviceName(storage, "  🍅 Work [laptop] #2 ");
+    expect(storage.load(DEVICE_NAME_KEY)).toBe("🍅 Work [laptop] #2");
+    await focus(lm, [9, 0], [9, 25]);
+    saveDeviceName(storage, "Phone");
+    await focus(lm, [10, 0], [10, 25]);
+    saveDeviceName(storage, "   ");
+    expect(storage.load(DEVICE_NAME_KEY)).toBeNull();
+    await focus(lm, [11, 0], [11, 25]);
+    storage.save(DEVICE_NAME_KEY, 42); // not text: no name
+    await focus(lm, [12, 0], [12, 25]);
+    expect(read(vault).map((line) => line.get("Device") ?? null)).toEqual([
+      "Work (laptop) 2",
+      "Phone",
+      null,
+      null,
+    ]);
+  });
+
+  it("writes no Device without this device's storage", async () => {
+    const { vault, lm } = writable(null);
+    await focus(lm, [9, 0], [9, 25]);
+    expect(read(vault)[0].has("Device")).toBe(false);
+  });
+
+  it("keeps the tail on a line a write failed on, and writes it later as it was", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { vault, storage, lm } = writable();
+    if (!storage) throw new Error("no storage");
+    saveDeviceName(storage, "Work laptop");
+    vi.spyOn(vault, "process").mockRejectedValueOnce(new Error("EACCES"));
+    await focus(lm, [9, 0], [9, 25]);
+    const kept = readUnwrittenLines(storage.load(UNWRITTEN_LINES_KEY));
+    expect(kept).toHaveLength(1);
+    const keptLine = kept[0].lines[0];
+    expect(parseLogLine(keptLine)?.values.get("Session")).toMatch(/^s/);
+    // Renamed since: the kept line keeps the name it was written with.
+    saveDeviceName(storage, "Phone");
+    expect(await lm.retryUnwrittenLines()).toBe(1);
+    expect(vault.contents[LOG]).toContain(keptLine);
+    expect(read(vault)[0].get("Device")).toBe("Work laptop");
+  });
+});
+
+/**
+ * A real LogManager in another time zone. Node re-reads TZ when it is
+ * assigned, and moment works on Date, so the fake clock follows it.
+ */
+describe.each<[string, string, [number, number, number], string, string | null]>([
+  // 2026-11-01: 02:00 CDT → 01:00 CST. A session from 01:50 to 02:15 CDT's wall clock.
+  ["America/Chicago", "2026-11-01", [1, 50, 0], "-300", "-60"],
+  // 2026-10-25: 03:00 CEST → 02:00 CET.
+  ["Europe/Berlin", "2026-10-25", [2, 50, 0], "120", "-60"],
+  ["Asia/Kolkata", "2026-10-25", [2, 50, 0], "330", null],
+])("LogManager's Offset in %s (0.7.0)", (zone, date, [h, mi, s], offset, change) => {
+  let saved: string | undefined;
+  let previousMoment: unknown;
+  beforeEach(() => {
+    saved = process.env.TZ;
+    process.env.TZ = zone;
+    const g = globalThis as unknown as { moment?: unknown };
+    previousMoment = g.moment;
+    g.moment = createRequire(import.meta.url)("moment");
+    vi.useFakeTimers({ toFake: ["Date"] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
+    if (saved === undefined) delete process.env.TZ;
+    else process.env.TZ = saved;
+  });
+
+  it("writes the offset at the start, and the change when the clocks moved during it", async () => {
+    const vault = fakeVault({});
+    Object.assign(vault, {
+      adapter: { exists: () => Promise.resolve(true) },
+      create: (path: string, data: string) => {
+        vault.contents[path] = data;
+        return Promise.resolve();
+      },
+      createFolder: () => Promise.resolve(),
+    });
+    const plugin = {
+      settings: { logFolderPath: "Logs", dayStartHour: 0 },
+      app: { vault },
+      invalidateFocusTotalCache: vi.fn(),
+    } as unknown as GentlePomoPlugin;
+    const lm = new LogManager(plugin);
+    const [y, mo, d] = date.split("-").map(Number);
+    const start = new Date(y, mo - 1, d, h, mi, s).getTime();
+    vi.setSystemTime(start);
+    lm.startSession("focus", "Night reading", 25);
+    vi.setSystemTime(start + 25 * 60_000);
+    await lm.endSession("finished");
+    const line = parseLogLine((vault.contents[`Logs/${date}-gentle-pomodoro-log.md`] ?? "").trim());
+    expect(line?.values.get("Total")).toBe("1500");
+    expect(line?.values.get("Offset")).toBe(offset);
+    expect(line?.values.get("OffsetChange") ?? null).toBe(change);
   });
 });

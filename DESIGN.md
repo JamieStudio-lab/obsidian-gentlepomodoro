@@ -69,8 +69,11 @@ container and a `.gp-root`-scoped block misses all four — invisibly, because t
 anyone would look to check, is fine:
 
 - `.gp-status*` — built from `addStatusBarItem()` in [main.ts](main.ts)
-- `.gp-confirm-modal` — [confirmModal.ts](confirmModal.ts)
-- `.gp-setting-with-error` / `.gp-setting-error` — [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
+- `.gp-confirm-modal` — [confirmModal.ts](confirmModal.ts), and `.gp-copy-fallback` —
+  [clipboard.ts](clipboard.ts) (0.7.0)
+- `.gp-setting-with-error` / `.gp-setting-error`, and since 0.7.0 the Dataview tables group's
+  `.gp-setting-wide`, `.gp-column-*`, `.gp-setting-code` and `.gp-query-code*` —
+  [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
 - `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor, the first rule in styles.css
 
 **Layer 0 — Obsidian's own variables.** Not ours. Listed above.

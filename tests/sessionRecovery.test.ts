@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { TFile } from "obsidian";
 import { Modal } from "../__mocks__/obsidian";
 import { LogManager, taskLinkAfterMove } from "../logManager";
-import { loggedTotalSeconds, parseLogLine, logSeconds } from "../logLine";
+import { formatLogLine, loggedTotalSeconds, parseLogLine, logSeconds } from "../logLine";
+import { saveDeviceName } from "../deviceStorage";
 import { segmentLogs } from "../logSegments";
 import { askRecovery } from "../recoveryModal";
 import {
@@ -84,6 +85,43 @@ describe("reading a saved session back", () => {
     }
     expect(readSavedSessions([good, { nope: true }])).toEqual([good]);
     expect(readSavedSessions("x")).toEqual([]);
+  });
+});
+
+describe("reading a saved session's tail back (0.7.0)", () => {
+  const tailed = saved({
+    sessionId: "s7k2m9qx4w",
+    startedBy: "auto",
+    sleeps: [[t(9, 6), t(9, 9)]],
+  });
+
+  it("reads its ID, what opened it and its sleeps", () => {
+    expect(readSavedSession(JSON.parse(JSON.stringify(tailed)))).toEqual(tailed);
+  });
+
+  it("reads all three or none: one that is not what LogManager saves costs the tail, never the session", () => {
+    const bare = saved();
+    for (const bad of [
+      { ...tailed, sessionId: undefined },
+      { ...tailed, sessionId: "s7k2m9qx" },
+      { ...tailed, sessionId: 7 },
+      { ...tailed, startedBy: undefined },
+      { ...tailed, startedBy: "boot" },
+      { ...tailed, sleeps: undefined },
+      { ...tailed, sleeps: "x" },
+      { ...tailed, sleeps: [[t(9, 9), t(9, 6)]] },
+      { ...tailed, sleeps: [[t(9, 6)]] },
+      { ...tailed, sleeps: [[t(9, 6), -1]] },
+    ]) {
+      const read = readSavedSession(JSON.parse(JSON.stringify(bad)));
+      expect(read, JSON.stringify(bad)).toEqual(bare);
+    }
+  });
+
+  it("reads a session a 0.6.9 run saved as it was, with no tail", () => {
+    const old = saved();
+    expect(readSavedSession(JSON.parse(JSON.stringify(old)))).toEqual(old);
+    expect(Object.keys(readSavedSession(old) ?? {})).not.toContain("sessionId");
   });
 });
 
@@ -187,10 +225,12 @@ describe("Log up to planned end — a long unfinished session (F18)", () => {
       activeSeconds: 6 * 3600 + 50 * 60,
       overtimeSeconds: 6 * 3600 + 25 * 60,
       plannedEndAt: t(9, 35),
+      plannedSeconds: 25 * 60,
     });
     // The plan as the clock had it, ±5 included.
     expect(recoveredLongSession(long({ plannedMs: 30 * ONE_MINUTE_MS }), at, 6)).toMatchObject({
       plannedEndAt: t(9, 40),
+      plannedSeconds: 30 * 60,
     });
     // From exactly the threshold.
     expect(recoveredLongSession(long({ lastSeenMs: t(15, 10) }), at, 6)).not.toBeNull();
@@ -602,6 +642,81 @@ describe("LogManager keeps the open session on this device (F23)", () => {
     expect(parsed && logSeconds(parsed, "Total")).toBe(24 * 60);
   });
 
+  describe("the recovered line's tail (0.7.0)", () => {
+    it("saves the session's ID, what opened it and its sleeps on this device", () => {
+      const { lm, storage } = setup();
+      lm.startSession("focus", "Write docs", 25, "Projects/Docs.md", "abc123", null, "auto");
+      vi.setSystemTime(t(9, 30));
+      lm.pauseSession(t(9, 10), t(9, 30));
+      expect(open(storage)).toMatchObject({
+        sessionId: expect.stringMatching(/^s[0-9abcdefghjkmnpqrstvwxyz]{9}$/) as unknown,
+        startedBy: "auto",
+        sleeps: [[t(9, 10), t(9, 30)]],
+      });
+    });
+
+    it("logs it with the ID it started with, as recovered, its plan, its sleep's share and the device — no Cycle", async () => {
+      const storage = memoryStorage();
+      const first = setup(storage);
+      first.lm.startSession("focus", "Write docs", 25, "Projects/Docs.md", "abc123", null, "auto");
+      const id = open(storage)?.sessionId;
+      vi.setSystemTime(t(9, 30));
+      first.lm.pauseSession(t(9, 10), t(9, 30)); // asleep 09:10–09:30
+      vi.setSystemTime(t(9, 32));
+      first.lm.startSession("focus", "Write docs", 25, "Projects/Docs.md", "abc123");
+      vi.setSystemTime(t(9, 50));
+      first.lm.heartbeat();
+      first.lm.dispose(); // quit at 09:50
+
+      saveDeviceName(storage, "Work laptop");
+      // The next start's clock says 30 minutes: Planned is the saved plan, 25.
+      const { lm, vault } = setup(storage, 30 * ONE_MINUTE_MS);
+      await lm.offerUnfinishedSessions(() => Promise.resolve("log"));
+      const parsed = parseLogLine(lines(vault)[0]);
+      if (!parsed) throw new Error("no line");
+      const at = parsed.fields.findIndex((f) => f.key === "Session");
+      expect(Object.fromEntries(parsed.fields.slice(at).map((f) => [f.key, f.value]))).toEqual({
+        Session: id,
+        StartedBy: "auto",
+        EndedBy: "recovered",
+        Planned: "1500",
+        Offset: String(-new Date(t(9, 0)).getTimezoneOffset() || 0),
+        Slept: "1200",
+        Device: "Work laptop",
+      });
+      // Overtime past that same plan, as the timer counts it.
+      expect(logSeconds(parsed, "Total")).toBe(50 * 60 - 22 * 60);
+      expect(logSeconds(parsed, "Overtime")).toBe(3 * 60);
+    });
+
+    it("writes a quit inside a sleep's pause with no Slept: the line ends where the pause began", async () => {
+      const storage = memoryStorage();
+      const first = setup(storage);
+      first.lm.startSession("focus", "Write docs", 25);
+      vi.setSystemTime(t(9, 40));
+      first.lm.pauseSession(t(9, 20), t(9, 40));
+      first.lm.dispose();
+      const { lm, vault } = setup(storage);
+      await lm.offerUnfinishedSessions(() => Promise.resolve("log"));
+      const parsed = parseLogLine(lines(vault)[0]);
+      expect(parsed?.values.get("End")).toBe("2026-10-02 09:20:00");
+      expect(parsed?.values.get("EndedBy")).toBe("recovered");
+      expect(parsed?.values.has("Slept")).toBe(false);
+    });
+
+    it("logs a session a 0.6.9 run saved exactly as 0.6.9 wrote it: no tail, no Device", async () => {
+      const storage = memoryStorage();
+      saveDeviceName(storage, "Work laptop");
+      storage.save(UNFINISHED_SESSIONS_KEY, [saved({ lastSeenMs: t(9, 30) })]);
+      const { lm, vault } = setup(storage);
+      await lm.offerUnfinishedSessions(() => Promise.resolve("log"));
+      const { session } = recoveredSession(saved({ lastSeenMs: t(9, 30) }), at);
+      expect(session.sessionId).toBeUndefined();
+      expect(lines(vault)).toEqual([formatLogLine(session)]);
+      expect(lines(vault)[0].endsWith("[Overtime:: 300]")).toBe(true);
+    });
+  });
+
   describe("Log up to planned end (F18)", () => {
     /** 09:00 start, a pause 09:10–09:20, running at 16:00: the engine's own session. */
     function longFocus(storage: ReturnType<typeof memoryStorage>) {
@@ -651,15 +766,45 @@ describe("LogManager keeps the open session on this device (F23)", () => {
           activeSeconds: 6 * 3600 + 50 * 60,
           overtimeSeconds: 6 * 3600 + 25 * 60,
           plannedEndAt: t(9, 35),
+          plannedSeconds: 25 * 60,
         },
       ]);
       expect(viaStop).toHaveLength(1);
-      expect(lines(vault)).toEqual(viaStop);
+      expect(lines(vault)).toHaveLength(1);
       const parsed = parseLogLine(viaStop[0]);
-      expect(parsed?.values.get("End")).toBe("2026-10-02 09:35:00");
-      expect(parsed && logSeconds(parsed, "Total")).toBe(25 * 60);
-      expect(parsed && logSeconds(parsed, "Overtime")).toBe(0);
+      const recovered = parseLogLine(lines(vault)[0]);
+      if (!parsed || !recovered) throw new Error("not a session line");
+      expect(parsed.values.get("End")).toBe("2026-10-02 09:35:00");
+      expect(logSeconds(parsed, "Total")).toBe(25 * 60);
+      expect(logSeconds(parsed, "Overtime")).toBe(0);
       expect(lm.unfinishedSessions()).toEqual([]);
+
+      // The fields 0.6.9 wrote are the same line, byte for byte; the tails
+      // (0.7.0) differ in exactly the session's ID, how it ended and its
+      // Cycle — a recovery moves no long-break count, so it has none.
+      const split = (line: NonNullable<typeof parsed>) => {
+        const at = line.fields.findIndex((f) => f.key === "Session");
+        expect(at).toBeGreaterThan(0);
+        const pairs = line.fields.map((f) => [f.key, f.value] as const);
+        return { core: pairs.slice(0, at), tail: new Map(pairs.slice(at)) };
+      };
+      const stop = split(parsed);
+      const recovery = split(recovered);
+      expect(recovery.core).toEqual(stop.core);
+      const keys = [...new Set([...stop.tail.keys(), ...recovery.tail.keys()])];
+      expect(keys.filter((key) => stop.tail.get(key) !== recovery.tail.get(key)).sort()).toEqual([
+        "Cycle",
+        "EndedBy",
+        "Session",
+      ]);
+      expect(stop.tail.get("EndedBy")).toBe("planned-end");
+      expect(recovery.tail.get("EndedBy")).toBe("recovered-planned-end");
+      expect(stop.tail.get("Cycle")).toBe("1");
+      expect(recovery.tail.has("Cycle")).toBe(false);
+      expect(recovery.tail.get("Session")).not.toBe(stop.tail.get("Session"));
+      // Both write the plan, and the 6 h 25 m the planned end left out.
+      expect(recovery.tail.get("Planned")).toBe("1500");
+      expect(recovery.tail.get("Dropped")).toBe(String(6 * 3600 + 25 * 60));
     });
 
     it("Log up to planned end writes a split session's lines cut there, a pause after it dropped (F18)", async () => {
@@ -1329,7 +1474,9 @@ describe("main.ts wires it", () => {
     expect(recovery).toContain(
       "plannedEndAt: activeReachedAt(session.startTime, session.pauses, plannedSeconds(saved)),"
     );
-    expect(engine).toContain('if (answer === "planned") end = plannedSessionEnd(question);');
+    expect(engine).toContain(
+      'if (answer === "planned") end = { ...plannedSessionEnd(question), endedBy: "planned-end" };'
+    );
     expect(manager).toContain("await this.logUnfinished(saved, plannedSessionEnd(long));");
     // And no second copy of the walk.
     for (const text of [engine, manager, recovery]) {

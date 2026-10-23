@@ -132,7 +132,11 @@ export type SegmentLine = SessionLog & { closedBySwitch?: true };
  * - A segment under a minute is merged into the next one (the last into the
  *   one before it): no line under a minute, as for a whole session (F59).
  * - Overtime goes from the END backwards: the last minutes of a session are
- *   the ones past its planned end, whoever they were for.
+ *   the ones past its planned end, whoever they were for — and so Dropped,
+ *   the time a planned end left out past them, is the last line's alone.
+ * - The rest of the tail (0.7.0) is the session's on every line: its ID, how
+ *   it started and ended, its plan, its Cycle and the device. A line's Offset,
+ *   OffsetChange and Slept are its own, read off its own span (formatLogLine).
  */
 export function segmentLogs(session: SessionLog, closed: readonly ClosedSegment[]): SegmentLine[] {
   if (closed.length === 0) return [session];
@@ -180,6 +184,7 @@ export function segmentLogs(session: SessionLog, closed: readonly ClosedSegment[
     endTime: part.end,
     pauses: pausesWithin(session.pauses, part.start, part.end),
     overtimeSeconds: overtimes[i],
+    droppedSeconds: i === parts.length - 1 ? session.droppedSeconds : undefined,
     ...(part.closed ? { closedBySwitch: true as const } : {}),
   }));
 }

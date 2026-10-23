@@ -8,6 +8,8 @@ node_modules
 # build
 main.js
 *.js.map
+# ...but not Dataview's bundle, which the tests run (tests/fixtures/dataview)
+!tests/fixtures/dataview/main.js
 
 # System
 .DS_Store

@@ -29,7 +29,9 @@ import {
   readLogPauses,
   readLogTime,
   repeatedReading,
+  type SessionLog,
 } from "../logLine";
+import { segmentLogs } from "../logSegments";
 import type { MomentLike } from "../momentTypes";
 
 // The real moment; a locale file requires "../moment", so both go through
@@ -795,6 +797,26 @@ describe("scanLogAnomalies — the hour a fall-back repeats (America/New_York)",
     expect(kinds(line)).toEqual([]);
   });
 
+  it("does not flag a Slept inside a pause that ends in the second pass (0.7.0)", () => {
+    // Paused 01:50 EDT to 01:10 EST — 20 minutes that read as -40 — asleep
+    // 01:52 EDT to 01:08 EST.
+    const line = formatLogLine({
+      mode: "focus",
+      taskName: "Weed",
+      scheduledDurationMinutes: 25,
+      startTime: moment(clock(0, 30)),
+      endTime: moment(clock(2, 10)),
+      pauses: [{ start: moment(clock(1, 50, 1)), end: moment(clock(1, 10, 2)) }],
+      status: "finished",
+      sessionId: "s000000000",
+      sleeps: [[clock(1, 52, 1), clock(1, 8, 2)]],
+    });
+    expect(parseLogLine(line)?.values.get("Slept")).toBe("960");
+    expect(kinds(line)).toEqual([]);
+    // A Slept no reading of those pauses can hold is still one.
+    expect(kinds(line.replace("[Slept:: 960]", "[Slept:: 1202]"))).toEqual(["slept Logs/0.md:1"]);
+  });
+
   it("does not call a second-pass session an overlap with a first-pass one", () => {
     const lines = [
       timerLine(clock(1, 10, 1), clock(1, 40, 1)),
@@ -841,6 +863,8 @@ describe("scanLogAnomalies — one 🆔 under different names", () => {
       long: 0,
       endBeforeStart: 0,
       idNames: 1,
+      slept: 0,
+      cycle: 0,
     });
   });
 
@@ -882,6 +906,148 @@ describe("scanLogAnomalies — one 🆔 under different names", () => {
   });
 });
 
+describe("scanLogAnomalies — what a 0.6.9 Fix leaves on a 0.7.0 line", () => {
+  // The tail as the timer writes it, then a field or two after it.
+  const TAIL =
+    " [Session:: s7k2m9qx4w] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Offset:: 120]";
+  const tailed = (line: string, extra = "", tail = TAIL) => `${line}${tail}${extra}`;
+  const cancelled = (line: string) => line.replace("[Status:: finished]", "[Status:: cancelled]");
+  const skipTail = TAIL.replace("[EndedBy:: stop]", "[EndedBy:: skip]");
+  const paused = { pauses: [`${D} 09:10:00 - ${D} 09:15:00`] };
+  /** 09:00–09:30 with five minutes paused: Total 1500. */
+  const pausedFocus = () => focus(`${D} 09:00:00`, `${D} 09:30:00`, 1500, paused);
+  const sleptFocus = (slept: number) => tailed(pausedFocus(), ` [Slept:: ${String(slept)}]`);
+  /** What each line, scanned on its own, is flagged for: lines here share
+   *  their times, and together would overlap. */
+  const alone = (...lines: string[]) => lines.map((line) => kinds(line));
+
+  it("flags a Slept longer than the line's pauses, past the second a time is cut by", () => {
+    expect(alone(sleptFocus(120), sleptFocus(300), sleptFocus(301))).toEqual([[], [], []]);
+    expect(kinds(sleptFocus(302))).toEqual(["slept Logs/0.md:1"]);
+    expect(scan(sleptFocus(302))[0].detail).toBe("Slept is 302 s, but its pauses add up to 300 s.");
+    // A rest line turned focus keeps its Slept beside `Pauses:: []`.
+    const unpaused = tailed(focus(`${D} 09:00:00`, `${D} 09:25:00`, 1500), " [Slept:: 600]");
+    expect(kinds(unpaused)).toEqual(["slept Logs/0.md:1"]);
+  });
+
+  it("does not judge Slept where the paused time is unknown, or Slept is not a number", () => {
+    // A Rest line writes no Pauses: its sleep is inside a pause it does not list.
+    expect(kinds(tailed(rest(`${D} 09:30:00`, `${D} 10:30:00`, 300), " [Slept:: 3000]"))).toEqual(
+      []
+    );
+    const unreadable = sleptFocus(900).replace(/\[Pauses:: [^\]]*\]\]/u, "[Pauses:: lunch]");
+    expect(parseLogLine(unreadable)?.values.get("Pauses")).toBe("lunch");
+    expect(kinds(unreadable)).toEqual([]);
+    expect(kinds(tailed(pausedFocus(), " [Slept:: 900s]"))).toEqual([]);
+  });
+
+  it("flags a Cycle on a break or a skipped focus, which move no long-break count", () => {
+    const cycleOnRest = tailed(rest(`${D} 09:30:00`, `${D} 09:35:00`, 300), " [Cycle:: 2]");
+    const cycleOnSkip = tailed(
+      cancelled(pausedFocus()),
+      "",
+      skipTail.replace("1500]", "1500] [Cycle:: 3]")
+    );
+    expect(parseLogLine(cycleOnSkip)?.values.get("Cycle")).toBe("3");
+    expect(scan(cycleOnRest, cycleOnSkip).map((a) => `${a.kind} ${a.path}: ${a.detail}`)).toEqual([
+      "cycle Logs/0.md: Cycle 2 on a break; only a focus that counts has a Cycle.",
+      "cycle Logs/1.md: Cycle 3 on a skipped session (Status cancelled); only a focus that counts has a Cycle.",
+    ]);
+    // A focus that counted has one; a skipped one without one is right.
+    expect(
+      alone(
+        tailed(pausedFocus(), " [Cycle:: 4]"),
+        tailed(cancelled(pausedFocus()), "", skipTail),
+        tailed(rest(`${D} 09:30:00`, `${D} 09:35:00`, 300))
+      )
+    ).toEqual([[], [], []]);
+  });
+
+  it("leaves EndedBy skip alone, a skipped session Fix changed to finished included", () => {
+    // 0.7.0's Fix keeps EndedBy as written, so this is a line it makes on
+    // purpose: the session was skipped, then counted.
+    expect(scan(tailed(pausedFocus(), "", skipTail))).toEqual([]);
+    expect(
+      alone(
+        tailed(cancelled(pausedFocus()), "", skipTail),
+        // A skipped break: a Rest line has no Status, and Skip does not
+        // cancel a break — not even under a Status typed on it by hand.
+        tailed(rest(`${D} 09:30:00`, `${D} 09:32:00`, 120), "", skipTail),
+        tailed(rest(`${D} 09:30:00`, `${D} 09:32:00`, 120), " [Status:: finished]", skipTail),
+        tailed(pausedFocus()),
+        // Finished it must say: a Status taken out or typed otherwise is not that.
+        tailed(pausedFocus().replace(" [Status:: finished]", ""), "", skipTail),
+        tailed(pausedFocus().replace("[Status:: finished]", "[Status:: done]"), "", skipTail)
+      )
+    ).toEqual([[], [], [], [], [], []]);
+  });
+
+  it("looks only at lines with the tail: a field like it on an older line is not one", () => {
+    const noSession = (line: string) => line.replace(/ \[Session:: [^\]]*\]/u, "");
+    const lines = [
+      sleptFocus(900),
+      tailed(rest(`${D} 09:30:00`, `${D} 09:35:00`, 300), " [Cycle:: 2]"),
+    ];
+    expect(alone(...lines)).toEqual([["slept Logs/0.md:1"], ["cycle Logs/0.md:1"]]);
+    const older = lines.map(noSession);
+    for (const line of older) expect(parseLogLine(line)?.values.has("Session")).toBe(false);
+    expect(alone(...older)).toEqual([[], []]);
+  });
+
+  it("looks at the tail of a line whose times it cannot read, and lists the older kinds first", () => {
+    const noStart = tailed(rest("soon", `${D} 09:35:00`, 300), " [Cycle:: 2]");
+    expect(kinds(noStart)).toEqual(["cycle Logs/0.md:1"]);
+    // Total off and Slept too long, on one line.
+    const both = tailed(focus(`${D} 09:00:00`, `${D} 09:30:00`, 1600, paused), " [Slept:: 900]");
+    expect(kinds(both)).toEqual(["total Logs/0.md:1", "slept Logs/0.md:1"]);
+  });
+
+  it("finds nothing on the lines the timer writes: its sleeps, Cycles and Skips", () => {
+    const t = (h: number, mi: number) => moment(new Date(2026, 5, 15, h, mi));
+    const ms = (h: number, mi: number) => new Date(2026, 5, 15, h, mi).getTime();
+    const base: SessionLog = {
+      mode: "focus",
+      taskName: "Weed",
+      taskPath: "Projects/Garden.md",
+      scheduledDurationMinutes: 25,
+      startTime: t(9, 0),
+      endTime: t(9, 40),
+      pauses: [{ start: t(9, 10), end: t(9, 25) }],
+      status: "finished",
+      overtimeSeconds: 0,
+      sessionId: "s7k2m9qx4w",
+      startedBy: "start",
+      endedBy: "stop",
+      plannedSeconds: 1500,
+      cycle: 2,
+      sleeps: [[ms(9, 10), ms(9, 22)]],
+      device: "Desk",
+    };
+    const lines = [
+      base,
+      // Switched from Read at 09:20, mid-pause: each part its share of both.
+      ...segmentLogs(base, [{ end: t(9, 20), taskName: "Read", taskPath: "Projects/Read.md" }]),
+      { ...base, status: "cancelled", endedBy: "skip", cycle: undefined },
+      // A break asleep: Slept, and no Pauses field to hold it.
+      {
+        ...base,
+        mode: "break",
+        breakType: "short",
+        startTime: t(10, 0),
+        endTime: t(10, 30),
+        pauses: [{ start: t(10, 5), end: t(10, 20) }],
+        sleeps: [[ms(10, 5), ms(10, 15)]],
+      },
+    ].map((session) => formatLogLine(session as SessionLog));
+    const fields = lines.map((line) => parseLogLine(line)?.values);
+    expect(fields.map((f) => f?.get("Slept") ?? null)).toEqual(["720", "600", "120", "720", "600"]);
+    expect(fields[4]?.has("Pauses")).toBe(false);
+    expect(fields.map((f) => f?.get("Cycle") ?? null)).toEqual(["2", "2", "2", null, null]);
+    expect(fields.map((f) => f?.get("EndedBy"))).toEqual(["stop", "stop", "stop", "skip", "stop"]);
+    for (const [i, line] of lines.entries()) expect(kinds(line), String(i)).toEqual([]);
+  });
+});
+
 describe("describeSeconds", () => {
   it("says seconds under a minute, minutes and seconds under an hour, else hours and minutes", () => {
     expect(describeSeconds(0)).toBe("0s");
@@ -905,6 +1071,8 @@ describe("countAnomalies", () => {
       ...of("long", 3),
       ...of("overlap", 4),
       ...of("endBeforeStart", 2),
+      ...of("slept", 7),
+      ...of("cycle", 8),
     ];
     expect(countAnomalies(found)).toEqual({
       total: 5,
@@ -912,6 +1080,8 @@ describe("countAnomalies", () => {
       long: 3,
       endBeforeStart: 2,
       idNames: 1,
+      slept: 7,
+      cycle: 8,
     });
     expect(Object.keys(countAnomalies([])).sort()).toEqual([...LOG_ANOMALY_KINDS].sort());
   });

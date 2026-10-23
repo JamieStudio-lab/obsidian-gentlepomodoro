@@ -45,6 +45,8 @@ export interface LongSessionQuestion {
   overtimeSeconds: number;
   /** The instant the active time reached the planned length (ms). */
   plannedEndAt: number;
+  /** That planned length in whole seconds, ±5 included (the line's Planned). */
+  plannedSeconds: number;
 }
 
 /** How the user answered. "cancel" — the dialog closed — cancels the Stop. */
@@ -72,13 +74,22 @@ export function isLongSession(
 /**
  * Where the answer "planned" ends a session — Stop's "End at planned end" and
  * the startup's "Log up to planned end" alike: where its active time reached
- * the plan, with no Overtime. Its line's Total is then the planned length.
+ * the plan, with no Overtime. Its line's Total is then the planned length, and
+ * its Dropped (0.7.0) the active time left out past it — one rule, so the two
+ * answers write the same numbers.
  */
 export function plannedSessionEnd(question: LongSessionQuestion): {
   endAt: number;
   overtimeSeconds: number;
+  plannedSeconds: number;
+  droppedSeconds: number;
 } {
-  return { endAt: question.plannedEndAt, overtimeSeconds: 0 };
+  return {
+    endAt: question.plannedEndAt,
+    overtimeSeconds: 0,
+    plannedSeconds: question.plannedSeconds,
+    droppedSeconds: Math.max(0, question.activeSeconds - question.plannedSeconds),
+  };
 }
 
 export const LONG_SESSION_TITLE = "Log this long focus?";

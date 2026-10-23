@@ -1,0 +1,3 @@
+# Dataview's bundle, byte for byte: tests/dataviewEngine.test.ts checks its sha1, so no
+# checkout may change its line endings.
+tests/fixtures/dataview/main.js -text

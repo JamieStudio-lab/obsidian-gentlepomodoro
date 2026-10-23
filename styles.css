@@ -4632,3 +4632,102 @@ body.is-tablet .gp-timer-time {
 .gp-setting-note.gp-setting-note-info {
   color: var(--text-muted);
 }
+
+/* ===== Settings-tab Dataview tables (0.7.0) ===== */
+
+/* The Columns row: its list takes the row's whole width, under the name and
+   description, while the Simple and Detailed buttons stay in the control
+   column — on a phone, where Obsidian makes a settings button full width,
+   they share the line there and the list still gets the width it needs.
+
+   Below 400px of settings pane (every phone, and a narrow desktop pane)
+   app.css turns a setting row into a COLUMN with align-items: flex-start, so
+   a child is as wide as its content, not the row: the list ended at its
+   longest name, and the code below came out as wide as its longest line
+   (1488px in a 320px pane), scrolling the whole tab sideways. Stretched and
+   held to the row, both are the row's width, and the code scrolls inside
+   itself. Measured in headless Chrome under 1.14.5's app.css. */
+.gp-setting-wide {
+  flex-wrap: wrap;
+}
+
+.gp-column-list {
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  align-self: stretch;
+  max-width: 100%;
+  gap: var(--gp-space-1);
+  min-width: 0;
+  margin-top: var(--gp-space-4);
+}
+
+/* One line each: switch, name, ↑, ↓. A long name is cut, never the arrows:
+   at 320px the name has about 150px. */
+.gp-column-item {
+  display: flex;
+  align-items: center;
+  gap: var(--gp-space-4);
+  min-width: 0;
+}
+
+.gp-column-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Touch: each arrow a 36px target, as Tasks' edit and postpone are on a phone. */
+body.is-mobile .gp-column-item .extra-setting-button {
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+/* The code row has no name and no control, only the closed "Show the code". */
+.gp-setting-code {
+  flex-wrap: wrap;
+}
+
+.gp-setting-code .setting-item-info,
+.gp-setting-code .setting-item-control {
+  display: none;
+}
+
+.gp-query-code {
+  flex: 1 0 100%;
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gp-query-code > summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+/* The code scrolls inside itself, both ways, so the page never scrolls
+   sideways at phone width. */
+.gp-query-code-text {
+  max-height: 16em;
+  margin: var(--gp-space-4) 0 0;
+  padding: var(--gp-space-4);
+  overflow: auto;
+  border-radius: var(--gp-radius-sm);
+  background-color: var(--code-background);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  white-space: pre;
+  user-select: text;
+}
+
+/* The code to copy by hand when the clipboard refuses (clipboard.ts). */
+.gp-copy-fallback {
+  width: 100%;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  resize: vertical;
+}

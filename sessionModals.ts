@@ -1,6 +1,17 @@
 import { FuzzySuggestModal, Modal, Setting } from "obsidian";
-import type { App } from "obsidian";
+import type { App, DropdownComponent, TextComponent } from "obsidian";
 import { markDestructive } from "./confirmModal";
+import {
+  EXPORT_FOLDER_NOTE,
+  EXPORT_FORMATS,
+  EXPORT_KINDS,
+  EXPORT_RANGES,
+  NO_LOG_FILES_YET,
+  type ExportForm,
+  type ExportFormat,
+  type ExportKinds,
+  type ExportRange,
+} from "./logExport";
 import { logger } from "./logger";
 import {
   SESSION_KIND_OPTIONS,
@@ -271,5 +282,147 @@ export class PickSessionModal extends Modal {
     this.generation++;
     this.listEl = null;
     this.contentEl.empty();
+  }
+}
+
+export interface ExportFormOptions {
+  /** The values the dialog opens with. Never written to: the dialog edits a copy. */
+  form: ExportForm;
+  /** The From and To a Days choice stands for (exportRangeDates): null for
+   *  Choose dates, and for Everything when there is no log file yet. */
+  datesFor: (range: ExportRange) => { from: string; to: string } | null;
+  /** Why these values cannot be exported, or null. Checked before the dialog closes. */
+  check: (form: ExportForm) => string | null;
+}
+
+/**
+ * The Export sessions dialog (0.7.0). Resolves with the values on Export and
+ * null on every other way out, Esc and a click outside included, so the
+ * promise always settles.
+ */
+export function askExportForm(app: App, options: ExportFormOptions): Promise<ExportForm | null> {
+  return new Promise((resolve) => {
+    new ExportFormModal(app, options, resolve).open();
+  });
+}
+
+class ExportFormModal extends Modal {
+  private answer: ExportForm | null = null;
+  private readonly form: ExportForm;
+
+  constructor(
+    app: App,
+    private readonly options: ExportFormOptions,
+    private readonly resolveAnswer: (answer: ExportForm | null) => void
+  ) {
+    super(app);
+    this.form = { ...options.form };
+  }
+
+  override onOpen(): void {
+    const form = this.form;
+    this.titleEl.setText("Export sessions");
+    let days: DropdownComponent | null = null;
+    let fromText: TextComponent | null = null;
+    let toText: TextComponent | null = null;
+    let problem: HTMLElement | null = null;
+
+    // From and To always show the dates the Days choice stands for, and stay
+    // editable: a date typed there makes it "Choose dates". Setting a box's
+    // value from here does not run its change handler, in Obsidian as in a
+    // plain input, so the two never loop.
+    const typed = () => {
+      if (form.range === "custom") return;
+      form.range = "custom";
+      days?.setValue("custom");
+    };
+    new Setting(this.contentEl).setName("Days").addDropdown((dropdown) => {
+      days = dropdown;
+      for (const option of EXPORT_RANGES) dropdown.addOption(option.value, option.label);
+      dropdown.setValue(form.range).onChange((value) => {
+        form.range = value as ExportRange;
+        const dates = this.options.datesFor(form.range);
+        if (dates !== null) {
+          form.from = dates.from;
+          form.to = dates.to;
+          fromText?.setValue(dates.from);
+          toText?.setValue(dates.to);
+        }
+        problem?.setText(form.range === "all" && dates === null ? NO_LOG_FILES_YET : "");
+      });
+    });
+    new Setting(this.contentEl)
+      .setName("From")
+      .setDesc("The first day, like 2026-10-01.")
+      .addText((text) => {
+        fromText = text;
+        text
+          .setPlaceholder("2026-10-01")
+          .setValue(form.from)
+          .onChange((value) => {
+            form.from = value;
+            typed();
+          });
+      });
+    new Setting(this.contentEl)
+      .setName("To")
+      .setDesc("The last day, included.")
+      .addText((text) => {
+        toText = text;
+        text
+          .setPlaceholder("2026-10-31")
+          .setValue(form.to)
+          .onChange((value) => {
+            form.to = value;
+            typed();
+          });
+      });
+    new Setting(this.contentEl).setName("Sessions").addDropdown((dropdown) => {
+      for (const option of EXPORT_KINDS) dropdown.addOption(option.value, option.label);
+      dropdown.setValue(form.kinds).onChange((value) => {
+        form.kinds = value as ExportKinds;
+      });
+    });
+    new Setting(this.contentEl).setName("Format").addDropdown((dropdown) => {
+      for (const option of EXPORT_FORMATS) dropdown.addOption(option.value, option.label);
+      dropdown.setValue(form.format).onChange((value) => {
+        form.format = value as ExportFormat;
+      });
+    });
+    new Setting(this.contentEl)
+      .setName("Folder")
+      .setDesc(EXPORT_FOLDER_NOTE)
+      .addText((text) =>
+        text.setValue(form.folder).onChange((value) => {
+          form.folder = value;
+        })
+      );
+
+    const problemEl = this.contentEl.createDiv("gp-setting-note");
+    problem = problemEl;
+    new Setting(this.contentEl)
+      .addButton((button) =>
+        button.setButtonText("Cancel").onClick(() => {
+          this.close();
+        })
+      )
+      .addButton((button) =>
+        button
+          .setButtonText("Export")
+          .setCta()
+          .onClick(() => {
+            // Said in the dialog, which stays open: the values typed are kept.
+            const message = this.options.check(form);
+            problemEl.setText(message ?? "");
+            if (message !== null) return;
+            this.answer = { ...form };
+            this.close();
+          })
+      );
+  }
+
+  override onClose(): void {
+    this.contentEl.empty();
+    this.resolveAnswer(this.answer);
   }
 }

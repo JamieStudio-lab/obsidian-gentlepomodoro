@@ -40,6 +40,20 @@ const SKIPPED =
 const OLDEST =
   "- [x] ☕ Rest | Start:: 2026-10-02 12:00:00 | End:: 2026-10-02 12:05:00 | Scheduled:: 300 | Total:: 300";
 
+/** The 0.7.0 members on a line with no Session: every one unknown. */
+const NO_TAIL = {
+  sessionId: null,
+  startedBy: null,
+  endedBy: null,
+  planned: null,
+  cycle: null,
+  offset: null,
+  endOffset: null,
+  slept: null,
+  dropped: null,
+  device: null,
+};
+
 /** Properties with a pasted example that reads as a session line. */
 const TRAP = [
   "---",
@@ -158,6 +172,7 @@ describe("getDay", () => {
         overtime: 0,
         pauses: [{ start: "2026-10-02 09:10:00", end: "2026-10-02 09:20:00" }],
         status: "finished",
+        ...NO_TAIL,
       },
       {
         kind: "rest",
@@ -171,6 +186,7 @@ describe("getDay", () => {
         overtime: null,
         pauses: [],
         status: null,
+        ...NO_TAIL,
       },
       {
         kind: "focus",
@@ -185,6 +201,7 @@ describe("getDay", () => {
         overtime: null,
         pauses: [],
         status: "finished",
+        ...NO_TAIL,
       },
       {
         kind: "focus",
@@ -198,6 +215,7 @@ describe("getDay", () => {
         overtime: 0,
         pauses: [],
         status: "cancelled",
+        ...NO_TAIL,
       },
       {
         kind: "rest",
@@ -211,6 +229,7 @@ describe("getDay", () => {
         overtime: null,
         pauses: [],
         status: null,
+        ...NO_TAIL,
       },
     ]);
   });
@@ -337,6 +356,77 @@ describe("getDay", () => {
     expect(again.goalMinutes).toBe(90);
     expect(vault.writes).toEqual([]);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("getDay — the 0.7.0 tail", () => {
+  // A day of made-up 0.7.0 lines: a focus with every field, run across New
+  // York's fall-back; a break; a split session's two parts; and a 0.6.9 line.
+  const FULL = `${FOCUS.replace(/2026-10-02/g, "2026-10-05")} [Session:: s7k2m9qx4w] [StartedBy:: auto] [EndedBy:: planned-end] [Planned:: 1800] [Cycle:: 4] [Offset:: -240] [OffsetChange:: -60] [Slept:: 120] [Dropped:: 600] [Device:: Work laptop]`;
+  const BREAK = `${REST.replace(/2026-10-02/g, "2026-10-05")} [Session:: s0000000aa] [StartedBy:: auto] [EndedBy:: skip] [Planned:: 300] [Offset:: 330]`;
+  const PART = (start: string, end: string, tail: string) =>
+    `- 🍅 Focus [Task:: No Task] [Start:: 2026-10-05 ${start}] [End:: 2026-10-05 ${end}] [Scheduled:: 1500] [Pauses:: []] [Total:: 600] [Status:: finished] [Type:: focus] [Overtime:: 0] [Session:: s1111111bb] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 1] [Offset:: 0]${tail}`;
+  const DAY = [
+    FULL,
+    BREAK,
+    PART("13:00:00", "13:10:00", ""),
+    PART("13:10:00", "13:20:00", " [Dropped:: 90]"),
+    FOCUS.replace(/2026-10-02/g, "2026-10-05"),
+  ].join("\n");
+  const sessions = async () =>
+    (await setup({ ...FILES, [LOG("2026-10-05")]: `${DAY}\n` }).api.getDay("2026-10-05")).sessions;
+
+  it("gives every tail field under its own name, numbers as numbers", async () => {
+    const [full] = await sessions();
+    expect(full).toMatchObject({
+      sessionId: "s7k2m9qx4w",
+      startedBy: "auto",
+      endedBy: "planned-end",
+      planned: 1800,
+      cycle: 4,
+      offset: -240,
+      endOffset: -300,
+      slept: 120,
+      dropped: 600,
+      device: "Work laptop",
+    });
+    // The ten fields before it read as they always have.
+    expect(full).toMatchObject({ scheduled: 1500, total: 1500, overtime: 0, status: "finished" });
+  });
+
+  it("gives 0 for a missing Slept or Dropped, and the offset itself as endOffset with no change", async () => {
+    const [, rest, first, last] = await sessions();
+    expect(rest).toMatchObject({ slept: 0, dropped: 0, offset: 330, endOffset: 330, cycle: null });
+    expect(rest.device).toBeNull();
+    // One session, two lines: the ID shared, Dropped on the last alone.
+    expect([first, last].map((s) => [s.sessionId, s.dropped])).toEqual([
+      ["s1111111bb", 0],
+      ["s1111111bb", 90],
+    ]);
+    expect(first.endOffset).toBe(0);
+  });
+
+  it("gives null for every tail member of a line with no Session, and works none out", async () => {
+    const plain = (await sessions())[4];
+    expect(plain).toMatchObject(NO_TAIL);
+    expect(plain.total).toBe(1500);
+  });
+
+  it("adds only those ten members, so a member is never there by accident", async () => {
+    expect(Object.keys((await sessions())[0])).toEqual([
+      "kind",
+      "type",
+      "task",
+      "id",
+      "start",
+      "end",
+      "scheduled",
+      "total",
+      "overtime",
+      "pauses",
+      "status",
+      ...Object.keys(NO_TAIL),
+    ]);
   });
 });
 

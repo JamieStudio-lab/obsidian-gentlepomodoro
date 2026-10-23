@@ -111,8 +111,13 @@ export const Platform = { isDesktopApp: true, isMobile: false, isIosApp: false }
 export class Notice {
   /** Every message shown, in order, so a test can read what the user was told. */
   static shown: string[] = [];
-  constructor(message: string) {
+  /** Every message taken down by code (hide), in order: one shown "while it runs". */
+  static hidden: string[] = [];
+  constructor(private readonly message: string) {
     Notice.shown.push(message);
+  }
+  hide(): void {
+    Notice.hidden.push(this.message);
   }
 }
 
@@ -262,43 +267,210 @@ class ExtraButtonStub {
 export type TextComponent = TextStub;
 export type ButtonComponent = ButtonStub;
 
+/** What createEl takes, as Obsidian's DomElementInfo has it — the parts used. */
+export interface StubElInfo {
+  cls?: string;
+  text?: string;
+  attr?: Record<string, string>;
+}
+
 /** Just enough element for the rows that build their own DOM. */
 export interface StubEl {
+  tag: string;
   classes: string[];
   children: StubEl[];
+  /** The element this one was created in, or moved into. */
+  parent: StubEl | null;
   text: string;
+  attrs: Record<string, string>;
+  /** A form control's value (a textarea's text). */
+  value: string;
+  /** Set by select(): the whole value is selected. */
+  selected: boolean;
+  /** The components built on this element (ToggleComponent, ExtraButtonComponent). */
+  controls: unknown[];
   addClass: (cls: string) => void;
   toggleClass: (cls: string, on: boolean) => void;
   createDiv: (cls?: string) => StubEl;
+  createEl: (tag: string, info?: StubElInfo) => StubEl;
+  createSpan: (info?: StubElInfo) => StubEl;
   setText: (text: string) => void;
+  setAttr: (name: string, value: string) => void;
+  removeAttribute: (name: string) => void;
+  empty: () => void;
+  /** ChildNode.before / after: `node` moved next to this one, in its parent. */
+  before: (node: StubEl) => void;
+  after: (node: StubEl) => void;
+  focus: () => void;
+  select: () => void;
 }
 
-export function stubEl(cls = ""): StubEl {
+/**
+ * The element focus() was last called on, and how many times a move took
+ * focus away from the page; tests reset both.
+ */
+export const stubFocus: { el: StubEl | null; dropped: number } = { el: null, dropped: 0 };
+
+export function stubEl(cls = "", tag = "div"): StubEl {
+  const place = (node: StubEl, offset: 0 | 1) => {
+    const parent = el.parent;
+    if (parent === null) throw new Error("before/after on an element with no parent");
+    const from = parent.children.indexOf(node);
+    if (from !== -1) parent.children.splice(from, 1);
+    // As Chromium does: a node taken out of the page, even to be put straight
+    // back, drops the focus it holds (or holds inside it).
+    for (let f = stubFocus.el; f !== null; f = f.parent) {
+      if (f === node) {
+        stubFocus.el = null;
+        stubFocus.dropped++;
+        break;
+      }
+    }
+    parent.children.splice(parent.children.indexOf(el) + offset, 0, node);
+    node.parent = parent;
+  };
+  const adopt = (child: StubEl) => {
+    child.parent = el;
+    el.children.push(child);
+    return child;
+  };
+  const make = (tagName: string, info?: StubElInfo) => {
+    const child = adopt(stubEl(info?.cls ?? "", tagName));
+    if (info?.text !== undefined) child.text = info.text;
+    if (info?.attr) Object.assign(child.attrs, info.attr);
+    return child;
+  };
   const el: StubEl = {
+    tag,
     classes: cls === "" ? [] : cls.split(" "),
     children: [],
+    parent: null,
     text: "",
+    attrs: {},
+    value: "",
+    selected: false,
+    controls: [],
     addClass: (c: string) => el.classes.push(c),
     toggleClass: (c: string, on: boolean) => {
       const at = el.classes.indexOf(c);
       if (on && at === -1) el.classes.push(c);
       if (!on && at !== -1) el.classes.splice(at, 1);
     },
-    createDiv: (c = "") => {
-      const child = stubEl(c);
-      el.children.push(child);
-      return child;
-    },
+    createDiv: (c = "") => make("div", { cls: c }),
+    createEl: (tagName: string, info?: StubElInfo) => make(tagName, info),
+    createSpan: (info?: StubElInfo) => make("span", info),
     setText: (t: string) => {
       el.text = t;
+    },
+    setAttr: (name: string, value: string) => {
+      el.attrs[name] = value;
+    },
+    removeAttribute: (name: string) => {
+      delete el.attrs[name];
+    },
+    empty: () => {
+      el.children.length = 0;
+      el.controls.length = 0;
+      el.text = "";
+    },
+    before: (node: StubEl) => place(node, 0),
+    after: (node: StubEl) => place(node, 1),
+    focus: () => {
+      stubFocus.el = el;
+    },
+    select: () => {
+      el.selected = true;
     },
   };
   return el;
 }
 
+/**
+ * Obsidian's switch, built on its own into an element (the column list), as
+ * 1.14's app.js has it: setValue runs the change handler when the value
+ * moves, and a click does nothing while it is disabled.
+ */
+export class ToggleComponent {
+  readonly toggleEl: StubEl;
+  disabled = false;
+  tooltip = "";
+  private on = false;
+  private changeCallback: ((on: boolean) => void) | null = null;
+  constructor(containerEl: StubEl) {
+    this.toggleEl = containerEl.createDiv("checkbox-container");
+    containerEl.controls.push(this);
+  }
+  getValue(): boolean {
+    return this.on;
+  }
+  setValue(on: boolean): this {
+    if (this.on !== on) {
+      this.on = on;
+      this.changeCallback?.(on);
+    }
+    return this;
+  }
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    this.toggleEl.toggleClass("is-disabled", disabled);
+    return this;
+  }
+  setTooltip(tooltip: string): this {
+    this.tooltip = tooltip;
+    return this;
+  }
+  onChange(cb: (on: boolean) => void): this {
+    this.changeCallback = cb;
+    return this;
+  }
+  /** What a click does. */
+  click(): void {
+    if (!this.disabled) this.setValue(!this.on);
+  }
+}
+
+/**
+ * Obsidian's icon button, as 1.14's app.js has it: a focusable element
+ * (tabindex 0) that loses its tabindex while disabled, and a click that does
+ * nothing then.
+ */
+export class ExtraButtonComponent {
+  readonly extraSettingsEl: StubEl;
+  disabled = false;
+  icon = "";
+  private clickCallback: (() => void) | null = null;
+  constructor(containerEl: StubEl) {
+    this.extraSettingsEl = containerEl.createDiv("clickable-icon extra-setting-button");
+    this.extraSettingsEl.setAttr("tabindex", "0");
+    containerEl.controls.push(this);
+  }
+  setDisabled(disabled: boolean): this {
+    this.disabled = disabled;
+    this.extraSettingsEl.toggleClass("is-disabled", disabled);
+    if (disabled) this.extraSettingsEl.removeAttribute("tabindex");
+    else this.extraSettingsEl.setAttr("tabindex", "0");
+    return this;
+  }
+  setIcon(icon: string): this {
+    this.icon = icon;
+    return this;
+  }
+  setTooltip(tooltip: string): this {
+    this.extraSettingsEl.setAttr("aria-label", tooltip);
+    return this;
+  }
+  onClick(cb: () => void): this {
+    this.clickCallback = cb;
+    return this;
+  }
+  click(): void {
+    if (!this.disabled) this.clickCallback?.();
+  }
+}
+
 /** An element inside a modal's content; its own children's text is recorded too. */
 export interface ModalChild extends StubEl {
-  createEl: (tag: string, options?: { text?: string }) => ModalChild;
+  createEl: (tag: string, options?: StubElInfo) => ModalChild;
 }
 
 /** A modal's content: an element, the text written into it (paragraphs and
@@ -307,6 +479,8 @@ export interface ModalChild extends StubEl {
  *  rows and text, so a list a dialog fills and empties can be read back. */
 export interface ModalContent extends StubEl {
   paragraphs: string[];
+  /** Every element createEl made in it, in order: a textarea can be read back. */
+  elements: ModalChild[];
   settings: Setting[];
   createEl: (tag: string, options?: { text?: string }) => ModalChild;
   createDiv: (cls?: string) => ModalContent;
@@ -315,17 +489,21 @@ export interface ModalContent extends StubEl {
 }
 
 function modalContent(cls = ""): ModalContent {
-  const child = (options?: { text?: string }): ModalChild => {
+  const child = (tag: string, options?: StubElInfo): ModalChild => {
     if (options?.text !== undefined) content.paragraphs.push(options.text);
-    return Object.assign(stubEl(), {
-      createEl: (_tag: string, inner?: { text?: string }) => child(inner),
+    const el: ModalChild = Object.assign(stubEl(options?.cls ?? "", tag), {
+      createEl: (inner: string, info?: StubElInfo) => child(inner, info),
     });
+    if (options?.attr) Object.assign(el.attrs, options.attr);
+    content.elements.push(el);
+    return el;
   };
   const content: ModalContent = Object.assign(stubEl(cls), {
     paragraphs: [] as string[],
+    elements: [] as ModalChild[],
     settings: [] as Setting[],
     children: [] as ModalContent[],
-    createEl: (_tag: string, options?: { text?: string }) => child(options),
+    createEl: (tag: string, options?: StubElInfo) => child(tag, options),
     createDiv: (c = "") => {
       const div = modalContent(c);
       content.children.push(div);

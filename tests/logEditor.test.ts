@@ -22,6 +22,7 @@ import {
 } from "../logEditor";
 import { formatLogLine, parseFocusTotalSeconds, parseLogLine } from "../logLine";
 import type { MomentLike } from "../momentTypes";
+import { offsetAt } from "./logTail";
 
 /**
  * "Add a session" and "Fix a logged session" (0.6.9, C6), the parts that
@@ -46,8 +47,14 @@ const form = (set: Partial<SessionForm> = {}): SessionForm => ({
   ...set,
 });
 
+/** The Session ID an added session gets here (newSessionId's in the app). */
+const ADDED_ID = "sadded0001";
 const add = (set: Partial<SessionForm> = {}, nowMs = NOW) =>
-  sessionFromForm(form(set), { toMoment, nowMs });
+  sessionFromForm(form(set), { toMoment, nowMs, newSessionId: () => ADDED_ID });
+/** The tail an added session's line ends with (0.7.0): its own ID, "added"
+ *  both ways, its length as Planned and the Offset at its start. */
+const addedTail = (planned: number, start = new Date(2026, 9, 2, 9, 30)) =>
+  ` [Session:: ${ADDED_ID}] [StartedBy:: added] [EndedBy:: added] [Planned:: ${String(planned)}] [Offset:: ${offsetAt(start)}]`;
 
 /** The one line a form writes, or the reason it was refused. */
 const lineFor = (set: Partial<SessionForm> = {}, nowMs = NOW): string => {
@@ -84,22 +91,39 @@ describe("a new session from the dialog", () => {
         task: { name: "Write docs #task/develop/docs", path: "Projects/Docs.md", id: "abc123" },
       })
     ).toBe(
-      "- 🍅 Focus [Task:: [[Projects/Docs.md|Write docs #task/develop/docs]]] [ID:: abc123] [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:55:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]"
+      "- 🍅 Focus [Task:: [[Projects/Docs.md|Write docs #task/develop/docs]]] [ID:: abc123] [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:55:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]" +
+        addedTail(1500)
     );
   });
 
   it("writes no task as the log's own 'No Task', and a skipped focus as cancelled", () => {
     expect(lineFor({ status: "cancelled", minutes: "10" })).toBe(
-      "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:40:00] [Scheduled:: 600] [Pauses:: []] [Total:: 600] [Status:: cancelled] [Type:: focus] [Overtime:: 0]"
+      "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:40:00] [Scheduled:: 600] [Pauses:: []] [Total:: 600] [Status:: cancelled] [Type:: focus] [Overtime:: 0]" +
+        addedTail(600)
     );
   });
 
   it("writes a break as a Rest line of its kind, with no task", () => {
     const task = { name: "Write docs", path: "Projects/Docs.md" };
     expect(lineFor({ kind: "short-break", minutes: "5", task })).toBe(
-      "- ☕ Rest [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:35:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break]"
+      "- ☕ Rest [Start:: 2026-10-02 09:30:00] [End:: 2026-10-02 09:35:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break]" +
+        addedTail(300)
     );
     expect(lineFor({ kind: "long-break", minutes: "15" })).toContain("[Type:: long-break]");
+  });
+
+  it("gives it nothing only the timer can know: no Cycle, Slept, Dropped or Device (0.7.0)", () => {
+    const built = add();
+    if (!built.ok) throw new Error(built.message);
+    expect(built.session).toMatchObject({
+      sessionId: ADDED_ID,
+      startedBy: "added",
+      endedBy: "added",
+      plannedSeconds: 1500,
+    });
+    for (const key of ["cycle", "sleeps", "droppedSeconds", "device"]) {
+      expect(built.session, key).not.toHaveProperty(key);
+    }
   });
 
   it("takes a one-digit hour and spaces around the values", () => {
@@ -646,6 +670,108 @@ describe("a logged line, edited", () => {
       expect(parsed?.format, JSON.stringify(set)).toBe("v2");
       expect(parsed?.rest).toBe("");
     }
+  });
+});
+
+describe("a 0.7.0 line, fixed: its tail (choice 4)", () => {
+  // Made up. A Stop in overtime after one +5 — Scheduled 1500, Planned 1800,
+  // Overtime 180 past the plan — with a sleep inside its pause, and a device.
+  const STOPPED =
+    '- 🍅 Focus [Task:: [[Projects/Writing.md|Draft intro #task/research/paper]]] [ID:: abc123] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 11:13:00] [Scheduled:: 1500] [Pauses:: ["2026-10-02 10:10:00 - 2026-10-02 10:50:00"]] [Total:: 1980] [Status:: finished] [Type:: focus] [Overtime:: 180] [Session:: sd4f6g8j2k] [StartedBy:: auto] [EndedBy:: stop] [Planned:: 1800] [Cycle:: 3] [Offset:: -240] [Slept:: 2100] [Device:: Work laptop]';
+  // An End at planned end, the seven hours past it left out.
+  const PLANNED =
+    "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 07:00:00] [End:: 2026-10-02 07:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0] [Session:: sh2k4m6n8p] [StartedBy:: start] [EndedBy:: planned-end] [Planned:: 1500] [Cycle:: 1] [Offset:: -240] [Dropped:: 23700]";
+
+  const edit = (text: string, set: Partial<SessionForm>) => {
+    const line = loggedLines(text)[0];
+    const initial = formFromLine(line, toMoment);
+    if (!initial) throw new Error("unreadable");
+    const result = editedLine(
+      line,
+      initial,
+      { ...initial, ...set },
+      { toMoment, nowMs: NOW, dayStartHour: 0, fileDate: "2026-10-02" }
+    );
+    if (result.kind !== "ok") throw new Error(result.kind);
+    return result.text;
+  };
+  /** The tail after the ten fields, as [key, value] pairs, in line order. */
+  const tailOf = (text: string) => {
+    const fields = parseLogLine(text)?.fields ?? [];
+    const at = fields.findIndex((f) => f.key === "Session");
+    return at === -1 ? [] : fields.slice(at).map((f) => [f.key, f.value]);
+  };
+  const without = (text: string, ...keys: string[]) =>
+    tailOf(text).filter(([key]) => !keys.includes(key));
+
+  it("keeps the tail byte for byte, each field once, when only the task changes", () => {
+    const fixed = edit(STOPPED, { task: { name: "Outline", path: "Projects/Writing.md" } });
+    expect(fixed).toBe(
+      STOPPED.replace(
+        "[Task:: [[Projects/Writing.md|Draft intro #task/research/paper]]] [ID:: abc123]",
+        "[Task:: [[Projects/Writing.md|Outline]]]"
+      )
+    );
+    const keys = (parseLogLine(fixed)?.fields ?? []).map((f) => f.key);
+    expect(keys.length).toBe(new Set(keys).size);
+  });
+
+  it("drops Cycle when a focus is made skipped: only a counted focus has a place", () => {
+    const skipped = edit(STOPPED, { status: "cancelled" });
+    expect(skipped).toBe(
+      STOPPED.replace("[Status:: finished]", "[Status:: cancelled]").replace(" [Cycle:: 3]", "")
+    );
+    // Made finished again, it gets none back: nothing is added.
+    expect(edit(skipped, { status: "finished" })).toBe(STOPPED.replace(" [Cycle:: 3]", ""));
+  });
+
+  it("drops Cycle when a focus is made a break, and keeps the rest of the tail", () => {
+    const rest = edit(PLANNED, { kind: "short-break" });
+    expect(rest).toBe(
+      "- ☕ Rest [Start:: 2026-10-02 07:00:00] [End:: 2026-10-02 07:25:00] [Scheduled:: 1500] [Total:: 1500] [Type:: short-break] [Session:: sh2k4m6n8p] [StartedBy:: start] [EndedBy:: planned-end] [Planned:: 1500] [Offset:: -240] [Dropped:: 23700]"
+    );
+  });
+
+  it("counts new minutes' Overtime past Planned, not Scheduled, and drops Slept with the pauses", () => {
+    const longer = edit(STOPPED, { minutes: "40" });
+    const parsed = parseLogLine(longer);
+    expect(parsed?.values.get("Pauses")).toBe("[]");
+    expect(parsed?.values.get("Total")).toBe("2400");
+    // 2400 − Planned 1800; past Scheduled it would read 900.
+    expect(parsed?.values.get("Overtime")).toBe("600");
+    expect(tailOf(longer)).toEqual(without(STOPPED, "Slept", "Dropped"));
+    expect(parsed?.values.has("Slept")).toBe(false);
+    // And Dropped, which was time past a plan the line no longer runs to.
+    const shorter = edit(PLANNED, { minutes: "30" });
+    expect(parseLogLine(shorter)?.values.get("Overtime")).toBe("300");
+    expect(tailOf(shorter)).toEqual(without(PLANNED, "Dropped"));
+  });
+
+  it("drops Slept and Dropped when the start moves, and keeps Offset as written", () => {
+    const moved = edit(STOPPED, { time: "10:30" });
+    expect(parseLogLine(moved)?.values.get("Pauses")).toBe(
+      '["2026-10-02 10:40:00 - 2026-10-02 11:20:00"]'
+    );
+    expect(tailOf(moved)).toEqual(without(STOPPED, "Slept"));
+    expect(tailOf(edit(PLANNED, { time: "07:30" }))).toEqual(without(PLANNED, "Dropped"));
+  });
+
+  it("adds no tail to a line that has none, and counts its Overtime past Scheduled", () => {
+    const old = STOPPED.slice(0, STOPPED.indexOf(" [Session::"));
+    const fixed = edit(old, { minutes: "40" });
+    expect(tailOf(fixed)).toEqual([]);
+    expect(parseLogLine(fixed)?.values.get("Overtime")).toBe("900");
+    expect(edit(old, { status: "cancelled" })).toBe(
+      old.replace("[Status:: finished]", "[Status:: cancelled]")
+    );
+  });
+
+  it("drops nothing from a line without Session, whatever fields it was given by hand", () => {
+    const handmade = `${FOCUS_1000} [Slept:: 60] [Cycle:: 2]`;
+    expect(tailOf(handmade)).toEqual([]);
+    expect(edit(handmade, { status: "cancelled", minutes: "20" })).toMatch(
+      /\[Overtime:: 0\] \[Slept:: 60\] \[Cycle:: 2\]$/
+    );
   });
 });
 

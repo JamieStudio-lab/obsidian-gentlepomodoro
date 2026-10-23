@@ -22,10 +22,13 @@ import {
   logicalDate,
   logTaskId,
   loggedTotalSeconds,
+  newSessionId,
   parseFocusTotalSeconds,
   parseLogLine,
   replaceTaskValue,
+  type EndedBy,
   type SessionLog,
+  type StartedBy,
 } from "./logLine";
 import {
   REFRESH_SKIPS,
@@ -50,7 +53,7 @@ import {
   type SegmentLine,
 } from "./logSegments";
 import type { MomentFactory, MomentLike } from "./momentTypes";
-import type { DeviceStorage } from "./deviceStorage";
+import { readDeviceName, type DeviceStorage } from "./deviceStorage";
 import { frontmatterRowCount, recordLogGoal, resolveGoalMinutes } from "./logFrontmatter";
 import { dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
 import { plannedSessionEnd, type LongSessionQuestion } from "./sessionGaps";
@@ -93,6 +96,16 @@ export interface SessionEnd {
   endAt?: number;
   /** Active seconds past the planned end; 0 when left out. */
   overtimeSeconds?: number;
+  // What the line's tail says about the end (0.7.0, logLine.ts). Each is
+  // read by the engine at the instant the end is decided, never after an
+  // await, so it agrees with the Overtime above; left out, it is not written.
+  endedBy?: EndedBy;
+  /** The clock's plan in whole seconds, ±5 included (Planned). */
+  plannedSeconds?: number;
+  /** A counted focus's place in the long-break cycle (Cycle). */
+  cycle?: number;
+  /** Active seconds a planned end left out (Dropped). */
+  droppedSeconds?: number;
 }
 
 /**
@@ -249,7 +262,7 @@ export function resolveLogLink(app: App, linktext: string, sourcePath: string): 
 }
 
 /** Obsidian's Vault.create rejects with this when the path is taken. */
-function isAlreadyExists(e: unknown): boolean {
+export function isAlreadyExists(e: unknown): boolean {
   return e instanceof Error && /already exists/i.test(e.message);
 }
 
@@ -326,6 +339,12 @@ export class LogManager {
    * modes (F21): a session of the other mode still open here is a stray — a
    * Start that landed while the last end was still writing — and resuming it
    * logged a break as a 🍅 Focus line that counted toward the goal.
+   *
+   * A new session gets its Session ID here, once (0.7.0): every line it ends
+   * as shares it, and so does its recovery. `startedBy` is what opened it —
+   * Start, an auto-start, a Reset while running — and a resume keeps the
+   * first one's. An ID minted for a session that writes nothing (a Reset, one
+   * under a minute) is simply never seen.
    */
   startSession(
     mode: "focus" | "break",
@@ -333,7 +352,8 @@ export class LogManager {
     durationMinutes: number,
     taskPath?: string,
     taskId?: string,
-    breakType?: "short" | "long" | null
+    breakType?: "short" | "long" | null,
+    startedBy: StartedBy = "start"
   ) {
     if (this.currentSession && this.currentSession.mode !== mode) {
       logger.warn(`Discarded an open ${this.currentSession.mode} session to start a ${mode}`);
@@ -356,14 +376,27 @@ export class LogManager {
       pauses: [],
       status: "cancelled",
       breakType,
+      sessionId: newSessionId(),
+      startedBy,
+      sleeps: [],
     };
     this.saveOpenSession();
   }
 
-  /** Open a pause, at `at` (ms) — the last tick before a computer slept — or now. */
-  pauseSession(at?: number) {
-    if (!this.currentSession) return;
+  /**
+   * Open a pause, at `at` (ms) — the last tick before a computer slept — or
+   * now. The sleep check also passes `sleptUntil`, the tick that woke it: the
+   * span between is about how long the computer slept, kept for the line's
+   * Slept (0.7.0). The pause runs on past it, as any pause, until a resume or
+   * the end; only the sleep in it is Slept.
+   */
+  pauseSession(at?: number, sleptUntil?: number) {
+    const open = this.currentSession;
+    if (!open) return;
     this.currentPauseStart = at === undefined ? moment() : moment(at);
+    if (at !== undefined && sleptUntil !== undefined && sleptUntil > at) {
+      open.sleeps = [...(open.sleeps ?? []), [at, sleptUntil]];
+    }
     this.saveOpenSession();
   }
 
@@ -411,6 +444,13 @@ export class LogManager {
       plannedMs: this.device.plannedMs(),
       lastSeenMs: seenAt,
     };
+    // The tail as far as the start knows it, so a recovered line keeps the
+    // session's ID and what opened it, and Slept its sleeps.
+    if (open.sessionId !== undefined) {
+      saved.sessionId = open.sessionId;
+      saved.startedBy = open.startedBy;
+      saved.sleeps = (open.sleeps ?? []).map(([start, end]) => [start, end]);
+    }
     this.device.storage.save(OPEN_SESSION_KEY, saved);
     this.openSaved = true;
   }
@@ -572,7 +612,8 @@ export class LogManager {
    * auto-starts the next session ends this one at its planned end however late
    * the tick ran (F3). An open pause closes there, and pauses are cut to it.
    * `end.overtimeSeconds` is the active time past the planned end, the focus
-   * line's Overtime.
+   * line's Overtime; its other fields are the tail's (EndedBy, Planned, Cycle,
+   * Dropped), written as given.
    */
   async endSession(status: "finished" | "cancelled", end: SessionEnd = {}): Promise<boolean> {
     const open = this.currentSession;
@@ -594,6 +635,10 @@ export class LogManager {
         endTime,
         status,
         overtimeSeconds: end.overtimeSeconds ?? 0,
+        endedBy: end.endedBy,
+        plannedSeconds: end.plannedSeconds,
+        cycle: end.cycle,
+        droppedSeconds: end.droppedSeconds,
       };
 
       // The whole session is judged, a split one too: its segments are
@@ -1038,7 +1083,7 @@ export class LogManager {
    */
   async logUnfinished(
     saved: SavedSession,
-    end?: { endAt: number; overtimeSeconds: number }
+    end?: { endAt: number; overtimeSeconds: number; droppedSeconds?: number }
   ): Promise<void> {
     if (this.disposed || !this.keepsLog()) return;
     const { session, closed } = recoveredSession(saved, (ms) => moment(ms), end);
@@ -1167,8 +1212,11 @@ export class LogManager {
     const dateStr = logicalDate(session.startTime, this.plugin.settings.dayStartHour);
     const filePath = dailyLogPath(folderPath, dateStr);
 
-    // Format the lines via the pure helper (logLine.ts; tests/logManager.test.ts).
-    const lines = parts.map(formatLogLine);
+    // Format the lines via the pure helper (logLine.ts; tests/logManager.test.ts),
+    // each with this device's name as it is now (0.7.0's Device) — the timer's
+    // lines and a recovery's, never Add's, which writes its own.
+    const device = this.device ? readDeviceName(this.device.storage) : "";
+    const lines = parts.map((part) => formatLogLine({ ...part, device }));
 
     // Writes can fail on mobile (Obsidian Sync / iCloud conflicts, locked files).
     // Catch here so a write failure never breaks the timer state machine — the

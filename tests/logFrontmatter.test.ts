@@ -30,6 +30,7 @@ import type GentlePomoPlugin from "../main";
 import { memoryStorage } from "./memoryStorage";
 import { fakeVault, linkCache } from "./fakeVault";
 import { callbackBody, topLevelStatements } from "./sourceText";
+import { ZERO_SESSION_ID, offsetAt, zeroSessionIds } from "./logTail";
 
 /** The goal changes kept on a device, path → minutes, their times left out. */
 function keptMinutes(storage: DeviceStorage): Map<string, number> {
@@ -562,9 +563,11 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
     g.moment = realMoment;
     if (typeof g.window === "undefined") g.window = globalThis;
     vi.useFakeTimers({ toFake: ["Date"] });
+    zeroSessionIds();
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
     (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
   });
 
@@ -614,8 +617,10 @@ describe("LogManager records today's goal in today's file (real moment)", () => 
     at(2, 10, 25);
     await lm.endSession("finished");
   }
+  // With the tail 0.7.0 writes on every line LogManager writes.
   const LINE =
-    "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]";
+    "- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0] " +
+    `[Session:: ${ZERO_SESSION_ID}] [StartedBy:: start] [Offset:: ${offsetAt(new Date(2026, 9, 2, 10, 0))}]`;
 
   it("starts a new day's file with the day's goal, in the same write as its first line", async () => {
     const { created, lm } = setup();

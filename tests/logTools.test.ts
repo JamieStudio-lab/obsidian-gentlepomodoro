@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import moment from "moment";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -27,6 +27,7 @@ import type { SessionFormAnswer, SessionFormOptions } from "../sessionModals";
 import { DEFAULT_SETTINGS } from "../constants";
 import type { GentlePomoSettings } from "../types";
 import { fakeVault, type FakeVault } from "./fakeVault";
+import { ZERO_SESSION_ID, offsetAt, zeroSessionIds } from "./logTail";
 
 /**
  * The daily log's commands (0.6.9): Open today's log (F56), Check log and
@@ -198,6 +199,9 @@ function harness(
       h.forms.push(options);
       return Promise.resolve(h.formAnswers.shift() ?? null);
     },
+    // Export's own (0.7.0): tests/logExport.test.ts drives it.
+    readDays: () => Promise.reject(new Error("no read API here")),
+    saveSettings: () => Promise.resolve(),
     ...extra,
   });
   return h;
@@ -278,6 +282,25 @@ describe("Check log", () => {
     expect(warnings.join("\n")).toContain(`Check log: "${LOG("2026-10-02")}"\n  line 2: Starts at`);
     expect(warnings.join("\n")).toContain(
       '🆔 abc123 is on more than one task line in "Projects/A.md", and not on exactly one open one'
+    );
+  });
+
+  it("points out a 0.7.0 line a 0.6.9 Fix left stale, line by line", async () => {
+    // Fixed on a 0.6.9 device: skipped → finished, and its pause shortened.
+    const stale = V2_FOCUS.replace(
+      "[Pauses:: []] [Total:: 1500]",
+      '[Pauses:: ["2026-10-02 10:05:00 - 2026-10-02 10:06:00"]] [Total:: 1440]'
+    ).concat(
+      " [Session:: s7k2m9qx4w] [StartedBy:: start] [EndedBy:: skip] [Planned:: 1500] [Offset:: 120] [Slept:: 600]"
+    );
+    const h = harness({ [LOG("2026-10-02")]: `${stale}\n` });
+    await h.tools.check();
+    expect(h.vault.writes).toEqual([]);
+    expect(Notice.shown[0]).toContain(
+      "Worth a look: 1 Slept value(s) longer than their line's pauses."
+    );
+    expect(warnings.join("\n")).toContain(
+      `Check log: "${LOG("2026-10-02")}"\n  line 1: Slept is 600 s, but its pauses add up to 60 s.`
     );
   });
 
@@ -772,9 +795,22 @@ describe("the log tools' wording", () => {
   });
 
   it("names every kind of finding Check counts, and only those found", () => {
-    const anomalies = { total: 6, overlap: 1, long: 2, endBeforeStart: 1, idNames: 3 };
+    const anomalies = {
+      total: 6,
+      overlap: 1,
+      long: 2,
+      endBeforeStart: 1,
+      idNames: 3,
+      slept: 4,
+      cycle: 5,
+    };
     expect(checkLogMessage(summary({ anomalies, renames: 2, unreadableFiles: 1 }))).toBe(
-      "Gentle pomodoro: checked 3 log file(s) and changed nothing. 2 file name(s) use other digits and can be renamed. Worth a look: 6 Total(s) that don't match their start, end and pauses, 1 overlapping session(s), 2 session(s) longer than 12 hours, 1 session(s) that end before they start, 3 task ID(s) logged under different names. Left as they are: 1 file(s) that couldn't be opened. Details are in the developer console."
+      "Gentle pomodoro: checked 3 log file(s) and changed nothing. 2 file name(s) use other digits and can be renamed. Worth a look: 6 Total(s) that don't match their start, end and pauses, 1 overlapping session(s), 2 session(s) longer than 12 hours, 1 session(s) that end before they start, 3 task ID(s) logged under different names, 4 Slept value(s) longer than their line's pauses, 5 Cycle(s) on a break or a skipped session. Left as they are: 1 file(s) that couldn't be opened. Details are in the developer console."
+    );
+    // The 0.7.0 kinds alone.
+    const tail = { ...countAnomalies([]), cycle: 1 };
+    expect(checkLogMessage(summary({ anomalies: tail }))).toBe(
+      "Gentle pomodoro: checked 3 log file(s) and changed nothing. Worth a look: 1 Cycle(s) on a break or a skipped session. Details are in the developer console."
     );
   });
 
@@ -877,6 +913,17 @@ describe("the log tools' wording", () => {
 });
 
 describe("Add a session (C6)", () => {
+  // Each added line has its own Session ID (0.7.0); fixed here to compare lines.
+  let ids: ReturnType<typeof zeroSessionIds>;
+  beforeEach(() => {
+    ids = zeroSessionIds();
+  });
+  afterEach(() => {
+    ids.mockRestore();
+  });
+  const tail = (planned: number) =>
+    ` [Session:: ${ZERO_SESSION_ID}] [StartedBy:: added] [EndedBy:: added] [Planned:: ${String(planned)}] [Offset:: ${offsetAt(new Date(2026, 9, 2, 11, 0))}]`;
+
   const filled = (set: Partial<SessionForm>): SessionFormAnswer => ({
     action: "save",
     form: {
@@ -896,7 +943,7 @@ describe("Add a session (C6)", () => {
     await h.tools.addSession();
     expect(h.vault.writes).toEqual([LOG("2026-10-02")]);
     expect(h.vault.contents[LOG("2026-10-02")]).toBe(
-      `# Today\n${V2_FOCUS}\n- 🍅 Focus [Task:: [[Docs.md|Write docs]]] [ID:: d0c5] [Start:: 2026-10-02 11:00:00] [End:: 2026-10-02 11:30:00] [Scheduled:: 1800] [Pauses:: []] [Total:: 1800] [Status:: finished] [Type:: focus] [Overtime:: 0]\n${V2_LATER}\n`
+      `# Today\n${V2_FOCUS}\n- 🍅 Focus [Task:: [[Docs.md|Write docs]]] [ID:: d0c5] [Start:: 2026-10-02 11:00:00] [End:: 2026-10-02 11:30:00] [Scheduled:: 1800] [Pauses:: []] [Total:: 1800] [Status:: finished] [Type:: focus] [Overtime:: 0]${tail(1800)}\n${V2_LATER}\n`
     );
     expect(h.changed).toBe(1);
     expect(Notice.shown).toEqual(["Gentle pomodoro: session added to the log for 2026-10-02."]);
@@ -909,7 +956,7 @@ describe("Add a session (C6)", () => {
     expect(h.created).toEqual([
       {
         path: LOG("2026-10-02"),
-        data: "- ☕ Rest [Start:: 2026-10-02 11:00:00] [End:: 2026-10-02 11:05:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break]\n",
+        data: `- ☕ Rest [Start:: 2026-10-02 11:00:00] [End:: 2026-10-02 11:05:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break]${tail(300)}\n`,
       },
     ]);
   });
@@ -1244,6 +1291,7 @@ describe("the plugin's wiring", () => {
     ["convert-old-log-lines", "Convert old log lines", "await this.convertLog();"],
     ["add-session", "Add a session", "await this.addSession();"],
     ["fix-logged-session", "Fix a logged session", "this.fixSession();"],
+    ["export-sessions", "Export sessions", "await this.exportSessions();"],
     [
       "refresh-logs-by-task-id",
       "Refresh log task names by ID",
@@ -1264,12 +1312,19 @@ describe("the plugin's wiring", () => {
       "refreshLogTaskNames(): Promise<void> { return this.logManager.refreshLoggedTaskNamesById(); }",
       "addSession(): Promise<void> { return this.logTools.addSession(); }",
       "fixSession(): void { this.logTools.fixSession(); }",
+      "exportSessions(): Promise<void> { return this.logTools.exportSessions(); }",
     ]) {
       expect(main).toContain(line);
     }
     // Asks with the real dialog, and repaints today's total after a write.
     expect(main).toContain("confirm: (options) => confirmAction(this.app, options),");
     expect(main).toContain("logChanged: () => { this.logFolderChanged(); },");
+    // Export reads through the plugin's own read API, and remembers its
+    // choices in data.json (0.7.0).
+    expect(main).toContain(
+      'readDays: (from, to) => this.api ? this.api.getDays(from, to) : Promise.reject(new Error("Gentle Pomodoro is not loaded.")),'
+    );
+    expect(main).toContain("saveSettings: () => this.saveSettings(),");
   });
 
   it("opens today's log from the status bar's menu", () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // Imported from the mock by path, not through the "obsidian" alias: the alias
@@ -6,18 +6,37 @@ import { resolve } from "node:path";
 // package (which has no recording stubs). Vitest points the alias at this very
 // file, so it is the same module instance the tab constructs.
 import {
+  ExtraButtonComponent,
   FuzzySuggestModal,
+  Modal,
   Notice,
   Platform,
   Setting,
+  ToggleComponent,
+  stubFocus,
+  type ModalContent,
   type RecordedComponent,
+  type StubEl,
 } from "../__mocks__/obsidian";
 import {
   BREAK_END_CUE_NAME,
   CHECK_LOG_NAME,
   CONVERT_LOG_NAME,
+  COLUMN_LAST_ON_TOOLTIP,
   CUE_MUTED_NOTICE,
   DAY_START_NAME,
+  DEVICE_NAME_NAME,
+  EXPORT_SESSIONS_NAME,
+  QUERY_CODE_SUMMARY,
+  QUERY_COLUMNS_NAME,
+  QUERY_COPIES,
+  QUERY_GROUP_HEADING,
+  QUERY_KINDS_NAME,
+  QUERY_NO_FOLDER_PREVIEW,
+  QUERY_RANGE_NAME,
+  QUERY_SKIPPED_NAME,
+  QUERY_SORT_NAME,
+  deviceNameNote,
   FOCUS_END_CUE_NAME,
   GentlePomoSettingTab,
   LONG_SESSION_NAME,
@@ -42,6 +61,23 @@ import { DEFAULT_THEME } from "../themes";
 import { TimerEngine } from "../TimerEngine";
 import type { GentlePomoSettings } from "../types";
 import { fakeVault } from "./fakeVault";
+import { parseRules, stripComments } from "./cssRules";
+import { DEVICE_NAME_KEY } from "../deviceStorage";
+import { NO_LOG_FOLDER_NOTICE } from "../logTools";
+import {
+  QUERY_COLUMNS,
+  QUERY_KINDS,
+  QUERY_PRESETS,
+  QUERY_RANGES,
+  QUERY_SORTS,
+  formatQueryColumns,
+  presetColumns,
+  queryCode,
+  queryOptions,
+  resolveQueryColumns,
+  sessionsTable,
+  sessionsTableJs,
+} from "../logQueries";
 import {
   LOG_FOLDER_DESC,
   LOG_FOLDER_NAME,
@@ -50,6 +86,7 @@ import {
   logFolderLeftMessage,
   logFolderProblem,
   logFolderProblemNote,
+  logFolderProblemNotice,
   logFolderRootMessage,
   resolveLogFolderInput,
 } from "../logFolder";
@@ -148,6 +185,10 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
       calls.push({ method: "refreshLogTaskNames", args: [] });
       return Promise.resolve();
     },
+    exportSessions: () => {
+      calls.push({ method: "exportSessions", args: [] });
+      return Promise.resolve();
+    },
     app_workspace: null,
   };
   // The tab reaches app.workspace only through applySettingsToOpenViews. Give
@@ -156,7 +197,15 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
   // be invisible to every assertion below — and that call is the only thing
   // keeping an open gear panel from showing a stale toggle. applySettingsToOpenViews
   // duck-types on `"applySettings" in view`, so this stub is enough.
+  // This device's storage (0.7.0, the device name row): Obsidian's own
+  // local storage, as 1.8.7 has it, so deviceStorage(app) finds it.
+  const local = new Map<string, unknown>();
   (plugin as unknown as { app: unknown }).app = {
+    loadLocalStorage: (key: string) => local.get(key) ?? null,
+    saveLocalStorage: (key: string, value: unknown) => {
+      if (value === null || value === undefined) local.delete(key);
+      else local.set(key, value);
+    },
     // The log folder row looks folders up as it is typed.
     vault: fakeVault(files),
     workspace: {
@@ -171,7 +220,7 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
   );
   const el = container();
   (tab as unknown as { containerEl: unknown }).containerEl = el;
-  return { tab, el, calls, settings };
+  return { tab, el, calls, settings, local };
 }
 
 /** Flatten the 1.13 definitions to (heading, name, desc) in render order. */
@@ -279,6 +328,8 @@ describe("the two settings paths cannot drift", () => {
       "Long break",
       // 0.6.9: the folder, the log's three choices and its four commands.
       "Daily log",
+      // 0.7.0: code to paste, right after the log it reads.
+      "Dataview tables",
       "Daily focus goal",
       "Task picker",
       "Task integration",
@@ -290,8 +341,10 @@ describe("the two settings paths cannot drift", () => {
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
       // The moment groups' outcome lines are text, not controls — they carry no
-      // component by design and identify themselves with their own class.
+      // component by design and identify themselves with their own class. So
+      // is the Dataview tables' code preview (0.7.0).
       if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
+      if (setting.settingEl.classes.includes("gp-setting-code")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
     }
   });
@@ -2182,10 +2235,14 @@ describe("the Daily log group", () => {
       DAY_START_NAME,
       TASK_SWITCH_NAME,
       LONG_SESSION_NAME,
+      // 0.7.0: with the choices that decide what a line holds, above the buttons.
+      DEVICE_NAME_NAME,
       OPEN_LOG_NAME,
       CHECK_LOG_NAME,
       CONVERT_LOG_NAME,
       REFRESH_NAMES_NAME,
+      // 0.7.0: with the log's other one-off buttons.
+      EXPORT_SESSIONS_NAME,
     ]);
     // Moved, not copied: the folder was under "Display & behavior".
     expect(declarativeRows(ctx.tab).filter((r) => r.name === LOG_FOLDER_NAME)).toHaveLength(1);
@@ -2207,7 +2264,7 @@ describe("the Daily log group", () => {
     Platform.isDesktopApp = false;
     try {
       const rows = declarativeRows(makeTab().tab).filter((r) => r.heading === "Daily log");
-      expect(rows).toHaveLength(8);
+      expect(rows).toHaveLength(10);
     } finally {
       Platform.isDesktopApp = true;
     }
@@ -2295,6 +2352,7 @@ describe("the Daily log group", () => {
     [CHECK_LOG_NAME, "Check", "checkLog"],
     [CONVERT_LOG_NAME, "Convert", "convertLog"],
     [REFRESH_NAMES_NAME, "Refresh", "refreshLogTaskNames"],
+    [EXPORT_SESSIONS_NAME, "Export", "exportSessions"],
   ] as const)('renders "%s" as a button that runs its command', (name, label, method) => {
     ctx.tab.display();
     const button = componentOf(ctx.el, name);
@@ -2309,7 +2367,13 @@ describe("the Daily log group", () => {
     const group = ctx.tab.getSettingDefinitions().find((g) => {
       return (g as { heading?: string }).heading === "Daily log";
     }) as unknown as { items: { name: string; action?: () => void }[] };
-    for (const name of [OPEN_LOG_NAME, CHECK_LOG_NAME, CONVERT_LOG_NAME, REFRESH_NAMES_NAME]) {
+    for (const name of [
+      OPEN_LOG_NAME,
+      CHECK_LOG_NAME,
+      CONVERT_LOG_NAME,
+      REFRESH_NAMES_NAME,
+      EXPORT_SESSIONS_NAME,
+    ]) {
       group.items.find((item) => item.name === name)?.action?.();
     }
     expect(ctx.calls.map((x) => x.method)).toEqual([
@@ -2317,6 +2381,497 @@ describe("the Daily log group", () => {
       "checkLog",
       "convertLog",
       "refreshLogTaskNames",
+      "exportSessions",
     ]);
+  });
+});
+
+/* ===== 0.7.0: this device's name, and the Dataview tables ===== */
+
+describe("this device's name", () => {
+  it("shows the name this device keeps, and keeps what is typed there — never in data.json", async () => {
+    const c = makeTab();
+    c.local.set(DEVICE_NAME_KEY, "Work laptop");
+    c.tab.display();
+    const box = componentOf(c.el, DEVICE_NAME_NAME);
+    expect(box.kind).toBe("text");
+    expect(box.value).toBe("Work laptop");
+    expect(box.placeholder).toBe("Example: Work laptop");
+    box.change?.("  Phone  " as never);
+    await flushTab();
+    expect(c.local.get(DEVICE_NAME_KEY)).toBe("Phone");
+    // Nothing of the plugin's settings moved, and nothing was saved.
+    expect(c.calls).toEqual([]);
+    expect(JSON.stringify(c.settings)).not.toContain("Phone");
+    box.change?.("" as never);
+    expect(c.local.has(DEVICE_NAME_KEY)).toBe(false);
+  });
+
+  it("says under the row how a line will write it, when cleaning changes it", () => {
+    const c = makeTab();
+    c.tab.display();
+    const row = rowFor(c.el, DEVICE_NAME_NAME);
+    const note = (row.infoEl as StubEl).children.find((x) => x.classes.includes("gp-setting-note"));
+    if (!note) throw new Error("no note");
+    expect(note.classes).toContain("gp-setting-note-info");
+    expect(note.text).toBe("");
+    componentOf(c.el, DEVICE_NAME_NAME).change?.("Desk [home] #2" as never);
+    expect(note.text).toBe('Written as "Desk (home) 2".');
+    componentOf(c.el, DEVICE_NAME_NAME).change?.("Desk" as never);
+    expect(note.text).toBe("");
+  });
+
+  it("names the written form only when it differs, and says when nothing is left", () => {
+    expect(deviceNameNote("")).toBe("");
+    expect(deviceNameNote("  Work laptop  ")).toBe("");
+    expect(deviceNameNote("a::b")).toBe('Written as "a:b".');
+    expect(deviceNameNote("x".repeat(45))).toBe(`Written as "${"x".repeat(40)}".`);
+    expect(deviceNameNote("🍅 # ☕")).toMatch(/no Device is written/);
+  });
+});
+
+describe("the Dataview tables group", () => {
+  /** The column list as drawn: each row's name, switch and arrows, in order. */
+  function columnList(el: { settings: Setting[] }) {
+    const row = rowFor(el, QUERY_COLUMNS_NAME);
+    const list = (row.settingEl as StubEl).children.find((x) =>
+      x.classes.includes("gp-column-list")
+    );
+    if (!list) throw new Error("no column list");
+    return {
+      list,
+      items: list.children.map((item) => ({
+        el: item,
+        name: item.children.find((x) => x.tag === "span")?.text ?? "",
+        toggle: item.controls[0] as ToggleComponent,
+        up: item.controls[1] as ExtraButtonComponent,
+        down: item.controls[2] as ExtraButtonComponent,
+      })),
+    };
+  }
+  const labels = (ids: readonly string[]) =>
+    ids.map((id) => QUERY_COLUMNS.find((c) => c.id === id)?.label);
+  const codeEl = (el: { settings: Setting[] }) => {
+    const row = el.settings.find((s) => s.settingEl.classes.includes("gp-setting-code"));
+    const details = (row?.settingEl as StubEl | undefined)?.children.find(
+      (x) => x.tag === "details"
+    );
+    if (!details) throw new Error("no code row");
+    return {
+      summary: details.children.find((x) => x.tag === "summary")?.text,
+      pre: details.children.find((x) => x.tag === "pre") as StubEl,
+    };
+  };
+  const LOGS = { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" };
+  const withFolder = (over: Partial<GentlePomoSettings> = {}) =>
+    makeTab({ logFolderPath: "Pomodoro_logs", ...over }, LOGS);
+  const sessionsCode = (settings: GentlePomoSettings, folder = "Pomodoro_logs") =>
+    sessionsTable(queryOptions(settings, folder));
+
+  beforeEach(() => {
+    Notice.shown.length = 0;
+    Modal.opened = null;
+    stubFocus.el = null;
+    stubFocus.dropped = 0;
+  });
+
+  it("sits right after Daily log, in the order the design has it", () => {
+    const rows = declarativeRows(ctx.tab);
+    const headings = [...new Set(rows.map((r) => r.heading))];
+    expect(headings[headings.indexOf("Daily log") + 1]).toBe(QUERY_GROUP_HEADING);
+    expect(rows.filter((r) => r.heading === QUERY_GROUP_HEADING).map((r) => r.name)).toEqual([
+      QUERY_COLUMNS_NAME,
+      QUERY_RANGE_NAME,
+      QUERY_KINDS_NAME,
+      QUERY_SKIPPED_NAME,
+      QUERY_SORT_NAME,
+      "",
+      ...QUERY_COPIES.map((c) => c.name),
+    ]);
+    for (const row of rows.filter((r) => r.heading === QUERY_GROUP_HEADING)) {
+      expect(row.desc.split(/(?<=\.) /).length, row.name).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("is on every device", () => {
+    Platform.isDesktopApp = false;
+    try {
+      const rows = declarativeRows(makeTab().tab).filter((r) => r.heading === QUERY_GROUP_HEADING);
+      expect(rows).toHaveLength(10);
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("makes Columns and the code render rows on both paths, and the Copy rows findable by search", () => {
+    const group = ctx.tab.getSettingDefinitions().find((g) => {
+      return (g as { heading?: string }).heading === QUERY_GROUP_HEADING;
+    }) as unknown as { items: Record<string, unknown>[] };
+    expect(typeof group.items[0].render).toBe("function");
+    expect(typeof group.items[5].render).toBe("function");
+    for (const item of group.items.slice(6)) {
+      expect(typeof item.action, String(item.name)).toBe("function");
+      expect(item.aliases, String(item.name)).toEqual(["dataview", "query", "copy"]);
+    }
+    // Only the Copy rows carry aliases.
+    expect(group.items.slice(0, 6).some((item) => "aliases" in item)).toBe(false);
+  });
+
+  it("lists every column in the stored order, with Simple and Detailed beside them", () => {
+    ctx.tab.display();
+    const { items } = columnList(ctx.el);
+    const stored = resolveQueryColumns(DEFAULT_SETTINGS.queryColumns);
+    expect(items.map((i) => i.name)).toEqual(labels(stored.map((c) => c.id)));
+    expect(items.map((i) => i.toggle.getValue())).toEqual(stored.map((c) => c.on));
+    expect(items.filter((i) => i.toggle.getValue()).map((i) => i.name)).toEqual(
+      labels(QUERY_PRESETS.simple)
+    );
+    const row = rowFor(ctx.el, QUERY_COLUMNS_NAME);
+    expect(row.settingEl.classes).toContain("gp-setting-wide");
+    expect(row.components.map((b) => b.buttonText)).toEqual(["Simple", "Detailed"]);
+    expect(items[0].up.icon).toBe("arrow-up");
+    expect(items[0].down.extraSettingsEl.attrs["aria-label"]).toBe("Move Date down");
+  });
+
+  it("the default in data.json is Simple, written as the setting stores it", () => {
+    expect(DEFAULT_SETTINGS.queryColumns).toBe(formatQueryColumns(presetColumns("simple")));
+  });
+
+  it("switching a column writes the setting at once, in place, and repaints the code", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const end = columnList(c.el).items.find((i) => i.name === "End");
+    end?.toggle.click();
+    await flushTab();
+    expect(c.settings.queryColumns.split(",")).toContain("end");
+    expect(resolveQueryColumns(c.settings.queryColumns).map((x) => x.id)).toEqual(
+      resolveQueryColumns(DEFAULT_SETTINGS.queryColumns).map((x) => x.id)
+    );
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(codeEl(c.el).pre.text).toContain('AS "End"');
+  });
+
+  it("never lets the last column on be switched off", async () => {
+    const c = withFolder({ queryColumns: "task" });
+    c.tab.display();
+    const { items } = columnList(c.el);
+    const task = items.find((i) => i.name === "Task");
+    if (!task) throw new Error("no Task");
+    expect(task.toggle.getValue()).toBe(true);
+    expect(task.toggle.disabled).toBe(true);
+    expect(task.toggle.tooltip).toBe(COLUMN_LAST_ON_TOOLTIP);
+    expect(items.filter((i) => i.toggle.disabled)).toHaveLength(1);
+    // A switch that is reached anyway is put back, and nothing is written.
+    task.toggle.setValue(false);
+    await flushTab();
+    expect(task.toggle.getValue()).toBe(true);
+    expect(c.settings.queryColumns).toBe("task");
+    expect(c.calls).toEqual([]);
+    // A second column on frees it.
+    items.find((i) => i.name === "Date")?.toggle.click();
+    await flushTab();
+    expect(task.toggle.disabled).toBe(false);
+    expect(task.toggle.tooltip).toBe("Show Task");
+  });
+
+  it("disables ↑ on the first column and ↓ on the last", () => {
+    ctx.tab.display();
+    const { items } = columnList(ctx.el);
+    expect(items.map((i) => i.up.disabled)).toEqual(items.map((_i, n) => n === 0));
+    expect(items.map((i) => i.down.disabled)).toEqual(items.map((_i, n) => n === items.length - 1));
+  });
+
+  it("moves a column with ↑ / ↓, the nodes kept, the focus on the pressed arrow", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { list, items } = columnList(c.el);
+    const task = items[2];
+    expect(task.name).toBe("Task");
+    stubFocus.el = task.up.extraSettingsEl;
+    task.up.click();
+    await flushTab();
+    // Swapped with Start; the setting, the drawn order and the code all agree.
+    const order = ["date", "task", "start", "minutes", "status"];
+    expect(c.settings.queryColumns.startsWith(`${order.join(",")},-end`)).toBe(true);
+    expect(list.children.map((x) => x.children.find((y) => y.tag === "span")?.text)).toEqual(
+      labels(resolveQueryColumns(c.settings.queryColumns).map((x) => x.id))
+    );
+    // The same node, not a rebuilt one, and still focused on its ↑ — never
+    // having lost it: the neighbour moved, not the row holding the focus,
+    // so no blur and focus again for a screen reader to announce.
+    expect(list.children[1]).toBe(task.el);
+    expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+    expect(stubFocus.dropped).toBe(0);
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    // ↑ again: it reaches the top, its ↑ goes off, and focus moves to its ↓.
+    task.up.click();
+    await flushTab();
+    expect(list.children[0]).toBe(task.el);
+    expect(task.up.disabled).toBe(true);
+    expect(task.up.extraSettingsEl.attrs.tabindex).toBeUndefined();
+    expect(stubFocus.el).toBe(task.down.extraSettingsEl);
+    // And down to the end: ↓ goes off there, and focus moves to its ↑.
+    for (let n = 0; n < items.length - 1; n++) task.down.click();
+    await flushTab();
+    expect(list.children[items.length - 1]).toBe(task.el);
+    expect(task.down.disabled).toBe(true);
+    expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+    expect(stubFocus.dropped).toBe(0);
+    expect(resolveQueryColumns(c.settings.queryColumns).at(-1)).toEqual({ id: "task", on: true });
+  });
+
+  it("moves a column that is off too, so it shows where it was put once switched on", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const end = columnList(c.el).items.find((i) => i.name === "End");
+    if (!end) throw new Error("no End");
+    // From sixth to second.
+    for (let n = 0; n < 4; n++) end.up.click();
+    await flushTab();
+    end.toggle.click();
+    await flushTab();
+    expect(c.settings.queryColumns.split(",").slice(0, 2)).toEqual(["date", "end"]);
+  });
+
+  it.each([
+    ["Simple", "simple"],
+    ["Detailed", "detailed"],
+  ] as const)("%s rewrites the whole list to its preset", async (label, preset) => {
+    const c = withFolder({ queryColumns: "offset,-date" });
+    c.tab.display();
+    rowFor(c.el, QUERY_COLUMNS_NAME)
+      .components.find((b) => b.buttonText === label)
+      ?.click?.();
+    await flushTab();
+    expect(c.settings.queryColumns).toBe(formatQueryColumns(presetColumns(preset)));
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual(
+      labels(presetColumns(preset).map((x) => x.id))
+    );
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+  });
+
+  it.each([
+    [QUERY_RANGE_NAME, "queryRange", QUERY_RANGES, "week", "month"],
+    [QUERY_KINDS_NAME, "queryKinds", QUERY_KINDS, "focus", "all"],
+    [QUERY_SORT_NAME, "querySort", QUERY_SORTS, "newest", "oldest"],
+  ] as const)(
+    "%s offers its choices, shows a value it does not know as the default, and stores what is picked",
+    async (name, key, choices, fallback, pick) => {
+      const c = withFolder({ [key]: "fortnight" } as Partial<GentlePomoSettings>);
+      c.tab.display();
+      const row = componentOf(c.el, name);
+      expect(row.options).toEqual(choices.map((o) => ({ value: o.value, label: o.label })));
+      expect(row.value).toBe(fallback);
+      row.change?.(pick as never);
+      await flushTab();
+      expect(c.settings[key]).toBe(pick);
+      expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+      expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+      // A value no row offers is stored as the default, never kept.
+      await c.tab.setControlValue(key, "fortnight");
+      expect(c.settings[key]).toBe(fallback);
+    }
+  );
+
+  it("includes skipped focus by default, and the switch repaints the code", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const row = componentOf(c.el, QUERY_SKIPPED_NAME);
+    expect(row.value).toBe(true);
+    expect(codeEl(c.el).pre.text).not.toContain('"cancelled"');
+    row.change?.(false as never);
+    await flushTab();
+    expect(c.settings.querySkipped).toBe(false);
+    expect(codeEl(c.el).pre.text).toContain('s.Status != "cancelled"');
+  });
+
+  it("shows the sessions table's code under a closed Show the code, kept in step", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const code = codeEl(c.el);
+    expect(code.summary).toBe(QUERY_CODE_SUMMARY);
+    expect(code.pre.classes).toContain("gp-query-code-text");
+    expect(code.pre.text).toBe(sessionsCode(c.settings));
+    // The day's start changes the code's "today".
+    await c.tab.setControlValue("dayStartHour", "4");
+    expect(code.pre.text).toContain("date(now).hour < 4");
+    expect(code.pre.text).toBe(sessionsCode(c.settings));
+  });
+
+  it("says where the code would be when no folder is set, and follows the folder row", async () => {
+    const c = makeTab({}, LOGS);
+    c.tab.display();
+    expect(codeEl(c.el).pre.text).toBe(QUERY_NO_FOLDER_PREVIEW);
+    componentOf(c.el, LOG_FOLDER_NAME).change?.("Pomodoro_logs" as never);
+    await flushTab();
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+  });
+
+  it("keeps a 1.13 render live when the render before it is torn down after it", async () => {
+    const c = withFolder();
+    const group = c.tab.getSettingDefinitions().find((g) => {
+      return (g as { heading?: string }).heading === QUERY_GROUP_HEADING;
+    }) as unknown as { items: { render?: (s: Setting) => (() => void) | void }[] };
+    const render = (n: number) => {
+      const setting = new Setting();
+      const teardown = group.items[n].render?.(setting);
+      return { setting, teardown: teardown ?? (() => undefined) };
+    };
+    const oldCode = render(5);
+    const newCode = render(5);
+    const oldColumns = render(0);
+    const newColumns = render(0);
+    oldCode.teardown();
+    oldColumns.teardown();
+    await c.tab.setControlValue("querySort", "oldest");
+    const pre = (newCode.setting.settingEl as StubEl).children[0].children.find(
+      (x) => x.tag === "pre"
+    );
+    expect(pre?.text).toContain("SORT s.Start ASC");
+    const list = (newColumns.setting.settingEl as StubEl).children.find((x) =>
+      x.classes.includes("gp-column-list")
+    );
+    (list?.children[0].controls[2] as ExtraButtonComponent).click();
+    await flushTab();
+    expect(c.settings.queryColumns.startsWith("start,date,")).toBe(true);
+    expect(list?.children[1].children.find((x) => x.tag === "span")?.text).toBe("Date");
+  });
+
+  describe("the Copy buttons", () => {
+    let written: string[];
+    let answer: Promise<void>;
+    let clipboard: { writeText: (text: string) => Promise<void> } | undefined;
+    beforeEach(() => {
+      written = [];
+      answer = Promise.resolve();
+      clipboard = {
+        writeText: (text: string) => {
+          written.push(text);
+          return answer;
+        },
+      };
+      vi.stubGlobal("window", {
+        navigator: {
+          get clipboard() {
+            return clipboard;
+          },
+        },
+      });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const fallbackText = () => {
+      const content = (Modal.opened as unknown as { contentEl: ModalContent } | null)?.contentEl;
+      return content?.elements.find((x) => x.tag === "textarea");
+    };
+
+    it.each(QUERY_COPIES.map((copy) => [copy.name, copy] as const))(
+      "%s puts its code on the clipboard inside the click, then says so",
+      async (name, copy) => {
+        const c = withFolder({ queryRange: "today", dayStartHour: 3 });
+        c.tab.display();
+        const button = componentOf(c.el, name);
+        expect(button.kind).toBe("button");
+        expect(button.buttonText).toBe("Copy");
+        button.click?.();
+        // Before anything is awaited: iOS gives the clipboard only to the gesture.
+        expect(written).toEqual([queryCode(copy.kind, queryOptions(c.settings, "Pomodoro_logs"))]);
+        expect(Notice.shown).toEqual([]);
+        await flushTab();
+        expect(Notice.shown).toEqual([copy.copied]);
+        expect(Modal.opened).toBeNull();
+        // Copying writes nothing of the plugin's.
+        expect(c.calls).toEqual([]);
+      }
+    );
+
+    it("runs the same copy from the 1.13 definitions", () => {
+      const c = withFolder();
+      const group = c.tab.getSettingDefinitions().find((g) => {
+        return (g as { heading?: string }).heading === QUERY_GROUP_HEADING;
+      }) as unknown as { items: { name: string; action?: (el: unknown, i: number) => void }[] };
+      group.items.find((i) => i.name === QUERY_COPIES[2].name)?.action?.({}, 0);
+      expect(written).toEqual([queryCode("totals", queryOptions(c.settings, "Pomodoro_logs"))]);
+    });
+
+    it("shows the code selected in a dialog when the clipboard refuses", async () => {
+      answer = Promise.reject(new Error("denied"));
+      const c = withFolder();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      await flushTab();
+      expect(Notice.shown).toEqual([]);
+      const area = fallbackText();
+      expect(area?.value).toBe(sessionsCode(c.settings));
+      expect(area?.selected).toBe(true);
+      expect(area?.attrs.readonly).toBe("");
+      expect(area?.classes).toContain("gp-copy-fallback");
+    });
+
+    it("shows the dialog straight away where there is no clipboard", () => {
+      clipboard = undefined;
+      const c = withFolder();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[1].name).click?.();
+      expect(fallbackText()?.value).toBe(
+        sessionsTableJs(queryOptions(c.settings, "Pomodoro_logs"))
+      );
+    });
+
+    it("copies nothing without a log folder, and says why", async () => {
+      const c = makeTab();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      await flushTab();
+      expect(written).toEqual([]);
+      expect(Modal.opened).toBeNull();
+      expect(Notice.shown).toEqual([NO_LOG_FOLDER_NOTICE]);
+    });
+
+    it("copies nothing for the vault's top level, and says why", async () => {
+      const c = makeTab({ logFolderPath: "/" });
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[3].name).click?.();
+      await flushTab();
+      expect(written).toEqual([]);
+      expect(Notice.shown).toEqual([logFolderProblemNotice("/", { kind: "root" })]);
+    });
+
+    it("fills in the vault's own spelling of the folder, as Dataview's index needs", () => {
+      const c = makeTab({ logFolderPath: " pomodoro_LOGS " }, LOGS);
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      expect(written[0]).toContain('FROM "Pomodoro_logs"');
+      expect(codeEl(c.el).pre.text).toContain('FROM "Pomodoro_logs"');
+    });
+  });
+});
+
+describe("the Dataview tables group's stylesheet", () => {
+  const rules = parseRules(
+    stripComments(readFileSync(resolve(__dirname, "..", "styles.css"), "utf8"))
+  );
+  const bodyOf = (sel: string): string => {
+    const found = rules.filter((r) => r.sel === sel && r.context.length === 0);
+    expect(found, sel).toHaveLength(1);
+    return found[0].body.replace(/\s+/g, " ");
+  };
+
+  it("holds the column list and the code to the row's width when a narrow pane stacks the row", () => {
+    // Below 400px of settings pane app.css makes a setting row a column with
+    // align-items: flex-start, so a child is as wide as its content: the code
+    // came out 1488px wide in a 320px pane, and the whole tab scrolled
+    // sideways (headless Chrome under 1.14.5's app.css).
+    for (const sel of [".gp-column-list", ".gp-query-code"]) {
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*align-self: stretch;/);
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*max-width: 100%;/);
+    }
+    // And the code scrolls inside itself instead.
+    expect(bodyOf(".gp-query-code-text")).toMatch(/(^|;)\s*overflow: auto;/);
   });
 });

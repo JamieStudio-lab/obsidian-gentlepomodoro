@@ -85,6 +85,25 @@ export interface GentlePomoSettings {
   // sessionGaps.ts's resolveLongSessionPromptHours.
   longSessionPromptHours: number;
 
+  // The "Dataview tables" group (0.7.0): what the Copy buttons' code shows.
+  // Flat scalars, each read through its resolver in logQueries.ts — a plain
+  // string survives coerceToDefaults whatever it holds. `queryColumns` is
+  // every column in the user's order, "-" before one that is off
+  // (formatQueryColumns); never an array, which the shallow merge of the
+  // defaults would share by reference.
+  queryColumns: string;
+  queryRange: string;
+  queryKinds: string;
+  querySkipped: boolean;
+  querySort: string;
+
+  // Export sessions (0.7.0): the format and folder last exported to, written
+  // once a file is, and offered by the dialog next time. Read through
+  // logExport.ts's resolveExportFormat and exportFolderSetting; "" is the
+  // default folder, "Pomodoro exports".
+  exportFormat: string;
+  exportFolder: string;
+
   // Show the task picker (button + dropdown) in the timer panel.
   showTaskSelector: boolean;
 

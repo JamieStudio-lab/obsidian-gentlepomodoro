@@ -29,6 +29,7 @@ import {
   logicalDate,
   parseFocusTotalSeconds,
   parseLogLine,
+  readLogTail,
   readLogTime,
   resolveDayStartHour,
   type ParsedLogLine,
@@ -76,6 +77,33 @@ export interface LogApiSession {
   pauses: LogApiPause[] | null;
   /** "finished" or "cancelled" on focus lines; null on Rest lines. */
   status: string | null;
+
+  // 0.7.0: the line's tail (readLogTail). Every one of these is null on a line
+  // with no Session — written before 0.7.0, by Convert, or by a 0.6.9 device —
+  // and none is worked out from the other fields: an older Stop has no endedBy.
+  /** The session's ID, shared by every line a split session writes. */
+  sessionId: string | null;
+  /** "start", "auto", "reset" or "added". */
+  startedBy: string | null;
+  /** "time-up", "stop", "planned-end", "skip", "recovered",
+   *  "recovered-planned-end" or "added". */
+  endedBy: string | null;
+  /** The plan in seconds when it ended, ±5 included: what overtime is past. */
+  planned: number | null;
+  /** Its place in the long-break cycle, 1 to "Focus sessions before a long
+   *  break"; null too on a session that moved no count. */
+  cycle: number | null;
+  /** Minutes east of UTC when it started, and when it ended: they differ only
+   *  across a clock change. */
+  offset: number | null;
+  endOffset: number | null;
+  /** Seconds — about how long the computer slept, inside the pauses — and
+   *  seconds of focus a planned end left out (total + dropped is what the
+   *  timer measured). 0 when the line has the tail and not the field. */
+  slept: number | null;
+  dropped: number | null;
+  /** The name typed for the device that logged it; null when none was. */
+  device: string | null;
 }
 
 /** One day of the log. */
@@ -132,14 +160,16 @@ export interface LogApiHost {
 
 const DATE_REGEX = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-interface CalendarDate {
+/** A YYYY-MM-DD date as numbers. Exported for Export sessions (logExport.ts), which checks
+ *  and counts its dates by the same rule. */
+export interface CalendarDate {
   year: number;
   month: number;
   day: number;
 }
 
 /** `value` as a calendar date, or null when it is not YYYY-MM-DD (0-9) naming one. */
-function calendarDate(value: unknown): CalendarDate | null {
+export function calendarDate(value: unknown): CalendarDate | null {
   if (typeof value !== "string") return null;
   const match = DATE_REGEX.exec(value);
   // readLogTime checks the calendar: 2026-02-30 is no date.
@@ -168,16 +198,17 @@ const pad = (n: number, width = 2) => String(n).padStart(width, "0");
 
 /** The date `offset` days after `date` — counted in calendar days, so a
  *  night the clocks change is one day like any other. */
-function dateAfter(date: CalendarDate, offset: number): CalendarDate {
+export function dateAfter(date: CalendarDate, offset: number): CalendarDate {
   const d = new Date(Date.UTC(date.year, date.month - 1, date.day + offset));
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
 }
 
 /** YYYY-MM-DD. */
-const dateText = (date: CalendarDate) => `${pad(date.year, 4)}-${pad(date.month)}-${pad(date.day)}`;
+export const dateText = (date: CalendarDate) =>
+  `${pad(date.year, 4)}-${pad(date.month)}-${pad(date.day)}`;
 
 /** Days from `a` to `b`, negative when `b` is earlier. */
-function daysBetween(a: CalendarDate, b: CalendarDate): number {
+export function daysBetween(a: CalendarDate, b: CalendarDate): number {
   const ms = Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day);
   return Math.round(ms / 86_400_000);
 }
@@ -196,6 +227,7 @@ function apiSession(
   resolveLink: LogApiHost["resolveLink"]
 ): LogApiSession {
   const task = parsed.task;
+  const tail = readLogTail(parsed);
   return {
     kind: parsed.kind,
     type: parsed.values.get("Type") ?? null,
@@ -213,6 +245,18 @@ function apiSession(
     overtime: logSeconds(parsed, "Overtime"),
     pauses: readPauses(parsed),
     status: parsed.values.get("Status") ?? null,
+    // Named one by one, never spread: a field LogTail gains is not in the API
+    // until it is added here, under its own name.
+    sessionId: tail?.sessionId ?? null,
+    startedBy: tail?.startedBy ?? null,
+    endedBy: tail?.endedBy ?? null,
+    planned: tail?.planned ?? null,
+    cycle: tail?.cycle ?? null,
+    offset: tail?.offset ?? null,
+    endOffset: tail?.endOffset ?? null,
+    slept: tail?.slept ?? null,
+    dropped: tail?.dropped ?? null,
+    device: tail?.device ?? null,
   };
 }
 
