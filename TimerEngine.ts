@@ -5,7 +5,7 @@ import type { MomentFactory } from "./momentTypes";
 import type { SessionEnd } from "./logManager";
 import { NO_TASK_LABEL, ONE_MINUTE_MS, SLEEP_GAP_MS } from "./constants";
 import { logger } from "./logger";
-import { cyclePosition, logicalDate } from "./logLine";
+import { cycleLength, cyclePosition, logicalDate } from "./logLine";
 import {
   isLongSession,
   plannedSessionEnd,
@@ -800,14 +800,17 @@ export class TimerEngine {
       this.plugin.settings.sessionCounterDate === sessionDay
         ? this.plugin.settings.sessionsSinceLongBreak + 1
         : 1;
-    const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
+    // Its place in the cycle: the line's Cycle, and below what decides the
+    // long break, so the two cannot disagree even on a hand-edited data.json
+    // (a fractional length or count, or one below 1).
+    const cycle = cyclePosition(counter, this.plugin.settings.longBreakEvery);
     const focus = this.state.mode === "focus";
 
     // Log the finished session. False when it was under a minute (F59): no
     // line, and below, no 🍅 and no step of the long-break count.
     const counted = await this.plugin.logManager.endSession("finished", {
       ...end,
-      cycle: focus ? cyclePosition(counter, longBreakEvery) : undefined,
+      cycle: focus ? cycle : undefined,
     });
 
     // For focus sessions: optionally increment the task's pomodoro count
@@ -831,9 +834,8 @@ export class TimerEngine {
         this.plugin.settings.sessionCounterDate = sessionDay;
         await this.plugin.saveSettings();
 
-        // The same length the line's Cycle was placed by: a long break follows
-        // the focus whose Cycle is longBreakEvery.
-        isLongBreak = counter % longBreakEvery === 0;
+        // A long break follows the focus whose Cycle is the cycle's last place.
+        isLongBreak = cycle === cycleLength(this.plugin.settings.longBreakEvery);
       }
       this.switchMode("break", autoStartNext, isLongBreak);
     } else {

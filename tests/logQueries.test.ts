@@ -30,7 +30,9 @@ import { dailyLogPath } from "../logFolder";
  * The Dataview tables' code, as text (logQueries.ts). What the code DOES is
  * tests/dataviewEngine.test.ts's: it runs every variant in Dataview's own
  * engine. This holds what the settings make of their stored values, and the
- * text itself, letter for letter, as the 0.7.0 preview ran it.
+ * text itself, letter for letter: the 0.7.0 preview's, with review round 2's
+ * three changes (a line Convert wrote with no Type, a file Dataview cannot
+ * date, a session counted once in time by task), each run in the engine.
  */
 
 const SIMPLE_WEEK: QueryOptions = {
@@ -210,16 +212,16 @@ describe("the fence", () => {
   });
 });
 
-describe("the code, letter for letter as the preview ran it", () => {
+describe("the code, letter for letter", () => {
   it("the sessions table", () => {
     expect(sessionsTable(SIMPLE_WEEK)).toBe(
       [
         "```dataview",
         'TABLE WITHOUT ID file.day AS "Date", substring(s.Start, 11, 16) AS "Start", s.Task AS "Task", choice(s.Total != null, round(default(s.Total, 0) / 60), null) AS "Minutes", s.Status AS "Status"',
         'FROM "Pomodoro_logs"',
-        'WHERE endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
+        'WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
         "FLATTEN file.lists AS s",
-        'WHERE s.Type = "focus"',
+        'WHERE (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus")))',
         "SORT s.Start DESC",
         "```",
       ].join("\n")
@@ -231,6 +233,7 @@ describe("the code, letter for letter as the preview ran it", () => {
       [
         "```dataviewjs",
         'const folder = "Pomodoro_logs";',
+        'const isFocus = (s) => s.Type === "focus" || (s.Type == null && s.Total != null && s.text.startsWith("🍅 Focus"));',
         'const from = dv.date("today").minus({ days: 6 });',
         "const to = null;",
         "const rows = [];",
@@ -239,7 +242,7 @@ describe("the code, letter for letter as the preview ran it", () => {
         "  if (from && p.file.day < from) continue;",
         "  if (to && p.file.day > to) continue;",
         "  for (const s of p.file.lists) {",
-        '    if (s.Type !== "focus") continue;',
+        "    if (!isFocus(s)) continue;",
         "    rows.push({ p, s });",
         "  }",
         "}",
@@ -265,9 +268,9 @@ describe("the code, letter for letter as the preview ran it", () => {
         "```dataview",
         'TABLE WITHOUT ID key AS "Day", round(sum(rows.s.Total) / 60) AS "Focus minutes", length(filter(rows.s, (x) => !x.Session)) + length(unique(filter(rows.s.Session, (x) => x))) AS "Sessions", max(rows.goal_minutes) AS "Goal"',
         'FROM "Pomodoro_logs"',
-        'WHERE endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
+        'WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
         "FLATTEN file.lists AS s",
-        'WHERE s.Type = "focus" AND s.Status != "cancelled"',
+        'WHERE (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus"))) AND s.Status != "cancelled"',
         "GROUP BY file.day",
         "SORT key DESC",
         "```",
@@ -279,11 +282,11 @@ describe("the code, letter for letter as the preview ran it", () => {
     expect(timeByTask(SIMPLE_WEEK)).toBe(
       [
         "```dataview",
-        'TABLE WITHOUT ID key AS "Task", round(sum(rows.s.Total) / 60) AS "Minutes", length(rows) AS "Sessions"',
+        'TABLE WITHOUT ID key AS "Task", round(sum(rows.s.Total) / 60) AS "Minutes", length(filter(rows.s, (x) => !x.Session)) + length(unique(filter(rows.s.Session, (x) => x))) AS "Sessions"',
         'FROM "Pomodoro_logs"',
-        'WHERE endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
+        'WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND file.day >= date(today) - dur(6 days)',
         "FLATTEN file.lists AS s",
-        'WHERE s.Type = "focus" AND s.Status != "cancelled"',
+        'WHERE (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus"))) AND s.Status != "cancelled"',
         "GROUP BY string(s.Task)",
         "SORT sum(rows.s.Total) DESC",
         "```",

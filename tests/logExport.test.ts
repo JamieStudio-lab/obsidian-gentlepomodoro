@@ -17,6 +17,7 @@ import {
   NO_LOG_FILES_YET,
   checkExportDates,
   checkExportFolder,
+  EXPORT_FOLDER_CHARACTERS,
   checkExportForm,
   csvText,
   exportChunks,
@@ -485,6 +486,42 @@ describe("the folder", () => {
     expect(checkExportFolder("exports", both)).toEqual({ kind: "ok", path: "exports" });
     expect(checkExportFolder("Exports", both)).toEqual({ kind: "ok", path: "Exports" });
     expect(checkExportFolder("EXPORTS", both)).toEqual({ kind: "ok", path: "Exports" });
+  });
+
+  it("refuses a new folder whose name Obsidian would refuse to create, on any device", () => {
+    for (const input of [
+      "Reviews: Q4",
+      "Q4?",
+      "a<b",
+      "a>b",
+      "x|y",
+      'say "hi"',
+      "stars*",
+      "Exports.",
+      "Exports /2026",
+      "Reports/Focus/Week: 1",
+      // Every folder to be made is judged, not only the first.
+      "New exports/Week: 1",
+      "New exports/2026/Q4?",
+    ]) {
+      expect(check(input), input).toEqual({ kind: "problem", message: EXPORT_FOLDER_CHARACTERS });
+    }
+    // A backslash is a slash to normalizePath, so it makes two folders.
+    expect(check("Reports\\Weekly")).toEqual({ kind: "ok", path: "Reports/Weekly" });
+  });
+
+  it("takes a folder that exists whatever its name, as it is never made again", () => {
+    const odd = fakeVault({}, ["Q4? review", "Q4? review/Done."]);
+    expect(checkExportFolder("q4? review", odd)).toEqual({ kind: "ok", path: "Q4? review" });
+    expect(checkExportFolder("Q4? review/done.", odd)).toEqual({
+      kind: "ok",
+      path: "Q4? review/Done.",
+    });
+    // A new folder inside one is still judged.
+    expect(checkExportFolder("Q4? review/a:b", odd)).toEqual({
+      kind: "problem",
+      message: EXPORT_FOLDER_CHARACTERS,
+    });
   });
 
   it("refuses the vault's top level", () => {
@@ -1049,6 +1086,46 @@ describe("Export sessions", () => {
     expect(Notice.shown).toEqual([EXPORT_BUSY_NOTICE]);
   });
 
+  it("is free again however an export ended: a failed write, nothing to export, a refused folder", async () => {
+    const h = harness();
+    const endings: [string, () => void][] = [
+      [
+        "a create that failed",
+        () => {
+          h.createError = new Error("EACCES: permission denied");
+        },
+      ],
+      [
+        "a range with no session",
+        () => {
+          h.createError = null;
+          h.answer = answering({ range: "custom", from: "2024-01-01", to: "2024-12-31" });
+        },
+      ],
+      [
+        "a folder refused after the dialog",
+        () => {
+          h.answer = answering({ folder: ".obsidian/exports" });
+        },
+      ],
+      [
+        "an export that wrote its file",
+        () => {
+          h.answer = answering({});
+        },
+      ],
+    ];
+    for (const [name, set] of endings) {
+      set();
+      const dialogs = h.dialogs.length;
+      Notice.shown.length = 0;
+      await h.tools.exportSessions();
+      expect(h.dialogs.length, name).toBe(dialogs + 1);
+      expect(Notice.shown, name).not.toContain(EXPORT_BUSY_NOTICE);
+    }
+    expect(h.created).toHaveLength(1);
+  });
+
   it("checks the dialog's values against the vault as it is then", async () => {
     const h = harness();
     h.answer = () => null;
@@ -1058,15 +1135,20 @@ describe("Export sessions", () => {
     expect(check({ ...form, folder: ".obsidian/exports" })).toBe(EXPORT_FOLDER_HIDDEN);
     expect(check({ ...form, folder: "" })).toBe(EXPORT_FOLDER_TOP_LEVEL);
     expect(check({ ...form, from: "2026-02-30" })).toMatch(/^From must be a date/);
+    // Everything, with log files there, is a range like any other.
+    expect(check({ ...form, range: "all" })).toBeNull();
     // A log file written while the dialog is open counts.
     h.vault.add(LOG("2026-10-24"), `${FOCUS}\n`);
     expect(h.dialogs[0].datesFor("all")).toEqual({ from: "2026-10-20", to: "2026-10-24" });
     const empty = harness({});
     empty.answer = () => null;
     await empty.tools.exportSessions();
-    expect(empty.dialogs[0].check({ ...empty.dialogs[0].form, range: "all" })).toBe(
-      NO_LOG_FILES_YET
-    );
+    const emptyCheck = empty.dialogs[0].check;
+    const all = { ...empty.dialogs[0].form, range: "all" as const };
+    expect(emptyCheck(all)).toBe(NO_LOG_FILES_YET);
+    // The check reads the vault at each call, not as it was when the dialog opened.
+    empty.vault.add(LOG("2026-10-24"), `${FOCUS}\n`);
+    expect(emptyCheck(all)).toBeNull();
   });
 
   it("refuses the vault's config folder by the name the vault gives it", async () => {

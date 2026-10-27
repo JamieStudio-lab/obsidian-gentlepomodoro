@@ -23,13 +23,18 @@
  *   `string(s.Task)` keeps two tasks of one note apart.
  * - `contains()` matches substrings inside strings, so the kinds are written
  *   out as ORs.
+ * - A line Convert rewrote from a log older than the Type field has no Type
+ *   (nothing is invented on it), and `s.Type = "focus"` alone leaves it out
+ *   of every table while the daily goal counts it: such a line is known by
+ *   the marker it begins with, and by a Total — a line from before 0.6.9
+ *   begins with the marker too, but Dataview reads no field from it.
  *
  * A log line's keys are read here as `s.Key`, never written as the line
  * writes them: only logLine.ts may (tests/logLine.test.ts).
  */
 import { normalizePath } from "obsidian";
 import type { LogFolderProblem } from "./logFolder";
-import { LOG_FILE_SUFFIX, resolveDayStartHour } from "./logLine";
+import { LOG_FILE_SUFFIX, LOG_FOCUS_MARKER, LOG_REST_MARKER, resolveDayStartHour } from "./logLine";
 import type { GentlePomoSettings } from "./types";
 
 /** A whole-minutes cell from a seconds field that older lines may not have. */
@@ -368,7 +373,12 @@ export function fenced(lang: string, body: string): string {
 
 /** What a daily log's file name ends with, as Dataview gives `file.name` (no .md). */
 const LOG_NAME_SUFFIX = LOG_FILE_SUFFIX.replace(/\.md$/, "");
-const FILE_GUARD = `endswith(file.name, ${dqlString(LOG_NAME_SUFFIX)})`;
+/**
+ * A daily log: its name ends like one, and Dataview dates it. A log-named
+ * file Dataview cannot date (a name in other digits) has no day to show,
+ * and DataviewJS's `!p.file.day` leaves it out too, so the two agree.
+ */
+const FILE_GUARD = `file.day AND endswith(file.name, ${dqlString(LOG_NAME_SUFFIX)})`;
 
 /**
  * The plugin's "today" in DQL. With "Day starts at" a session at 01:30 is the
@@ -406,21 +416,29 @@ function rangeDql(o: QueryOptions): string | null {
   }
 }
 
+/** A focus line, a line with no Type known by its marker (see the top). */
+const FOCUS_DQL = `(s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, ${dqlString(LOG_FOCUS_MARKER)})))`;
+const BREAK_DQL = `(s.Type = "short-break" OR s.Type = "long-break" OR (s.Type = null AND s.Total != null AND startswith(s.text, ${dqlString(LOG_REST_MARKER)})))`;
+
 const KINDS_DQL: Record<QueryKinds, string> = {
-  focus: 's.Type = "focus"',
-  all: '(s.Type = "focus" OR s.Type = "short-break" OR s.Type = "long-break")',
+  focus: FOCUS_DQL,
+  all: `(${FOCUS_DQL} OR ${BREAK_DQL})`,
 };
+
+/** The same two tests in DataviewJS, as the code's first lines define them. */
+const FOCUS_JS = `const isFocus = (s) => s.Type === "focus" || (s.Type == null && s.Total != null && s.text.startsWith(${JSON.stringify(LOG_FOCUS_MARKER)}));`;
+const BREAK_JS = `const isBreak = (s) => s.Type === "short-break" || s.Type === "long-break" || (s.Type == null && s.Total != null && s.text.startsWith(${JSON.stringify(LOG_REST_MARKER)}));`;
 
 /** The Task cell: a break's reads "Break" or "Long break", never the ☕ marker. */
 function taskDql(o: QueryOptions): string {
   return o.kinds === "all"
-    ? 'choice(s.Type = "focus", s.Task, choice(s.Type = "long-break", "Long break", "Break"))'
+    ? `choice(${FOCUS_DQL}, s.Task, choice(s.Type = "long-break", "Long break", "Break"))`
     : "s.Task";
 }
 
 function taskJs(o: QueryOptions): string {
   return o.kinds === "all"
-    ? 's.Type === "focus" ? s.Task ?? null : s.Type === "long-break" ? "Long break" : "Break"'
+    ? 'isFocus(s) ? s.Task ?? null : s.Type === "long-break" ? "Long break" : "Break"'
     : "s.Task ?? null";
 }
 
@@ -486,12 +504,16 @@ export function dailyTotals(o: QueryOptions): string {
   );
 }
 
-/** Focus minutes and sessions for each task (its name, tags kept), most first. */
+/**
+ * Focus minutes and sessions for each task (its name, tags kept), most
+ * first. Sessions are counted as the daily totals count them: a split
+ * session that comes back to a task has two lines for it under one Session.
+ */
 export function timeByTask(o: QueryOptions): string {
   return fenced(
     "dataview",
     [
-      'TABLE WITHOUT ID key AS "Task", round(sum(rows.s.Total) / 60) AS "Minutes", length(rows) AS "Sessions"',
+      'TABLE WITHOUT ID key AS "Task", round(sum(rows.s.Total) / 60) AS "Minutes", length(filter(rows.s, (x) => !x.Session)) + length(unique(filter(rows.s.Session, (x) => x))) AS "Sessions"',
       `FROM ${dqlString(o.folder)}`,
       fileWhereDql(o),
       "FLATTEN file.lists AS s",
@@ -511,7 +533,8 @@ export function timeByTask(o: QueryOptions): string {
  */
 export function sessionsTableJs(o: QueryOptions): string {
   const today = todayJs(o);
-  const lines: string[] = [`const folder = ${JSON.stringify(dqlEscape(o.folder))};`];
+  const lines: string[] = [`const folder = ${JSON.stringify(dqlEscape(o.folder))};`, FOCUS_JS];
+  if (o.kinds === "all") lines.push(BREAK_JS);
   switch (o.range) {
     case "note":
       lines.push("const from = dv.current().file.day;", "const to = from;");
@@ -543,8 +566,8 @@ export function sessionsTableJs(o: QueryOptions): string {
   lines.push("  for (const s of p.file.lists) {");
   lines.push(
     o.kinds === "all"
-      ? '    if (s.Type !== "focus" && s.Type !== "short-break" && s.Type !== "long-break") continue;'
-      : '    if (s.Type !== "focus") continue;'
+      ? "    if (!isFocus(s) && !isBreak(s)) continue;"
+      : "    if (!isFocus(s)) continue;"
   );
   if (!o.skipped) lines.push('    if (s.Status === "cancelled") continue;');
   lines.push("    rows.push({ p, s });");

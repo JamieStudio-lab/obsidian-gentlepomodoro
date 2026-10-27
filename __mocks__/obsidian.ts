@@ -296,7 +296,11 @@ export interface StubEl {
   createSpan: (info?: StubElInfo) => StubEl;
   setText: (text: string) => void;
   setAttr: (name: string, value: string) => void;
+  getAttribute: (name: string) => string | null;
   removeAttribute: (name: string) => void;
+  /** Listeners added with addEventListener, by event type; pressKey runs them. */
+  listeners: Record<string, ((event: never) => void)[]>;
+  addEventListener: (type: string, listener: (event: never) => void) => void;
   empty: () => void;
   /** ChildNode.before / after: `node` moved next to this one, in its parent. */
   before: (node: StubEl) => void;
@@ -350,6 +354,10 @@ export function stubEl(cls = "", tag = "div"): StubEl {
     value: "",
     selected: false,
     controls: [],
+    listeners: {},
+    addEventListener: (type: string, listener: (event: never) => void) => {
+      (el.listeners[type] ??= []).push(listener);
+    },
     addClass: (c: string) => el.classes.push(c),
     toggleClass: (c: string, on: boolean) => {
       const at = el.classes.indexOf(c);
@@ -365,6 +373,7 @@ export function stubEl(cls = "", tag = "div"): StubEl {
     setAttr: (name: string, value: string) => {
       el.attrs[name] = value;
     },
+    getAttribute: (name: string) => el.attrs[name] ?? null,
     removeAttribute: (name: string) => {
       delete el.attrs[name];
     },
@@ -384,6 +393,24 @@ export function stubEl(cls = "", tag = "div"): StubEl {
   };
   return el;
 }
+
+/**
+ * A key pressed on an element: its keydown listeners run, as the browser
+ * would run them. Says whether one of them called preventDefault.
+ */
+export function pressKey(el: StubEl, key: string): boolean {
+  let prevented = false;
+  const event = { key, preventDefault: () => (prevented = true) };
+  for (const listener of el.listeners.keydown ?? []) listener(event as never);
+  return prevented;
+}
+
+/**
+ * Which Obsidian's ExtraButton the mock builds: 1.13's, a div with tabindex
+ * 0 that Enter and Space press (app.js, 1.13.7), or 1.7's, a bare div with a
+ * click listener only (app.js, 1.7.7) — minAppVersion is 1.7.2. Tests reset it.
+ */
+export const stubObsidian: { extraButton: "1.13" | "1.7" } = { extraButton: "1.13" };
 
 /**
  * Obsidian's switch, built on its own into an element (the column list), as
@@ -439,14 +466,23 @@ export class ExtraButtonComponent {
   disabled = false;
   icon = "";
   private clickCallback: (() => void) | null = null;
+  private readonly modern = stubObsidian.extraButton === "1.13";
   constructor(containerEl: StubEl) {
     this.extraSettingsEl = containerEl.createDiv("clickable-icon extra-setting-button");
-    this.extraSettingsEl.setAttr("tabindex", "0");
+    if (this.modern) {
+      this.extraSettingsEl.setAttr("tabindex", "0");
+      this.extraSettingsEl.addEventListener("keydown", (event: KeyboardEvent) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        this.click();
+      });
+    }
     containerEl.controls.push(this);
   }
   setDisabled(disabled: boolean): this {
     this.disabled = disabled;
     this.extraSettingsEl.toggleClass("is-disabled", disabled);
+    if (!this.modern) return this;
     if (disabled) this.extraSettingsEl.removeAttribute("tabindex");
     else this.extraSettingsEl.setAttr("tabindex", "0");
     return this;

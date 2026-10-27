@@ -181,6 +181,17 @@ export function checkExportDates(from: string, to: string): string | null {
 
 export const EXPORT_FOLDER_TOP_LEVEL = "Pick a folder inside the vault.";
 export const EXPORT_FOLDER_HIDDEN = "Hidden folders aren't synced or listed. Pick another folder.";
+export const EXPORT_FOLDER_CHARACTERS =
+  "A new folder's name can't contain : * ? \" < > | or end with a dot or a space.";
+
+/**
+ * What Obsidian refuses in a name it creates on SOME device (app.js, 1.13.7:
+ * ":" everywhere, `* " < > | ?` on Windows, `* ? < > "` on Android, and on
+ * Windows a name ending in "." or " "), refused on every device: a vault
+ * syncs, and a folder made on a Mac is made again on each device it syncs to.
+ * ("\" and "/" are already the path's slashes, normalizePath's.)
+ */
+const UNCREATABLE_NAME = /[:*?"<>|]|[. ]$/u;
 
 export type ExportFolderCheck = { kind: "ok"; path: string } | { kind: "problem"; message: string };
 
@@ -193,7 +204,10 @@ export type ExportFolderCheck = { kind: "ok"; path: string } | { kind: "problem"
  * Refused: the vault's top level (the file would sit among the notes), and a
  * folder with any part starting with "." — the config folder among them —
  * which Obsidian neither syncs nor lists, so the file could not be found from
- * inside it. And a path a file is in the way of.
+ * inside it. A path a file is in the way of. And a folder still to be made
+ * whose name Obsidian would refuse to create: said here, in the dialog, which
+ * stays open, rather than as a failed export after it closed. A folder that
+ * exists is never made again, so its name is not judged.
  */
 export function checkExportFolder(
   input: string,
@@ -212,10 +226,12 @@ export function checkExportFolder(
     return { kind: "problem", message: EXPORT_FOLDER_HIDDEN };
   }
   const nameOf = (item: { path: string }) => item.path.slice(item.path.lastIndexOf("/") + 1);
+  const uncreatable: ExportFolderCheck = { kind: "problem", message: EXPORT_FOLDER_CHARACTERS };
   const spelled: string[] = [];
   let at: TFolder | null = vault.getRoot();
   for (const name of names) {
     if (at === null) {
+      if (UNCREATABLE_NAME.test(name)) return uncreatable;
       spelled.push(name);
       continue;
     }
@@ -236,6 +252,7 @@ export function checkExportFolder(
         message: `"${[...spelled, nameOf(file)].join("/")}" is a file. Pick a folder.`,
       };
     }
+    if (UNCREATABLE_NAME.test(name)) return uncreatable;
     spelled.push(name);
     at = null;
   }

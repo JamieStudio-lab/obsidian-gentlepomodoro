@@ -436,8 +436,10 @@ export const LONG_SESSION_SECONDS = 12 * 60 * 60;
  * logged session" leaves behind — it keeps every field it does not know, so
  * a field its edit made untrue stays:
  * - slept: Slept longer than the line's pauses, by more than the second a
- *   written time is cut by (a sleep is always inside a pause). Not on a line
- *   with no Pauses field — a Rest line's paused time is unknown, not 0.
+ *   written time is cut by (a sleep is always inside a pause). A Rest line
+ *   writes no Pauses, but its Total is End − Start − pauses exactly, so its
+ *   paused time is its span less its Total (unwrittenPausedRange): a 0.6.9 Fix
+ *   that shortens a break that slept leaves a Slept it cannot hold.
  * - cycle: a Cycle on a break, or on a skipped (cancelled) focus: neither
  *   moves the long-break count.
  * EndedBy skip on a focus marked finished is NOT one: 0.7.0's own Fix keeps
@@ -537,6 +539,27 @@ function pausedRange(parsed: ParsedLogLine): { paused: number; most: number } | 
     later += repeatedReading(to);
   }
   return { paused, most: paused + later };
+}
+
+/**
+ * The paused time of a line that writes no Pauses (every Rest line): the
+ * writer works Total out as End − Start − pauses (loggedTotalSeconds), so the
+ * pauses are its span less its Total — at most, with an End in a repeated
+ * hour read in its second pass. A planned end's Dropped makes that more,
+ * never less, so no Slept the timer wrote is ever above it. Null on a line
+ * with a Pauses field, or a Start, End or Total that cannot be read.
+ */
+function unwrittenPausedRange(parsed: ParsedLogLine): { paused: number; most: number } | null {
+  if (parsed.values.has("Pauses")) return null;
+  const start = readLogTime(parsed.values.get("Start") ?? "");
+  const end = readLogTime(parsed.values.get("End") ?? "");
+  const total = SIGNED_SECONDS_REGEX.exec(parsed.values.get("Total") ?? "");
+  if (start === null || end === null || total === null) return null;
+  const active = parseInt(total[0], 10);
+  return {
+    paused: Math.max(0, end - start - active),
+    most: Math.max(0, end + repeatedReading(end) - start - active),
+  };
 }
 
 /** A line with the tail, where Check found it. */
@@ -699,12 +722,16 @@ export function scanLogAnomalies(files: readonly LogFileText[]): LogAnomaly[] {
   for (const at of tailed) {
     const { parsed, tail } = at;
     const status = parsed.values.get("Status");
-    const pauses = pausedRange(parsed);
+    const written = pausedRange(parsed);
+    const pauses = written ?? unwrittenPausedRange(parsed);
     if (tail.slept !== null && pauses !== null && tail.slept > pauses.most + 1) {
+      const paused = String(pauses.paused);
       flag(
         at,
         "slept",
-        `Slept is ${String(tail.slept)} s, but its pauses add up to ${String(pauses.paused)} s.`
+        written !== null
+          ? `Slept is ${String(tail.slept)} s, but its pauses add up to ${paused} s.`
+          : `Slept is ${String(tail.slept)} s, but End − Start − Total, its paused time, is ${paused} s.`
       );
     }
     if (tail.cycle !== null && (parsed.kind === "rest" || status === "cancelled")) {

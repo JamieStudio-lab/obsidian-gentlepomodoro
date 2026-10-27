@@ -414,14 +414,22 @@ export function sanitizeDevice(name: string): string {
 }
 
 /**
+ * The long-break cycle's length, from the setting: a whole number, at least
+ * 1 (data.json can hold any number; only the settings row floors it).
+ */
+export function cycleLength(every: number): number {
+  return Math.max(1, Math.floor(every));
+}
+
+/**
  * A focus's place in the long-break cycle, 1…`every`: the line's Cycle. `count`
  * is the day's counter as this session moves it — TimerEngine never resets it
  * after a long break, so the 5th focus of a day of 4-and-a-long-break is 1.
- * A long break follows the focus whose place is `every`.
+ * A long break follows the focus whose place is cycleLength(`every`), and
+ * TimerEngine decides it from this very number.
  */
 export function cyclePosition(count: number, every: number): number {
-  const length = Math.max(1, Math.floor(every));
-  return ((Math.max(1, Math.floor(count)) - 1) % length) + 1;
+  return ((Math.max(1, Math.floor(count)) - 1) % cycleLength(every)) + 1;
 }
 
 /** Whole seconds since the epoch: what the written times show. */

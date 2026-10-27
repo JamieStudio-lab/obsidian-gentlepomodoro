@@ -39,14 +39,17 @@ scripts that anchor on the end of a line — see the first entry under
   - `Offset` — minutes east of UTC when it began, like `-300`.
   - `OffsetChange` — minutes the clocks moved while it ran. Only when it
     isn't 0, which is only across a clock change.
-  - `Slept` — seconds, about how long the computer slept during it, inside
-    its pauses. An estimate: it can hold up to about a minute awake at
-    either end, and a sleep of under about 10 minutes isn't recorded. Not
+  - `Slept` — seconds, about how long the computer slept while the timer
+    was running: the sleep that made it pause (a sleep while you had paused
+    it yourself isn't counted). An estimate: it can hold up to about a
+    minute awake at either end, and a sleep of under about 10 minutes isn't
+    recorded. Not
     on a session that ended at its planned time while the computer slept
     (the next one starting on its own): that sleep counts as focus. Only
     when above 0.
-  - `Dropped` — seconds of active time a planned end left out, so `Total`
-    plus `Dropped` is what the timer measured. Only after Stop's **End at
+  - `Dropped` — seconds of active time a planned end left out, so the
+    session's `Total` plus `Dropped` is what the timer measured (a split
+    session's `Total` added up over its lines). Only after Stop's **End at
     planned end** or the startup's **Log up to planned end**, which now write
     the same numbers, and then on the last line of a split session.
   - `Device` — this device's name, when you have typed one.
@@ -74,9 +77,13 @@ scripts that anchor on the end of a line — see the first entry under
   code** previews it. A line from before 0.7.0 shows `-` for what it doesn't
   have (`Planned` never falls back to `Scheduled`). The code keeps your **Day
   starts at** hour, leaves out any note in the log folder that isn't a daily
-  log, counts a split session once in the totals (on 0.7.0 lines, which
-  carry a `Session`), and, if the system refuses clipboard access, shows the
-  code in a window to copy by hand.
+  log, counts what the daily goal counts (a line **Convert old log lines**
+  rewrote from a log older than the `Type` field has none, and is counted),
+  counts a split session once in the totals and in time by task (on 0.7.0
+  lines, which carry a `Session`), and, if the system refuses clipboard
+  access, shows the code in a window to copy by hand. The ↑ / ↓ buttons and
+  **Show the code** work from the keyboard on every Obsidian the plugin runs
+  on.
 - **This device's name** (Daily log): optional, written as `Device` on what
   this device's timer logs, to tell your devices apart. It is kept on that
   device only, never in the settings file, so a name typed on the laptop
@@ -96,14 +103,18 @@ scripts that anchor on the end of a line — see the first entry under
   written. The CSV has a byte order mark (Excel reads accents), CRLF line
   ends and a header; its columns are fixed, with new ones added at the end.
   Text cells that start like a formula (`=`, `+`, `-`, `@`, a tab) get a `'`
-  in front. The vault's top level and hidden folders are refused.
+  in front. The vault's top level and hidden folders are refused, and so is
+  a new folder whose name Obsidian can't create on every device (`:`, `*`,
+  `?`, `"`, `<`, `>`, `|`, or a dot or space at the end), in the dialog,
+  before anything is written.
 - **The read API gains ten session members**, `sessionId`, `startedBy`,
   `endedBy`, `planned`, `cycle`, `offset`, `endOffset`, `slept`, `dropped` and
   `device`, read from the fields above. They are `null` on a line without
   `Session`, none worked out afterwards. The API stays version 1; nothing it
   gave before has changed.
 - **Check log looks at the new fields**, on lines that have them: a `Slept`
-  longer than the line's pauses, and a `Cycle` on a break or a skipped focus.
+  longer than the line's pauses (on a break, which lists none, its time less
+  its `Total`), and a `Cycle` on a break or a skipped focus.
   These are what a device still on 0.6.9 leaves stale when it fixes a 0.7.0
   line. It changes nothing.
 - **Add a session** writes `Session`, `StartedBy` and `EndedBy` (both
@@ -111,7 +122,9 @@ scripts that anchor on the end of a line — see the first entry under
   `Slept`, `Dropped` or `Device`. **Fix a logged session** keeps the new
   fields as written, except what the fix makes untrue: a new length counts
   `Overtime` past `Planned`, a new start or length takes out `Slept` and
-  `Dropped`, and making a focus a break or skipped takes out `Cycle`. A line
+  `Dropped`, and making a focus a break or skipped takes out `Cycle`.
+  `Offset` and `OffsetChange` stay as written, so a fix that moves a start,
+  or changes a length, across a clock change leaves them an hour out. A line
   without them gets none.
 
 ### Changed
@@ -135,8 +148,9 @@ scripts that anchor on the end of a line — see the first entry under
   `Device` is written only when you type a name.
 - The README's two example queries are replaced. They counted any note in the
   log folder that quoted a log line, and had never been run in Dataview. The
-  new ones take your folder, filter on the daily log's file name, read each
-  list item as `s` and were run in Dataview 0.5.68.
+  new ones take your folder, filter on the daily log's file name and date,
+  count a focus line Convert rewrote without a `Type`, read each list item
+  as `s`, and run in Dataview 0.5.68 in the plugin's tests.
 
 ### Internal
 
@@ -155,8 +169,10 @@ scripts that anchor on the end of a line — see the first entry under
   Export, so the three can't read one line three ways. The tests fail any
   other source that names a new field followed by `::`, and any new field
   whose name ends in an older one or is `Day` or `Date`.
-- 2188 → 2534 tests, 36 → 39 files. Every rule added was broken on purpose
-  to see a test fail: over 500 breakages, all caught except four that change
+- The long break is decided from the same number the line's `Cycle` is, so
+  the two agree even when the settings file was edited by hand.
+- 2188 → 2557 tests, 36 → 39 files. Every rule added was broken on purpose
+  to see a test fail: over 550 breakages, all caught except six that change
   nothing a user can see.
 
 ## [0.6.9] — 2026-10-08

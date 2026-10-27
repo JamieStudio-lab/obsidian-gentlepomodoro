@@ -13,7 +13,9 @@ import {
   Platform,
   Setting,
   ToggleComponent,
+  pressKey,
   stubFocus,
+  stubObsidian,
   type ModalContent,
   type RecordedComponent,
   type StubEl,
@@ -2457,8 +2459,10 @@ describe("the Dataview tables group", () => {
       (x) => x.tag === "details"
     );
     if (!details) throw new Error("no code row");
+    const summaryEl = details.children.find((x) => x.tag === "summary") as StubEl;
     return {
-      summary: details.children.find((x) => x.tag === "summary")?.text,
+      summary: summaryEl.text,
+      summaryEl,
       pre: details.children.find((x) => x.tag === "pre") as StubEl,
     };
   };
@@ -2622,6 +2626,81 @@ describe("the Dataview tables group", () => {
     expect(resolveQueryColumns(c.settings.queryColumns).at(-1)).toEqual({ id: "task", on: true });
   });
 
+  it("adds no key handling of its own on 1.13, whose arrows Enter and Space press already", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { list, items } = columnList(c.el);
+    for (const item of items) {
+      for (const arrow of [item.up, item.down]) {
+        expect(arrow.extraSettingsEl.listeners.keydown ?? []).toHaveLength(1);
+        expect(arrow.extraSettingsEl.attrs["data-gp-keyboard"]).toBeUndefined();
+      }
+    }
+    // One Enter, one move: a handler of the plugin's beside Obsidian's would move twice.
+    const task = items[2];
+    expect(pressKey(task.up.extraSettingsEl, "Enter")).toBe(true);
+    await flushTab();
+    expect(list.children[1]).toBe(task.el);
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+  });
+
+  describe("on Obsidian 1.7, whose ExtraButton Tab never reaches", () => {
+    beforeEach(() => {
+      stubObsidian.extraButton = "1.7";
+    });
+    afterEach(() => {
+      stubObsidian.extraButton = "1.13";
+    });
+
+    it("gives every arrow a tabindex, taken off while it is disabled", () => {
+      ctx.tab.display();
+      const { items } = columnList(ctx.el);
+      items.forEach((item, n) => {
+        expect(item.up.extraSettingsEl.attrs.tabindex, `${item.name} up`).toBe(
+          n === 0 ? undefined : "0"
+        );
+        expect(item.down.extraSettingsEl.attrs.tabindex, `${item.name} down`).toBe(
+          n === items.length - 1 ? undefined : "0"
+        );
+      });
+    });
+
+    it("moves a column with Enter and Space, focus kept, and not from a disabled arrow", async () => {
+      const c = withFolder();
+      c.tab.display();
+      const { list, items } = columnList(c.el);
+      const task = items[2];
+      stubFocus.el = task.up.extraSettingsEl;
+      expect(pressKey(task.up.extraSettingsEl, "Enter")).toBe(true);
+      await flushTab();
+      expect(list.children[1]).toBe(task.el);
+      expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+      // Space too; at the top the arrow goes off, its tabindex with it, and
+      // focus moves to ↓ — which a keyboard can reach.
+      expect(pressKey(task.up.extraSettingsEl, " ")).toBe(true);
+      await flushTab();
+      expect(list.children[0]).toBe(task.el);
+      expect(task.up.disabled).toBe(true);
+      expect(task.up.extraSettingsEl.attrs.tabindex).toBeUndefined();
+      expect(stubFocus.el).toBe(task.down.extraSettingsEl);
+      expect(task.down.extraSettingsEl.attrs.tabindex).toBe("0");
+      // A disabled arrow reached anyway moves nothing and writes nothing.
+      const saves = c.calls.length;
+      pressKey(task.up.extraSettingsEl, "Enter");
+      await flushTab();
+      expect(list.children[0]).toBe(task.el);
+      expect(c.calls).toHaveLength(saves);
+      // Other keys are left alone.
+      expect(pressKey(task.down.extraSettingsEl, "a")).toBe(false);
+      // Down again, and ↑ is back in the Tab order.
+      pressKey(task.down.extraSettingsEl, "Enter");
+      await flushTab();
+      expect(list.children[1]).toBe(task.el);
+      expect(task.up.extraSettingsEl.attrs.tabindex).toBe("0");
+      expect(stubFocus.dropped).toBe(0);
+    });
+  });
+
   it("moves a column that is off too, so it shows where it was put once switched on", async () => {
     const c = withFolder();
     c.tab.display();
@@ -2693,6 +2772,9 @@ describe("the Dataview tables group", () => {
     c.tab.display();
     const code = codeEl(c.el);
     expect(code.summary).toBe(QUERY_CODE_SUMMARY);
+    // In Obsidian 1.13's Tab order, which walks [tabindex] and not a bare
+    // summary (checked in Chromium under 1.13.7's own settings handler).
+    expect(code.summaryEl.attrs.tabindex).toBe("0");
     expect(code.pre.classes).toContain("gp-query-code-text");
     expect(code.pre.text).toBe(sessionsCode(c.settings));
     // The day's start changes the code's "today".

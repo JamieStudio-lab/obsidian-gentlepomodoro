@@ -817,6 +817,31 @@ describe("scanLogAnomalies — the hour a fall-back repeats (America/New_York)",
     expect(kinds(line.replace("[Slept:: 960]", "[Slept:: 1202]"))).toEqual(["slept Logs/0.md:1"]);
   });
 
+  it("does not flag a break's Slept when its End is in the second pass (0.7.0)", () => {
+    // 01:20 EDT to 01:40 EST: 80 minutes that read as 20. Paused 01:22 EDT to
+    // 01:30 EST and asleep 01:23 EDT to 01:28 EST, with no Pauses field.
+    const line = formatLogLine({
+      mode: "break",
+      taskName: "No Task",
+      scheduledDurationMinutes: 5,
+      startTime: moment(clock(1, 20, 1)),
+      endTime: moment(clock(1, 40, 2)),
+      pauses: [{ start: moment(clock(1, 22, 1)), end: moment(clock(1, 30, 2)) }],
+      status: "finished",
+      breakType: "short",
+      sessionId: "s000000000",
+      sleeps: [[clock(1, 23, 1), clock(1, 28, 2)]],
+    });
+    const values = parseLogLine(line)?.values;
+    expect(values?.has("Pauses")).toBe(false);
+    expect(values?.get("Total")).toBe(String(12 * 60));
+    expect(values?.get("Slept")).toBe(String(65 * 60));
+    expect(kinds(line)).toEqual([]);
+    // A Slept no reading of that span can hold is still one.
+    const odd = line.replace(`[Slept:: ${String(65 * 60)}]`, `[Slept:: ${String(68 * 60 + 2)}]`);
+    expect(kinds(odd)).toEqual(["slept Logs/0.md:1"]);
+  });
+
   it("does not call a second-pass session an overlap with a first-pass one", () => {
     const lines = [
       timerLine(clock(1, 10, 1), clock(1, 40, 1)),
@@ -930,11 +955,27 @@ describe("scanLogAnomalies — what a 0.6.9 Fix leaves on a 0.7.0 line", () => {
     expect(kinds(unpaused)).toEqual(["slept Logs/0.md:1"]);
   });
 
-  it("does not judge Slept where the paused time is unknown, or Slept is not a number", () => {
-    // A Rest line writes no Pauses: its sleep is inside a pause it does not list.
-    expect(kinds(tailed(rest(`${D} 09:30:00`, `${D} 10:30:00`, 300), " [Slept:: 3000]"))).toEqual(
-      []
+  it("judges a break's Slept against its span less its Total: the pauses it does not list", () => {
+    // 09:30–10:30 with Total 300: 3300 s paused, so 3000 asleep fits.
+    const asleep = (slept: number, end = "10:30:00", total = 300) =>
+      tailed(rest(`${D} 09:30:00`, `${D} ${end}`, total), ` [Slept:: ${String(slept)}]`);
+    expect(alone(asleep(3000), asleep(3300), asleep(3301))).toEqual([[], [], []]);
+    expect(kinds(asleep(3302))).toEqual(["slept Logs/0.md:1"]);
+    // What a 0.6.9 Fix leaves when it shortens a break that slept 42 minutes
+    // to 5: End and Total moved, the Slept kept.
+    const shortened = asleep(2520, "09:35:00");
+    expect(kinds(shortened)).toEqual(["slept Logs/0.md:1"]);
+    expect(scan(shortened)[0].detail).toBe(
+      "Slept is 2520 s, but End − Start − Total, its paused time, is 0 s."
     );
+    // A Total past the span is the "total" kind's; no paused time is not less than none.
+    expect(kinds(asleep(1, "10:30:00", 3700))).toEqual(["total Logs/0.md:1"]);
+    expect(kinds(asleep(2, "10:30:00", 3700))).toEqual(["total Logs/0.md:1", "slept Logs/0.md:1"]);
+    // A break whose times cannot be read is not judged.
+    expect(kinds(tailed(rest("soon", `${D} 10:30:00`, 300), " [Slept:: 9000]"))).toEqual([]);
+  });
+
+  it("does not judge Slept where the paused time is unknown, or Slept is not a number", () => {
     const unreadable = sleptFocus(900).replace(/\[Pauses:: [^\]]*\]\]/u, "[Pauses:: lunch]");
     expect(parseLogLine(unreadable)?.values.get("Pauses")).toBe("lunch");
     expect(kinds(unreadable)).toEqual([]);

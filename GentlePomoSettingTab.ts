@@ -370,6 +370,13 @@ interface MusicSlotUi {
   probe: ((url: string, target: MusicTarget, token: number) => void) | null;
 }
 
+/**
+ * Marks a column arrow the plugin made keyboard-usable itself, on an Obsidian
+ * whose ExtraButton is not (see columnArrow): its tabindex is then the
+ * plugin's to take off and put back as the arrow is disabled and enabled.
+ */
+const KEYBOARD_ARROW_ATTR = "data-gp-keyboard";
+
 /** One row of the column list: its node, and the three controls on it. */
 interface ColumnItemUi {
   id: QueryColumnId;
@@ -377,6 +384,42 @@ interface ColumnItemUi {
   toggle: ToggleComponent;
   up: ExtraButtonComponent;
   down: ExtraButtonComponent;
+}
+
+/**
+ * A column's ↑ or ↓, usable from the keyboard on every Obsidian the plugin
+ * runs on. 1.13's ExtraButton is a div with tabindex 0 that Enter and Space
+ * press; 1.7's (minAppVersion is 1.7.2) is a bare div with a click listener
+ * only (app.js, 1.7.7), which Tab never reaches, so a keyboard could switch
+ * columns but never move one. There the arrow is given what 1.13 gives it.
+ * Its tooltip is also its accessible name: the arrows are icons only.
+ */
+function columnArrow(
+  el: HTMLElement,
+  icon: string,
+  name: string,
+  press: () => void
+): ExtraButtonComponent {
+  const arrow = new ExtraButtonComponent(el).setIcon(icon).setTooltip(name).onClick(press);
+  const button = arrow.extraSettingsEl;
+  if (button.getAttribute("tabindex") !== null) return arrow;
+  button.setAttr(KEYBOARD_ARROW_ATTR, "true");
+  button.setAttr("tabindex", "0");
+  button.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    if (!arrow.disabled) press();
+  });
+  return arrow;
+}
+
+/** Disable or enable an arrow, its tabindex with it where the plugin set one. */
+function setArrowDisabled(arrow: ExtraButtonComponent, disabled: boolean): void {
+  arrow.setDisabled(disabled);
+  const button = arrow.extraSettingsEl;
+  if (button.getAttribute(KEYBOARD_ARROW_ATTR) === null) return;
+  if (disabled) button.removeAttribute("tabindex");
+  else button.setAttr("tabindex", "0");
 }
 
 export class GentlePomoSettingTab extends PluginSettingTab {
@@ -910,19 +953,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       void this.switchColumn(choice.id, on);
     });
     el.createSpan({ cls: "gp-column-name", text: label });
-    // setTooltip is also each arrow's accessible name: they are icons only.
-    const up = new ExtraButtonComponent(el)
-      .setIcon("arrow-up")
-      .setTooltip(`Move ${label} up`)
-      .onClick(() => {
-        void this.moveColumn(choice.id, -1);
-      });
-    const down = new ExtraButtonComponent(el)
-      .setIcon("arrow-down")
-      .setTooltip(`Move ${label} down`)
-      .onClick(() => {
-        void this.moveColumn(choice.id, 1);
-      });
+    const up = columnArrow(el, "arrow-up", `Move ${label} up`, () => {
+      void this.moveColumn(choice.id, -1);
+    });
+    const down = columnArrow(el, "arrow-down", `Move ${label} down`, () => {
+      void this.moveColumn(choice.id, 1);
+    });
     return { id: choice.id, el, toggle, up, down };
   }
 
@@ -939,8 +975,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       const last = onCount === 1 && choice?.on === true;
       item.toggle.setDisabled(last);
       item.toggle.setTooltip(last ? COLUMN_LAST_ON_TOOLTIP : `Show ${label}`);
-      item.up.setDisabled(index === 0);
-      item.down.setDisabled(index === this.columnItems.length - 1);
+      setArrowDisabled(item.up, index === 0);
+      setArrowDisabled(item.down, index === this.columnItems.length - 1);
     });
   }
 
@@ -1008,7 +1044,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   private buildQueryCodeRow(setting: Setting): () => void {
     setting.settingEl.addClass("gp-setting-code");
     const details = setting.settingEl.createEl("details", { cls: "gp-query-code" });
-    details.createEl("summary", { text: QUERY_CODE_SUMMARY });
+    // A tabindex, though a summary can be focused without one: Obsidian 1.13's
+    // settings take Tab over and walk only the elements its own list names
+    // (links, buttons, inputs, [tabindex] …), and a bare summary is not among
+    // them, so Tab passed "Show the code" by and it could not be opened from
+    // the keyboard (app.js, 1.13.7). Enter and Space still open it natively.
+    details.createEl("summary", { text: QUERY_CODE_SUMMARY, attr: { tabindex: "0" } });
     const pre = details.createEl("pre", { cls: "gp-query-code-text" });
     this.queryCodeEl = pre;
     this.refreshQueryPreview();

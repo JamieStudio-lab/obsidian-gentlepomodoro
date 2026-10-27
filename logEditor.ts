@@ -22,6 +22,7 @@ import {
   newSessionId,
   parseLogLine,
   readLogPauses,
+  readLogTail,
   readLogTime,
   repeatedReading,
   stamp,
@@ -571,9 +572,11 @@ export function editedLine(
   }
 
   const scheduled = logSeconds(line.parsed, "Scheduled") ?? minutes * 60;
-  // A 0.7.0 line's own plan, when it says one: Overtime is past that.
+  // A 0.7.0 line's own plan, when it says one: Overtime is past that. Read
+  // as the read API, Check log and Export read it (readLogTail), so a
+  // Planned none of them can read is unknown here too, and Scheduled counts.
   const hasTail = original.has("Session");
-  const planned = hasTail ? logSeconds(line.parsed, "Planned") : null;
+  const planned = readLogTail(line.parsed)?.planned ?? null;
   const task = taskChanged ? form.task : initial.task;
   const at = (seconds: number) => context.toMoment(seconds * 1000);
   // No sessionId, ever: the template is only the ten fields (LOG_FIELD_KEYS).

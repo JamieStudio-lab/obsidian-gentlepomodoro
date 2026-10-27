@@ -657,20 +657,22 @@ describe("LogManager keeps the open session on this device (F23)", () => {
 
     it("logs it with the ID it started with, as recovered, its plan, its sleep's share and the device — no Cycle", async () => {
       const storage = memoryStorage();
-      const first = setup(storage);
+      // Scheduled 25, and +5 pressed: the clock's plan is 30.
+      const first = setup(storage, 30 * ONE_MINUTE_MS);
       first.lm.startSession("focus", "Write docs", 25, "Projects/Docs.md", "abc123", null, "auto");
       const id = open(storage)?.sessionId;
       vi.setSystemTime(t(9, 30));
       first.lm.pauseSession(t(9, 10), t(9, 30)); // asleep 09:10–09:30
       vi.setSystemTime(t(9, 32));
       first.lm.startSession("focus", "Write docs", 25, "Projects/Docs.md", "abc123");
-      vi.setSystemTime(t(9, 50));
+      vi.setSystemTime(t(10, 0));
       first.lm.heartbeat();
-      first.lm.dispose(); // quit at 09:50
+      first.lm.dispose(); // quit at 10:00
 
       saveDeviceName(storage, "Work laptop");
-      // The next start's clock says 30 minutes: Planned is the saved plan, 25.
-      const { lm, vault } = setup(storage, 30 * ONE_MINUTE_MS);
+      // The next start's clock says 35 minutes: Planned is the saved plan, 30
+      // — neither that clock nor Scheduled.
+      const { lm, vault } = setup(storage, 35 * ONE_MINUTE_MS);
       await lm.offerUnfinishedSessions(() => Promise.resolve("log"));
       const parsed = parseLogLine(lines(vault)[0]);
       if (!parsed) throw new Error("no line");
@@ -679,14 +681,14 @@ describe("LogManager keeps the open session on this device (F23)", () => {
         Session: id,
         StartedBy: "auto",
         EndedBy: "recovered",
-        Planned: "1500",
+        Planned: "1800",
         Offset: String(-new Date(t(9, 0)).getTimezoneOffset() || 0),
         Slept: "1200",
         Device: "Work laptop",
       });
       // Overtime past that same plan, as the timer counts it.
-      expect(logSeconds(parsed, "Total")).toBe(50 * 60 - 22 * 60);
-      expect(logSeconds(parsed, "Overtime")).toBe(3 * 60);
+      expect(logSeconds(parsed, "Total")).toBe(60 * 60 - 22 * 60);
+      expect(logSeconds(parsed, "Overtime")).toBe(8 * 60);
     });
 
     it("writes a quit inside a sleep's pause with no Slept: the line ends where the pause began", async () => {

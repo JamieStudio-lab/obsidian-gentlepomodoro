@@ -198,6 +198,33 @@ describe("TimerEngine — long break after N pomodoros", () => {
     expect(stub.settings.sessionsSinceLongBreak).toBe(5);
   });
 
+  it.each([
+    ["a fractional length", { longBreakEvery: 2.5, sessionsSinceLongBreak: 0 }, [1, 2, 1, 2]],
+    ["a fractional count", { longBreakEvery: 4, sessionsSinceLongBreak: 1.5 }, [2, 3, 4, 1]],
+    ["a count below 1", { longBreakEvery: 4, sessionsSinceLongBreak: -3 }, [1, 1, 1, 1]],
+  ] as const)(
+    "with %s in data.json, the long break follows the focus whose Cycle is the last place",
+    async (_name, stored, cycles) => {
+      // Only the settings row floors these; a hand-edited or synced data.json
+      // can hold anything, and the line's Cycle and the break must agree.
+      const stub = makePluginStub({ ...stored, sessionCounterDate: TODAY });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const timer = new TimerEngine(stub.plugin as any);
+      const length = Math.max(1, Math.floor(stored.longBreakEvery));
+      const seen: { cycle: unknown; breakType: unknown }[] = [];
+      for (let n = 0; n < cycles.length; n++) {
+        await timer.finish(); // a focus
+        const ends = stub.calls.filter((c) => c.name === "endSession");
+        const { cycle } = ends[ends.length - 1].args[1] as Record<string, unknown>;
+        seen.push({ cycle, breakType: timer.getState().breakType });
+        await timer.finish(); // its break
+      }
+      expect(seen).toEqual(
+        cycles.map((cycle) => ({ cycle, breakType: cycle === length ? "long" : "short" }))
+      );
+    }
+  );
+
   it("midnight rollover resets the counter (yesterday's date → 0 then increment to 1)", async () => {
     const stub = makePluginStub({
       sessionsSinceLongBreak: 3,

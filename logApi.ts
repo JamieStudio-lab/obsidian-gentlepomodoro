@@ -97,9 +97,10 @@ export interface LogApiSession {
    *  across a clock change. */
   offset: number | null;
   endOffset: number | null;
-  /** Seconds — about how long the computer slept, inside the pauses — and
-   *  seconds of focus a planned end left out (total + dropped is what the
-   *  timer measured). 0 when the line has the tail and not the field. */
+  /** Seconds — about how long the computer slept with the timer running,
+   *  inside the pauses — and seconds of focus a planned end left out (the
+   *  session's total + dropped is what the timer measured; dropped is on a
+   *  split session's last line). 0 when the line has the tail and not the field. */
   slept: number | null;
   dropped: number | null;
   /** The name typed for the device that logged it; null when none was. */

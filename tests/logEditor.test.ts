@@ -20,7 +20,7 @@ import {
   type LoggedLine,
   type SessionForm,
 } from "../logEditor";
-import { formatLogLine, parseFocusTotalSeconds, parseLogLine } from "../logLine";
+import { formatLogLine, parseFocusTotalSeconds, parseLogLine, readLogTail } from "../logLine";
 import type { MomentLike } from "../momentTypes";
 import { offsetAt } from "./logTail";
 
@@ -746,6 +746,17 @@ describe("a 0.7.0 line, fixed: its tail (choice 4)", () => {
     expect(parseLogLine(shorter)?.values.get("Overtime")).toBe("300");
     expect(tailOf(shorter)).toEqual(without(PLANNED, "Dropped"));
   });
+
+  it.each(["1800.5", "1800 s", "18e2", "", "abc"])(
+    "reads a Planned of %j as the read API does: unknown, so Overtime is past Scheduled",
+    (planned) => {
+      // Not a whole number of seconds: readLogTail — the API, Check log,
+      // Export — calls it unknown, and so does Fix.
+      const odd = STOPPED.replace("[Planned:: 1800]", `[Planned:: ${planned}]`);
+      expect(readLogTail(parseLogLine(odd)!)?.planned).toBeNull();
+      expect(parseLogLine(edit(odd, { minutes: "40" }))?.values.get("Overtime")).toBe("900");
+    }
+  );
 
   it("drops Slept and Dropped when the start moves, and keeps Offset as written", () => {
     const moved = edit(STOPPED, { time: "10:30" });

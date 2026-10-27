@@ -37,6 +37,7 @@ import {
   type ParsedLogLine,
   type SessionLog,
 } from "../logLine";
+import { convertLogContent } from "../logConvert";
 import { NO_TASK_LABEL } from "../constants";
 import type { MomentLike } from "../momentTypes";
 
@@ -52,9 +53,11 @@ import type { MomentLike } from "../momentTypes";
  * row error at all; the DQL and DataviewJS tables must give the same rows.
  *
  * The vault holds 0.7.0 lines (the plugin's own writer), 0.6.9 lines (the
- * same writer without a Session ID), a pre-0.6.9 line Dataview reads
- * nothing from, a note in each log folder with no date, and a dated note
- * there that quotes a log line, which only the file-name guard keeps out.
+ * same writer without a Session ID), lines Convert rewrote from a log older
+ * than the Type field (no Type), a pre-0.6.9 line Dataview reads nothing
+ * from, a split session that comes back to its task, a note in each log
+ * folder with no date, a dated note there that quotes a log line, which only
+ * the file-name guard keeps out, and a log-named file Dataview cannot date.
  */
 
 const require = createRequire(import.meta.url);
@@ -109,6 +112,9 @@ function rest(span: Span, breakType: "short" | "long", more: Partial<SessionLog>
   });
 }
 
+/** A line from before the Type field, as Convert old log lines writes it: no Type. */
+const converted = (v1: string): string => convertLogContent(v1).content;
+
 const tail = (id: string, more: Partial<SessionLog> = {}): Partial<SessionLog> => ({
   sessionId: `s00000000${id}`,
   startedBy: "start",
@@ -139,6 +145,37 @@ const DAYS: { day: string; goal: number; lines: string[] }[] = [
     lines: [
       focus({ day: "2026-10-14", from: "09:00", to: "09:25" }, WRITING, { taskId: "abc123" }),
       rest({ day: "2026-10-14", from: "09:25", to: "09:30" }, "short"),
+    ],
+  },
+  {
+    day: "2026-10-20",
+    goal: 120,
+    lines: [
+      // Rewritten by Convert from a log older than the Type field, which
+      // invents no Type: the daily goal counts them, so the tables must too.
+      converted(
+        "- 🍅 Focus | Task:: [[Projects/Writing.md|Draft intro #task/research/paper]] | Start:: 2026-10-20 08:00:00 | End:: 2026-10-20 08:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished"
+      ),
+      converted(
+        "- ☕ Rest | Start:: 2026-10-20 08:25:00 | End:: 2026-10-20 08:40:00 | Scheduled:: 900 | Total:: 900"
+      ),
+      // A session split at two switches that comes back to its task: two
+      // lines for Writing under one Session, which time by task counts once.
+      focus(
+        { day: "2026-10-20", from: "09:00", to: "09:10" },
+        WRITING,
+        tail("m", { endedBy: "stop", cycle: 1 })
+      ),
+      focus(
+        { day: "2026-10-20", from: "09:10", to: "09:12" },
+        ADMIN,
+        tail("m", { endedBy: "stop", cycle: 1 })
+      ),
+      focus(
+        { day: "2026-10-20", from: "09:12", to: "09:25" },
+        WRITING,
+        tail("m", { endedBy: "stop", cycle: 1 })
+      ),
     ],
   },
   {
@@ -262,6 +299,12 @@ function vault(): FakeFiles {
     files[`${folder}/2026-10-23 notes.md`] = {
       contents: `# Notes\n\nCopied from the log:\n\n${TODAY_LINES[0]}\n`,
     };
+    // Named like a daily log, in digits Dataview cannot date (0.6.8 wrote
+    // such names): no day, so no table shows it — in DQL as in DataviewJS,
+    // and not under "This note's day" in a note that has no day either.
+    files[`${folder}/٢٠٢٦-١٠-٢٢-gentle-pomodoro-log.md`] = {
+      contents: `${TODAY_LINES[0]}\n${TODAY_LINES[1]}\n`,
+    };
   }
   files["Projects/Writing.md"] = { contents: "# Writing\n\n- [ ] Draft intro 🆔 abc123\n" };
   files["Projects/Admin.md"] = { contents: "# Admin\n\n- [ ] Inbox\n" };
@@ -276,7 +319,16 @@ interface Expected {
   day: string;
   parsed: ParsedLogLine;
   type: string;
+  /** What the goal counts it as: its Type, or with no Type its marker. */
+  kind: "focus" | "rest" | "";
   start: string;
+}
+
+function kindOf(parsed: ParsedLogLine): Expected["kind"] {
+  const type = parsed.values.get("Type");
+  if (type === undefined) return parsed.kind;
+  if (type === "focus") return "focus";
+  return type === "short-break" || type === "long-break" ? "rest" : "";
 }
 
 /** Every line Dataview can read (version 2), through the plugin's own reader. */
@@ -288,6 +340,7 @@ const READABLE: Expected[] = DAYS.flatMap(({ day, lines }) =>
       day,
       parsed,
       type: parsed.values.get("Type") ?? "",
+      kind: kindOf(parsed),
       start: parsed.values.get("Start") ?? "",
     }))
 );
@@ -320,7 +373,7 @@ function expectedSessions(o: QueryOptions, today: string, origin: string): Expec
   const rows = READABLE.filter(
     (line) =>
       days.includes(line.day) &&
-      (o.kinds === "all" ? line.type !== "" : line.type === "focus") &&
+      (o.kinds === "all" ? line.kind !== "" : line.kind === "focus") &&
       (o.skipped || line.parsed.values.get("Status") !== "cancelled")
   );
   rows.sort((a, b) => (a.start < b.start ? -1 : 1));
@@ -333,13 +386,83 @@ function countedFocus(range: QueryRange, today: string, origin: string): Expecte
   return READABLE.filter(
     (line) =>
       days.includes(line.day) &&
-      line.type === "focus" &&
+      line.kind === "focus" &&
       line.parsed.values.get("Status") !== "cancelled"
   );
 }
 
 const minutes = (lines: Expected[]) =>
   Math.round(lines.reduce((sum, l) => sum + (logSeconds(l.parsed, "Total") ?? 0), 0) / 60);
+
+/** Sessions as the totals count them: a line without a Session is one, a Session once. */
+function sessionCount(lines: Expected[]): number {
+  const ids = lines.map((l) => l.parsed.values.get("Session"));
+  return ids.filter((id) => id === undefined).length + new Set(ids.filter(Boolean)).size;
+}
+
+/**
+ * Each column's cell as the harness prints it, from the plugin's own reading
+ * of the line: the oracle every column is held to, so a column that shows
+ * another field — in both languages at once — is caught.
+ */
+function expectedCell(id: string, line: Expected, kinds: QueryOptions["kinds"]): string {
+  const value = (key: string) => line.parsed.values.get(key);
+  const text = (key: string) => (value(key) === undefined ? "-" : JSON.stringify(value(key)));
+  const mins = (key: string) => {
+    const seconds = logSeconds(line.parsed, key);
+    return seconds === null ? "-" : String(Math.round(seconds / 60));
+  };
+  const hasSession = value("Session") !== undefined;
+  switch (id) {
+    case "date":
+      return `date(${line.day} 00:00)`;
+    case "start":
+      return JSON.stringify(line.start.slice(11, 16));
+    case "end":
+      return JSON.stringify((value("End") ?? "").slice(11, 16));
+    case "task": {
+      if (kinds === "all" && line.kind === "rest") {
+        return line.type === "long-break" ? '"Long break"' : '"Break"';
+      }
+      const task = value("Task");
+      if (task === undefined) return "-";
+      return task.startsWith("[[") ? task : JSON.stringify(task);
+    }
+    case "minutes":
+      return mins("Total");
+    case "planned":
+      return mins("Planned");
+    case "overtime":
+      return mins("Overtime");
+    case "pauses": {
+      const pauses = value("Pauses");
+      return pauses === undefined ? "-" : String(pauses.split(" - ").length - 1);
+    }
+    case "status":
+      return text("Status");
+    case "type":
+      return text("Type");
+    case "endedby":
+      return text("EndedBy");
+    case "startedby":
+      return text("StartedBy");
+    case "cycle":
+      return value("Cycle") ?? "-";
+    case "slept":
+      return hasSession ? String(Math.round((logSeconds(line.parsed, "Slept") ?? 0) / 60)) : "-";
+    case "dropped":
+      return hasSession ? String(Math.round((logSeconds(line.parsed, "Dropped") ?? 0) / 60)) : "-";
+    case "device":
+      return text("Device");
+    case "session":
+      return text("Session");
+    case "offset": {
+      const written = value("Offset");
+      return written === undefined ? "-" : String(Number(written) / 60);
+    }
+  }
+  throw new Error(`no expected cell for the column ${id}`);
+}
 
 /* ===== Running ===== */
 
@@ -485,11 +608,48 @@ describe("the sessions table's cells", () => {
     const table = await runDql(sessionsTable(oldest), index, WEEK_NOTE);
     const tasks = column(table, "Task");
     want.forEach((line, i) => {
-      if (line.type === "short-break") expect(tasks[i]).toBe('"Break"');
-      else if (line.type === "long-break") expect(tasks[i]).toBe('"Long break"');
+      if (line.type === "long-break") expect(tasks[i]).toBe('"Long break"');
+      else if (line.kind === "rest") expect(tasks[i]).toBe('"Break"');
       else expect(tasks[i]).not.toMatch(/Break/);
     });
     expect(tasks).toContain("[[Projects/Writing.md|Draft intro #task/research/paper]]");
+  });
+
+  it.each([["focus" as const], ["all" as const]])(
+    "shows every column's own field, %s: each cell against the plugin's reading of its line",
+    async (kinds) => {
+      setNow(NOON);
+      const o = options({ range: "all", kinds, sort: "oldest" });
+      const lines = expectedSessions(o, "2026-10-23", WEEK_NOTE);
+      for (const table of [
+        await runDql(sessionsTable(o), index, WEEK_NOTE),
+        await runDataviewJs(sessionsTableJs(o), index, WEEK_NOTE),
+      ]) {
+        expect(table.headers).toEqual(QUERY_COLUMNS.map((c) => c.head));
+        expect(texts(table)).toEqual(
+          lines.map((line) => QUERY_COLUMNS.map((c) => expectedCell(c.id, line, kinds)))
+        );
+      }
+      // The oracle's own reach: these lines put a value, not "-", in every
+      // column, so no column could pass by being empty everywhere.
+      for (const c of QUERY_COLUMNS) {
+        expect(
+          lines.some((line) => expectedCell(c.id, line, kinds) !== "-"),
+          c.id
+        ).toBe(true);
+      }
+    }
+  );
+
+  it("shows a line Convert wrote with no Type: in Focus only as in Focus and breaks", async () => {
+    setNow(NOON);
+    for (const kinds of ["focus", "all"] as const) {
+      const o = options({ range: "all", kinds, sort: "oldest" });
+      const starts = texts(await runDql(sessionsTable(o), index, WEEK_NOTE)).map((r) => r[1]);
+      expect(starts, kinds).toContain('"08:00"');
+      if (kinds === "all") expect(starts).toContain('"08:25"');
+      else expect(starts).not.toContain('"08:25"');
+    }
   });
 
   it("counts pauses and shows the offset in hours", async () => {
@@ -544,11 +704,13 @@ describe("the daily totals", () => {
             const lines = countedFocus(range, "2026-10-23", DAILY_NOTE).filter(
               (l) => l.day === day
             );
-            const ids = lines.map((l) => l.parsed.values.get("Session"));
-            const sessions =
-              ids.filter((id) => id === undefined).length + new Set(ids.filter(Boolean)).size;
             const goal = DAYS.find((d) => d.day === day)!.goal;
-            return [`date(${day} 00:00)`, String(minutes(lines)), String(sessions), String(goal)];
+            return [
+              `date(${day} 00:00)`,
+              String(minutes(lines)),
+              String(sessionCount(lines)),
+              String(goal),
+            ];
           })
         );
       }
@@ -564,7 +726,7 @@ describe("the daily totals", () => {
 
 describe("time by task", () => {
   it.each(QUERY_RANGES.map(({ value }) => value))(
-    "%s: one row per task (two tasks of one note apart), most minutes first",
+    "%s: one row per task (two tasks of one note apart), most minutes first, a session once",
     async (range) => {
       setNow(NOON);
       for (const folder of FOLDERS) {
@@ -575,13 +737,25 @@ describe("time by task", () => {
         const want = tasks
           .map((task) => {
             const of = lines.filter((l) => l.parsed.values.get("Task") === task);
-            return [JSON.stringify(task), String(minutes(of)), String(of.length)];
+            return [JSON.stringify(task), String(minutes(of)), String(sessionCount(of))];
           })
           .sort((a, b) => Number(b[1]) - Number(a[1]));
         expect(texts(table)).toEqual(want);
       }
     }
   );
+
+  it("counts a split session that comes back to its task once: two lines, one session", async () => {
+    setNow(NOON);
+    const o = options({ range: "all" });
+    const rows = texts(await runDql(timeByTask(o), index, DAILY_NOTE));
+    const writing = rows.find((row) => row[0].includes("Draft intro"));
+    const lines = countedFocus("all", "2026-10-23", DAILY_NOTE).filter((l) =>
+      (l.parsed.values.get("Task") ?? "").includes("Draft intro")
+    );
+    expect(lines.length).toBeGreaterThan(sessionCount(lines));
+    expect(writing?.[2]).toBe(String(sessionCount(lines)));
+  });
 
   it("keeps the two tasks of Writing.md apart", async () => {
     setNow(NOON);
@@ -675,5 +849,47 @@ describe("Day starts at", () => {
     const js = await runDataviewJs(sessionsTableJs(o), index, WEEK_NOTE);
     expect(dql.rows.length).toBe(expectedSessions(o, "2026-10-23", WEEK_NOTE).length);
     expect(texts(js)).toEqual(texts(dql));
+  });
+});
+
+describe("the README's two example queries", () => {
+  // README.md says they were run in Dataview; this runs them, so an edit to
+  // them is held to the same counts as the copied code.
+  const readme = readFileSync(resolve(dirname(DATAVIEW_BUNDLE), "../../../README.md"), "utf8");
+  const examples = [...readme.matchAll(/^```dataview\n[\s\S]*?^```$/gm)]
+    .map((m) => m[0])
+    .filter((block) => block.includes('FROM "Your log folder"'));
+  const run = (block: string) =>
+    runDql(block.replace('FROM "Your log folder"', `FROM "${PLAIN}"`), index, WEEK_NOTE);
+
+  it("are both there", () => {
+    expect(examples).toHaveLength(2);
+  });
+
+  it("list the latest twenty focus sessions, a line Convert wrote with no Type among them", async () => {
+    setNow(NOON);
+    const table = await run(examples[0]);
+    expect(table.rowErrors).toEqual([]);
+    const want = READABLE.filter((l) => l.kind === "focus")
+      .sort((a, b) => (a.start < b.start ? 1 : -1))
+      .slice(0, 20);
+    expect(texts(table).map((row) => row[1])).toEqual(want.map((l) => JSON.stringify(l.start)));
+    expect(READABLE.filter((l) => l.kind === "focus").length).toBeGreaterThan(20);
+  });
+
+  it("add up each day's focus the way the daily goal does", async () => {
+    setNow(NOON);
+    const table = await run(examples[1]);
+    expect(table.rowErrors).toEqual([]);
+    const days = [...new Set(countedFocus("all", "2026-10-23", WEEK_NOTE).map((l) => l.day))]
+      .sort()
+      .reverse();
+    expect(texts(table)).toEqual(
+      days.map((day) => [
+        `date(${day} 00:00)`,
+        String(minutes(countedFocus("all", "2026-10-23", WEEK_NOTE).filter((l) => l.day === day))),
+      ])
+    );
+    expect(days).toContain("2026-10-20");
   });
 });
