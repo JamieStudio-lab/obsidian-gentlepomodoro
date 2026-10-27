@@ -505,8 +505,11 @@ const sameForm = (a: SessionForm, b: SessionForm): boolean =>
  *
  * A line with 0.7.0's tail (it has a Session) keeps it as written, except
  * what the edit makes untrue: new minutes count Overtime past its Planned —
- * the plan the clock ended it at — so Total − Planned is still the Overtime;
- * a new start or length drops Slept (it named sleep inside pauses that moved
+ * the plan the clock ended it at — so Total − Planned is the Overtime, as on
+ * a whole session's line. (A split session's part carries the whole
+ * session's Planned and an Overtime spread from the end, so a fixed part is
+ * counted as if it were the whole session, as 0.6.9 counted it past
+ * Scheduled.) A new start or length drops Slept (it named sleep inside pauses that moved
  * or went) and Dropped (time past a plan the line no longer runs to); a focus
  * made a break, or made skipped, drops Cycle (only a counted focus has a
  * place in the cycle). Session, StartedBy, EndedBy, Planned, Offset,

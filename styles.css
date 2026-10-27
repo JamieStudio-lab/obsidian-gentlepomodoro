@@ -4709,6 +4709,18 @@ body.is-mobile .gp-column-item .extra-setting-button {
   cursor: pointer;
 }
 
+/* Tab reaches the arrows and "Show the code" on every version, so they carry
+   the plugin's ring: Obsidian 1.7 draws none on a clickable icon (its
+   `:focus { outline: none }`, and no `.clickable-icon:focus-visible`), and
+   no version draws one on a summary. On 1.13 this replaces the grey halo its
+   `.clickable-icon:focus-visible` puts on an arrow, so the two look alike. */
+.gp-column-item .extra-setting-button:focus-visible,
+.gp-query-code > summary:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+  box-shadow: none;
+}
+
 /* The code scrolls inside itself, both ways, so the page never scrolls
    sideways at phone width. */
 .gp-query-code-text {

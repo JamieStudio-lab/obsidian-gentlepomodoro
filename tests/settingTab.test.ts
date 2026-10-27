@@ -2956,4 +2956,24 @@ describe("the Dataview tables group's stylesheet", () => {
     // And the code scrolls inside itself instead.
     expect(bodyOf(".gp-query-code-text")).toMatch(/(^|;)\s*overflow: auto;/);
   });
+
+  it("rings a focused arrow and Show the code with the plugin's own ring, on every version", () => {
+    // Obsidian 1.7 draws no ring on a clickable icon and no version on a
+    // summary, so without this a focused one looked like the rest
+    // (headless Chromium under 1.7.7's and 1.13.7's app.css).
+    const ring = rules.filter(
+      (r) =>
+        r.context.length === 0 &&
+        r.sel.includes(".gp-column-item .extra-setting-button:focus-visible") &&
+        r.sel.includes(".gp-query-code > summary:focus-visible")
+    );
+    expect(ring).toHaveLength(1);
+    const body = ring[0].body.replace(/\s+/g, " ");
+    expect(body).toMatch(
+      /(^|;)\s*outline: var\(--gp-focus-ring-width\) solid var\(--gp-focus-ring-color\);/
+    );
+    expect(body).toMatch(/(^|;)\s*outline-offset: var\(--gp-focus-ring-offset\);/);
+    // 1.13's grey halo off, so the two versions show one ring.
+    expect(body).toMatch(/(^|;)\s*box-shadow: none;/);
+  });
 });

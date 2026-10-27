@@ -18,6 +18,7 @@ import {
   checkExportDates,
   checkExportFolder,
   EXPORT_FOLDER_CHARACTERS,
+  EXPORT_FOLDER_NEW_NAME,
   checkExportForm,
   csvText,
   exportChunks,
@@ -488,7 +489,7 @@ describe("the folder", () => {
     expect(checkExportFolder("EXPORTS", both)).toEqual({ kind: "ok", path: "Exports" });
   });
 
-  it("refuses a new folder whose name Obsidian would refuse to create, on any device", () => {
+  it("refuses a folder name Obsidian refuses a file inside, on any device, made or to be made", () => {
     for (const input of [
       "Reviews: Q4",
       "Q4?",
@@ -497,10 +498,8 @@ describe("the folder", () => {
       "x|y",
       'say "hi"',
       "stars*",
-      "Exports.",
-      "Exports /2026",
       "Reports/Focus/Week: 1",
-      // Every folder to be made is judged, not only the first.
+      // Every part is judged, not only the first.
       "New exports/Week: 1",
       "New exports/2026/Q4?",
     ]) {
@@ -510,17 +509,46 @@ describe("the folder", () => {
     expect(check("Reports\\Weekly")).toEqual({ kind: "ok", path: "Reports/Weekly" });
   });
 
-  it("takes a folder that exists whatever its name, as it is never made again", () => {
-    const odd = fakeVault({}, ["Q4? review", "Q4? review/Done."]);
-    expect(checkExportFolder("q4? review", odd)).toEqual({ kind: "ok", path: "Q4? review" });
-    expect(checkExportFolder("Q4? review/done.", odd)).toEqual({
-      kind: "ok",
-      path: "Q4? review/Done.",
-    });
-    // A new folder inside one is still judged.
-    expect(checkExportFolder("Q4? review/a:b", odd)).toEqual({
+  it("refuses a new folder whose name Windows refuses: a dot or space at the end, a device name", () => {
+    for (const input of [
+      "Exports.",
+      "Exports /2026",
+      "Exports/aux",
+      "Con",
+      "Exports/nul.old",
+      "COM1",
+      "Exports/lpt9",
+      "prn/2026",
+    ]) {
+      expect(check(input), input).toEqual({ kind: "problem", message: EXPORT_FOLDER_NEW_NAME });
+    }
+    // Only the whole name before its last dot is a device name.
+    for (const input of [
+      "console",
+      "com0",
+      "LPT10",
+      "Exports/auxiliary",
+      "aux files",
+      "nul.old.2",
+    ]) {
+      expect(check(input).kind, input).toBe("ok");
+    }
+  });
+
+  it("takes a folder that exists by its characters alone, as it is never made again", () => {
+    const odd = fakeVault({}, ["Q4? review", "Archive/Done.", "aux"]);
+    // A file inside it is refused all the same (Vault.create checks every part).
+    expect(checkExportFolder("q4? review", odd)).toEqual({
       kind: "problem",
       message: EXPORT_FOLDER_CHARACTERS,
+    });
+    // What only a NEW folder is refused for is not held against one that exists.
+    expect(checkExportFolder("archive/done.", odd)).toEqual({ kind: "ok", path: "Archive/Done." });
+    expect(checkExportFolder("AUX/2026", odd)).toEqual({ kind: "ok", path: "aux/2026" });
+    // A new folder inside one is judged as new.
+    expect(checkExportFolder("Archive/Done./con", odd)).toEqual({
+      kind: "problem",
+      message: EXPORT_FOLDER_NEW_NAME,
     });
   });
 
@@ -1109,12 +1137,30 @@ describe("Export sessions", () => {
         },
       ],
       [
-        "an export that wrote its file",
+        "every file name taken",
         () => {
           h.answer = answering({});
+          taken.forEach((path) => h.disk.set(path, "taken"));
+        },
+      ],
+      [
+        "an export that wrote its file",
+        () => {
+          taken.forEach((path) => h.disk.delete(path));
+        },
+      ],
+      // Run once more, so the ending before it is checked too.
+      [
+        "a dialog closed",
+        () => {
+          h.answer = () => null;
         },
       ],
     ];
+    const taken = Array.from(
+      { length: EXPORT_NAME_TRIES },
+      (_, i) => `${FILE_30}${i > 0 ? ` ${String(i + 1)}` : ""}.csv`
+    );
     for (const [name, set] of endings) {
       set();
       const dialogs = h.dialogs.length;
@@ -1123,7 +1169,7 @@ describe("Export sessions", () => {
       expect(h.dialogs.length, name).toBe(dialogs + 1);
       expect(Notice.shown, name).not.toContain(EXPORT_BUSY_NOTICE);
     }
-    expect(h.created).toHaveLength(1);
+    expect(h.created).toEqual([`${FILE_30}.csv`]);
   });
 
   it("checks the dialog's values against the vault as it is then", async () => {

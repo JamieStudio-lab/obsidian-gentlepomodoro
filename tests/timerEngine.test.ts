@@ -202,6 +202,8 @@ describe("TimerEngine — long break after N pomodoros", () => {
     ["a fractional length", { longBreakEvery: 2.5, sessionsSinceLongBreak: 0 }, [1, 2, 1, 2]],
     ["a fractional count", { longBreakEvery: 4, sessionsSinceLongBreak: 1.5 }, [2, 3, 4, 1]],
     ["a count below 1", { longBreakEvery: 4, sessionsSinceLongBreak: -3 }, [1, 1, 1, 1]],
+    // A cycle of one: every focus is its last place, so each has a long break.
+    ["a length below 1", { longBreakEvery: 0.5, sessionsSinceLongBreak: 0 }, [1, 1, 1, 1]],
   ] as const)(
     "with %s in data.json, the long break follows the focus whose Cycle is the last place",
     async (_name, stored, cycles) => {
@@ -222,6 +224,32 @@ describe("TimerEngine — long break after N pomodoros", () => {
       expect(seen).toEqual(
         cycles.map((cycle) => ({ cycle, breakType: cycle === length ? "long" : "short" }))
       );
+    }
+  );
+
+  it.each([2, 5, 1, 8])(
+    "reads the cycle's length once: changed to %s while the end writes, the 4th focus still has its long break",
+    async (changedTo) => {
+      // The settings tab writes longBreakEvery at once (each keystroke before
+      // 1.13), so it can change while the end awaits the vault. The line's
+      // Cycle was placed with the length as it was; the break must follow it.
+      const stub = makePluginStub({
+        sessionsSinceLongBreak: 3,
+        sessionCounterDate: TODAY,
+        longBreakEvery: 4,
+      });
+      const endSession = stub.plugin.logManager.endSession;
+      stub.plugin.logManager.endSession = async (...args: unknown[]) => {
+        const counted = await (endSession as (...a: unknown[]) => Promise<boolean>)(...args);
+        stub.settings.longBreakEvery = changedTo;
+        return counted;
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const timer = new TimerEngine(stub.plugin as any);
+      await timer.finish();
+      const ends = stub.calls.filter((c) => c.name === "endSession");
+      expect((ends[0].args[1] as Record<string, unknown>).cycle).toBe(4);
+      expect(timer.getState().breakType).toBe("long");
     }
   );
 

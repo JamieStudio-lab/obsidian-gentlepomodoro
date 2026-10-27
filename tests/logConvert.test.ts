@@ -840,6 +840,22 @@ describe("scanLogAnomalies — the hour a fall-back repeats (America/New_York)",
     // A Slept no reading of that span can hold is still one.
     const odd = line.replace(`[Slept:: ${String(65 * 60)}]`, `[Slept:: ${String(68 * 60 + 2)}]`);
     expect(kinds(odd)).toEqual(["slept Logs/0.md:1"]);
+    // Started before the repeated hour, so only its End can be the later
+    // reading: 00:50 EDT to 01:10 EST is 80 minutes that read as 20.
+    const early = formatLogLine({
+      mode: "break",
+      taskName: "No Task",
+      scheduledDurationMinutes: 5,
+      startTime: moment(clock(0, 50)),
+      endTime: moment(clock(1, 10, 2)),
+      pauses: [{ start: moment(clock(0, 52)), end: moment(clock(1, 6, 2)) }],
+      status: "finished",
+      breakType: "short",
+      sessionId: "s000000000",
+      sleeps: [[clock(0, 53), clock(1, 4, 2)]],
+    });
+    expect(parseLogLine(early)?.values.get("Slept")).toBe(String(71 * 60));
+    expect(kinds(early)).toEqual([]);
   });
 
   it("does not call a second-pass session an overlap with a first-pass one", () => {

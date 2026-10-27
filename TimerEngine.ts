@@ -801,9 +801,11 @@ export class TimerEngine {
         ? this.plugin.settings.sessionsSinceLongBreak + 1
         : 1;
     // Its place in the cycle: the line's Cycle, and below what decides the
-    // long break, so the two cannot disagree even on a hand-edited data.json
-    // (a fractional length or count, or one below 1).
-    const cycle = cyclePosition(counter, this.plugin.settings.longBreakEvery);
+    // long break, so the two cannot disagree — on a hand-edited data.json (a
+    // fractional length or count, or one below 1), or when the setting is
+    // changed while the end awaits the vault: the length is read once, here.
+    const cycleEvery = cycleLength(this.plugin.settings.longBreakEvery);
+    const cycle = cyclePosition(counter, cycleEvery);
     const focus = this.state.mode === "focus";
 
     // Log the finished session. False when it was under a minute (F59): no
@@ -835,7 +837,7 @@ export class TimerEngine {
         await this.plugin.saveSettings();
 
         // A long break follows the focus whose Cycle is the cycle's last place.
-        isLongBreak = cycle === cycleLength(this.plugin.settings.longBreakEvery);
+        isLongBreak = cycle === cycleEvery;
       }
       this.switchMode("break", autoStartNext, isLongBreak);
     } else {

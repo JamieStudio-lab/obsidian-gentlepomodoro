@@ -33,6 +33,7 @@ import {
 import {
   formatLogLine,
   logSeconds,
+  parseFocusTotalSeconds,
   parseLogLine,
   type ParsedLogLine,
   type SessionLog,
@@ -153,12 +154,24 @@ const DAYS: { day: string; goal: number; lines: string[] }[] = [
     lines: [
       // Rewritten by Convert from a log older than the Type field, which
       // invents no Type: the daily goal counts them, so the tables must too.
+      // Each starts at a time no other line does, so a test can find it.
       converted(
-        "- 🍅 Focus | Task:: [[Projects/Writing.md|Draft intro #task/research/paper]] | Start:: 2026-10-20 08:00:00 | End:: 2026-10-20 08:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished"
+        "- 🍅 Focus | Task:: [[Projects/Writing.md|Draft intro #task/research/paper]] | Start:: 2026-10-20 07:05:00 | End:: 2026-10-20 07:30:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished"
       ),
       converted(
-        "- ☕ Rest | Start:: 2026-10-20 08:25:00 | End:: 2026-10-20 08:40:00 | Scheduled:: 900 | Total:: 900"
+        "- ☕ Rest | Start:: 2026-10-20 07:35:00 | End:: 2026-10-20 07:50:00 | Scheduled:: 900 | Total:: 900"
       ),
+      // Notes of the user's own that begin with a marker's word and carry a
+      // Total: the goal never reads them (parseLogLine refuses them), and no
+      // table may — one Total Dataview reads as a duration would make a
+      // day's sum fail, which drops the whole day from the totals.
+      "- 🍅 Focus today, in all [Total:: 4h]",
+      "- 🍅 Focused reading [Total:: 600]",
+      "- ☕ Rest of the week off [Total:: 300]",
+      // And notes that begin with the marker and a link, as a log line
+      // begins with a field: no Total, so no table takes them.
+      "- 🍅 Focus [[Projects/Writing.md]] went well",
+      "- ☕ Rest [[Projects/Admin.md]] after lunch",
       // A session split at two switches that comes back to its task: two
       // lines for Writing under one Session, which time by task counts once.
       focus(
@@ -184,6 +197,7 @@ const DAYS: { day: string; goal: number; lines: string[] }[] = [
     lines: [
       // Before 0.6.9: Dataview reads no field from it, so no table shows it.
       "- 🍅 Focus | Task:: X | Start:: 2026-10-21 08:00:00 | End:: 2026-10-21 08:25:00 | Scheduled:: 1500 | Pauses:: [] | Total:: 1500 | Status:: finished | Type:: focus",
+      "- ☕ Rest | Start:: 2026-10-21 08:25:00 | End:: 2026-10-21 08:30:00 | Scheduled:: 300 | Total:: 300 | Type:: short-break",
       rest({ day: "2026-10-21", from: "09:25", to: "09:30" }, "short"),
       focus({ day: "2026-10-21", from: "10:00", to: "10:25" }, WRITING, { taskId: "abc123" }),
     ],
@@ -643,12 +657,18 @@ describe("the sessions table's cells", () => {
 
   it("shows a line Convert wrote with no Type: in Focus only as in Focus and breaks", async () => {
     setNow(NOON);
+    const at = (rows: string[][], start: string) =>
+      rows.filter((r) => r[0] === "date(2026-10-20 00:00)" && r[1] === start).length;
     for (const kinds of ["focus", "all"] as const) {
       const o = options({ range: "all", kinds, sort: "oldest" });
-      const starts = texts(await runDql(sessionsTable(o), index, WEEK_NOTE)).map((r) => r[1]);
-      expect(starts, kinds).toContain('"08:00"');
-      if (kinds === "all") expect(starts).toContain('"08:25"');
-      else expect(starts).not.toContain('"08:25"');
+      for (const table of [
+        await runDql(sessionsTable(o), index, WEEK_NOTE),
+        await runDataviewJs(sessionsTableJs(o), index, WEEK_NOTE),
+      ]) {
+        const rows = texts(table);
+        expect(at(rows, '"07:05"'), kinds).toBe(1);
+        expect(at(rows, '"07:35"'), kinds).toBe(kinds === "all" ? 1 : 0);
+      }
     }
   });
 
@@ -877,18 +897,22 @@ describe("the README's two example queries", () => {
     expect(READABLE.filter((l) => l.kind === "focus").length).toBeGreaterThan(20);
   });
 
-  it("add up each day's focus the way the daily goal does", async () => {
+  it("add up each day's focus the way the daily goal does, once its old lines are converted", async () => {
     setNow(NOON);
     const table = await run(examples[1]);
     expect(table.rowErrors).toEqual([]);
     const days = [...new Set(countedFocus("all", "2026-10-23", WEEK_NOTE).map((l) => l.day))]
       .sort()
       .reverse();
+    // Against the goal's own count of each day's file, less the lines still
+    // in the old format, which Dataview reads nothing from.
+    const goalMinutes = (day: string) => {
+      const lines = DAYS.find((d) => d.day === day)?.lines ?? [];
+      const readable = lines.filter((line) => parseLogLine(line)?.format !== "v1");
+      return Math.round(parseFocusTotalSeconds(readable.join("\n")) / 60);
+    };
     expect(texts(table)).toEqual(
-      days.map((day) => [
-        `date(${day} 00:00)`,
-        String(minutes(countedFocus("all", "2026-10-23", WEEK_NOTE).filter((l) => l.day === day))),
-      ])
+      days.map((day) => [`date(${day} 00:00)`, String(goalMinutes(day))])
     );
     expect(days).toContain("2026-10-20");
   });

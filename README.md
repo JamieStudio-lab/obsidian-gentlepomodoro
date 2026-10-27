@@ -210,7 +210,7 @@ The field names and their order are stable — safe to pin queries against; new 
 TABLE WITHOUT ID s.Task AS Task, s.Start AS Start, round(s.Total / 60) AS Minutes, s.Status AS Status
 FROM "Your log folder"
 FLATTEN file.lists AS s
-WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus")))
+WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus [")))
 SORT s.Start DESC
 LIMIT 20
 ```
@@ -219,7 +219,7 @@ LIMIT 20
 TABLE WITHOUT ID key AS Day, round(sum(rows.s.Total) / 60) AS "Focus minutes"
 FROM "Your log folder"
 FLATTEN file.lists AS s
-WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus"))) AND s.Status != "cancelled"
+WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus ["))) AND s.Status != "cancelled"
 GROUP BY file.day
 SORT key DESC
 ```
@@ -228,7 +228,7 @@ SORT key DESC
 The first lists your latest focus sessions; the second adds up each day's focus the way the daily goal does, leaving skipped sessions out. Four things in them are on purpose:
 
 - `file.day AND endswith(file.name, "-gentle-pomodoro-log")` keeps out any other note in that folder — a note that quotes a log line would otherwise be counted — and a file named like a log in digits Dataview can't read as a date.
-- `s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus")` takes in a focus line from a log older than the `Type` field, which **Convert old log lines** rewrites without one (it invents nothing); the daily goal counts those sessions. A line still in the old format begins the same way but has no `Total` Dataview can read, so it stays out.
+- `s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus [")` takes in a focus line from a log older than the `Type` field, which **Convert old log lines** rewrites without one (it invents nothing); the daily goal counts those sessions. A line still in the old format (`🍅 Focus | …`) stays out, as Dataview reads nothing from it, and so does a note of your own that starts with "🍅 Focus" without a log line's fields after it.
 - `s` is each list item of the file. Its fields keep their case: `s.Total`, never `s.total`, which is empty (a list item has no lower-case copies of its fields).
 - A cell Dataview can't work out drops its whole row, without an error. `round(s.Planned / 60)` hides every line written before 0.7.0, which has no `Planned`; write a field that may be missing as `choice(s.Planned != null, round(default(s.Planned, 0) / 60), null)`.
 
@@ -270,7 +270,7 @@ Saves your sessions as a file for a spreadsheet or a script. Use **Settings → 
 - **Days** — Last 7 days, Last 30 days (the default), This month, Last month, This year, Everything, or Choose dates (type **From** and **To** as `YYYY-MM-DD`). Everything runs from the first log file to today, or to the latest log file when that is later.
 - **Sessions** — Focus and breaks, or Focus only.
 - **Format** — CSV (for spreadsheets) or JSON Lines (for scripts).
-- **Folder** — typed, not picked: `Pomodoro exports` until you use another. The vault's top level isn't accepted, nor a folder with a part starting with `.` (Obsidian neither syncs nor lists those), nor a new folder whose name holds `:` `*` `?` `"` `<` `>` `|` or ends with a dot or a space (Obsidian can't create those on every device). The format and folder of the last export are remembered.
+- **Folder** — typed, not picked: `Pomodoro exports` until you use another. The vault's top level isn't accepted, nor a folder with a part starting with `.` (Obsidian neither syncs nor lists those), nor a folder whose name holds `:` `*` `?` `"` `<` `>` `|`, nor a new one that ends with a dot or a space or is a name Windows keeps (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`): Obsidian can't save the file there on every device. The format and folder of the last export are remembered.
 
 The file is `gentle-pomodoro-sessions-<from>-to-<to>-<HHmmss>.csv` (or `.jsonl`), with ` 2`, ` 3`… added if that name is taken. It is a new file every time. The export reads your log the way a template does (both line formats) and never changes it. It never overwrites a file it can see: it creates the file, and if the name is taken it takes the next one. The one gap is a file a sync drops there between Obsidian's own check and its write, which can be replaced. So the export reads the file back once, and a notice warns you if it doesn't hold what was written.
 

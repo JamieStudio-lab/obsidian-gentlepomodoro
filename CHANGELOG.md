@@ -77,9 +77,11 @@ scripts that anchor on the end of a line — see the first entry under
   code** previews it. A line from before 0.7.0 shows `-` for what it doesn't
   have (`Planned` never falls back to `Scheduled`). The code keeps your **Day
   starts at** hour, leaves out any note in the log folder that isn't a daily
-  log, counts what the daily goal counts (a line **Convert old log lines**
-  rewrote from a log older than the `Type` field has none, and is counted),
-  counts a split session once in the totals and in time by task (on 0.7.0
+  log or a note of your own in a log file, counts every line the daily goal
+  counts once it is in the new format (a line **Convert old log lines**
+  rewrote from a log older than the `Type` field has none, and is counted;
+  a line not yet converted Dataview can't read at all), counts a split
+  session once in the totals and in time by task (on 0.7.0
   lines, which carry a `Session`), and, if the system refuses clipboard
   access, shows the code in a window to copy by hand. The ↑ / ↓ buttons and
   **Show the code** work from the keyboard on every Obsidian the plugin runs
@@ -104,8 +106,9 @@ scripts that anchor on the end of a line — see the first entry under
   ends and a header; its columns are fixed, with new ones added at the end.
   Text cells that start like a formula (`=`, `+`, `-`, `@`, a tab) get a `'`
   in front. The vault's top level and hidden folders are refused, and so is
-  a new folder whose name Obsidian can't create on every device (`:`, `*`,
-  `?`, `"`, `<`, `>`, `|`, or a dot or space at the end), in the dialog,
+  a folder Obsidian can't save the file in on every device — a name with
+  `:`, `*`, `?`, `"`, `<`, `>` or `|`, or a new one that ends with a dot or a
+  space or is a name Windows keeps (`CON`, `AUX`, `NUL`, …) — in the dialog,
   before anything is written.
 - **The read API gains ten session members**, `sessionId`, `startedBy`,
   `endedBy`, `planned`, `cycle`, `offset`, `endOffset`, `slept`, `dropped` and
@@ -169,11 +172,13 @@ scripts that anchor on the end of a line — see the first entry under
   Export, so the three can't read one line three ways. The tests fail any
   other source that names a new field followed by `::`, and any new field
   whose name ends in an older one or is `Day` or `Date`.
-- The long break is decided from the same number the line's `Cycle` is, so
-  the two agree even when the settings file was edited by hand.
-- 2188 → 2557 tests, 36 → 39 files. Every rule added was broken on purpose
-  to see a test fail: over 550 breakages, all caught except six that change
-  nothing a user can see.
+- The long break is decided from the same number the line's `Cycle` is,
+  with the setting read once, so the two agree even when the settings file
+  was edited by hand or the setting changed while the session was being
+  logged.
+- 2188 → 2564 tests, 36 → 39 files. Every rule added was broken on purpose
+  to see a test fail: over 600 breakages, all caught except a few that
+  change nothing a user can see.
 
 ## [0.6.9] — 2026-10-08
 
