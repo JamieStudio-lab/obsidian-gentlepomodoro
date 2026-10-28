@@ -204,6 +204,8 @@ describe("TimerEngine — long break after N pomodoros", () => {
     ["a count below 1", { longBreakEvery: 4, sessionsSinceLongBreak: -3 }, [1, 1, 1, 1]],
     // A cycle of one: every focus is its last place, so each has a long break.
     ["a length below 1", { longBreakEvery: 0.5, sessionsSinceLongBreak: 0 }, [1, 1, 1, 1]],
+    ["a length of 0", { longBreakEvery: 0, sessionsSinceLongBreak: 0 }, [1, 1, 1, 1]],
+    ["a negative length", { longBreakEvery: -2, sessionsSinceLongBreak: 0 }, [1, 1, 1, 1]],
   ] as const)(
     "with %s in data.json, the long break follows the focus whose Cycle is the last place",
     async (_name, stored, cycles) => {

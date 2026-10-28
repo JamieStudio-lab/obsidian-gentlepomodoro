@@ -499,9 +499,12 @@ describe("the folder", () => {
       'say "hi"',
       "stars*",
       "Reports/Focus/Week: 1",
-      // Every part is judged, not only the first.
+      // Every part is judged, not only the first, nor only the last.
       "New exports/Week: 1",
       "New exports/2026/Q4?",
+      "Q4?/2026",
+      "New: exports/2026",
+      "Reports/a:b/2026",
     ]) {
       expect(check(input), input).toEqual({ kind: "problem", message: EXPORT_FOLDER_CHARACTERS });
     }
@@ -522,8 +525,13 @@ describe("the folder", () => {
     ]) {
       expect(check(input), input).toEqual({ kind: "problem", message: EXPORT_FOLDER_NEW_NAME });
     }
-    // Only the whole name before its last dot is a device name.
+    // Only the whole name before its last dot is a device name: not one that
+    // starts with one, nor one that ends with one.
     for (const input of [
+      "Beacon",
+      "Exports/Lexicon",
+      "Bordeaux",
+      "Annul",
       "console",
       "com0",
       "LPT10",
@@ -537,11 +545,14 @@ describe("the folder", () => {
 
   it("takes a folder that exists by its characters alone, as it is never made again", () => {
     const odd = fakeVault({}, ["Q4? review", "Archive/Done.", "aux"]);
-    // A file inside it is refused all the same (Vault.create checks every part).
-    expect(checkExportFolder("q4? review", odd)).toEqual({
-      kind: "problem",
-      message: EXPORT_FOLDER_CHARACTERS,
-    });
+    // A file inside it is refused all the same (Vault.create checks every part),
+    // and inside a folder made below it.
+    for (const input of ["q4? review", "Q4? review/2026"]) {
+      expect(checkExportFolder(input, odd), input).toEqual({
+        kind: "problem",
+        message: EXPORT_FOLDER_CHARACTERS,
+      });
+    }
     // What only a NEW folder is refused for is not held against one that exists.
     expect(checkExportFolder("archive/done.", odd)).toEqual({ kind: "ok", path: "Archive/Done." });
     expect(checkExportFolder("AUX/2026", odd)).toEqual({ kind: "ok", path: "aux/2026" });

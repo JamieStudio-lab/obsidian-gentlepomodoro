@@ -27,11 +27,13 @@
  *   (nothing is invented on it), and `s.Type = "focus"` alone leaves it out
  *   of every table while the daily goal counts it: such a line is known by
  *   the marker it begins with, followed by " [" as the writer puts it
- *   (formatV2Line), and by a Total. Neither is a note of the user's own in a
- *   log file, which the goal never reads: the " [" keeps out one that starts
- *   with the word ("🍅 Focus today [Total:: 4h]", "🍅 Focused reading") and a
- *   line from before 0.6.9 ("🍅 Focus | …"); the Total keeps out one that
- *   starts with a link ("🍅 Focus [[Project]] went well").
+ *   (formatV2Line), and by a Start and a Total, which every session line
+ *   has. That keeps out a note of the user's own in a log file, which the
+ *   goal never reads — one that starts with the word ("🍅 Focus today
+ *   [Total:: 4h]", "🍅 Focused reading") or with a link ("🍅 Focus
+ *   [[Project]] … [Total:: 1h]"), where a Total Dataview reads as a duration
+ *   would fail the day's sum and drop the whole day — and a line from
+ *   before 0.6.9 ("🍅 Focus | …"), from which Dataview reads no field.
  *
  * A log line's keys are read here as `s.Key`, never written as the line
  * writes them: only logLine.ts may (tests/logLine.test.ts).
@@ -421,8 +423,8 @@ function rangeDql(o: QueryOptions): string | null {
 }
 
 /** A focus line, a line with no Type known by its marker (see the top). */
-const FOCUS_DQL = `(s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, ${dqlString(`${LOG_FOCUS_MARKER} [`)})))`;
-const BREAK_DQL = `(s.Type = "short-break" OR s.Type = "long-break" OR (s.Type = null AND s.Total != null AND startswith(s.text, ${dqlString(`${LOG_REST_MARKER} [`)})))`;
+const FOCUS_DQL = `(s.Type = "focus" OR (s.Type = null AND s.Start != null AND s.Total != null AND startswith(s.text, ${dqlString(`${LOG_FOCUS_MARKER} [`)})))`;
+const BREAK_DQL = `(s.Type = "short-break" OR s.Type = "long-break" OR (s.Type = null AND s.Start != null AND s.Total != null AND startswith(s.text, ${dqlString(`${LOG_REST_MARKER} [`)})))`;
 
 const KINDS_DQL: Record<QueryKinds, string> = {
   focus: FOCUS_DQL,
@@ -430,8 +432,8 @@ const KINDS_DQL: Record<QueryKinds, string> = {
 };
 
 /** The same two tests in DataviewJS, as the code's first lines define them. */
-const FOCUS_JS = `const isFocus = (s) => s.Type === "focus" || (s.Type == null && s.Total != null && s.text.startsWith(${JSON.stringify(`${LOG_FOCUS_MARKER} [`)}));`;
-const BREAK_JS = `const isBreak = (s) => s.Type === "short-break" || s.Type === "long-break" || (s.Type == null && s.Total != null && s.text.startsWith(${JSON.stringify(`${LOG_REST_MARKER} [`)}));`;
+const FOCUS_JS = `const isFocus = (s) => s.Type === "focus" || (s.Type == null && s.Start != null && s.Total != null && s.text.startsWith(${JSON.stringify(`${LOG_FOCUS_MARKER} [`)}));`;
+const BREAK_JS = `const isBreak = (s) => s.Type === "short-break" || s.Type === "long-break" || (s.Type == null && s.Start != null && s.Total != null && s.text.startsWith(${JSON.stringify(`${LOG_REST_MARKER} [`)}));`;
 
 /** The Task cell: a break's reads "Break" or "Long break", never the ☕ marker. */
 function taskDql(o: QueryOptions): string {

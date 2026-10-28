@@ -172,6 +172,14 @@ const DAYS: { day: string; goal: number; lines: string[] }[] = [
       // begins with a field: no Total, so no table takes them.
       "- 🍅 Focus [[Projects/Writing.md]] went well",
       "- ☕ Rest [[Projects/Admin.md]] after lunch",
+      // A link and a Total, but no Start: the duration would fail the day's
+      // sum, which drops the whole day.
+      "- 🍅 Focus [[Projects/Writing.md]] felt slow, about [Total:: 1h]",
+      "- ☕ Rest [[Projects/Admin.md]] by hand [Total:: 600]",
+      // Fields as a log line has them, but not a session's: one without a
+      // Total, one without a Start. The plugin reads both; no table shows them.
+      "- 🍅 Focus [Task:: Plan the week] [Start:: 2026-10-20 06:00:00]",
+      "- ☕ Rest [Total:: 120]",
       // A session split at two switches that comes back to its task: two
       // lines for Writing under one Session, which time by task counts once.
       focus(
@@ -338,9 +346,16 @@ interface Expected {
   start: string;
 }
 
+/**
+ * With no Type, a line is known by its marker — and only as a session when
+ * it has a Start and a Total, as every line the timer, Convert or Fix writes
+ * does (the rule logQueries.ts states); else it is no session at all.
+ */
 function kindOf(parsed: ParsedLogLine): Expected["kind"] {
   const type = parsed.values.get("Type");
-  if (type === undefined) return parsed.kind;
+  if (type === undefined) {
+    return parsed.values.has("Start") && parsed.values.has("Total") ? parsed.kind : "";
+  }
   if (type === "focus") return "focus";
   return type === "short-break" || type === "long-break" ? "rest" : "";
 }
@@ -574,7 +589,7 @@ describe("the sessions table, every variant", () => {
       index,
       WEEK_NOTE
     );
-    expect(table.rows.length).toBe(READABLE.length);
+    expect(table.rows.length).toBe(READABLE.filter((l) => l.kind !== "").length);
     expect(table.rows.length).toBeGreaterThan(15);
   });
 });
@@ -696,7 +711,7 @@ describe("the sessions table's cells", () => {
       .map((c) => QUERY_COLUMNS.find((q) => q.id === c.id)!.head);
     expect(dql.headers).toEqual(heads);
     expect(dql.rowErrors).toEqual([]);
-    expect(dql.rows.length).toBe(READABLE.length);
+    expect(dql.rows.length).toBe(READABLE.filter((l) => l.kind !== "").length);
     expect(texts(js)).toEqual(texts(dql));
     expect(formatQueryColumns(columns)).toMatch(/^date,start,/);
   });
@@ -888,13 +903,19 @@ describe("the README's two example queries", () => {
 
   it("list the latest twenty focus sessions, a line Convert wrote with no Type among them", async () => {
     setNow(NOON);
+    const focus = READABLE.filter((l) => l.kind === "focus").sort((a, b) =>
+      a.start < b.start ? 1 : -1
+    );
+    const starts = (table: TableResult) => texts(table).map((row) => row[1]);
     const table = await run(examples[0]);
     expect(table.rowErrors).toEqual([]);
-    const want = READABLE.filter((l) => l.kind === "focus")
-      .sort((a, b) => (a.start < b.start ? 1 : -1))
-      .slice(0, 20);
-    expect(texts(table).map((row) => row[1])).toEqual(want.map((l) => JSON.stringify(l.start)));
-    expect(READABLE.filter((l) => l.kind === "focus").length).toBeGreaterThan(20);
+    expect(starts(table)).toEqual(focus.slice(0, 20).map((l) => JSON.stringify(l.start)));
+    // And without its LIMIT, which would cut a wrong row a sort puts last:
+    // every focus line, and nothing that is not one.
+    expect(examples[0]).toContain("\nLIMIT 20\n");
+    const all = await run(examples[0].replace("\nLIMIT 20\n", "\n"));
+    expect(all.rowErrors).toEqual([]);
+    expect(starts(all)).toEqual(focus.map((l) => JSON.stringify(l.start)));
   });
 
   it("add up each day's focus the way the daily goal does, once its old lines are converted", async () => {

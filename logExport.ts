@@ -181,9 +181,10 @@ export function checkExportDates(from: string, to: string): string | null {
 
 export const EXPORT_FOLDER_TOP_LEVEL = "Pick a folder inside the vault.";
 export const EXPORT_FOLDER_HIDDEN = "Hidden folders aren't synced or listed. Pick another folder.";
-export const EXPORT_FOLDER_CHARACTERS = "A folder name can't contain : * ? \" < > |.";
+export const EXPORT_FOLDER_CHARACTERS =
+  'Obsidian can\'t save a file in a folder whose name has ":" in it, nor on Windows or Android one with * ? " < > |. Pick another folder.';
 export const EXPORT_FOLDER_NEW_NAME =
-  "A new folder's name can't end with a dot or a space, or be one Windows keeps for itself (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9).";
+  "Obsidian on Windows can't make a folder whose name ends with a dot or a space, or is one Windows keeps (CON, PRN, AUX, NUL, COM1 to COM9, LPT1 to LPT9). Pick another name.";
 
 /**
  * What Obsidian's checkPath refuses on SOME device (app.js, 1.13.7, jD),

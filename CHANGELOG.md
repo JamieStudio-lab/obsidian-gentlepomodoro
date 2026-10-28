@@ -176,7 +176,7 @@ scripts that anchor on the end of a line — see the first entry under
   with the setting read once, so the two agree even when the settings file
   was edited by hand or the setting changed while the session was being
   logged.
-- 2188 → 2564 tests, 36 → 39 files. Every rule added was broken on purpose
+- 2188 → 2566 tests, 36 → 39 files. Every rule added was broken on purpose
   to see a test fail: over 600 breakages, all caught except a few that
   change nothing a user can see.
 

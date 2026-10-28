@@ -210,7 +210,7 @@ The field names and their order are stable — safe to pin queries against; new 
 TABLE WITHOUT ID s.Task AS Task, s.Start AS Start, round(s.Total / 60) AS Minutes, s.Status AS Status
 FROM "Your log folder"
 FLATTEN file.lists AS s
-WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus [")))
+WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Start != null AND s.Total != null AND startswith(s.text, "🍅 Focus [")))
 SORT s.Start DESC
 LIMIT 20
 ```
@@ -219,7 +219,7 @@ LIMIT 20
 TABLE WITHOUT ID key AS Day, round(sum(rows.s.Total) / 60) AS "Focus minutes"
 FROM "Your log folder"
 FLATTEN file.lists AS s
-WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus ["))) AND s.Status != "cancelled"
+WHERE file.day AND endswith(file.name, "-gentle-pomodoro-log") AND (s.Type = "focus" OR (s.Type = null AND s.Start != null AND s.Total != null AND startswith(s.text, "🍅 Focus ["))) AND s.Status != "cancelled"
 GROUP BY file.day
 SORT key DESC
 ```
@@ -228,7 +228,7 @@ SORT key DESC
 The first lists your latest focus sessions; the second adds up each day's focus the way the daily goal does, leaving skipped sessions out. Four things in them are on purpose:
 
 - `file.day AND endswith(file.name, "-gentle-pomodoro-log")` keeps out any other note in that folder — a note that quotes a log line would otherwise be counted — and a file named like a log in digits Dataview can't read as a date.
-- `s.Type = null AND s.Total != null AND startswith(s.text, "🍅 Focus [")` takes in a focus line from a log older than the `Type` field, which **Convert old log lines** rewrites without one (it invents nothing); the daily goal counts those sessions. A line still in the old format (`🍅 Focus | …`) stays out, as Dataview reads nothing from it, and so does a note of your own that starts with "🍅 Focus" without a log line's fields after it.
+- `s.Type = null AND s.Start != null AND s.Total != null AND startswith(s.text, "🍅 Focus [")` takes in a focus line from a log older than the `Type` field, which **Convert old log lines** rewrites without one (it invents nothing); the daily goal counts those sessions. A line still in the old format (`🍅 Focus | …`) stays out, as Dataview reads nothing from it, and so does a note of your own that starts with "🍅 Focus" but has no `Start` and `Total` of its own.
 - `s` is each list item of the file. Its fields keep their case: `s.Total`, never `s.total`, which is empty (a list item has no lower-case copies of its fields).
 - A cell Dataview can't work out drops its whole row, without an error. `round(s.Planned / 60)` hides every line written before 0.7.0, which has no `Planned`; write a field that may be missing as `choice(s.Planned != null, round(default(s.Planned, 0) / 60), null)`.
 
