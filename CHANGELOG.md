@@ -74,7 +74,8 @@ scripts that anchor on the end of a line — see the first entry under
   off), **Copy daily totals** and **Copy time by task**. You choose the
   sessions table's **Columns** (the columns in the table, in order, each
   with ↑ / ↓ and ✕, and under them **Add a column**, a button for each of
-  the other 18 — one added goes at the end, and at least one stays; with
+  the others, 18 columns in all — one added goes at the end, and at least
+  one stays; with
   **Simple** and **Detailed** buttons to start from), **Days** (this note's
   day, today, the last 7 or 30 days, or all), **Sessions** (focus only, or
   with breaks), **Include skipped focus** and **Order**, and **Show the
@@ -194,7 +195,7 @@ scripts that anchor on the end of a line — see the first entry under
   with the setting read once, so the two agree even when the settings file
   was edited by hand or the setting changed while the session was being
   logged.
-- 2188 → 2566 tests, 36 → 39 files. Every rule added was broken on purpose
+- 2188 → 2614 tests, 36 → 40 files. Every rule added was broken on purpose
   to see a test fail: over 600 breakages, all caught except a few that
   change nothing a user can see.
 

@@ -300,7 +300,7 @@ export interface StubEl {
   value: string;
   /** Set by select(): the whole value is selected. */
   selected: boolean;
-  /** The components built on this element (ToggleComponent, ExtraButtonComponent). */
+  /** The components built on this element (ExtraButtonComponent). */
   controls: unknown[];
   addClass: (cls: string) => void;
   toggleClass: (cls: string, on: boolean) => void;
@@ -517,50 +517,6 @@ export function pressKey(el: StubEl, key: string): boolean {
  * click listener only (app.js, 1.7.7) — minAppVersion is 1.7.2. Tests reset it.
  */
 export const stubObsidian: { extraButton: "1.13" | "1.7" } = { extraButton: "1.13" };
-
-/**
- * Obsidian's switch, built on its own into an element (the column list), as
- * 1.14's app.js has it: setValue runs the change handler when the value
- * moves, and a click does nothing while it is disabled.
- */
-export class ToggleComponent {
-  readonly toggleEl: StubEl;
-  disabled = false;
-  tooltip = "";
-  private on = false;
-  private changeCallback: ((on: boolean) => void) | null = null;
-  constructor(containerEl: StubEl) {
-    this.toggleEl = containerEl.createDiv("checkbox-container");
-    containerEl.controls.push(this);
-  }
-  getValue(): boolean {
-    return this.on;
-  }
-  setValue(on: boolean): this {
-    if (this.on !== on) {
-      this.on = on;
-      this.changeCallback?.(on);
-    }
-    return this;
-  }
-  setDisabled(disabled: boolean): this {
-    this.disabled = disabled;
-    this.toggleEl.toggleClass("is-disabled", disabled);
-    return this;
-  }
-  setTooltip(tooltip: string): this {
-    this.tooltip = tooltip;
-    return this;
-  }
-  onChange(cb: (on: boolean) => void): this {
-    this.changeCallback = cb;
-    return this;
-  }
-  /** What a click does. */
-  click(): void {
-    if (!this.disabled) this.setValue(!this.on);
-  }
-}
 
 /**
  * Obsidian's icon button, as 1.14's app.js has it: a focusable element

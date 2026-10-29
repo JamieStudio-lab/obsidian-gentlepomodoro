@@ -555,8 +555,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
   /**
    * The six link/name rows. A link and its name stay in one group, on one
-   * page: the name a probe offers is written only while the link's row is up
-   * (its teardown makes the probe stale), and both go when the page closes.
+   * page: a link check's answer is painted into the link row that is up and
+   * its name offered only into a name box that is up, and both go when the
+   * page closes (the answer is kept, and painted when it opens again).
    */
   private musicLinkDefinitions(): SettingRowSpec[] {
     const rows: SettingRowSpec[] = [];
@@ -590,9 +591,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   /**
    * Leaving the tab. A link check still in the air is not dropped: it was
    * asked about the link the slot still holds, so its answer is kept for the
-   * next render and its name offered if the slot has none — and one whose link
-   * has changed since does nothing (runMusicLinkProbe). The tokens make a
-   * request not yet sent for a link since changed stay unsent.
+   * next render — painted then, its name offered to no one — and one whose
+   * link has changed since does nothing (runMusicLinkProbe). The tokens keep a
+   * request not yet sent for a link since changed unsent.
    */
   override hide(): void {
     for (const ui of this.musicSlotUi) {
@@ -759,7 +760,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // The user has moved on from this link while the request was out.
     if (!stillThisLink()) return;
     // Into the row that is up now, if any (none while its page is closed);
-    // the name as ever only as an offer (maybePrefillMusicName).
+    // the name as ever only as an offer, into a box that is up
+    // (maybePrefillMusicName).
     this.paintMusicLinkError(slot, describeLinkCheck(result.status, target));
     this.maybePrefillMusicName(slot, result.name);
   }
@@ -779,13 +781,15 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     if (name === "") return;
     const nameKey = MUSIC_NAME_KEYS[slot];
     if (this.plugin.settings[nameKey].trim() !== "") return;
+    // Only into a name box that is up: an answer that lands after its page
+    // closed (or the settings did) offers nothing to nobody, and a name
+    // written then would appear without anyone having seen it offered.
     const input = this.musicSlot(slot).nameInput;
-    if (input) {
-      if (!input.inputEl.isConnected) return;
-      if (input.getValue().trim() !== "") return;
-      if (activeDocument.activeElement === input.inputEl) return;
-      input.setValue(name);
-    }
+    if (input === null) return;
+    if (!input.inputEl.isConnected) return;
+    if (input.getValue().trim() !== "") return;
+    if (activeDocument.activeElement === input.inputEl) return;
+    input.setValue(name);
     void this.commitMusicName(slot, name);
   }
 

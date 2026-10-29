@@ -512,35 +512,52 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
     });
   });
 
-  it("puts a warning sign on Music for a link the player can't load, and on Daily log for a folder it can't list", () => {
+  it("puts a warning sign on Music for a link that isn't a YouTube link, and on Daily log for a folder it can't list — each for its own", () => {
     const status = (c: ReturnType<typeof makeTab>, name: string) =>
       definitionPages(c.tab)
         .find((p) => p.name === name)
         ?.status?.() ?? null;
-    const ok = makeTab(
-      { musicUrl: "https://youtu.be/abcdefghijk", logFolderPath: "Pomodoro_logs" },
-      {
-        "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "",
-      }
-    );
+    const LOGS = { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" };
+    const GOOD_LINK = "https://youtu.be/abcdefghijk";
+    const ok = makeTab({ musicUrl: GOOD_LINK, logFolderPath: "Pomodoro_logs" }, LOGS);
     expect(status(ok, "Music")).toBeNull();
     expect(status(ok, "Daily log")).toBeNull();
-    const bad = makeTab(
-      { musicUrl2: "https://example.com/song", logFolderPath: "pomodoro_logs" },
-      {
-        "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "",
-      }
+    // A bad link alone: only Music says so.
+    const badLink = makeTab(
+      { musicUrl2: "https://example.com/song", logFolderPath: "Pomodoro_logs" },
+      LOGS
     );
-    expect(status(bad, "Music")).toBe("warning");
-    // The folder in other capitals: the timer writes there, the commands can't list it.
-    expect(status(bad, "Daily log")).toBe("warning");
+    expect(status(badLink, "Music")).toBe("warning");
+    expect(status(badLink, "Daily log")).toBeNull();
+    // The folder in other capitals alone (the timer writes there, the
+    // commands can't list it): only Daily log says so.
+    const badFolder = makeTab({ musicUrl: GOOD_LINK, logFolderPath: "pomodoro_logs" }, LOGS);
+    expect(status(badFolder, "Music")).toBeNull();
+    expect(status(badFolder, "Daily log")).toBe("warning");
     expect(status(makeTab({ logFolderPath: "/" }), "Daily log")).toBe("warning");
     expect(status(makeTab({ logFolderPath: "" }), "Daily log")).toBeNull();
     // No other page has a sign.
-    for (const page of definitionPages(bad.tab)) {
+    for (const page of definitionPages(badLink.tab)) {
       if (page.name === "Music" || page.name === "Daily log") continue;
       expect(page.status, page.name).toBeUndefined();
     }
+  });
+
+  it("works each warning out when it is drawn, as it does each value", () => {
+    // Obsidian keeps the definitions it read at load: a sign worked out then
+    // would show the state the plugin loaded with for the whole session.
+    const c = makeTab(
+      { musicUrl: "https://youtu.be/abcdefghijk", logFolderPath: "Pomodoro_logs" },
+      { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" }
+    );
+    const pages = definitionPages(c.tab);
+    const status = (name: string) => pages.find((p) => p.name === name)?.status?.() ?? null;
+    expect(status("Music")).toBeNull();
+    expect(status("Daily log")).toBeNull();
+    c.settings.musicUrl3 = "https://example.com/song";
+    c.settings.logFolderPath = "pomodoro_logs";
+    expect(status("Music")).toBe("warning");
+    expect(status("Daily log")).toBe("warning");
   });
 
   it("hands Obsidian values and warnings that cannot throw, whatever the settings hold", () => {
@@ -629,20 +646,29 @@ describe("render rows, built and torn down as a page opens and closes", () => {
     expect(seen.at(-1)).toBe("listener off");
   });
 
-  it("lets go of an outcome line its teardown took out", async () => {
+  it("lets go of an outcome line its teardown took out, and only its own", async () => {
     const c = makeTab();
-    const summaries = renderAll(c.tab).filter((row) =>
-      (row.setting.settingEl as StubEl).classes.includes("gp-setting-summary")
-    );
-    expect(summaries).toHaveLength(2);
-    const [focus] = summaries;
-    const text = () => (focus.setting.settingEl as StubEl).children[0]?.text;
-    const before = text();
-    if (typeof focus.teardown === "function") focus.teardown();
+    const summaryRows = () =>
+      renderAll(c.tab).filter((row) =>
+        (row.setting.settingEl as StubEl).classes.includes("gp-setting-summary")
+      );
+    const lineOf = (row: { setting: Setting }) => (row.setting.settingEl as StubEl).children[0];
+    const [first] = summaryRows();
+    const removed = lineOf(first);
+    const before = removed.text;
+    if (typeof first.teardown === "function") first.teardown();
     await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
-    // Not written to after it went: the map no longer holds it.
-    expect(text()).toBeUndefined();
-    expect(before).toBeTruthy();
+    // Out of its row, and not written to after it went.
+    expect((first.setting.settingEl as StubEl).children).toHaveLength(0);
+    expect(removed.text).toBe(before);
+    // A late teardown of an old render does not take the newer render's line.
+    const [older] = summaryRows();
+    const [newer] = summaryRows();
+    if (typeof older.teardown === "function") older.teardown();
+    await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
+    expect(lineOf(newer).text).toBe(sessionEndSummary("focus", c.settings));
+    await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
+    expect(lineOf(newer).text).toBe(sessionEndSummary("focus", c.settings));
   });
 
   it("keeps the answer to a link pasted just before its page closed, for when it opens again", async () => {
@@ -682,7 +708,7 @@ describe("render rows, built and torn down as a page opens and closes", () => {
       let asked = 0;
       stubRequest.handler = () => {
         asked++;
-        return Promise.resolve({ status: 401, json: {} });
+        return Promise.resolve({ status: 200, json: { title: "Lofi beats", author_name: "A" } });
       };
       const rows3 = renderAll(c3.tab);
       const link3 = rows3.find((r) => r.name === "Music / Music link 1");
@@ -693,7 +719,9 @@ describe("render rows, built and torn down as a page opens and closes", () => {
       const cache3 = (
         c3.tab as unknown as { linkProbeCache: Map<string, { result: { status: number } }> }
       ).linkProbeCache;
-      expect(cache3.get(url)?.result.status).toBe(401);
+      expect(cache3.get(url)?.result.status).toBe(200);
+      // Its name is offered to no one: no box was up to offer it in.
+      expect(c3.settings.musicName1).toBe("");
       // A link changed while the request was out: nothing kept, nothing painted.
       const c2 = makeTab();
       stubRequest.handler = () =>
@@ -2281,6 +2309,35 @@ describe("the sound rows", () => {
     await flush();
     await pick(c, FOCUS_END_CUE_NAME, { kind: "file", path: "Sounds/gong.mp3" });
     expect(seen).toContainEqual(["Sounds/gong.mp3", true]);
+  });
+
+  it("drops a pick that lands after its page closed, which runs the teardown and not hide()", async () => {
+    const c = makeTab();
+    let land: (l: Load) => void = () => {};
+    const asked = withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = r;
+        })
+    );
+    const item = groupNamed(c.tab, "When focus ends").items.find(
+      (i) => i.name === FOCUS_END_CUE_NAME
+    );
+    const setting = new Setting();
+    const teardown = (item?.render as (s: Setting) => (() => void) | void)(setting);
+    await flush();
+    setting.components.find((x) => x.kind === "button")?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    if (typeof teardown === "function") teardown();
+    land({ ok: true, buffer: {} });
+    await flush();
+    expect(c.settings.focusEndSound).toBe("bell");
+    expect(asked).not.toContain("preview:focus");
+    expect(asked).toContain("stopPreview");
   });
 
   it("drops a pick that lands after the tab was closed", async () => {
