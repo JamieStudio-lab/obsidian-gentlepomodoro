@@ -5,16 +5,45 @@ import {
   PluginSettingTab,
   Setting,
   ExtraButtonComponent,
-  ToggleComponent,
   debounce,
   requestUrl,
+  setIcon,
   type ButtonComponent,
+  type SettingDefinitionGroup,
   type SettingDefinitionItem,
+  type SettingDefinitionPage,
   type SettingControl,
   type SettingGroupItem,
   type TextComponent,
 } from "obsidian";
 import { THEMES, resolveTheme } from "./themes";
+import {
+  LOG_PAGE,
+  LOG_PAGE_DESC,
+  LOG_TABLES_PAGE,
+  LOG_TABLES_PAGE_DESC,
+  MUSIC_PAGE,
+  MUSIC_PAGE_DESC,
+  SOUNDS_PAGE,
+  SOUNDS_PAGE_DESC,
+  SOUNDS_PAGE_MOBILE,
+  STATUS_BAR_PAGE,
+  STATUS_BAR_PAGE_DESC,
+  TASKS_PAGE,
+  TASKS_PAGE_DESC,
+  TIMER_PAGE,
+  TIMER_PAGE_DESC,
+  logPageValue,
+  logTablesPageValue,
+  musicPageValue,
+  musicPageWarning,
+  safePageStatus,
+  safePageValue,
+  soundsPageValue,
+  statusBarPageValue,
+  tasksPageValue,
+  timerPageValue,
+} from "./settingPages";
 import { STATUS_BAR_TIMES, resolveStatusBarTime } from "./statusBar";
 import { DAY_START_HOURS, resolveDayStartHour, sanitizeDevice } from "./logLine";
 import { deviceStorage, readDeviceName, saveDeviceName } from "./deviceStorage";
@@ -26,7 +55,7 @@ import {
   QUERY_RANGES,
   QUERY_SORTS,
   formatQueryColumns,
-  moveQueryColumn,
+  moveShownColumn,
   presetColumns,
   queryCode,
   queryFolder,
@@ -35,8 +64,9 @@ import {
   resolveQueryKinds,
   resolveQueryRange,
   resolveQuerySort,
-  switchQueryColumn,
-  type ColumnChoice,
+  addQueryColumn,
+  arrangeQueryColumns,
+  removeQueryColumn,
   type QueryColumnId,
   type QueryCopyKind,
   type QueryPreset,
@@ -163,11 +193,15 @@ const EXPORT_SESSIONS_DESC =
 export const DEVICE_NAME_NAME = "This device's name";
 const DEVICE_NAME_DESC =
   "Optional. Each session this device's timer logs carries it as Device, to tell your devices apart; kept on this device only, never synced.";
-// The Dataview tables group (0.7.0).
-export const QUERY_GROUP_HEADING = "Dataview tables";
+// The Log tables group (0.7.0), on a page of its own name.
+export const QUERY_GROUP_HEADING = LOG_TABLES_PAGE;
 export const QUERY_COLUMNS_NAME = "Columns";
-const QUERY_COLUMNS_DESC =
-  "The sessions table's columns and their order. The Copy buttons below give code to paste into any note, which the Dataview plugin draws.";
+// Short, so Simple and Detailed sit beside it rather than below: the Copy
+// rows say what the code is, and the page's own row what Dataview has to do
+// with it.
+const QUERY_COLUMNS_DESC = "The sessions table shows these, in this order.";
+/** Over the columns not in the table, each a button that adds it. */
+export const COLUMN_ADD_LABEL = "Add a column";
 export const QUERY_RANGE_NAME = "Days";
 const QUERY_RANGE_DESC =
   "Which days the copied tables show. This note's day is the date in the name of the note you paste into.";
@@ -181,7 +215,7 @@ const QUERY_SORT_DESC = "Newest or oldest first, in the sessions table and the d
 export const QUERY_CODE_SUMMARY = "Show the code";
 export const QUERY_NO_FOLDER_PREVIEW =
   "Choose a log folder inside the vault under Daily log, and the code shows here.";
-export const COLUMN_LAST_ON_TOOLTIP = "At least one column stays on.";
+export const COLUMN_LAST_SHOWN_TOOLTIP = "At least one column stays in the table.";
 // Searched for as well as the names: "copy dataview" finds all four.
 const QUERY_COPY_ALIASES = ["dataview", "query", "copy"];
 
@@ -306,6 +340,24 @@ interface SettingGroupSpec {
   rows: SettingRowSpec[];
 }
 
+/**
+ * A page of groups (0.7.0, settingPages.ts). On 1.13+ the tab's top level is
+ * one row per page, with `value` on its right and a warning sign while
+ * `warning` holds; the page opens with its groups. Before 1.13 there are no
+ * pages, and display() shows every page's groups one after another.
+ *
+ * `value` and `warning` are functions on purpose: Obsidian reads the
+ * definitions once, when the plugin loads, and calls these each time it draws
+ * the list — on the way back from a page included.
+ */
+interface SettingPageSpec {
+  name: string;
+  desc: string;
+  value?: () => string;
+  warning?: () => boolean;
+  groups: SettingGroupSpec[];
+}
+
 /** What one oEmbed probe learned. `name` is "" when nothing usable came back. */
 interface LinkProbeResult {
   status: number;
@@ -371,55 +423,97 @@ interface MusicSlotUi {
 }
 
 /**
- * Marks a column arrow the plugin made keyboard-usable itself, on an Obsidian
- * whose ExtraButton is not (see columnArrow): its tabindex is then the
- * plugin's to take off and put back as the arrow is disabled and enabled.
+ * Marks a column button the plugin made keyboard-usable itself, on an Obsidian
+ * whose ExtraButton is not (see columnControl): its tabindex is then the
+ * plugin's to take off and put back as the button is disabled and enabled.
  */
-const KEYBOARD_ARROW_ATTR = "data-gp-keyboard";
+const KEYBOARD_CONTROL_ATTR = "data-gp-keyboard";
 
-/** One row of the column list: its node, and the three controls on it. */
+/** One row of the column list, a column in the table: its node and its three buttons. */
 interface ColumnItemUi {
   id: QueryColumnId;
   el: HTMLElement;
-  toggle: ToggleComponent;
   up: ExtraButtonComponent;
   down: ExtraButtonComponent;
+  remove: ExtraButtonComponent;
+}
+
+/** One "Add a column" button, a column not in the table. */
+interface ColumnChipUi {
+  id: QueryColumnId;
+  el: HTMLElement;
+}
+
+/** A column's name in the settings list. */
+function columnLabel(id: QueryColumnId): string {
+  return QUERY_COLUMNS.find((column) => column.id === id)?.label ?? id;
+}
+
+/** Where a column is in the catalog: the order the "Add a column" buttons keep. */
+function catalogIndex(id: QueryColumnId): number {
+  return QUERY_COLUMNS.findIndex((column) => column.id === id);
 }
 
 /**
- * A column's ↑ or ↓, usable from the keyboard on every Obsidian the plugin
+ * A column's ↑, ↓ or ✕, usable from the keyboard on every Obsidian the plugin
  * runs on. 1.13's ExtraButton is a div with tabindex 0 that Enter and Space
  * press; 1.7's (minAppVersion is 1.7.2) is a bare div with a click listener
- * only (app.js, 1.7.7), which Tab never reaches, so a keyboard could switch
- * columns but never move one. There the arrow is given what 1.13 gives it.
- * Its tooltip is also its accessible name: the arrows are icons only.
+ * only (app.js, 1.7.7), which Tab never reaches, so a keyboard could neither
+ * move a column nor take one out. There the button is given what 1.13 gives
+ * it. Its tooltip is also its accessible name, the buttons being icons only,
+ * and neither version gives one a role, so it is given that too.
  */
-function columnArrow(
+function columnControl(
   el: HTMLElement,
   icon: string,
   name: string,
   press: () => void
 ): ExtraButtonComponent {
-  const arrow = new ExtraButtonComponent(el).setIcon(icon).setTooltip(name).onClick(press);
-  const button = arrow.extraSettingsEl;
-  if (button.getAttribute("tabindex") !== null) return arrow;
-  button.setAttr(KEYBOARD_ARROW_ATTR, "true");
+  const control = new ExtraButtonComponent(el).setIcon(icon).setTooltip(name).onClick(press);
+  const button = control.extraSettingsEl;
+  button.setAttr("role", "button");
+  if (button.getAttribute("tabindex") !== null) return control;
+  button.setAttr(KEYBOARD_CONTROL_ATTR, "true");
   button.setAttr("tabindex", "0");
   button.addEventListener("keydown", (event: KeyboardEvent) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
-    if (!arrow.disabled) press();
+    if (!control.disabled) press();
   });
-  return arrow;
+  return control;
 }
 
-/** Disable or enable an arrow, its tabindex with it where the plugin set one. */
-function setArrowDisabled(arrow: ExtraButtonComponent, disabled: boolean): void {
-  arrow.setDisabled(disabled);
-  const button = arrow.extraSettingsEl;
-  if (button.getAttribute(KEYBOARD_ARROW_ATTR) === null) return;
+/**
+ * Disable or enable a column button: its tabindex with it where the plugin
+ * set one, and `aria-disabled`. That attribute is what both versions' app.css
+ * dims a clickable icon by (`.clickable-icon[aria-disabled='true']`, opacity
+ * 0.4); setDisabled only adds `is-disabled`, which neither styles, so until
+ * 0.7.0's review the first ↑ and the last ↓ looked as pressable as the rest.
+ * It also tells a screen reader. Taken off when enabled, never "false".
+ */
+function setControlDisabled(control: ExtraButtonComponent, disabled: boolean): void {
+  control.setDisabled(disabled);
+  const button = control.extraSettingsEl;
+  if (disabled) button.setAttr("aria-disabled", "true");
+  else button.removeAttribute("aria-disabled");
+  if (button.getAttribute(KEYBOARD_CONTROL_ATTR) === null) return;
   if (disabled) button.removeAttribute("tabindex");
   else button.setAttr("tabindex", "0");
+}
+
+/** What the Columns row's status line says after each change, for a screen reader. */
+export function columnMovedMessage(label: string, at: number, count: number): string {
+  return `${label} moved: column ${String(at)} of ${String(count)}.`;
+}
+export function columnAddedMessage(label: string, count: number): string {
+  return `${label} added: column ${String(count)} of ${String(count)}.`;
+}
+export function columnRemovedMessage(label: string): string {
+  return `${label} removed.`;
+}
+export function columnPresetMessage(preset: QueryPreset, count: number): string {
+  const name = preset === "simple" ? "Simple" : "Detailed";
+  return `${name}: ${String(count)} ${count === 1 ? "column" : "columns"}.`;
 }
 
 export class GentlePomoSettingTab extends PluginSettingTab {
@@ -427,22 +521,26 @@ export class GentlePomoSettingTab extends PluginSettingTab {
 
   /**
    * The two moment groups' outcome lines, kept so they can be rewritten in place when
-   * one of the four settings they describe is written. Repopulated by each
-   * render; entries from a previous render are simply overwritten, and a stale
+   * one of the four settings they describe is written. Set by each render and
+   * taken out by its teardown (on 1.13, when their page closes); a stale
    * detached node would only be written to, never shown.
    */
   private readonly endSummaryEls = new Map<SessionEndEdge, HTMLElement>();
 
   /**
-   * The Dataview tables group's live parts: the code preview, rewritten in
-   * place after every change the code depends on (1.13 re-renders nothing
-   * after setControlValue, as for the outcome lines above), and the column
-   * list with its rows in their current order. Set by each render, cleared
-   * by the 1.13 teardown.
+   * The Log tables group's live parts: the code preview, rewritten in place
+   * after every change the code depends on (1.13 re-renders nothing after
+   * setControlValue, as for the outcome lines above), and the column list with
+   * its rows in their current order. Set by each render, cleared by its
+   * teardown (on 1.13, when the page closes).
    */
   private queryCodeEl: HTMLElement | null = null;
   private columnListEl: HTMLElement | null = null;
+  private columnAddEl: HTMLElement | null = null;
+  private columnChipsEl: HTMLElement | null = null;
+  private columnStatusEl: HTMLElement | null = null;
   private columnItems: ColumnItemUi[] = [];
+  private columnChips: ColumnChipUi[] = [];
 
   constructor(app: App, plugin: GentlePomoPlugin) {
     super(app, plugin);
@@ -450,8 +548,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   }
 
   /**
-   * The six link/name rows, shared shape for the 1.13 path. Kept beside the
-   * imperative loop in display() — changing one means changing both.
+   * The six link/name rows. A link and its name stay in one group, on one
+   * page: the name a probe offers is written only while the link's row is up
+   * (its teardown makes the probe stale), and both go when the page closes.
    */
   private musicLinkDefinitions(): SettingRowSpec[] {
     const rows: SettingRowSpec[] = [];
@@ -529,7 +628,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // Paint what the STORED value already says. The sync validate hook used to
     // do this for free on mount, and a link that is broken in data.json must not
     // become invisible here just because nobody has typed in the box yet.
-    this.paintMusicLinkError(slot, validateMusicUrl(this.plugin.settings[urlKey]) ?? null);
+    const stored = this.plugin.settings[urlKey];
+    this.paintMusicLinkError(slot, validateMusicUrl(stored) ?? this.cachedLinkVerdict(stored));
     return () => {
       ui.token++;
       ui.urlInput = null;
@@ -560,6 +660,23 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     this.plugin.settings[nameKey] = value.trim();
     await this.plugin.saveSettings();
     this.applySettingsToOpenViews();
+  }
+
+  /**
+   * What YouTube said about this link a moment ago, if it is still fresh
+   * enough to stand in for asking — never a request, as this runs at render.
+   * On 1.13 the row is built again each time its page opens, and without this
+   * a verdict painted before Back was gone after it.
+   */
+  private cachedLinkVerdict(stored: string): string | null {
+    const url = stored.trim();
+    const target = url === "" ? null : parseYouTubeUrl(url);
+    const cached = this.linkProbeCache.get(url);
+    if (target === null || cached === undefined) return null;
+    if (cached.result.status !== 200 && Date.now() - cached.at >= MUSIC_LINK_CACHE_TTL_MS) {
+      return null;
+    }
+    return describeLinkCheck(cached.result.status, target);
   }
 
   private paintMusicLinkError(slot: number, message: string | null): void {
@@ -710,7 +827,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     // it. That column wraps to give its message a line of its own, and on a
     // phone — where Obsidian makes a settings button full width — the wrap
     // also pushed the chooser onto a line below ▶.
-    ui.statusEl = setting.infoEl.createDiv("gp-setting-note");
+    const statusEl = setting.infoEl.createDiv("gp-setting-note");
+    ui.statusEl = statusEl;
     void this.refreshCueStatus(edge);
     return () => {
       ui.token++;
@@ -718,6 +836,16 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       ui.playButton = null;
       ui.button = null;
       ui.statusEl = null;
+      statusEl.remove();
+      // A preview belongs to these rows. On 1.13 Back closes their page and
+      // runs this, and hide() is not called (only closing the settings or
+      // leaving the tab calls it): without this, a 30-second preview played on
+      // with no ■ left to press, and one still loading its file started after
+      // the page had gone. Unconditional — previewingEdge() is null while a
+      // file loads — and harmless twice; the next render sets the listener
+      // again.
+      this.plugin.timer.stopPreview();
+      this.plugin.timer.setPreviewListener(null);
     };
   }
 
@@ -834,8 +962,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * would say so until it is retyped (F29). Said, not changed — opening the
    * tab writes nothing.
    */
-  private buildLogFolderRow(setting: Setting): void {
-    // The folder as the tab found it: moving away from it leaves its logs
+  private buildLogFolderRow(setting: Setting): () => void {
+    // The folder as the row found it — when its page opened, on 1.13, and
+    // when the tab did before that: moving away from it leaves its logs
     // behind, whatever is typed on the way.
     const opened = this.plugin.settings.logFolderPath;
     const openedHoldsLogs = holdsLogs(this.app, opened);
@@ -850,6 +979,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           void this.writeLogFolder(value, opened, openedHoldsLogs, note);
         })
     );
+    // Under the description, outside the control column.
+    return () => {
+      note.remove();
+    };
   }
 
   /** Check and store a typed log folder, and say what happened under the row. */
@@ -891,7 +1024,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * typed (trimmed), at every keystroke like the tab's other text rows; the
    * note under it shows what a line will write when cleaning changes it.
    */
-  private buildDeviceNameRow(setting: Setting): void {
+  private buildDeviceNameRow(setting: Setting): () => void {
     const storage = deviceStorage(this.app);
     const stored = readDeviceName(storage);
     const note = setting.infoEl.createDiv("gp-setting-note gp-setting-note-info");
@@ -905,13 +1038,22 @@ export class GentlePomoSettingTab extends PluginSettingTab {
           note.setText(deviceNameNote(value));
         })
     );
+    return () => {
+      note.remove();
+    };
   }
 
   /**
-   * The Columns row (0.7.0): the Simple and Detailed buttons, and under the
-   * name a list of every column, each with a switch and ↑ / ↓ — no drag, which
-   * is 1.13-only and leaves a keyboard or a phone with nothing. A render row on
-   * both paths. Every change is written at once, as the tab's other rows are.
+   * The Columns row (0.7.0): the Simple and Detailed buttons; under the name
+   * the columns in the table, in order, each with ↑ / ↓ / ✕; and under them
+   * "Add a column", one button per column not in the table, in catalog order.
+   * No drag, which is 1.13-only and leaves a keyboard or a phone with nothing.
+   * A render row on both paths. Every change is written at once, as the
+   * tab's other rows are.
+   *
+   * Order only means something for a column in the table, so only those have
+   * arrows (the first design gave all 18 a switch and arrows, 26 of which
+   * moved columns nobody could see).
    */
   private buildColumnsRow(setting: Setting): () => void {
     setting.settingEl.addClass("gp-setting-wide");
@@ -922,91 +1064,211 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         })
       );
     }
-    const list = setting.settingEl.createDiv("gp-column-list");
+    const list = setting.settingEl.createDiv({
+      cls: "gp-column-list",
+      attr: { role: "list", "aria-label": "Columns in the table" },
+    });
+    const add = setting.settingEl.createDiv({
+      cls: "gp-column-add",
+      attr: { role: "group", "aria-label": COLUMN_ADD_LABEL },
+    });
+    add.createDiv({ cls: "gp-column-add-label", text: COLUMN_ADD_LABEL });
+    const chips = add.createDiv("gp-column-chips");
+    // Says what each change did, for a screen reader: after ✕ or an add,
+    // focus lands on a button that does not name the column acted on. There
+    // from the start, empty — a region made at its first message is often
+    // not read.
+    const status = setting.settingEl.createDiv({
+      cls: "gp-column-status",
+      attr: { role: "status", "aria-live": "polite" },
+    });
     this.columnListEl = list;
+    this.columnAddEl = add;
+    this.columnChipsEl = chips;
+    this.columnStatusEl = status;
     this.paintColumnList();
-    // Only this render's own list: a teardown that runs after the next
-    // render must not take that one's away.
     return () => {
+      // Outside the control column, which is all a re-render on the same
+      // Setting would clear.
+      list.remove();
+      add.remove();
+      status.remove();
+      // Only this render's own list: a teardown that runs after the next
+      // render must not take that one's away.
       if (this.columnListEl !== list) return;
       this.columnListEl = null;
+      this.columnAddEl = null;
+      this.columnChipsEl = null;
+      this.columnStatusEl = null;
       this.columnItems = [];
+      this.columnChips = [];
     };
   }
 
-  /** The column list built afresh from the stored order. */
+  /** Both parts built afresh from the stored columns. */
   private paintColumnList(): void {
     const list = this.columnListEl;
-    if (list === null) return;
+    const chips = this.columnChipsEl;
+    if (list === null || chips === null) return;
     list.empty();
-    this.columnItems = resolveQueryColumns(this.plugin.settings.queryColumns).map((choice) =>
-      this.buildColumnItem(list, choice)
-    );
+    chips.empty();
+    const columns = arrangeQueryColumns(resolveQueryColumns(this.plugin.settings.queryColumns));
+    this.columnItems = columns.filter((c) => c.on).map((c) => this.buildColumnItem(list, c.id));
+    this.columnChips = columns.filter((c) => !c.on).map((c) => this.buildColumnChip(chips, c.id));
     this.paintColumnStates();
   }
 
-  private buildColumnItem(list: HTMLElement, choice: ColumnChoice): ColumnItemUi {
-    const label = QUERY_COLUMNS.find((column) => column.id === choice.id)?.label ?? choice.id;
-    const el = list.createDiv("gp-column-item");
-    // The value first, then the handler: setValue calls it when the value moves.
-    const toggle = new ToggleComponent(el).setValue(choice.on).onChange((on) => {
-      void this.switchColumn(choice.id, on);
-    });
+  private buildColumnItem(list: HTMLElement, id: QueryColumnId): ColumnItemUi {
+    const label = columnLabel(id);
+    const el = list.createDiv({ cls: "gp-column-item", attr: { role: "listitem" } });
     el.createSpan({ cls: "gp-column-name", text: label });
-    const up = columnArrow(el, "arrow-up", `Move ${label} up`, () => {
-      void this.moveColumn(choice.id, -1);
+    const up = columnControl(el, "arrow-up", `Move ${label} up`, () => {
+      void this.moveColumn(id, -1);
     });
-    const down = columnArrow(el, "arrow-down", `Move ${label} down`, () => {
-      void this.moveColumn(choice.id, 1);
+    const down = columnControl(el, "arrow-down", `Move ${label} down`, () => {
+      void this.moveColumn(id, 1);
     });
-    return { id: choice.id, el, toggle, up, down };
+    const remove = columnControl(el, "x", `Remove ${label}`, () => {
+      void this.removeColumn(id);
+    });
+    remove.extraSettingsEl.addClass("gp-column-remove");
+    // A double click on ✕ is one press: the row below slides up under the
+    // pointer, and the second click would take that column out too. Caught on
+    // the way down, before the button's own listener; the arrows are left
+    // alone, the pressed one staying put, so twice is what was asked.
+    el.addEventListener(
+      "click",
+      (event: MouseEvent) => {
+        if (event.detail > 1 && remove.extraSettingsEl.contains(event.target as Node)) {
+          event.stopPropagation();
+        }
+      },
+      { capture: true }
+    );
+    return { id, el, up, down, remove };
   }
 
   /**
-   * Which controls can be used: ↑ not on the first column, ↓ not on the last,
-   * and the switch not on the one column left on — a table needs one.
+   * A plain button: Tab reaches it, and Enter and Space press it, on every
+   * version, with nothing added. Its label says what pressing it does, and
+   * the stylesheet keeps Obsidian from showing that label again as a tooltip
+   * over the name it repeats.
    */
-  private paintColumnStates(): void {
-    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
-    const onCount = columns.filter((c) => c.on).length;
-    this.columnItems.forEach((item, index) => {
-      const choice = columns.find((c) => c.id === item.id);
-      const label = QUERY_COLUMNS.find((column) => column.id === item.id)?.label ?? item.id;
-      const last = onCount === 1 && choice?.on === true;
-      item.toggle.setDisabled(last);
-      item.toggle.setTooltip(last ? COLUMN_LAST_ON_TOOLTIP : `Show ${label}`);
-      setArrowDisabled(item.up, index === 0);
-      setArrowDisabled(item.down, index === this.columnItems.length - 1);
+  private buildColumnChip(chips: HTMLElement, id: QueryColumnId): ColumnChipUi {
+    const label = columnLabel(id);
+    const el = chips.createEl("button", {
+      cls: "gp-column-chip",
+      attr: { type: "button", "aria-label": `Add ${label}` },
     });
+    setIcon(el.createSpan({ cls: "gp-column-chip-icon" }), "plus");
+    el.createSpan({ cls: "gp-column-chip-name", text: label });
+    el.addEventListener("click", (event: MouseEvent) => {
+      // One press for a double click: the next button slides under the pointer.
+      if (event.detail > 1) return;
+      void this.addColumn(id);
+    });
+    return { id, el };
   }
 
-  private async switchColumn(id: QueryColumnId, on: boolean): Promise<void> {
-    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
-    // Already so: the switch put back below calls this again.
-    if (columns.find((c) => c.id === id)?.on === on) return;
-    const next = switchQueryColumn(columns, id, on);
-    if (next === null) {
-      // The last column on: its switch is disabled, so only a keyboard or a
-      // race gets here. Put it back on, writing nothing.
-      this.columnItems.find((item) => item.id === id)?.toggle.setValue(true);
-      return;
-    }
+  private sayColumns(message: string): void {
+    this.columnStatusEl?.setText(message);
+  }
+
+  /**
+   * Which buttons can be used: ↑ not on the first column, ↓ not on the last,
+   * and ✕ not on the one column left in the table — a table needs one. And
+   * "Add a column" only while there is one to add.
+   */
+  private paintColumnStates(): void {
+    const count = this.columnItems.length;
+    this.columnItems.forEach((item, index) => {
+      setControlDisabled(item.up, index === 0);
+      setControlDisabled(item.down, index === count - 1);
+      setControlDisabled(item.remove, count === 1);
+      item.remove.setTooltip(
+        count === 1 ? COLUMN_LAST_SHOWN_TOOLTIP : `Remove ${columnLabel(item.id)}`
+      );
+    });
+    this.columnAddEl?.toggleClass("gp-column-add-empty", this.columnChips.length === 0);
+  }
+
+  /**
+   * Take a column out of the table. Its button is put among the others first,
+   * then focus moves — to the ✕ that takes this one's place, or the one above
+   * it, or, when the column left is the last and its ✕ is disabled, to the
+   * button just made — and only then is the row taken out: removing the node
+   * that holds focus drops focus to the page in Chromium.
+   */
+  private async removeColumn(id: QueryColumnId): Promise<void> {
+    const next = removeQueryColumn(resolveQueryColumns(this.plugin.settings.queryColumns), id);
+    if (next === null) return;
     this.plugin.settings.queryColumns = formatQueryColumns(next);
-    this.paintColumnStates();
+    const at = this.columnItems.findIndex((item) => item.id === id);
+    const item = this.columnItems[at];
+    const chips = this.columnChipsEl;
+    if (item === undefined || chips === null) {
+      this.paintColumnList();
+    } else {
+      const chip = this.buildColumnChip(chips, id);
+      const after = this.columnChips.findIndex((c) => catalogIndex(c.id) > catalogIndex(id));
+      if (after === -1) {
+        this.columnChips.push(chip);
+      } else {
+        this.columnChips[after].el.before(chip.el);
+        this.columnChips.splice(after, 0, chip);
+      }
+      this.columnItems.splice(at, 1);
+      this.paintColumnStates();
+      const neighbour = (this.columnItems[at] ?? this.columnItems[at - 1])?.remove;
+      (neighbour !== undefined && !neighbour.disabled
+        ? neighbour.extraSettingsEl
+        : chip.el
+      ).focus();
+      item.el.remove();
+    }
+    this.sayColumns(columnRemovedMessage(columnLabel(id)));
     this.refreshQueryPreview();
     await this.plugin.saveSettings();
   }
 
   /**
-   * Swap a column with its neighbour. The NEIGHBOUR's node is moved, never the
-   * pressed one: moving the node that holds focus drops focus to the page in
-   * Chromium, and pressing ↑ again must keep going. When that arrow has just
-   * been disabled (the column reached the top), focus goes to the other one.
+   * Add a column at the end of the table. Its row is built first, then focus
+   * moves — to the button that takes this one's place, or the one before it,
+   * or, when none is left, to the new row's ↑, the likely next press (never
+   * disabled: the row is not the first) — and only then is the button taken
+   * out, for the reason removeColumn gives.
+   */
+  private async addColumn(id: QueryColumnId): Promise<void> {
+    const next = addQueryColumn(resolveQueryColumns(this.plugin.settings.queryColumns), id);
+    if (next === null) return;
+    this.plugin.settings.queryColumns = formatQueryColumns(next);
+    const at = this.columnChips.findIndex((c) => c.id === id);
+    const chip = this.columnChips[at];
+    const list = this.columnListEl;
+    if (chip === undefined || list === null) {
+      this.paintColumnList();
+    } else {
+      const item = this.buildColumnItem(list, id);
+      this.columnItems.push(item);
+      this.columnChips.splice(at, 1);
+      this.paintColumnStates();
+      ((this.columnChips[at] ?? this.columnChips[at - 1])?.el ?? item.up.extraSettingsEl).focus();
+      chip.el.remove();
+    }
+    this.sayColumns(columnAddedMessage(columnLabel(id), next.filter((c) => c.on).length));
+    this.refreshQueryPreview();
+    await this.plugin.saveSettings();
+  }
+
+  /**
+   * Swap a column with its neighbour in the table. The NEIGHBOUR's node is
+   * moved, never the pressed one: moving the node that holds focus drops
+   * focus to the page in Chromium, and pressing ↑ again must keep going. When
+   * that arrow has just been disabled (the column reached the top), focus goes
+   * to the other one.
    */
   private async moveColumn(id: QueryColumnId, delta: -1 | 1): Promise<void> {
-    const columns = resolveQueryColumns(this.plugin.settings.queryColumns);
-    const from = columns.findIndex((c) => c.id === id);
-    const next = moveQueryColumn(columns, from, delta);
+    const next = moveShownColumn(resolveQueryColumns(this.plugin.settings.queryColumns), id, delta);
     if (next === null) return;
     this.plugin.settings.queryColumns = formatQueryColumns(next);
     const item = this.columnItems.find((i) => i.id === id);
@@ -1024,14 +1286,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     } else {
       this.paintColumnList();
     }
+    const shown = next.filter((c) => c.on);
+    this.sayColumns(
+      columnMovedMessage(columnLabel(id), shown.findIndex((c) => c.id === id) + 1, shown.length)
+    );
     this.refreshQueryPreview();
     await this.plugin.saveSettings();
   }
 
   /** Simple or Detailed: a starting point the list is rewritten to, not a mode kept. */
   private async applyColumnPreset(preset: QueryPreset): Promise<void> {
-    this.plugin.settings.queryColumns = formatQueryColumns(presetColumns(preset));
+    const columns = presetColumns(preset);
+    this.plugin.settings.queryColumns = formatQueryColumns(columns);
     this.paintColumnList();
+    this.sayColumns(columnPresetMessage(preset, columns.filter((c) => c.on).length));
     this.refreshQueryPreview();
     await this.plugin.saveSettings();
   }
@@ -1054,6 +1322,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     this.queryCodeEl = pre;
     this.refreshQueryPreview();
     return () => {
+      details.remove();
       if (this.queryCodeEl === pre) this.queryCodeEl = null;
     };
   }
@@ -1101,13 +1370,15 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * question should not need an experiment.
    *
    * It is a `render` row rather than a `desc` string because a description is
-   * baked in at definition time. `getSettingDefinitions()` runs on every
-   * `display()`, so a static string would be right whenever the tab is OPENED —
-   * but `refreshDomState()`, which is all Obsidian runs after `setControlValue`,
-   * only re-evaluates `visible`/`disabled` predicates and explicitly does not
-   * re-render. The text would then sit there contradicting the toggle the user
-   * just flipped. Instead the node is kept and rewritten by
-   * `refreshEndSummaries()` from the one place all four settings are written.
+   * baked in at definition time, and 1.13.7 reads the definitions once, when
+   * the plugin loads (its typings say "on every display()"; its code calls
+   * them from update() alone) — so a static string would describe the
+   * settings as they were then. And `refreshDomState()`, which is all
+   * Obsidian runs after `setControlValue`, only re-evaluates
+   * `visible`/`disabled` predicates and does not re-render, so the text would
+   * sit there contradicting the toggle the user just flipped. Instead the
+   * node is built at render and rewritten by `refreshEndSummaries()` from the
+   * one place all four settings are written.
    *
    * `name`/`desc` are deliberately empty so the two render paths still describe
    * the row identically; everything visible is built in the callback.
@@ -1121,6 +1392,12 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         const el = setting.settingEl.createDiv("gp-setting-summary-text");
         el.setText(sessionEndSummary(edge, this.plugin.settings));
         this.endSummaryEls.set(edge, el);
+        // Built outside the control column, which is all a re-render on the
+        // same Setting would clear.
+        return () => {
+          el.remove();
+          if (this.endSummaryEls.get(edge) === el) this.endSummaryEls.delete(edge);
+        };
       },
     };
   }
@@ -1155,520 +1432,612 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * that display() walks it with renderSettingRow. Adding a setting means
    * adding one entry here — there is no second list to remember.
    */
-  private settingGroups(): SettingGroupSpec[] {
+  private settingPages(): SettingPageSpec[] {
+    const settings = () => this.plugin.settings;
     return [
       {
-        heading: "Display & behavior",
-        rows: [
+        name: TIMER_PAGE,
+        desc: TIMER_PAGE_DESC,
+        value: () => timerPageValue(settings()),
+        groups: [
           {
-            name: "Auto-open on startup",
-            desc: "Open the timer panel in the right sidebar when Obsidian starts.",
-            control: { type: "toggle", key: "autoOpenOnStartup" },
+            heading: "Display & behavior",
+            rows: [
+              {
+                name: "Auto-open on startup",
+                desc: "Open the timer panel in the right sidebar when Obsidian starts.",
+                control: { type: "toggle", key: "autoOpenOnStartup" },
+              },
+            ],
+          },
+          {
+            heading: "Timer appearance",
+            rows: [
+              {
+                name: "Theme",
+                desc: "Visual style for the timer.",
+                control: {
+                  type: "dropdown",
+                  key: "theme",
+                  options: { ...THEMES },
+                },
+              },
+              {
+                name: "Show day/night indicator",
+                desc: "Show a subtle sun/moon indicator above the timer.",
+                control: { type: "toggle", key: "showDayNightIndicator" },
+              },
+              {
+                name: "Show estimated end time",
+                desc: "Show the projected finish time on the timer while a session is running.",
+                control: { type: "toggle", key: "showEndTime" },
+              },
+            ],
+          },
+          {
+            heading: "Long break",
+            rows: [
+              {
+                name: "Long break duration (minutes)",
+                desc: "Length of the long break that replaces a regular break.",
+                control: { type: "number", key: "longBreakMinutes", min: 1 },
+              },
+              {
+                name: "Focus sessions before a long break",
+                desc: "After this many focus sessions, the next break is a long one. The classic technique uses 4.",
+                control: { type: "number", key: "longBreakEvery", min: 1 },
+              },
+            ],
+          },
+          {
+            heading: "Daily focus goal",
+            rows: [
+              {
+                name: "Daily focus goal (minutes)",
+                desc: "Set to 0 to turn it off. Today's progress shows in the status bar, or in the timer panel on phones and tablets.",
+                control: { type: "number", key: "dailyFocusGoalMinutes", min: 0 },
+              },
+              {
+                // "Show a…", not "Notice when…": read alone, as settings search
+                // shows it, a leading "Notice" is a verb.
+                name: "Show a notice when you reach the goal",
+                desc: "Show a one-time notice when today's focus first crosses the daily goal.",
+                control: { type: "toggle", key: "goalNoticeEnabled" },
+              },
+            ],
           },
         ],
       },
       // Its own group from 0.6.8, when the status bar gained a time choice and
-      // a text option, and — like Notifications — built on the desktop app
-      // only: the mobile apps have no status bar, so these rows could do
-      // nothing on the device in your hand. The values still sync.
+      // a text option, and its own page from 0.7.0. Like Notifications, built
+      // on the desktop app only: the mobile apps have no status bar, so these
+      // rows could do nothing on the device in your hand. The values still
+      // sync.
       ...(Platform.isDesktopApp
         ? [
             {
-              heading: "Status bar",
-              rows: [
+              name: STATUS_BAR_PAGE,
+              desc: STATUS_BAR_PAGE_DESC,
+              value: () => statusBarPageValue(settings()),
+              groups: [
                 {
-                  name: "Show in status bar",
-                  desc: "Show the timer and today's goal ring in the status bar at the bottom of the window. Click it for timer controls; hover for the details.",
-                  control: { type: "toggle", key: "showInStatusBar" },
-                } satisfies SettingRowSpec,
-                {
-                  name: "Time in status bar",
-                  desc: "What the status bar shows beside Focus or Break. Hidden keeps the countdown out of sight, like the timer panel does; hover to see it.",
-                  control: {
-                    type: "dropdown",
-                    key: "statusBarTime",
-                    options: { ...STATUS_BAR_TIMES },
-                  },
-                } satisfies SettingRowSpec,
-                {
-                  name: "Show today's total as text",
-                  desc: 'Show today\'s focus time as text beside the ring, for example "Today 1h 24m / 4h 0m".',
-                  control: { type: "toggle", key: "statusBarShowTotal" },
-                } satisfies SettingRowSpec,
+                  heading: "Status bar",
+                  rows: [
+                    {
+                      name: "Show in status bar",
+                      desc: "Show the timer and today's goal ring in the status bar at the bottom of the window. Click it for timer controls; hover for the details.",
+                      control: { type: "toggle", key: "showInStatusBar" },
+                    } satisfies SettingRowSpec,
+                    {
+                      name: "Time in status bar",
+                      desc: "What the status bar shows beside Focus or Break. Hidden keeps the countdown out of sight, like the timer panel does; hover to see it.",
+                      control: {
+                        type: "dropdown",
+                        key: "statusBarTime",
+                        options: { ...STATUS_BAR_TIMES },
+                      },
+                    } satisfies SettingRowSpec,
+                    {
+                      name: "Show today's total as text",
+                      desc: 'Show today\'s focus time as text beside the ring, for example "Today 1h 24m / 4h 0m".',
+                      control: { type: "toggle", key: "statusBarShowTotal" },
+                    } satisfies SettingRowSpec,
+                  ],
+                },
               ],
-            },
+            } satisfies SettingPageSpec,
           ]
         : []),
       {
-        heading: "Timer appearance",
-        rows: [
+        // "Sounds" where Notifications is not built: a page named for a group
+        // it does not hold would send someone looking for it.
+        name: Platform.isDesktopApp ? SOUNDS_PAGE : SOUNDS_PAGE_MOBILE,
+        desc: SOUNDS_PAGE_DESC,
+        value: () => soundsPageValue(settings()),
+        groups: [
           {
-            name: "Theme",
-            desc: "Visual style for the timer.",
-            control: {
-              type: "dropdown",
-              key: "theme",
-              options: { ...THEMES },
-            },
+            // The two switches, and nothing else. From 0.6.3 this group also held
+            // the four end-of-session rows, and 0.6.7 first put the sound choosers
+            // in a separate "Sounds" group after it — two headings that mean the
+            // same thing, two auto-starts filed under a heading about sound, and
+            // "what happens when focus ends?" answered in two places. The tab now
+            // groups by MOMENT, with the headings the timer panel's gear uses, in
+            // the panel's order (a test holds the two lists together).
+            //
+            // A mute is policy, so both switches are on both surfaces; a level is
+            // moved while listening, so both volumes stay in the timer panel.
+            heading: "Audio",
+            rows: [
+              {
+                // The master gate for every timer sound on this page, and until
+                // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
+                // read "Rings when focus time is up" here with no way to see why
+                // it did not, and no control on this screen to change it.
+                name: MASTER_SOUND_LABEL,
+                // Enumerates the two cues that have NO row of their own, positively.
+                // The old "nothing below makes a sound" was true but taught the
+                // wrong model — it implied the rows below were the whole set, so a
+                // user could turn both off, expect silence, and meet a drum at
+                // 00:00. It also has to disclaim the music: soundEnabled is read
+                // only by TimerEngine.playSound and never reaches the player.
+                desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate, and both volumes are in the timer panel.",
+                control: { type: "toggle", key: "soundEnabled" },
+              },
+              // The music's mute belongs beside the timer's, not in the Music
+              // group: that group is about which link plays, and its neighbour
+              // "Show music player" STOPS playback, the opposite of a mute.
+              //
+              // The two VOLUMES are deliberately NOT here. A level is something you
+              // move while listening, which is a timer-panel gesture; they have
+              // been panel-only since 0.1.2 and stay that way. Both switches say
+              // where to find them, so the omission reads as a decision, not a gap.
+              {
+                name: MUSIC_SOUND_LABEL,
+                desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
+                control: { type: "toggle", key: "musicSoundEnabled" },
+              },
+            ],
           },
-          {
-            name: "Show day/night indicator",
-            desc: "Show a subtle sun/moon indicator above the timer.",
-            control: { type: "toggle", key: "showDayNightIndicator" },
-          },
-          {
-            name: "Show estimated end time",
-            desc: "Show the projected finish time on the timer while a session is running.",
-            control: { type: "toggle", key: "showEndTime" },
-          },
-        ],
-      },
-      {
-        // The two switches, and nothing else. From 0.6.3 this group also held
-        // the four end-of-session rows, and 0.6.7 first put the sound choosers
-        // in a separate "Sounds" group after it — two headings that mean the
-        // same thing, two auto-starts filed under a heading about sound, and
-        // "what happens when focus ends?" answered in two places. The tab now
-        // groups by MOMENT, with the headings the timer panel's gear uses, in
-        // the panel's order (a test holds the two lists together).
-        //
-        // A mute is policy, so both switches are on both surfaces; a level is
-        // moved while listening, so both volumes stay in the timer panel.
-        heading: "Audio",
-        rows: [
-          {
-            // The master gate for every timer sound on this page, and until
-            // 0.6.3 it lived ONLY in the timer panel's gear — so a muted user
-            // read "Rings when focus time is up" here with no way to see why
-            // it did not, and no control on this screen to change it.
-            name: MASTER_SOUND_LABEL,
-            // Enumerates the two cues that have NO row of their own, positively.
-            // The old "nothing below makes a sound" was true but taught the
-            // wrong model — it implied the rows below were the whole set, so a
-            // user could turn both off, expect silence, and meet a drum at
-            // 00:00. It also has to disclaim the music: soundEnabled is read
-            // only by TimerEngine.playSound and never reaches the player.
-            desc: "Every sound the timer makes, including the drum when focus starts and the sound when you stop. Music is separate, and both volumes are in the timer panel.",
-            control: { type: "toggle", key: "soundEnabled" },
-          },
-          // The music's mute belongs beside the timer's, not in the Music
-          // group: that group is about which link plays, and its neighbour
-          // "Show music player" STOPS playback, the opposite of a mute.
+          // The end of each session, one group per moment. The four switches are
+          // fully INDEPENDENT: the sound governs the auto-start path too, so no
+          // row is ever moot and none is hidden.
           //
-          // The two VOLUMES are deliberately NOT here. A level is something you
-          // move while listening, which is a timer-panel gesture; they have
-          // been panel-only since 0.1.2 and stay that way. Both switches say
-          // where to find them, so the omission reads as a decision, not a gap.
+          // The sound chooser comes FIRST. Below its switch it read as that
+          // switch's child, and looked inert while the switch was off, though Stop
+          // and Skip always play it; above it, the switch reads as one more
+          // occasion for the sound just chosen — hence "Play it when…". The panel
+          // keeps "Play a sound": it has no chooser for the "it" to point at.
           {
-            name: MUSIC_SOUND_LABEL,
-            desc: "Off silences the music without stopping it, so a live stream stays live. Its volume is in the timer panel.",
-            control: { type: "toggle", key: "musicSoundEnabled" },
-          },
-        ],
-      },
-      // The end of each session, one group per moment. The four switches are
-      // fully INDEPENDENT: the sound governs the auto-start path too, so no
-      // row is ever moot and none is hidden.
-      //
-      // The sound chooser comes FIRST. Below its switch it read as that
-      // switch's child, and looked inert while the switch was off, though Stop
-      // and Skip always play it; above it, the switch reads as one more
-      // occasion for the sound just chosen — hence "Play it when…". The panel
-      // keeps "Play a sound": it has no chooser for the "it" to point at.
-      {
-        heading: "When focus ends",
-        rows: [
-          this.cueRow("focus"),
-          {
-            name: "Play it when focus time is up",
-            desc: "Off by default, so a session you want to keep going with is never interrupted.",
-            control: { type: "toggle", key: "focusEndSoundEnabled" },
+            heading: "When focus ends",
+            rows: [
+              this.cueRow("focus"),
+              {
+                name: "Play it when focus time is up",
+                desc: "Off by default, so a session you want to keep going with is never interrupted.",
+                control: { type: "toggle", key: "focusEndSoundEnabled" },
+              },
+              {
+                name: AUTO_START_BREAK_LABEL,
+                desc: "When focus time is up, begin the break without waiting. Silent unless the switch above is on too.",
+                control: { type: "toggle", key: "autoStartBreak" },
+              },
+              this.endSummaryRow("focus"),
+            ],
           },
           {
-            name: AUTO_START_BREAK_LABEL,
-            desc: "When focus time is up, begin the break without waiting. Silent unless the switch above is on too.",
-            control: { type: "toggle", key: "autoStartBreak" },
+            heading: "When a break ends",
+            rows: [
+              this.cueRow("break"),
+              {
+                name: "Play it when break time is up",
+                desc: "So a five-minute break doesn't quietly become twenty.",
+                control: { type: "toggle", key: "breakEndSoundEnabled" },
+              },
+              {
+                name: AUTO_START_FOCUS_LABEL,
+                desc: "When break time is up, begin focusing without waiting. Silent unless the switch above is on too.",
+                control: { type: "toggle", key: "autoStartFocus" },
+              },
+              this.endSummaryRow("break"),
+            ],
           },
-          this.endSummaryRow("focus"),
-        ],
-      },
-      {
-        heading: "When a break ends",
-        rows: [
-          this.cueRow("break"),
-          {
-            name: "Play it when break time is up",
-            desc: "So a five-minute break doesn't quietly become twenty.",
-            control: { type: "toggle", key: "breakEndSoundEnabled" },
-          },
-          {
-            name: AUTO_START_FOCUS_LABEL,
-            desc: "When break time is up, begin focusing without waiting. Silent unless the switch above is on too.",
-            control: { type: "toggle", key: "autoStartFocus" },
-          },
-          this.endSummaryRow("break"),
-        ],
-      },
-      // New in 0.6.6, and built on the desktop app only: the mobile apps have
-      // no system notifications, and a switch that can do nothing on the
-      // device in your hand is a switch that lies. The value itself still
-      // syncs, so a phone never overwrites the choice made on a computer.
-      //
-      // Its own group rather than a row under either moment: it is one switch
-      // for both ends, and the one end-of-session signal that is NOT a sound —
-      // it exists for people who keep the sound off.
-      ...(Platform.isDesktopApp
-        ? [
-            {
-              heading: "Notifications",
-              rows: [
+          // New in 0.6.6, and built on the desktop app only: the mobile apps have
+          // no system notifications, and a switch that can do nothing on the
+          // device in your hand is a switch that lies. The value itself still
+          // syncs, so a phone never overwrites the choice made on a computer.
+          //
+          // Its own group rather than a row under either moment: it is one switch
+          // for both ends, and the one end-of-session signal that is NOT a sound —
+          // it exists for people who keep the sound off.
+          ...(Platform.isDesktopApp
+            ? [
                 {
-                  name: SESSION_END_NOTIFICATION_LABEL,
-                  desc: SESSION_END_NOTIFICATION_DESC,
-                  control: { type: "toggle", key: "sessionEndNotification" },
-                } satisfies SettingRowSpec,
-              ],
-            },
-          ]
-        : []),
-      {
-        heading: "Music",
-        rows: [
-          // Rendered rather than declared, because the link check owns its own
-          // debounce, its own staleness token and an error line of its own —
-          // none of which the `validate` hook can carry (see buildMusicUrlRow).
-          // setName/setDesc still come from here, so settings search keeps
-          // finding these rows.
-          ...this.musicLinkDefinitions(),
-          {
-            name: "Show music player",
-            desc: "Show the music controls in the timer panel. Turning this off also stops playback.",
-            control: { type: "toggle", key: "showMusicPlayer" },
-          },
-          {
-            name: "Loop music",
-            desc: "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player.",
-            control: { type: "toggle", key: "musicLoop" },
-          },
-          {
-            name: "Resume where you left off",
-            desc: MUSIC_RESUME_DESC,
-            control: { type: "toggle", key: "musicResume" },
-          },
+                  heading: "Notifications",
+                  rows: [
+                    {
+                      name: SESSION_END_NOTIFICATION_LABEL,
+                      desc: SESSION_END_NOTIFICATION_DESC,
+                      control: { type: "toggle", key: "sessionEndNotification" },
+                    } satisfies SettingRowSpec,
+                  ],
+                },
+              ]
+            : []),
         ],
       },
       {
-        heading: "Long break",
-        rows: [
+        name: MUSIC_PAGE,
+        desc: MUSIC_PAGE_DESC,
+        value: () => musicPageValue(settings()),
+        warning: () => musicPageWarning(settings()),
+        groups: [
           {
-            name: "Long break duration (minutes)",
-            desc: "Length of the long break that replaces a regular break.",
-            control: { type: "number", key: "longBreakMinutes", min: 1 },
-          },
-          {
-            name: "Focus sessions before a long break",
-            desc: "After this many focus sessions, the next break is a long one. The classic technique uses 4.",
-            control: { type: "number", key: "longBreakEvery", min: 1 },
-          },
-        ],
-      },
-      // Everything about the log in one place (0.6.9, F56). The folder row
-      // lived under "Display & behavior", where nothing said it switched the
-      // log on, and the log's one command was in the palette alone. Right
-      // above the goal, which is counted from the log.
-      {
-        heading: "Daily log",
-        rows: [
-          {
-            name: LOG_FOLDER_NAME,
-            desc: LOG_FOLDER_DESC,
-            render: (setting: Setting) => {
-              this.buildLogFolderRow(setting);
-            },
-          },
-          {
-            name: DAY_START_NAME,
-            desc: DAY_START_DESC,
-            control: {
-              type: "dropdown",
-              key: "dayStartHour",
-              options: Object.fromEntries(
-                DAY_START_HOURS.map((hour) => [
-                  String(hour),
-                  hour === 0 ? "Midnight" : `${String(hour)}:00`,
-                ])
-              ),
-            },
-          },
-          {
-            name: TASK_SWITCH_NAME,
-            desc: TASK_SWITCH_DESC,
-            control: {
-              type: "dropdown",
-              key: "taskSwitchLogging",
-              options: Object.fromEntries(TASK_SWITCH_OPTIONS.map((o) => [o.value, o.label])),
-            },
-          },
-          {
-            name: LONG_SESSION_NAME,
-            desc: LONG_SESSION_DESC,
-            control: {
-              type: "dropdown",
-              key: "longSessionPromptHours",
-              options: Object.fromEntries(
-                LONG_SESSION_PROMPT_HOURS.map((hours) => [
-                  String(hours),
-                  hours === 0 ? "Off" : `${String(hours)} hours`,
-                ])
-              ),
-            },
-          },
-          {
-            name: DEVICE_NAME_NAME,
-            desc: DEVICE_NAME_DESC,
-            render: (setting: Setting) => {
-              this.buildDeviceNameRow(setting);
-            },
-          },
-          {
-            name: OPEN_LOG_NAME,
-            desc: OPEN_LOG_DESC,
-            action: () => {
-              void this.plugin.openTodayLog();
-            },
-            buttonText: "Open",
-          },
-          {
-            name: CHECK_LOG_NAME,
-            desc: CHECK_LOG_DESC,
-            action: () => {
-              void this.plugin.checkLog();
-            },
-            buttonText: "Check",
-          },
-          {
-            name: CONVERT_LOG_NAME,
-            desc: CONVERT_LOG_DESC,
-            action: () => {
-              void this.plugin.convertLog();
-            },
-            buttonText: "Convert",
-          },
-          {
-            name: REFRESH_NAMES_NAME,
-            desc: REFRESH_NAMES_DESC,
-            action: () => {
-              void this.plugin.refreshLogTaskNames();
-            },
-            buttonText: "Refresh",
-          },
-          // 0.7.0: with the log's other one-off buttons.
-          {
-            name: EXPORT_SESSIONS_NAME,
-            desc: EXPORT_SESSIONS_DESC,
-            action: () => {
-              void this.plugin.exportSessions();
-            },
-            buttonText: "Export",
-          },
-        ],
-      },
-      // Code to paste into a note, which Dataview draws (0.7.0). Right after
-      // the log it reads; the plugin itself draws nothing in a note.
-      {
-        heading: QUERY_GROUP_HEADING,
-        rows: [
-          {
-            name: QUERY_COLUMNS_NAME,
-            desc: QUERY_COLUMNS_DESC,
-            render: (setting: Setting) => this.buildColumnsRow(setting),
-          },
-          {
-            name: QUERY_RANGE_NAME,
-            desc: QUERY_RANGE_DESC,
-            control: {
-              type: "dropdown",
-              key: "queryRange",
-              options: Object.fromEntries(QUERY_RANGES.map((o) => [o.value, o.label])),
-            },
-          },
-          {
-            name: QUERY_KINDS_NAME,
-            desc: QUERY_KINDS_DESC,
-            control: {
-              type: "dropdown",
-              key: "queryKinds",
-              options: Object.fromEntries(QUERY_KINDS.map((o) => [o.value, o.label])),
-            },
-          },
-          {
-            name: QUERY_SKIPPED_NAME,
-            desc: QUERY_SKIPPED_DESC,
-            control: { type: "toggle", key: "querySkipped" },
-          },
-          {
-            name: QUERY_SORT_NAME,
-            desc: QUERY_SORT_DESC,
-            control: {
-              type: "dropdown",
-              key: "querySort",
-              options: Object.fromEntries(QUERY_SORTS.map((o) => [o.value, o.label])),
-            },
-          },
-          {
-            // Text, not a control: the summary names it, so the row has no name.
-            name: "",
-            desc: "",
-            render: (setting: Setting) => this.buildQueryCodeRow(setting),
-          },
-          ...QUERY_COPIES.map(
-            (copy): SettingRowSpec => ({
-              name: copy.name,
-              desc: copy.desc,
-              aliases: QUERY_COPY_ALIASES,
-              // Synchronous to the clipboard: the click is the gesture iOS
-              // asks for (copyText).
-              action: () => {
-                this.copyQuery(copy);
+            heading: "Music",
+            rows: [
+              // Rendered rather than declared, because the link check owns its own
+              // debounce, its own staleness token and an error line of its own —
+              // none of which the `validate` hook can carry (see buildMusicUrlRow).
+              // setName/setDesc still come from here, so settings search keeps
+              // finding these rows.
+              ...this.musicLinkDefinitions(),
+              {
+                name: "Show music player",
+                desc: "Show the music controls in the timer panel. Turning this off also stops playback.",
+                control: { type: "toggle", key: "showMusicPlayer" },
               },
-              buttonText: "Copy",
-            })
-          ),
-        ],
-      },
-      {
-        heading: "Daily focus goal",
-        rows: [
-          {
-            name: "Daily focus goal (minutes)",
-            desc: "Set to 0 to turn it off. Today's progress shows in the status bar, or in the timer panel on phones and tablets.",
-            control: { type: "number", key: "dailyFocusGoalMinutes", min: 0 },
-          },
-          {
-            // "Show a…", not "Notice when…": read alone, as settings search
-            // shows it, a leading "Notice" is a verb.
-            name: "Show a notice when you reach the goal",
-            desc: "Show a one-time notice when today's focus first crosses the daily goal.",
-            control: { type: "toggle", key: "goalNoticeEnabled" },
-          },
-        ],
-      },
-      {
-        heading: "Task picker",
-        rows: [
-          {
-            // First in the group, above the folder path it governs: choosing
-            // "Current note" is what makes that path irrelevant, so the reader
-            // meets the decision before the field it decides about. The path
-            // row stays VISIBLE and editable either way — a control that
-            // vanished because you changed a dropdown reads as a fault, and
-            // this plugin has already learned that once (0.6.3's chimes).
-            name: TASK_SOURCE_SETTING_NAME,
-            desc: TASK_SOURCE_SETTING_DESC,
-            control: {
-              type: "dropdown",
-              key: "taskSource",
-              options: Object.fromEntries(
-                TASK_SOURCE_ORDER.map((source) => [source, TASK_SOURCE_LABELS[source]])
-              ),
-            },
-          },
-          {
-            name: "Tasks folder path",
-            desc: "Folder to search for tasks, e.g. projects/active. Leave empty to search the whole vault.",
-            control: { type: "text", key: "tasksPath", placeholder: "Example: projects/active" },
-          },
-          {
-            name: "Show task picker",
-            desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
-            control: { type: "toggle", key: "showTaskSelector" },
-          },
-          {
-            name: "Task lookahead window",
-            desc: "How many days ahead the task picker shows scheduled/due tasks. Overdue tasks always appear.",
-            control: {
-              type: "dropdown",
-              key: "taskSelectorDays",
-              options: {
-                "3": "3 days",
-                "5": "5 days",
-                "7": "7 days",
-                "14": "14 days",
-                "30": "30 days",
+              {
+                name: "Loop music",
+                desc: "Replay the video or playlist from the start when it ends. Live streams aren't affected. Changing this reloads the player.",
+                control: { type: "toggle", key: "musicLoop" },
               },
-            },
+              {
+                name: "Resume where you left off",
+                desc: MUSIC_RESUME_DESC,
+                control: { type: "toggle", key: "musicResume" },
+              },
+            ],
           },
         ],
       },
       {
-        heading: "Task integration",
-        rows: [
+        name: LOG_PAGE,
+        desc: LOG_PAGE_DESC,
+        value: () => logPageValue(settings()),
+        // The top level, or another spelling of an existing folder: the note
+        // under the folder row says which, and the sign says to look.
+        warning: () => this.logFolderWarning(),
+        groups: [
+          // Everything about the log in one place (0.6.9, F56). The folder row
+          // lived under "Display & behavior", where nothing said it switched the
+          // log on, and the log's one command was in the palette alone.
           {
-            name: "Count pomodoros on the task",
-            desc: POMO_COUNT_TOGGLE_DESC,
-            control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
+            heading: "Daily log",
+            rows: [
+              {
+                name: LOG_FOLDER_NAME,
+                desc: LOG_FOLDER_DESC,
+                render: (setting: Setting) => this.buildLogFolderRow(setting),
+              },
+              {
+                name: DAY_START_NAME,
+                desc: DAY_START_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "dayStartHour",
+                  options: Object.fromEntries(
+                    DAY_START_HOURS.map((hour) => [
+                      String(hour),
+                      hour === 0 ? "Midnight" : `${String(hour)}:00`,
+                    ])
+                  ),
+                },
+              },
+              {
+                name: TASK_SWITCH_NAME,
+                desc: TASK_SWITCH_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "taskSwitchLogging",
+                  options: Object.fromEntries(TASK_SWITCH_OPTIONS.map((o) => [o.value, o.label])),
+                },
+              },
+              {
+                name: LONG_SESSION_NAME,
+                desc: LONG_SESSION_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "longSessionPromptHours",
+                  options: Object.fromEntries(
+                    LONG_SESSION_PROMPT_HOURS.map((hours) => [
+                      String(hours),
+                      hours === 0 ? "Off" : `${String(hours)} hours`,
+                    ])
+                  ),
+                },
+              },
+              {
+                name: DEVICE_NAME_NAME,
+                desc: DEVICE_NAME_DESC,
+                render: (setting: Setting) => this.buildDeviceNameRow(setting),
+              },
+              {
+                name: OPEN_LOG_NAME,
+                desc: OPEN_LOG_DESC,
+                action: () => {
+                  void this.plugin.openTodayLog();
+                },
+                buttonText: "Open",
+              },
+              {
+                name: CHECK_LOG_NAME,
+                desc: CHECK_LOG_DESC,
+                action: () => {
+                  void this.plugin.checkLog();
+                },
+                buttonText: "Check",
+              },
+              {
+                name: CONVERT_LOG_NAME,
+                desc: CONVERT_LOG_DESC,
+                action: () => {
+                  void this.plugin.convertLog();
+                },
+                buttonText: "Convert",
+              },
+              {
+                name: REFRESH_NAMES_NAME,
+                desc: REFRESH_NAMES_DESC,
+                action: () => {
+                  void this.plugin.refreshLogTaskNames();
+                },
+                buttonText: "Refresh",
+              },
+              // 0.7.0: with the log's other one-off buttons.
+              {
+                name: EXPORT_SESSIONS_NAME,
+                desc: EXPORT_SESSIONS_DESC,
+                action: () => {
+                  void this.plugin.exportSessions();
+                },
+                buttonText: "Export",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        name: LOG_TABLES_PAGE,
+        desc: LOG_TABLES_PAGE_DESC,
+        value: () => logTablesPageValue(settings()),
+        groups: [
+          // Code to paste into a note, which Dataview draws (0.7.0). Right after
+          // the log it reads; the plugin itself draws nothing in a note.
+          {
+            heading: QUERY_GROUP_HEADING,
+            rows: [
+              {
+                name: QUERY_COLUMNS_NAME,
+                desc: QUERY_COLUMNS_DESC,
+                render: (setting: Setting) => this.buildColumnsRow(setting),
+              },
+              {
+                name: QUERY_RANGE_NAME,
+                desc: QUERY_RANGE_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "queryRange",
+                  options: Object.fromEntries(QUERY_RANGES.map((o) => [o.value, o.label])),
+                },
+              },
+              {
+                name: QUERY_KINDS_NAME,
+                desc: QUERY_KINDS_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "queryKinds",
+                  options: Object.fromEntries(QUERY_KINDS.map((o) => [o.value, o.label])),
+                },
+              },
+              {
+                name: QUERY_SKIPPED_NAME,
+                desc: QUERY_SKIPPED_DESC,
+                control: { type: "toggle", key: "querySkipped" },
+              },
+              {
+                name: QUERY_SORT_NAME,
+                desc: QUERY_SORT_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "querySort",
+                  options: Object.fromEntries(QUERY_SORTS.map((o) => [o.value, o.label])),
+                },
+              },
+              {
+                // Text, not a control: the summary names it, so the row has no name.
+                name: "",
+                desc: "",
+                render: (setting: Setting) => this.buildQueryCodeRow(setting),
+              },
+              ...QUERY_COPIES.map(
+                (copy): SettingRowSpec => ({
+                  name: copy.name,
+                  desc: copy.desc,
+                  aliases: QUERY_COPY_ALIASES,
+                  // Synchronous to the clipboard: the click is the gesture iOS
+                  // asks for (copyText).
+                  action: () => {
+                    this.copyQuery(copy);
+                  },
+                  buttonText: "Copy",
+                })
+              ),
+            ],
+          },
+        ],
+      },
+      {
+        name: TASKS_PAGE,
+        desc: TASKS_PAGE_DESC,
+        value: () => tasksPageValue(settings()),
+        groups: [
+          {
+            heading: "Task picker",
+            rows: [
+              {
+                // First in the group, above the folder path it governs: choosing
+                // "Current note" is what makes that path irrelevant, so the reader
+                // meets the decision before the field it decides about. The path
+                // row stays VISIBLE and editable either way — a control that
+                // vanished because you changed a dropdown reads as a fault, and
+                // this plugin has already learned that once (0.6.3's chimes).
+                name: TASK_SOURCE_SETTING_NAME,
+                desc: TASK_SOURCE_SETTING_DESC,
+                control: {
+                  type: "dropdown",
+                  key: "taskSource",
+                  options: Object.fromEntries(
+                    TASK_SOURCE_ORDER.map((source) => [source, TASK_SOURCE_LABELS[source]])
+                  ),
+                },
+              },
+              {
+                name: "Tasks folder path",
+                desc: "Folder to search for tasks, e.g. projects/active. Leave empty to search the whole vault.",
+                control: {
+                  type: "text",
+                  key: "tasksPath",
+                  placeholder: "Example: projects/active",
+                },
+              },
+              {
+                name: "Show task picker",
+                desc: "Show the task picker in the timer panel. Turning this off unlinks the current task.",
+                control: { type: "toggle", key: "showTaskSelector" },
+              },
+              {
+                name: "Task lookahead window",
+                desc: "How many days ahead the task picker shows scheduled/due tasks. Overdue tasks always appear.",
+                control: {
+                  type: "dropdown",
+                  key: "taskSelectorDays",
+                  options: {
+                    "3": "3 days",
+                    "5": "5 days",
+                    "7": "7 days",
+                    "14": "14 days",
+                    "30": "30 days",
+                  },
+                },
+              },
+            ],
           },
           {
-            name: CHECK_MARKERS_NAME,
-            desc: CHECK_MARKERS_DESC,
-            action: () => {
-              void this.plugin.checkPomodoroMarkers();
-            },
-            buttonText: "Check",
-          },
-          {
-            name: REPAIR_MARKERS_NAME,
-            desc: REPAIR_MARKERS_DESC,
-            action: () => {
-              void this.plugin.repairPomodoroMarkers();
-            },
-            buttonText: "Repair",
-          },
-          {
-            name: REMOVE_MARKERS_NAME,
-            desc: REMOVE_MARKERS_DESC,
-            action: () => {
-              void this.plugin.removeMisplacedPomodoroMarkers();
-            },
-            buttonText: "Remove",
-            destructive: true,
-          },
-          {
-            name: REMOVE_ALL_MARKERS_NAME,
-            desc: REMOVE_ALL_MARKERS_DESC,
-            action: () => {
-              void this.plugin.removeAllPomodoroMarkers();
-            },
-            buttonText: "Remove all",
-            destructive: true,
+            heading: "Task integration",
+            rows: [
+              {
+                name: "Count pomodoros on the task",
+                desc: POMO_COUNT_TOGGLE_DESC,
+                control: { type: "toggle", key: "incrementPomodoroCountOnFinish" },
+              },
+              {
+                name: CHECK_MARKERS_NAME,
+                desc: CHECK_MARKERS_DESC,
+                action: () => {
+                  void this.plugin.checkPomodoroMarkers();
+                },
+                buttonText: "Check",
+              },
+              {
+                name: REPAIR_MARKERS_NAME,
+                desc: REPAIR_MARKERS_DESC,
+                action: () => {
+                  void this.plugin.repairPomodoroMarkers();
+                },
+                buttonText: "Repair",
+              },
+              {
+                name: REMOVE_MARKERS_NAME,
+                desc: REMOVE_MARKERS_DESC,
+                action: () => {
+                  void this.plugin.removeMisplacedPomodoroMarkers();
+                },
+                buttonText: "Remove",
+                destructive: true,
+              },
+              {
+                name: REMOVE_ALL_MARKERS_NAME,
+                desc: REMOVE_ALL_MARKERS_DESC,
+                action: () => {
+                  void this.plugin.removeAllPomodoroMarkers();
+                },
+                buttonText: "Remove all",
+                destructive: true,
+              },
+            ],
           },
         ],
       },
     ];
   }
 
+  /** Every group, page by page: the flat list display() and the tests walk. */
+  private settingGroups(): SettingGroupSpec[] {
+    return this.settingPages().flatMap((page) => page.groups);
+  }
+
+  /** The log folder is one the timer writes to but the log's commands can't list. */
+  private logFolderWarning(): boolean {
+    const stored = this.plugin.settings.logFolderPath;
+    if (typeof stored !== "string" || stored.trim() === "") return false;
+    return logFolderProblem(stored, this.app.vault) !== null;
+  }
+
   /**
    * Obsidian 1.13+ renders settings itself from these, which is also what puts
-   * them in the settings search index. A pure projection of settingGroups() —
-   * the only things dropped are the button text and the destructive flag,
-   * neither of which the 1.13 action shape has room for (there the whole row
-   * is the control).
+   * them in the settings search index — a row inside a page included, and a
+   * result opens its page. A pure projection of settingPages(); the only things
+   * dropped are the button text and the destructive flag, neither of which the
+   * 1.13 action shape has room for (there the whole row is the control).
+   *
+   * Read ONCE, when the plugin adds the tab (and again only on update(), which
+   * the tab never calls: it re-renders an open page in place, on the same
+   * Setting objects, and every render row here builds outside the control
+   * column too). So nothing in here may depend on the settings except through a
+   * function Obsidian calls when it draws — the page values and warnings.
+   *
+   * A group whose heading is its page's name loses the heading here: the page
+   * title already says it. display() keeps every heading, having no titles.
    */
   override getSettingDefinitions(): SettingDefinitionItem<SettingsKey>[] {
-    return this.settingGroups().map((group) => ({
-      type: "group" as const,
-      heading: group.heading,
-      items: group.rows.map((row): SettingGroupItem<SettingsKey> => {
-        const base = {
-          name: row.name,
-          desc: row.desc,
-          ...(row.aliases && { aliases: row.aliases }),
-        };
-        if ("control" in row) return { ...base, control: row.control };
-        if ("render" in row) return { ...base, render: row.render };
-        return { ...base, action: row.action };
-      }),
-    }));
+    return this.settingPages().map(
+      (page): SettingDefinitionPage<SettingsKey> => ({
+        type: "page",
+        name: page.name,
+        desc: page.desc,
+        ...(page.value && {
+          displayValue: () => safePageValue(page.value ?? (() => "")),
+        }),
+        ...(page.warning && {
+          status: () => safePageStatus(page.warning ?? (() => false)),
+        }),
+        items: page.groups.map(
+          (group): SettingDefinitionGroup<SettingsKey> => ({
+            type: "group",
+            ...(group.heading !== page.name && { heading: group.heading }),
+            items: group.rows.map((row): SettingGroupItem<SettingsKey> => {
+              const base = {
+                name: row.name,
+                desc: row.desc,
+                ...(row.aliases && { aliases: row.aliases }),
+              };
+              if ("control" in row) return { ...base, control: row.control };
+              if ("render" in row) return { ...base, render: row.render };
+              return { ...base, action: row.action };
+            }),
+          })
+        ),
+      })
+    );
   }
 
   override getControlValue(key: string): unknown {
@@ -1699,7 +2068,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     if (key === "longSessionPromptHours") {
       return String(resolveLongSessionPromptHours(this.plugin.settings.longSessionPromptHours));
     }
-    // The Dataview tables' three choices (0.7.0), for the same reason again.
+    // The Log tables' three choices (0.7.0), for the same reason again.
     if (key === "queryRange") return resolveQueryRange(this.plugin.settings.queryRange);
     if (key === "queryKinds") return resolveQueryKinds(this.plugin.settings.queryKinds);
     if (key === "querySort") return resolveQuerySort(this.plugin.settings.querySort);
@@ -1955,7 +2324,7 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       case "incrementPomodoroCountOnFinish":
         settings.incrementPomodoroCountOnFinish = Boolean(value);
         break;
-      // The Dataview tables group (0.7.0): only the copied code reads these,
+      // The Log tables group (0.7.0): only the copied code reads these,
       // so each repaints its preview — 1.13 re-renders nothing after this.
       // Stored resolved, so a value no row offers is never kept.
       case "queryRange":

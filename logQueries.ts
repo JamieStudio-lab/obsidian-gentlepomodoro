@@ -1,5 +1,5 @@
 /**
- * The Dataview code the settings' Copy buttons give (0.7.0, "Dataview tables").
+ * The Dataview code the settings' Copy buttons give (0.7.0, "Log tables").
  *
  * The plugin draws nothing in a note: it hands the user ordinary Dataview and
  * DataviewJS code with their log folder filled in, which they paste, own and
@@ -51,8 +51,8 @@ const minutesJs = (key: string) =>
 
 /**
  * One column the sessions table can show, in catalog order: the order a
- * column is added in when a stored list lacks it, and the order of the
- * columns a preset leaves off.
+ * column is added in when a stored list lacks it, the order of the columns a
+ * preset leaves off, and the order of the Columns row's "Add a column" chips.
  */
 export interface QueryColumn {
   id: string;
@@ -162,7 +162,7 @@ export const QUERY_COLUMNS = [
 
 export type QueryColumnId = (typeof QUERY_COLUMNS)[number]["id"];
 
-/** One column as the user set it: where it is in the list, and whether it shows. */
+/** One column as the user set it: whether it shows, and where in the list. */
 export interface ColumnChoice {
   id: QueryColumnId;
   on: boolean;
@@ -203,10 +203,12 @@ export function presetColumns(name: QueryPreset): ColumnChoice[] {
 }
 
 /**
- * The columns as data.json keeps them: one string, every column in the user's
- * order, a leading `-` marking one off —
- * `date,start,task,minutes,status,-end,…`. A string, never an array: the
- * shallow merge of the defaults would share an array by reference.
+ * The columns as data.json keeps them: one string, every column, a leading
+ * `-` marking one off — `date,start,task,minutes,status,-end,…`. A string,
+ * never an array: the shallow merge of the defaults would share an array by
+ * reference. The Columns row writes the shown ones in their order, then the
+ * rest in catalog order (arrangeQueryColumns); a stored value in any other
+ * order still reads, the off ones' order being nobody's choice.
  */
 export function formatQueryColumns(columns: readonly ColumnChoice[]): string {
   return columns.map((column) => (column.on ? column.id : `-${column.id}`)).join(",");
@@ -216,8 +218,10 @@ export function formatQueryColumns(columns: readonly ColumnChoice[]): string {
  * The stored columns, never trusted as stored (a hand-edited or synced
  * data.json, or one from a later version): ids trimmed and lower-cased,
  * unknown ones and repeats dropped (the first wins), and any column the value
- * lacks added off, in catalog order — so a column a later version adds
- * shows up at the end. Simple when it is not text or leaves nothing on.
+ * lacks added off — so a column a later version adds is offered too. Simple
+ * when it is not text or leaves nothing on. Always arranged
+ * (arrangeQueryColumns): the shown ones in their order, the rest in catalog
+ * order, whatever order a stored value put them in.
  */
 export function resolveQueryColumns(raw: unknown): ColumnChoice[] {
   if (typeof raw !== "string") return presetColumns("simple");
@@ -233,37 +237,66 @@ export function resolveQueryColumns(raw: unknown): ColumnChoice[] {
   for (const column of QUERY_COLUMNS) {
     if (!out.some((c) => c.id === column.id)) out.push({ id: column.id, on: false });
   }
-  return out.some((c) => c.on) ? out : presetColumns("simple");
+  return out.some((c) => c.on) ? arrangeQueryColumns(out) : presetColumns("simple");
 }
 
 /**
- * The columns with the one at `index` swapped with its neighbour `delta`
- * (−1 up, +1 down) away, or null at either end. Off columns move too, so one
- * switched on later shows where the user put it.
+ * The columns as the Columns row has them: the shown ones in their order,
+ * then the others in catalog order, as its "Add a column" chips list them.
  */
-export function moveQueryColumn(
+export function arrangeQueryColumns(columns: readonly ColumnChoice[]): ColumnChoice[] {
+  const shown = columns.filter((c) => c.on).map((c) => ({ ...c }));
+  const hidden = QUERY_COLUMNS.filter((column) =>
+    columns.some((c) => c.id === column.id && !c.on)
+  ).map((column) => ({ id: column.id, on: false }));
+  return [...shown, ...hidden];
+}
+
+/**
+ * The columns with `id` added at the end of the table, or null when it is
+ * already there or not a column the list has.
+ */
+export function addQueryColumn(
   columns: readonly ColumnChoice[],
-  index: number,
-  delta: -1 | 1
+  id: QueryColumnId
 ): ColumnChoice[] | null {
-  const to = index + delta;
-  if (index < 0 || index >= columns.length || to < 0 || to >= columns.length) return null;
-  const next = columns.map((c) => ({ ...c }));
-  [next[index], next[to]] = [next[to], next[index]];
-  return next;
+  if (!columns.some((c) => c.id === id && !c.on)) return null;
+  const rest = arrangeQueryColumns(columns.filter((c) => c.id !== id));
+  const shown = rest.filter((c) => c.on);
+  return [...shown, { id, on: true }, ...rest.filter((c) => !c.on)];
 }
 
 /**
- * The columns with `id` switched on or off, its place kept — or null when that
- * would leave none on, as a table needs one.
+ * The columns with `id` taken out of the table, back among the others in
+ * catalog order — or null when it is not in the table, or is the only one
+ * left, as a table needs one.
  */
-export function switchQueryColumn(
+export function removeQueryColumn(
+  columns: readonly ColumnChoice[],
+  id: QueryColumnId
+): ColumnChoice[] | null {
+  if (!columns.some((c) => c.id === id && c.on)) return null;
+  if (columns.filter((c) => c.on).length === 1) return null;
+  return arrangeQueryColumns(columns.map((c) => (c.id === id ? { id, on: false } : { ...c })));
+}
+
+/**
+ * The columns with shown column `id` swapped with the shown column before it
+ * (−1) or after it (+1), or null at either end of the table or when `id` is
+ * not in it. The others in between, if a stored value has any, are not
+ * stepped over one by one: they go to the end, in catalog order.
+ */
+export function moveShownColumn(
   columns: readonly ColumnChoice[],
   id: QueryColumnId,
-  on: boolean
+  delta: -1 | 1
 ): ColumnChoice[] | null {
-  const next = columns.map((c) => (c.id === id ? { ...c, on } : { ...c }));
-  return next.some((c) => c.on) ? next : null;
+  const arranged = arrangeQueryColumns(columns);
+  const from = arranged.findIndex((c) => c.id === id && c.on);
+  const to = from + delta;
+  if (from === -1 || to < 0 || arranged[to]?.on !== true) return null;
+  [arranged[from], arranged[to]] = [arranged[to], arranged[from]];
+  return arranged;
 }
 
 /** The Days row's choices; a note pasted into a daily note follows its day. */

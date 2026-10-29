@@ -6,9 +6,12 @@ import {
   dqlEscape,
   dqlString,
   fenced,
+  addQueryColumn,
+  arrangeQueryColumns,
   formatQueryColumns,
-  moveQueryColumn,
+  moveShownColumn,
   presetColumns,
+  removeQueryColumn,
   queryCode,
   queryFolder,
   queryOptions,
@@ -18,7 +21,6 @@ import {
   resolveQuerySort,
   sessionsTable,
   sessionsTableJs,
-  switchQueryColumn,
   timeByTask,
   type QueryOptions,
 } from "../logQueries";
@@ -27,7 +29,7 @@ import { LOG_FILE_SUFFIX, LOG_TAIL_KEYS } from "../logLine";
 import { dailyLogPath } from "../logFolder";
 
 /**
- * The Dataview tables' code, as text (logQueries.ts). What the code DOES is
+ * The Log tables' code, as text (logQueries.ts). What the code DOES is
  * tests/dataviewEngine.test.ts's: it runs every variant in Dataview's own
  * engine. This holds what the settings make of their stored values, and the
  * text itself, letter for letter: the 0.7.0 preview's, with review round 2's
@@ -88,17 +90,17 @@ describe("the columns setting", () => {
 
   it("is never trusted as stored", () => {
     // Case and spaces, an unknown id, a repeat (the first wins), and every
-    // column the value lacks added off, in catalog order.
-    const read = resolveQueryColumns(" Task , -DATE, nonsense, task, - offset");
-    expect(read.slice(0, 3)).toEqual([
+    // column the value lacks added off; the off ones in catalog order,
+    // whatever order the value put them in.
+    const read = resolveQueryColumns(" Task , -DATE, nonsense, task, - offset, minutes, -minutes");
+    expect(read.slice(0, 2)).toEqual([
       { id: "task", on: true },
-      { id: "date", on: false },
-      { id: "offset", on: false },
+      { id: "minutes", on: true },
     ]);
     expect(read).toHaveLength(QUERY_COLUMNS.length);
-    expect(read.slice(3).every((c) => !c.on)).toBe(true);
-    expect(read.slice(3).map((c) => c.id)).toEqual(
-      QUERY_COLUMNS.map((c) => c.id).filter((id) => !["task", "date", "offset"].includes(id))
+    expect(read.slice(2).every((c) => !c.on)).toBe(true);
+    expect(read.slice(2).map((c) => c.id)).toEqual(
+      QUERY_COLUMNS.map((c) => c.id).filter((id) => !["task", "minutes"].includes(id))
     );
   });
 
@@ -108,22 +110,80 @@ describe("the columns setting", () => {
     }
   });
 
-  it("moves a column by one, and not past either end", () => {
-    const columns = presetColumns("simple");
-    const up = moveQueryColumn(columns, 2, -1);
-    expect(up?.slice(0, 3).map((c) => c.id)).toEqual(["date", "task", "start"]);
-    expect(moveQueryColumn(columns, 0, -1)).toBeNull();
-    expect(moveQueryColumn(columns, columns.length - 1, 1)).toBeNull();
-    // The list given is left as it was.
-    expect(columns.slice(0, 3).map((c) => c.id)).toEqual(["date", "start", "task"]);
+  // The Columns row: the shown columns in their order, then the others in
+  // catalog order — what its list and its "Add a column" buttons show.
+  const shown = (columns: readonly { id: string; on: boolean }[] | null) =>
+    columns?.filter((c) => c.on).map((c) => c.id);
+  const hiddenInOrder = (columns: readonly { id: string; on: boolean }[] | null) =>
+    columns?.filter((c) => !c.on).map((c) => c.id);
+  const catalogWithout = (ids: string[]) =>
+    QUERY_COLUMNS.map((c) => c.id as string).filter((id) => !ids.includes(id));
+
+  it("arranges the shown columns in their order, then the rest in catalog order", () => {
+    // Out of order, the off columns among the on ones, as no reading leaves
+    // them now (resolveQueryColumns arranges too).
+    const stored = [
+      { id: "offset", on: false },
+      { id: "task", on: true },
+      { id: "end", on: false },
+      { id: "date", on: true },
+      ...QUERY_COLUMNS.filter(
+        (c) => !["offset", "task", "end", "date", "start"].includes(c.id)
+      ).map((c) => ({ id: c.id, on: false })),
+      { id: "start", on: true },
+    ] as Parameters<typeof arrangeQueryColumns>[0];
+    expect(resolveQueryColumns(formatQueryColumns(stored))).toEqual(arrangeQueryColumns(stored));
+    const arranged = arrangeQueryColumns(stored);
+    expect(shown(arranged)).toEqual(["task", "date", "start"]);
+    expect(hiddenInOrder(arranged)).toEqual(catalogWithout(["task", "date", "start"]));
+    expect(arranged).toHaveLength(QUERY_COLUMNS.length);
+    // A preset is already arranged, and the list given is left as it was.
+    expect(arrangeQueryColumns(presetColumns("detailed"))).toEqual(presetColumns("detailed"));
+    expect(stored[0]).toEqual({ id: "offset", on: false });
   });
 
-  it("switches a column in place, and refuses to switch off the last one on", () => {
-    const columns = resolveQueryColumns("task");
-    expect(switchQueryColumn(columns, "task", false)).toBeNull();
-    const two = switchQueryColumn(columns, "end", true);
-    expect(two?.filter((c) => c.on).map((c) => c.id)).toEqual(["task", "end"]);
-    expect(two?.map((c) => c.id)).toEqual(columns.map((c) => c.id));
+  it("adds a column at the end of the table, and only one that is not in it", () => {
+    const columns = resolveQueryColumns("-end,task,-offset,date");
+    const added = addQueryColumn(columns, "offset");
+    expect(shown(added)).toEqual(["task", "date", "offset"]);
+    expect(hiddenInOrder(added)).toEqual(catalogWithout(["task", "date", "offset"]));
+    expect(addQueryColumn(columns, "task")).toBeNull();
+    expect(addQueryColumn(columns, "nonsense" as never)).toBeNull();
+    expect(shown(columns)).toEqual(["task", "date"]);
+  });
+
+  it("removes a column back among the others in catalog order, never the last one", () => {
+    const columns = resolveQueryColumns("device,task,date");
+    const removed = removeQueryColumn(columns, "device");
+    expect(shown(removed)).toEqual(["task", "date"]);
+    // Back in its catalog place among the others, not where it was.
+    expect(hiddenInOrder(removed)).toEqual(catalogWithout(["task", "date"]));
+    expect(removeQueryColumn(columns, "end")).toBeNull();
+    expect(removeQueryColumn(resolveQueryColumns("task"), "task")).toBeNull();
+    expect(shown(columns)).toEqual(["device", "task", "date"]);
+  });
+
+  it("moves a shown column past the shown one next to it, whatever lies between in storage", () => {
+    // Hidden columns between shown ones: ↑ on task must pass date at once,
+    // not swap with the hidden start and look as if nothing happened.
+    const columns = resolveQueryColumns("date,-start,task,-end,minutes");
+    expect(shown(moveShownColumn(columns, "task", -1))).toEqual(["task", "date", "minutes"]);
+    expect(shown(moveShownColumn(columns, "task", 1))).toEqual(["date", "minutes", "task"]);
+    expect(moveShownColumn(columns, "date", -1)).toBeNull();
+    expect(moveShownColumn(columns, "minutes", 1)).toBeNull();
+    expect(moveShownColumn(columns, "start", -1)).toBeNull();
+    expect(hiddenInOrder(moveShownColumn(columns, "task", -1))).toEqual(
+      catalogWithout(["date", "task", "minutes"])
+    );
+    expect(shown(columns)).toEqual(["date", "task", "minutes"]);
+  });
+
+  it("writes an arranged list back as it reads", () => {
+    const added = addQueryColumn(presetColumns("simple"), "end");
+    expect(added).not.toBeNull();
+    if (added === null) return;
+    expect(resolveQueryColumns(formatQueryColumns(added))).toEqual(added);
+    expect(formatQueryColumns(added).startsWith("date,start,task,minutes,status,end,-")).toBe(true);
   });
 });
 

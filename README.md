@@ -41,7 +41,7 @@ A visually soothing, task-integrated Pomodoro timer for your daily focus work. F
 - One markdown file per day in your log folder, `<folder>/YYYY-MM-DD-gentle-pomodoro-log.md`, with one line per session. Set the folder under **Settings → Daily log**; with none set, no log is kept.
 - Every line is made of Dataview fields — `[Start:: …]`, `[Total:: …]`, `[Status:: …]` and the rest — so Dataview reads them directly. See [Log format](#log-format) for the fields and example queries.
 - **Each line says how the session went** (0.7.0): how it began and ended (Start, an auto-start, Stop, Skip, time up…), where it sat in the long-break cycle, the time zone it was in, about how long the computer slept, and — if you name your devices — which device logged it. Lines written before 0.7.0 don't have these, and nothing adds them afterwards.
-- **Copy a table into any note**: under **Settings → Dataview tables**, choose the columns, the days and the order, and a **Copy** button gives you Dataview code with your log folder already filled in. See [Dataview tables](#dataview-tables).
+- **Copy a table into any note**: under **Settings → Log tables**, choose the columns, the days and the order, and a **Copy** button gives you Dataview code with your log folder already filled in. See [Log tables](#log-tables).
 - **Export sessions** to a CSV or JSON Lines file, for a spreadsheet or a script of your own. See [Export sessions](#export-sessions).
 - **Logs from before 0.6.9** have lines Dataview can't read. The plugin still reads them (today's total, renames), and **Convert old log lines** rewrites them in the new form, keeping every start, end and total — it shows exact counts, lists the few tidy-ups it makes to task names, dates and stray checkboxes, and asks first. A day logged under two file names — one written with other digits by Obsidian in Arabic, Persian, Bengali or Nepali — is merged into the 0-9 file, each session at its start time, and the old file goes to the trash. **Check log** reports what it would convert or merge, and anything in the log that looks wrong, without changing a thing. After you update, if your log still has old lines, a notice tells you once where **Convert old log lines** is.
 - **Open today's log** from the command palette, the status bar's menu, the settings, or — on phones and tablets — by tapping today's total in the timer panel.
@@ -107,21 +107,26 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 ## Configure
 
-**Settings tab** (Settings → Gentle Pomodoro), grouped into sections (findable via Obsidian's settings search on Obsidian 1.13+):
+**Settings tab** (Settings → Gentle Pomodoro). On Obsidian 1.13 and later it opens on a short list of pages, each showing its current value on the right — the theme, the two end-of-session sounds, how many music links, the log folder, the table's columns — and Obsidian's settings search finds any setting inside them. A sign on **Music** or **Daily log** means a link the player can't load, or a log folder the log's commands can't list. On older Obsidian there are no pages: the same groups follow one another on one page, in the same order.
 
-- **Display & behavior**: auto-open on startup.
-- **Status bar** (computers only): **show in status bar**, **time in status bar** (hidden, minutes left, clock or end time — also in the status bar's own menu), and **show today's total as text** beside the goal ring.
-- **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), **show day/night indicator**, and **estimated end time** (shown while a session runs).
-- **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute. Both also live in the timer panel, and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
-- **When focus ends** and **When a break ends** — the same headings as the timer panel. Each group has:
-  - **Focus-end sound** / **Break-end sound** — the singing bell and the ding by default. Pick another built-in sound or your own **mp3, m4a or wav** file from the vault (up to 30 seconds); picking plays it once, and **▶** plays it again — while a sound plays, ▶ turns into **■** to stop it. Only one plays at a time: picking another sound, pressing the other row's ▶, switching **Timer sounds** off or closing the settings stops it. A file that can't be used is refused when you pick it, with the reason. If a chosen file goes missing on a device (not synced yet, deleted, renamed), the built-in sound plays and the row says why. The sound always plays when you stop or skip that session. Settings tab only.
-  - **Play it when focus time is up** / **Play it when break time is up** — rings the sound once when that session's time is up, whether the timer runs into overtime or starts the next session.
-  - **Auto-start the break** / **Auto-start focus**.
-  - A line saying what will actually happen with the settings you have.
-  - **Using your own sound:** first put the file in your vault — drag it into Obsidian's file list, or on a phone attach it to any note — then pick it from the list. Files in hidden folders such as `.obsidian` aren't listed. On your other devices it plays once the file has synced there (with Obsidian Sync, only while its **Sync audio** option is on — it is by default); until then the built-in sound plays.
-- **Notifications** (computers only): **notify when time is up** — a silent system notification when focus or break time is up. Also in the timer panel.
-- **Music**: **music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
-- **Long break**: duration (default 15m) and **focus sessions before a long break** (default 4).
+- **Timer**:
+  - **Display & behavior**: auto-open on startup.
+  - **Timer appearance**: **theme** (`Classic` default, `Frosted glass`, `Frosted glass 2` or `Pixel city`), **show day/night indicator**, and **estimated end time** (shown while a session runs).
+  - **Long break**: duration (default 15m) and **focus sessions before a long break** (default 4).
+  - **Daily focus goal**: minutes (default 120, 0 turns it off) and **show a notice when you reach the goal**.
+- **Status bar** (computers only):
+  - **Show in status bar**, **time in status bar** (hidden, minutes left, clock or end time — also in the status bar's own menu), and **show today's total as text** beside the goal ring.
+- **Sounds and notifications** (**Sounds** on phones and tablets, which have no notifications):
+  - **Audio**: **timer sounds** (the master switch — it also covers the start drum and the Stop sound, and never touches the music) and the **music sound** mute. Both also live in the timer panel, and the two surfaces follow each other; the **volumes** are in the timer panel only, since a level is something you move while listening.
+  - **When focus ends** and **When a break ends** — the same headings as the timer panel. Each group has:
+    - **Focus-end sound** / **Break-end sound** — the singing bell and the ding by default. Pick another built-in sound or your own **mp3, m4a or wav** file from the vault (up to 30 seconds); picking plays it once, and **▶** plays it again — while a sound plays, ▶ turns into **■** to stop it. Only one plays at a time: picking another sound, pressing the other row's ▶, switching **Timer sounds** off, leaving the page or closing the settings stops it. A file that can't be used is refused when you pick it, with the reason. If a chosen file goes missing on a device (not synced yet, deleted, renamed), the built-in sound plays and the row says why. The sound always plays when you stop or skip that session. Settings tab only.
+    - **Play it when focus time is up** / **Play it when break time is up** — rings the sound once when that session's time is up, whether the timer runs into overtime or starts the next session.
+    - **Auto-start the break** / **Auto-start focus**.
+    - A line saying what will actually happen with the settings you have.
+    - **Using your own sound:** first put the file in your vault — drag it into Obsidian's file list, or on a phone attach it to any note — then pick it from the list. Files in hidden folders such as `.obsidian` aren't listed. On your other devices it plays once the file has synced there (with Obsidian Sync, only while its **Sync audio** option is on — it is by default); until then the built-in sound plays.
+  - **Notifications** (computers only): **notify when time is up** — a silent system notification when focus or break time is up. Also in the timer panel.
+- **Music**:
+  - **Music link 1–3** (video, live stream, or playlist — audio-only playback in the timer panel), each with an optional **name** shown in the panel and filled in for you when you paste a link, **show music player** (turning it off also stops playback), **loop music** (replay from the start when it ends; on by default), and **resume where you left off** (reopen each link at the moment you paused; on by default).
 - **Daily log**:
   - **Pomodoro logs folder** — where the daily log files go. Empty (the default) keeps no log. Spaces around the name are dropped, the vault's top level (`/`) isn't accepted, and if you type an existing folder's name in other capitals, that folder is used and the row says so. Changing it leaves older logs where they are, and the row reminds you.
   - **Day starts at** — midnight (the default) to 6:00.
@@ -129,10 +134,11 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
   - **Ask about long sessions** — off, 2, 4, 6 (the default) or 8 hours.
   - **This device's name** — optional. Each session this device's timer logs carries it as `Device`, to tell your devices apart. It is kept on this device only (Obsidian's local storage for this vault), never in the settings file, so a name typed on the laptop doesn't reach the phone. 🍅, ☕ and `#` are taken out and it is cut to 40 characters when a line is written; a note under the row shows the written form when it differs. **Add a session** writes no `Device`.
   - Buttons: **Open today's log**, **Check log**, **Convert old log lines**, **Refresh task names** and **Export sessions** — the same as the commands (**Refresh task names** is `Refresh log task names by ID`).
-- **Dataview tables**: **columns** (a switch and ↑ / ↓ for each, with **Simple** and **Detailed** buttons), **days**, **sessions**, **include skipped focus**, **order**, a **Show the code** preview and four **Copy** buttons. See [Dataview tables](#dataview-tables).
-- **Daily focus goal**: minutes (default 120, 0 turns it off) and **show a notice when you reach the goal**.
-- **Task picker**: **where to find tasks** (tasks folder / current note / open notes); tasks folder path; **show task picker** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the picker reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
-- **Task integration**: **count pomodoros on the task** (opt-in, beta — edits your task files), plus the marker recovery actions: check / repair / remove misplaced / remove all.
+- **Log tables**:
+  - **Columns**: the columns in the table, in order, each with **↑** / **↓** to move it and **✕** to take it out, and under them **Add a column** — one button for each of the others. **Simple** and **Detailed** set the list to a starting point. Then **days**, **sessions**, **include skipped focus**, **order**, a **Show the code** preview and four **Copy** buttons. See [Log tables](#log-tables).
+- **Tasks**:
+  - **Task picker**: **where to find tasks** (tasks folder / current note / open notes); tasks folder path; **show task picker** (defaults to hidden until you set a tasks folder path; turning it off unlinks the current task); **task lookahead window** — how many days ahead the picker reaches (3 / 5 / 7 / 14 / 30 days; default 3), with overdue tasks always shown.
+  - **Task integration**: **count pomodoros on the task** (opt-in, beta — edits your task files), plus the marker recovery actions: check / repair / remove misplaced / remove all.
 
 **In-view panel** (gear icon on the timer) — grouped into sections:
 
@@ -203,7 +209,7 @@ goal_minutes: 120
 ---
 ```
 
-The field names and their order are stable — safe to pin queries against; new fields are only ever added at the end. Dataview reads `Start` and `End` as text (`2026-10-02 10:00:00`, which sorts correctly); use `date(s.Start, "yyyy-MM-dd HH:mm:ss")` when you need a date. Two examples. Put your own log folder in place of `Your log folder` — or use the **Copy** buttons under **Dataview tables**, which fill it in:
+The field names and their order are stable — safe to pin queries against; new fields are only ever added at the end. Dataview reads `Start` and `End` as text (`2026-10-02 10:00:00`, which sorts correctly); use `date(s.Start, "yyyy-MM-dd HH:mm:ss")` when you need a date. Two examples. Put your own log folder in place of `Your log folder` — or use the **Copy** buttons under **Log tables**, which fill it in:
 
 ````md
 ```dataview
@@ -238,11 +244,11 @@ With **Day starts at** set to a later hour, a session that starts after midnight
 
 **Changed in 0.6.9 — check your own queries.** Earlier versions wrote `- 🍅 Focus | Task:: … | Start:: … | Total:: 1500 | …`, from which Dataview reads no field at all. The field names, their order and the values are unchanged; only the brackets are new, plus `Overtime` at the end of focus lines. A pattern for a number or a fixed word, such as `Total::\s*(\d+)` or `Status::\s*cancelled`, reads both kinds of line. A pattern that ends a text value at a `|` or at the end of the line (`[^|]+`, `.*`) must also stop at `]` on the new lines: `Task::\s*(?:…|([^|]+))`, on a task with no note, takes `No Task] [Start:: …` and the rest of the line. And one that splits a line on `|`, or looks for `| Key::`, reads only the old lines. Old logs stay as they are until you run **Convert old log lines**, which rewrites them in the new form, keeping every start, end and total (it also tidies task names, tells you what before it writes, and adds no `Overtime`: only the timer knows that). Run **Check log** first to see what it would change. If your log still has old lines after you update, a notice says once where **Convert old log lines** is.
 
-## Dataview tables
+## Log tables
 
-The plugin draws nothing in your notes. **Settings → Dataview tables** builds a table for you instead: the **Copy** buttons give you ordinary code for the [Dataview](https://github.com/blacksmithgu/obsidian-dataview) plugin, with your log folder already filled in, which you paste into any note, keep and change as you like. Dataview has to be installed to draw it.
+The plugin draws nothing in your notes. **Settings → Log tables** builds a table for you instead: the **Copy** buttons give you ordinary code for the [Dataview](https://github.com/blacksmithgu/obsidian-dataview) plugin, with your log folder already filled in, which you paste into any note, keep and change as you like. Dataview has to be installed to draw it.
 
-- **Columns** — a switch and ↑ / ↓ for each column; the table shows the switched-on ones in the order of the list. Off columns can be moved too, so one you switch on later lands where you put it. At least one stays on. **Simple** (Date, Start, Task, Minutes, Status — the default) and **Detailed** (adds End, Planned, Overtime, Pauses and Ended by) set the list to a starting point; neither is a mode that is kept. The columns: Date, Start, End, Task, Minutes, Planned (min), Overtime (min), Pauses, Status, Type, Ended by, Started by, Cycle, Slept (min), Dropped (min), Device, Session ID, UTC offset (h).
+- **Columns** — the columns in the table, in their order: **↑** / **↓** move one, **✕** takes it out, and each button under **Add a column** puts that column at the end of the table. At least one column stays. **Simple** (Date, Start, Task, Minutes, Status — the default) and **Detailed** (adds End, Planned, Overtime, Pauses and Ended by) set the list to a starting point; neither is a mode that is kept. The columns: Date, Start, End, Task, Minutes, Planned (min), Overtime (min), Pauses, Status, Type, Ended by, Started by, Cycle, Slept (min), Dropped (min), Device, Session ID, UTC offset (h).
 - **Days** — This note's day (the date in the name of the note you paste into, for a daily note), Today, Last 7 days (the default), Last 30 days or All days.
 - **Sessions** — Focus only (the default), or Focus and breaks.
 - **Include skipped focus** — on by default. Daily totals and time by task never include it, as the daily goal doesn't.
@@ -349,7 +355,7 @@ The API only reads: it never changes a file, and what it returns is yours to cha
 ## Compatible plugins
 
 - **[Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks)** — the task picker reads its emoji-marker format.
-- **[Dataview](https://github.com/blacksmithgu/obsidian-dataview)** — daily log lines are made of inline fields, ready to query (see [Log format](#log-format)); the **Copy** buttons under [Dataview tables](#dataview-tables) give code it draws.
+- **[Dataview](https://github.com/blacksmithgu/obsidian-dataview)** — daily log lines are made of inline fields, ready to query (see [Log format](#log-format)); the **Copy** buttons under [Log tables](#log-tables) give code it draws.
 
 ## Files the plugin reads
 
@@ -359,7 +365,7 @@ What the plugin reads and writes in your vault, and when:
 - **Linked task** — reads that task's note to keep its name up to date and to unlink it when you tick it off; with the opt-in 🍅 counter on, edits only that task's line.
 - **Daily logs** — writes one log file a day in your log folder (today's with the day's goal as a property at the top, which changing the daily goal updates) and reads today's for the daily goal; renaming a linked task, or the `Refresh log task names by ID` command, rewrites task names inside the logs in that folder. **Check log** and **Convert old log lines** read the daily log files in that folder (Check also reads the notes their 🆔 lines link to; Convert rewrites the files that change, and moves a log file whose lines it merged into another to the trash, as your trash setting says). **Add a session** / **Fix a logged session** write only the day they are about, and their task button reads the same notes as the task picker. Before the daily-goal notice, the plugin reads its own settings file again, in case another device has shown it today. The template API reads the log files of the days a template asks for, and nothing else.
 - **Old log lines notice** — once, at the first start after updating to 0.6.9 (or, if there was no log folder or no log file in it yet, at the first start with one), reads the daily log files in the log folder to see whether any still holds a line **Convert old log lines** would rewrite, and says so in one notice if one does. It writes nothing. A new install — or a reinstall, which keeps your logs — looks once too, once it has a log folder with a log file in it.
-- **Dataview tables** — the **Copy** buttons read only the plugin's own settings, the names of your vault's folders (to spell the log folder as the vault does) and nothing in your notes. They write nothing: the code goes to the clipboard.
+- **Log tables** — the **Copy** buttons read only the plugin's own settings, the names of your vault's folders (to spell the log folder as the vault does) and nothing in your notes. They write nothing: the code goes to the clipboard.
 - **Export sessions** — reads the log through the same API a template uses (the daily log files of the days you ask for, up to the latest log file), then creates one new CSV or JSON Lines file in the folder you typed, creating that folder if it is missing, and reads the file back once. It never changes the log and never overwrites a file it can see.
 - **Kept on this device only** — the session in progress (so it can be offered back after a quit or a crash), any log line that couldn't be written yet, a daily-goal change not yet written to its day's file, and this device's name, in Obsidian's local storage for this vault. Not in the plugin's settings file, so none of it syncs.
 - **Sound picker** — lists the vault's mp3, m4a and wav files when you open it, and reads only the file you pick.

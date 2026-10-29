@@ -85,11 +85,12 @@ export interface GentlePomoSettings {
   // sessionGaps.ts's resolveLongSessionPromptHours.
   longSessionPromptHours: number;
 
-  // The "Dataview tables" group (0.7.0): what the Copy buttons' code shows.
+  // The "Log tables" group (0.7.0): what the Copy buttons' code shows.
   // Flat scalars, each read through its resolver in logQueries.ts — a plain
   // string survives coerceToDefaults whatever it holds. `queryColumns` is
-  // every column in the user's order, "-" before one that is off
-  // (formatQueryColumns); never an array, which the shallow merge of the
+  // every column, "-" before one that is off — the ones in the table in the
+  // user's order, then the rest in catalog order (formatQueryColumns,
+  // arrangeQueryColumns); never an array, which the shallow merge of the
   // defaults would share by reference.
   queryColumns: string;
   queryRange: string;

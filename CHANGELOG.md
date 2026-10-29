@@ -6,8 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.7.0] — 2026-10-22
 
-**Each log line now says how its session began and ended, and the settings
-can copy a ready-made Dataview table or export your sessions to a file.**
+**Each log line now says how its session began and ended, the settings can
+copy a ready-made Dataview table or export your sessions to a file, and on
+Obsidian 1.13 the settings open on a short list of pages.**
 Update every device that logs. Lines are longer and `Overtime` is no longer
 the last field on a focus line, which matters only to your own queries or
 scripts that anchor on the end of a line — see the first entry under
@@ -64,13 +65,16 @@ scripts that anchor on the end of a line — see the first entry under
   the session moved no long-break count; on a line without it every one of
   them is unknown. A session 0.6.9 left unfinished and 0.7.0 then logs from
   the question at startup has none.
-- **A Dataview tables group in the settings**, right after Daily log. The
+- **A Log tables page in the settings** (a group, right after Daily log,
+  before Obsidian 1.13). The
   plugin draws nothing in your notes: four **Copy** buttons give you code for
   the Dataview plugin, with your log folder filled in, to paste into any note
   and change as you like — **Copy sessions table**, **Copy sessions table for
   DataviewJS** (which reads the log files itself, so it runs with the plugin
   off), **Copy daily totals** and **Copy time by task**. You choose the
-  sessions table's **Columns** (a switch and ↑ / ↓ for each of 18, with
+  sessions table's **Columns** (the columns in the table, in order, each
+  with ↑ / ↓ and ✕, and under them **Add a column**, a button for each of
+  the other 18 — one added goes at the end, and at least one stays; with
   **Simple** and **Detailed** buttons to start from), **Days** (this note's
   day, today, the last 7 or 30 days, or all), **Sessions** (focus only, or
   with breaks), **Include skipped focus** and **Order**, and **Show the
@@ -83,9 +87,10 @@ scripts that anchor on the end of a line — see the first entry under
   a line not yet converted Dataview can't read at all), counts a split
   session once in the totals and in time by task (on 0.7.0
   lines, which carry a `Session`), and, if the system refuses clipboard
-  access, shows the code in a window to copy by hand. The ↑ / ↓ buttons and
-  **Show the code** work from the keyboard on every Obsidian the plugin runs
-  on.
+  access, shows the code in a window to copy by hand. The ↑ / ↓ / ✕ buttons,
+  the **Add a column** buttons and **Show the code** work from the keyboard on
+  every Obsidian the plugin runs on, a screen reader is told what each change
+  did, and a double click on ✕ or on an add button counts once.
 - **This device's name** (Daily log): optional, written as `Device` on what
   this device's timer logs, to tell your devices apart. It is kept on that
   device only, never in the settings file, so a name typed on the laptop
@@ -132,6 +137,18 @@ scripts that anchor on the end of a line — see the first entry under
 
 ### Changed
 
+- **On Obsidian 1.13 and later the settings open on a short list of pages**
+  — Timer, Status bar (computers only), Sounds and notifications (Sounds on
+  phones and tablets), Music, Daily log, Log tables and Tasks — each showing
+  its current value (the theme, the two end-of-session sounds, how many music
+  links, the log folder, the table's columns and days, where the task picker
+  looks), with a warning sign on Music for a link the player can't load and on
+  Daily log for a folder the log's commands can't list. Obsidian's settings
+  search still finds every setting, and opens its page. The settings are the
+  same ones; only where they sit is new. Before 1.13 they stay on one page, in
+  the pages' order, so **Long break** and **Daily focus goal** now come right
+  after **Timer appearance**, and **Status bar** after them. Leaving the
+  Sounds page stops a sound you are previewing, as closing the settings does.
 - **For your own log queries and scripts: lines are longer, and `Overtime`
   is no longer last.** A focus line is about 108 characters longer (a break
   about 92; more with a device name). The ten earlier fields, their order

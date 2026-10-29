@@ -12,7 +12,7 @@ export const COPY_FALLBACK_TEXT =
 
 /**
  * Put `text` on the clipboard and say so with `copiedNotice` (0.7.0, the
- * Dataview tables' Copy buttons).
+ * Log tables' Copy buttons).
  *
  * `writeText` is called at once, inside the click that asked: iOS gives the
  * clipboard only to a user gesture, as it gives WebAudio only to one
