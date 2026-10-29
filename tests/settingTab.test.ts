@@ -17,6 +17,7 @@ import {
   stubEl,
   stubFocus,
   stubObsidian,
+  stubRequest,
   type ModalContent,
   type RecordedComponent,
   type StubEl,
@@ -542,6 +543,29 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
     }
   });
 
+  it("hands Obsidian values and warnings that cannot throw, whatever the settings hold", () => {
+    // 1.13.7 calls displayValue with no try: one throw takes the whole list
+    // down. The definitions must wrap every page's functions, not only the
+    // helpers in settingPages.ts that are careful today.
+    const c = makeTab();
+    for (const key of ["theme", "musicUrl", "logFolderPath", "queryColumns", "taskSource"]) {
+      Object.defineProperty(c.settings, key, {
+        get() {
+          throw new Error(`boom: ${key}`);
+        },
+      });
+    }
+    for (const page of definitionPages(c.tab)) {
+      expect(() => page.displayValue?.(), page.name).not.toThrow();
+      expect(() => page.status?.(), page.name).not.toThrow();
+    }
+    const value = (name: string) => definitionPages(c.tab).find((p) => p.name === name);
+    expect(value("Timer")?.displayValue?.()).toBe("");
+    expect(value("Music")?.status?.()).toBeNull();
+    expect(value("Daily log")?.status?.()).toBeNull();
+    expect(value("Log tables")?.displayValue?.()).toBe("");
+  });
+
   it("never re-renders itself in place: no update() anywhere in the tab", () => {
     // update() re-renders an open page on the SAME Setting objects, clearing
     // only the control column, and every render row here builds outside it
@@ -619,6 +643,77 @@ describe("render rows, built and torn down as a page opens and closes", () => {
     // Not written to after it went: the map no longer holds it.
     expect(text()).toBeUndefined();
     expect(before).toBeTruthy();
+  });
+
+  it("keeps the answer to a link pasted just before its page closed, for when it opens again", async () => {
+    // Back within a moment of pasting: the row's teardown makes it stale, and
+    // the answer used to be dropped before it was cached — no verdict, ever.
+    const url = "https://youtu.be/abcdefghijk";
+    const c = makeTab();
+    let answer: (status: number) => void = () => undefined;
+    stubRequest.handler = () =>
+      new Promise((resolve) => {
+        answer = (status) => resolve({ status, json: {} });
+      });
+    try {
+      const rows = renderAll(c.tab);
+      const link = rows.find((r) => r.name === "Music / Music link 1");
+      if (!link) throw new Error("no link row");
+      (link.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      await flushTab();
+      // The page closes while the request is out.
+      for (const row of rows) if (typeof row.teardown === "function") row.teardown();
+      answer(404);
+      await flushTab();
+      const cache = (
+        c.tab as unknown as { linkProbeCache: Map<string, { result: { status: number } }> }
+      ).linkProbeCache;
+      expect(cache.get(url)?.result.status).toBe(404);
+      // And the row built when it opens again says so, without asking again.
+      stubRequest.handler = () => Promise.reject(new Error("asked again"));
+      const reopened = renderAll(c.tab).find((r) => r.name === "Music / Music link 1");
+      const error = (reopened?.setting.controlEl as StubEl | undefined)?.children.find((x) =>
+        x.classes.includes("gp-setting-error")
+      );
+      expect(error?.text).toMatch(/link/i);
+      // Back before the request is even made (in Obsidian, inside the 800 ms
+      // debounce; here, while the save it waits for is pending): still asked.
+      const c3 = makeTab();
+      let asked = 0;
+      stubRequest.handler = () => {
+        asked++;
+        return Promise.resolve({ status: 401, json: {} });
+      };
+      const rows3 = renderAll(c3.tab);
+      const link3 = rows3.find((r) => r.name === "Music / Music link 1");
+      (link3?.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      for (const row of rows3) if (typeof row.teardown === "function") row.teardown();
+      await flushTab();
+      expect(asked).toBe(1);
+      const cache3 = (
+        c3.tab as unknown as { linkProbeCache: Map<string, { result: { status: number } }> }
+      ).linkProbeCache;
+      expect(cache3.get(url)?.result.status).toBe(401);
+      // A link changed while the request was out: nothing kept, nothing painted.
+      const c2 = makeTab();
+      stubRequest.handler = () =>
+        new Promise((resolve) => {
+          answer = (status) => resolve({ status, json: {} });
+        });
+      const rows2 = renderAll(c2.tab);
+      const link2 = rows2.find((r) => r.name === "Music / Music link 1");
+      (link2?.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      await flushTab();
+      c2.settings.musicUrl = "https://youtu.be/bbbbbbbbbbb";
+      answer(404);
+      await flushTab();
+      const error2 = (link2?.setting.controlEl as StubEl | undefined)?.children.find((x) =>
+        x.classes.includes("gp-setting-error")
+      );
+      expect(error2?.text ?? "").toBe("");
+    } finally {
+      stubRequest.handler = null;
+    }
   });
 
   it("paints what YouTube said a moment ago when a link's row is built again", () => {
@@ -2837,12 +2932,31 @@ describe("the Log tables group", () => {
         "plus"
       );
     }
-    expect(add.attrs).toMatchObject({ role: "group", "aria-label": COLUMN_ADD_LABEL });
+    // Named by its visible label, never an aria-label: Obsidian shows any
+    // [aria-label] as a tooltip over everything inside it.
+    expect(add.attrs.role).toBe("group");
     expect(add.children[0].text).toBe(COLUMN_ADD_LABEL);
+    expect(add.attrs["aria-labelledby"]).toBe(add.children[0].attrs.id);
+    expect(add.children[0].attrs.id).toMatch(/^gp-column-add-label-\d+$/);
     expect(add.classes).not.toContain("gp-column-add-empty");
     expect(chipsEl.children).toHaveLength(QUERY_COLUMNS.length - QUERY_PRESETS.simple.length);
     expect(list.attrs.role).toBe("list");
-    expect(list.attrs["aria-label"]).toBe("Columns in the table");
+    // Only the buttons carry an aria-label, their tooltip and their name.
+    const labelled: StubEl[] = [];
+    const walk = (el: StubEl) => {
+      if (el.attrs["aria-label"] !== undefined) labelled.push(el);
+      el.children.forEach(walk);
+    };
+    walk(rowFor(ctx.el, QUERY_COLUMNS_NAME).settingEl as StubEl);
+    for (const el of labelled) {
+      expect(
+        el.tag === "button" || el.classes.includes("extra-setting-button"),
+        el.attrs["aria-label"]
+      ).toBe(true);
+    }
+    // A second render's label has an id of its own.
+    ctx.tab.display();
+    expect(columnList(ctx.el).add.attrs["aria-labelledby"]).not.toBe(add.attrs["aria-labelledby"]);
     for (const item of items) {
       expect(item.el.attrs.role).toBe("listitem");
       expect([item.up.icon, item.down.icon, item.remove.icon]).toEqual([
@@ -2998,6 +3112,12 @@ describe("the Log tables group", () => {
     clickEl(chip("End"));
     await flushTab();
     expect(stubFocus.el).toBe(planned);
+    // One in the middle, where "the next" and "the one before" differ.
+    stubFocus.el = chip("Overtime (min)");
+    const pauses = chip("Pauses");
+    clickEl(chip("Overtime (min)"));
+    await flushTab();
+    expect(stubFocus.el).toBe(pauses);
     // The last one: the one before it.
     const last = QUERY_COLUMNS.at(-1)?.label ?? "";
     const beforeLast = QUERY_COLUMNS.at(-2)?.label ?? "";
@@ -3041,7 +3161,10 @@ describe("the Log tables group", () => {
       expect(control.disabled).toBe(true);
       expect(control.extraSettingsEl.attrs["aria-disabled"]).toBe("true");
     }
-    expect(task.remove.extraSettingsEl.attrs["aria-label"]).toBe(COLUMN_LAST_SHOWN_TOOLTIP);
+    // Still named for what it does, and to which column, then why it can't.
+    expect(task.remove.extraSettingsEl.attrs["aria-label"]).toBe(
+      `Remove Task. ${COLUMN_LAST_SHOWN_TOOLTIP}`
+    );
     // A click reached anyway writes nothing.
     task.remove.click();
     await flushTab();
@@ -3258,7 +3381,7 @@ describe("the Log tables group", () => {
     });
   });
 
-  it("takes a double click on ✕ or an add button as one press, and on an arrow as two", async () => {
+  it("takes a double click on any of a row's buttons or an add button as one press", async () => {
     const c = withFolder();
     c.tab.display();
     const { items, chips } = columnList(c.el);
@@ -3282,17 +3405,42 @@ describe("the Log tables group", () => {
       "Status",
       "End",
     ]);
-    // An arrow stays under the pointer: twice is what was asked.
-    const status = columnList(c.el).items[3];
-    status.up.click(1);
-    status.up.click(2);
+    // ↑ on Status: Status moves up, and Minutes, which it swapped with, takes
+    // its place under the pointer — the second click lands on Minutes' ↑ and
+    // must not move it straight back.
+    const before = columnList(c.el).items;
+    before[3].up.click(1);
+    before[2].up.click(2);
     await flushTab();
     expect(columnList(c.el).items.map((i) => i.name)).toEqual([
       "Date",
-      "Status",
       "Task",
+      "Status",
       "Minutes",
       "End",
+    ]);
+    // ↓ the same way, and two clicks that are two presses still move twice.
+    const now = columnList(c.el).items;
+    now[0].down.click(1);
+    now[1].down.click(2);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Task",
+      "Date",
+      "Status",
+      "Minutes",
+      "End",
+    ]);
+    const after = columnList(c.el).items;
+    after[4].up.click(1);
+    after[4].up.click(1);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Task",
+      "Date",
+      "End",
+      "Status",
+      "Minutes",
     ]);
   });
 
@@ -3656,6 +3804,10 @@ describe("the Log tables group's stylesheet", () => {
     expect(all).not.toMatch(/display:\s*none/);
     expect(all).not.toMatch(/visibility:\s*hidden/);
     expect(all).not.toMatch(/clip-path/);
+  });
+
+  it("holds the hidden status line to its own row, on 1.7 too", () => {
+    expect(bodyOf(".gp-setting-wide")).toMatch(/(^|;)\s*position: relative;/);
   });
 
   it("shows a disabled column button as one, with the cursor too", () => {

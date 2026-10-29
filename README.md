@@ -107,7 +107,7 @@ Or grab it directly from the [Obsidian catalog page](https://obsidian.md/plugins
 
 ## Configure
 
-**Settings tab** (Settings → Gentle Pomodoro). On Obsidian 1.13 and later it opens on a short list of pages, each showing its current value on the right — the theme, the two end-of-session sounds, how many music links, the log folder, the table's columns — and Obsidian's settings search finds any setting inside them. A sign on **Music** or **Daily log** means a link the player can't load, or a log folder the log's commands can't list. On older Obsidian there are no pages: the same groups follow one another on one page, in the same order.
+**Settings tab** (Settings → Gentle Pomodoro). On Obsidian 1.13 and later it opens on a short list of pages, each showing its current value on the right — the theme, the two end-of-session sounds, how many music links, the log folder, the table's columns — and Obsidian's settings search finds any setting inside them. A warning sign on **Music** means a link that isn't a YouTube link the player can use (whether YouTube has the video is checked on the page itself, as you paste); on **Daily log**, a folder the log's commands can't list — the vault's top level, or a folder typed in other capitals than the vault's. On older Obsidian there are no pages: the same groups follow one another on one page, in the same order.
 
 - **Timer**:
   - **Display & behavior**: auto-open on startup.

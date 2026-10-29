@@ -153,7 +153,16 @@ export function debounce<A extends unknown[]>(fn: (...args: A) => void, _ms?: nu
   };
 }
 
-export function requestUrl(_options: unknown): Promise<never> {
+/**
+ * What requestUrl answers: by default it rejects, as with no network; a test
+ * sets `handler` to answer itself (and resets it to null).
+ */
+export const stubRequest: { handler: ((options: unknown) => Promise<unknown>) | null } = {
+  handler: null,
+};
+
+export function requestUrl(options: unknown): Promise<never> {
+  if (stubRequest.handler !== null) return stubRequest.handler(options) as Promise<never>;
   return Promise.reject(new Error("requestUrl is not available in tests"));
 }
 
@@ -420,10 +429,20 @@ export function stubEl(cls = "", tag = "div"): StubEl {
     },
     setAttr: (name: string, value: string) => {
       el.attrs[name] = value;
+      if (name === "disabled" && stubFocus.el === el) {
+        stubFocus.el = null;
+        stubFocus.dropped++;
+      }
     },
     getAttribute: (name: string) => el.attrs[name] ?? null,
     removeAttribute: (name: string) => {
       delete el.attrs[name];
+      // As Chromium does: an element that can no longer take focus loses it,
+      // to the page.
+      if (stubFocus.el === el && !focusable(el)) {
+        stubFocus.el = null;
+        stubFocus.dropped++;
+      }
     },
     empty: () => {
       for (const child of el.children) {

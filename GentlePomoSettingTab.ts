@@ -444,6 +444,12 @@ interface ColumnChipUi {
   el: HTMLElement;
 }
 
+/**
+ * Makes each render's "Add a column" label id its own: on 1.13 a render and
+ * the late teardown of the one before it can both be in the page.
+ */
+let columnAddLabelSeq = 0;
+
 /** A column's name in the settings list. */
 function columnLabel(id: QueryColumnId): string {
   return QUERY_COLUMNS.find((column) => column.id === id)?.label ?? id;
@@ -582,9 +588,11 @@ export class GentlePomoSettingTab extends PluginSettingTab {
   }
 
   /**
-   * Closing the tab must drop every request still in the air, or a landing
-   * would paint an error into a torn-down row, or write a name for a link the
-   * user has since changed.
+   * Leaving the tab. A link check still in the air is not dropped: it was
+   * asked about the link the slot still holds, so its answer is kept for the
+   * next render and its name offered if the slot has none — and one whose link
+   * has changed since does nothing (runMusicLinkProbe). The tokens make a
+   * request not yet sent for a link since changed stay unsent.
    */
   override hide(): void {
     for (const ui of this.musicSlotUi) {
@@ -726,25 +734,32 @@ export class GentlePomoSettingTab extends PluginSettingTab {
     token: number
   ): Promise<void> {
     const ui = this.musicSlot(slot);
-    if (token !== ui.token) return;
+    // The slot must still hold the link we ask about. Compared against the
+    // string frozen when the request was issued, never against the live
+    // setting — that is 0.5.6's provenance rule, and the reason a position
+    // could once be stamped with the wrong URL. Each keystroke stores the box,
+    // so this is also "no keystroke has moved on from it".
+    const stillThisLink = () => this.plugin.settings[MUSIC_URL_KEYS[slot]].trim() === frozenUrl;
+    // A request whose row has gone (on 1.13 Back closes the page and its
+    // teardown bumps the token) is still made while the slot holds the link:
+    // the answer is kept for when the page opens again, which paints it
+    // (cachedLinkVerdict). Pasting and pressing Back within a moment used to
+    // drop it for good.
+    if (token !== ui.token && !stillThisLink()) return;
 
     const cached = this.linkProbeCache.get(frozenUrl);
     const fresh =
       cached !== undefined &&
       (cached.result.status === 200 || Date.now() - cached.at < MUSIC_LINK_CACHE_TTL_MS);
     const result = fresh && cached !== undefined ? cached.result : await probeMusicLink(target);
-    // A keystroke landed while the request was out: this answer describes a URL
-    // the user has already moved on from.
-    if (token !== ui.token) return;
     // Could not ask. Saying nothing beats accusing a link that may be fine.
     if (result === null) return;
+    // About frozenUrl whatever the box holds now.
     if (!fresh) this.linkProbeCache.set(frozenUrl, { result, at: Date.now() });
-    // Belt to the token's braces: the slot must still hold the link we asked
-    // about. Compared against the string frozen when the request was issued,
-    // never against the live setting — that is 0.5.6's provenance rule, and the
-    // reason a position could once be stamped with the wrong URL.
-    if (this.plugin.settings[MUSIC_URL_KEYS[slot]].trim() !== frozenUrl) return;
-
+    // The user has moved on from this link while the request was out.
+    if (!stillThisLink()) return;
+    // Into the row that is up now, if any (none while its page is closed);
+    // the name as ever only as an offer (maybePrefillMusicName).
     this.paintMusicLinkError(slot, describeLinkCheck(result.status, target));
     this.maybePrefillMusicName(slot, result.name);
   }
@@ -838,8 +853,8 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       ui.statusEl = null;
       statusEl.remove();
       // A preview belongs to these rows. On 1.13 Back closes their page and
-      // runs this, and hide() is not called (only closing the settings or
-      // leaving the tab calls it): without this, a 30-second preview played on
+      // runs this, and hide() is not called (only closing the settings,
+      // leaving the tab or clicking its own entry in the sidebar does): without this, a 30-second preview played on
       // with no ■ left to press, and one still loading its file started after
       // the page had gone. Unconditional — previewingEdge() is null while a
       // file loads — and harmless twice; the next render sets the listener
@@ -1064,15 +1079,17 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         })
       );
     }
-    const list = setting.settingEl.createDiv({
-      cls: "gp-column-list",
-      attr: { role: "list", "aria-label": "Columns in the table" },
-    });
+    // Named by what is on screen, never an aria-label: Obsidian shows any
+    // [aria-label] as a tooltip for whatever is under the pointer inside it
+    // (both versions' app.js), so "Columns in the table" popped up over every
+    // column name, and "Add a column" between two of its buttons.
+    const list = setting.settingEl.createDiv({ cls: "gp-column-list", attr: { role: "list" } });
+    const labelId = `gp-column-add-label-${String(++columnAddLabelSeq)}`;
     const add = setting.settingEl.createDiv({
       cls: "gp-column-add",
-      attr: { role: "group", "aria-label": COLUMN_ADD_LABEL },
+      attr: { role: "group", "aria-labelledby": labelId },
     });
-    add.createDiv({ cls: "gp-column-add-label", text: COLUMN_ADD_LABEL });
+    add.createDiv({ cls: "gp-column-add-label", text: COLUMN_ADD_LABEL, attr: { id: labelId } });
     const chips = add.createDiv("gp-column-chips");
     // Says what each change did, for a screen reader: after ✕ or an add,
     // focus lands on a button that does not name the column acted on. There
@@ -1132,14 +1149,19 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       void this.removeColumn(id);
     });
     remove.extraSettingsEl.addClass("gp-column-remove");
-    // A double click on ✕ is one press: the row below slides up under the
-    // pointer, and the second click would take that column out too. Caught on
-    // the way down, before the button's own listener; the arrows are left
-    // alone, the pressed one staying put, so twice is what was asked.
+    // A double click on any of the three is one press. After ✕ the row below
+    // slides up under the pointer, and after ↑ or ↓ this row moves away from
+    // it and the neighbour it swapped with takes its place — so the second
+    // click would take out the next column, or move the neighbour straight
+    // back (in Chromium under both versions' CSS, a double click on ↓ left
+    // the list as it was). Caught on the way down, before Obsidian's own
+    // listener on the button, which gives the callback no event to read.
     el.addEventListener(
       "click",
       (event: MouseEvent) => {
-        if (event.detail > 1 && remove.extraSettingsEl.contains(event.target as Node)) {
+        if (event.detail <= 1) return;
+        const buttons = [up, down, remove].map((control) => control.extraSettingsEl);
+        if (buttons.some((button) => button.contains(event.target as Node))) {
           event.stopPropagation();
         }
       },
@@ -1185,9 +1207,10 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       setControlDisabled(item.up, index === 0);
       setControlDisabled(item.down, index === count - 1);
       setControlDisabled(item.remove, count === 1);
-      item.remove.setTooltip(
-        count === 1 ? COLUMN_LAST_SHOWN_TOOLTIP : `Remove ${columnLabel(item.id)}`
-      );
+      // The tooltip is the accessible name too: it says what the button does
+      // and to which column even when it cannot, and then why.
+      const name = `Remove ${columnLabel(item.id)}`;
+      item.remove.setTooltip(count === 1 ? `${name}. ${COLUMN_LAST_SHOWN_TOOLTIP}` : name);
     });
     this.columnAddEl?.toggleClass("gp-column-add-empty", this.columnChips.length === 0);
   }
@@ -1264,8 +1287,9 @@ export class GentlePomoSettingTab extends PluginSettingTab {
    * Swap a column with its neighbour in the table. The NEIGHBOUR's node is
    * moved, never the pressed one: moving the node that holds focus drops
    * focus to the page in Chromium, and pressing ↑ again must keep going. When
-   * that arrow has just been disabled (the column reached the top), focus goes
-   * to the other one.
+   * the column reaches the top (or bottom), the pressed arrow is about to be
+   * disabled, so focus goes to the other one FIRST: disabling the focused one
+   * takes its tabindex off, which blurs it to the page for an instant.
    */
   private async moveColumn(id: QueryColumnId, delta: -1 | 1): Promise<void> {
     const next = moveShownColumn(resolveQueryColumns(this.plugin.settings.queryColumns), id, delta);
@@ -1279,10 +1303,14 @@ export class GentlePomoSettingTab extends PluginSettingTab {
       else item.el.before(other.el);
       this.columnItems[at] = other;
       this.columnItems[at + delta] = item;
-      this.paintColumnStates();
       const pressed = delta < 0 ? item.up : item.down;
       const reachedEnd = delta < 0 ? at + delta === 0 : at + delta === this.columnItems.length - 1;
-      (reachedEnd ? (delta < 0 ? item.down : item.up) : pressed).extraSettingsEl.focus();
+      const target = reachedEnd ? (delta < 0 ? item.down : item.up) : pressed;
+      // Enabled ahead of the paint (it ends enabled anyway), or focus() on a
+      // disabled one — no tabindex — would do nothing.
+      setControlDisabled(target, false);
+      target.extraSettingsEl.focus();
+      this.paintColumnStates();
     } else {
       this.paintColumnList();
     }

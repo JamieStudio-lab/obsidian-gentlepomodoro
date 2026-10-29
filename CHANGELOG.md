@@ -142,8 +142,9 @@ scripts that anchor on the end of a line — see the first entry under
   phones and tablets), Music, Daily log, Log tables and Tasks — each showing
   its current value (the theme, the two end-of-session sounds, how many music
   links, the log folder, the table's columns and days, where the task picker
-  looks), with a warning sign on Music for a link the player can't load and on
-  Daily log for a folder the log's commands can't list. Obsidian's settings
+  looks), with a warning sign on Music for a link that isn't a YouTube link
+  the player can use and on Daily log for a folder the log's commands can't
+  list. Obsidian's settings
   search still finds every setting, and opens its page. The settings are the
   same ones; only where they sit is new. Before 1.13 they stay on one page, in
   the pages' order, so **Long break** and **Daily focus goal** now come right

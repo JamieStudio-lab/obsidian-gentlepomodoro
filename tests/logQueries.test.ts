@@ -178,6 +178,32 @@ describe("the columns setting", () => {
     expect(shown(columns)).toEqual(["date", "task", "minutes"]);
   });
 
+  it("arranges a list given in any order before moving or adding, as each says", () => {
+    // Not from resolveQueryColumns, which arranges already: a list with
+    // hidden columns between the shown ones, as a caller could pass.
+    const raw = [
+      { id: "offset", on: false },
+      { id: "date", on: true },
+      { id: "start", on: false },
+      { id: "task", on: true },
+      { id: "end", on: false },
+      { id: "minutes", on: true },
+      ...QUERY_COLUMNS.filter(
+        (c) => !["offset", "date", "start", "task", "end", "minutes"].includes(c.id)
+      ).map((c) => ({ id: c.id, on: false })),
+    ] as Parameters<typeof arrangeQueryColumns>[0];
+    expect(shown(moveShownColumn(raw, "task", -1))).toEqual(["task", "date", "minutes"]);
+    expect(hiddenInOrder(moveShownColumn(raw, "task", -1))).toEqual(
+      catalogWithout(["date", "task", "minutes"])
+    );
+    const added = addQueryColumn(raw, "end");
+    expect(shown(added)).toEqual(["date", "task", "minutes", "end"]);
+    expect(hiddenInOrder(added)).toEqual(catalogWithout(["date", "task", "minutes", "end"]));
+    expect(hiddenInOrder(removeQueryColumn(raw, "task"))).toEqual(
+      catalogWithout(["date", "minutes"])
+    );
+  });
+
   it("writes an arranged list back as it reads", () => {
     const added = addQueryColumn(presetColumns("simple"), "end");
     expect(added).not.toBeNull();

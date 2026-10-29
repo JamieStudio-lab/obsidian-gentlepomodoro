@@ -4649,7 +4649,11 @@ body.is-tablet .gp-timer-time {
    held to the row, all three are the row's width, the buttons wrap, and the
    code scrolls inside itself. Measured in headless Chrome under 1.14.5's
    app.css. */
+/* Positioned, so the hidden status line inside it is held by its own row:
+   1.13 makes a setting row relative itself, 1.7 does not, and there the line
+   sat against the modal, thousands of pixels from its row. */
 .gp-setting-wide {
+  position: relative;
   flex-wrap: wrap;
 }
 
