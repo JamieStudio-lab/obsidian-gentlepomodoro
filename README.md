@@ -17,22 +17,22 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - **No ticking countdown.** The time is hidden while a session runs. Hover the timer to see it, or tap it on a phone.
 - **Estimated end time** while a session runs, like `Ends 15:30`.
 - **Long breaks**: a long break after every 4 focus sessions, by default. The count starts again each day.
-- **Overtime**: when time is up, the timer quietly counts up with a soft glow. The session goes on until you end it, and the extra time counts as focus.
+- **Overtime**: when time is up and the next session doesn't start by itself, the timer quietly counts up with a soft glow until you end the session. A focus's extra time counts as focus.
 - **Stop** (Finish & next) ends the session and leaves the next one paused. **Skip** moves on, and starts the next session if auto-start is on.
-- **Sounds**: a drum when focus starts, and a sound when a session ends. Pick a built-in sound or your own mp3, m4a or wav file (up to 30 seconds).
-- **Quiet when focus time is up**, by default, so the timer never breaks focus you want to keep going. A new install does play a sound when a break ends. Both can be turned on or off.
-- **Notify when time is up** (computers, opt-in): a silent system notification, for when other windows cover Obsidian.
+- **Sounds**: a drum when you start a focus, and a sound when a session ends. Pick a built-in sound or your own mp3, m4a or wav file (up to 30 seconds).
+- **Quiet when focus time is up**, by default, so the timer never breaks focus you want to keep going. A new install does play a sound when a break ends. Both can be turned on or off. Stop and Skip play the end sound either way, unless it already rang.
+- **Notify when time is up** (computers, opt-in): a silent system notification, for when other windows cover Obsidian. Turning it on shows a sample; allow notifications if your system asks.
 - Animations soften when your system asks for reduced motion.
 
 ### ✅ Tasks
 
 - **Turn on Show task picker** (Settings → Tasks) to pick a task in the timer panel. It is off on a new install.
 - It reads the [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) plugin's format, such as `- [ ] Write docs ⏳ 2025-12-23 🆔 abc123`, on any bullet (`-`, `*`, `+` or numbered).
-- **Where tasks come from**: a tasks folder (empty means the whole vault), the note you are in, or all the notes you have open.
-- From a folder, the picker shows tasks with a scheduled (⏳) or due (📅) date, grouped as Overdue, Today, Tomorrow and later, up to 3–30 days ahead. Overdue tasks always show. The two note options also show tasks with no date.
-- A linked task stays linked when you change where tasks come from. Ticking it off unlinks it (at the end of the session, if one is under way).
+- **Where to find tasks**: a tasks folder (empty means the whole vault), the current note, or all the notes you have open.
+- From a folder, the picker shows tasks with a scheduled (⏳) or due (📅) date, grouped as Overdue, Today, Tomorrow and later, up to 3 days ahead by default (5, 7, 14 or 30 in the settings). Overdue tasks always show. The two note options also show tasks with no date.
+- A linked task stays linked when you change where to find tasks. Ticking it off unlinks it (at the end of the session, if one is under way).
 - **🍅 count** (opt-in, beta — it edits your task files): each focus session you finish adds to a `🍅 N` count on the task's line, placed before the Tasks fields so its dates keep working: `- [ ] Write docs 🍅 3 ⏳ 2025-12-23`. A `🍅` you typed in the task's own text is left alone.
-- **Count tools**: versions up to 0.5.0 wrote the count after a task's dates, which broke them. **Check**, **Repair** and **Remove** find and fix those lines across the whole vault. **Remove all** takes every count out — back up first. The tools that write ask first, with exact counts.
+- **Count tools**: versions up to 0.5.0 wrote the count after a task's dates, which broke them. **Check**, **Repair** and **Remove** find and fix those lines across the whole vault. **Remove all** takes every count out — back up first. They act on any `🍅 N` after a task's dates, whoever typed it, and **Remove all** also on one at the end of a task's text. Cancelled and in-progress tasks are included. The tools that write ask first, with exact counts.
 
 ### 📊 Daily focus goal
 
@@ -53,11 +53,11 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - **Day starts at** (midnight to 6:00), for night owls: a session that starts before that hour goes into the day before's file.
 - **Task switch**: if you change task during a focus, the whole session goes to the last task. Choose **Split at the switch** to log a line for each task instead.
 - Sessions under a minute aren't logged. **Reset** throws the session away; **Stop** and **Skip** end it and keep it.
-- **A sleeping computer isn't focus**: if a computer sleeps for over 10 minutes while the timer runs, the timer pauses and tells you how long it left out. Press Start to carry on. A locked phone keeps timing.
-- **Long sessions**: when you stop a focus with 6 hours of active time that ran past its plan, such as a timer left on overnight, you're asked whether to keep it all or end it at the planned end. Change the hours, or turn it off, under **Ask about long sessions**.
-- **Nothing is lost**: if Obsidian quits or crashes mid-session, it offers to log the session the next time it starts. A line that can't be written yet is kept on the device and written later.
+- **A sleeping computer isn't focus**: if a computer sleeps for over 10 minutes while the timer runs, the timer pauses and tells you how long it left out. Press Start to carry on. If the time ran out during the sleep and the next session starts by itself, the session ends at its planned time instead. A locked phone keeps timing.
+- **Long sessions**: when you stop a focus with 6 hours or more of active time that ran past its plan, such as a timer left on overnight, you're asked whether to keep it all or end it at the planned end. Change the hours, or turn it off, under **Ask about long sessions**.
+- **An unfinished session is offered back**: if Obsidian quits or crashes mid-session, the next start offers to log it, up to where the timer was last seen running, or to discard it. On a computer that loses at most a minute; a phone that closes Obsidian in the background ends it at about when you left. A line that can't be written yet is kept on the device and written later.
 - **Renamed tasks**: when a task has a `🆔`, its past lines take the new name. **Refresh log task names by ID** catches up on renames made while the task wasn't linked.
-- **Logs from before 0.6.9** use an older line format that Dataview can't read. **Check log** reports them, and anything else that looks wrong, without changing anything. **Convert old log lines** rewrites them in the new format after asking.
+- **Logs from before 0.6.9** use an older line format that Dataview can't read. **Check log** reports them, and anything else that looks wrong, without changing anything. **Convert old log lines** rewrites them in the new format, keeping every start, end and total. It lists the few tidy-ups it makes to task names, dates and stray checkboxes, and asks first.
 - **Sync**: Obsidian Sync merges a day's file. Other sync tools (iCloud, Dropbox, Syncthing) can leave a conflict copy when two devices write the same day. Sessions in the copy don't count until you move them into the day's own file.
 
 ### 🧭 Status bar (computers)
@@ -73,7 +73,7 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - Fades in and out, and dips quietly under the timer's sounds.
 - Loops by default, and each link resumes where you paused it. **⏹** starts it over next time.
 - Its own mute and volume, separate from the timer's. It never starts by itself, and it stops when you close the panel.
-- **It doesn't play on iPhone or iPad**: YouTube won't load its player inside Obsidian there (error 153), whatever the link.
+- **Desktop only**: on iPhone and iPad, YouTube won't load its player inside Obsidian (error 153), whatever the link. Android hasn't been tested.
 - It uses YouTube over the network; see [Network use](#network-use).
 
 ### 📱 Phones and tablets
@@ -82,7 +82,7 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - Tap the timer to see the countdown for a couple of seconds.
 - Today's goal shows in the panel; tap it to open today's log.
 - Sound: press **Start** once to allow audio. On iPhone, the silent switch mutes it.
-- Not on phones and tablets: the status bar, system notifications and the sleep pause. Music doesn't play on iPhone or iPad.
+- Not on phones and tablets: the status bar, system notifications, the sleep pause and the music.
 
 ## Install
 
@@ -108,15 +108,15 @@ Or open the [catalog page](https://obsidian.md/plugins?id=gentle-pomo).
 
 On Obsidian 1.13 and later, the settings open on a list of pages, each showing its current value. Obsidian's settings search finds any setting inside them. On older versions, the same settings are on one page, in the same order.
 
-| Page                                                | What's on it                                                                                                                                                                                                                            |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Timer**                                           | Auto-open on startup; theme, day/night indicator and estimated end time; long break length (15 min) and focus sessions before a long break (4); daily focus goal (120 min) and its notice.                                              |
-| **Status bar** (computers)                          | Show in status bar, which time it shows, and today's total as text.                                                                                                                                                                     |
-| **Sounds and notifications** (**Sounds** on phones) | **Timer sounds** and **Music sound**, to mute either. For the end of focus and of a break: which sound, whether it plays when time is up, whether the next session starts by itself, and a line saying what will happen. Notifications. |
-| **Music**                                           | Three links and their names, show music player, loop, resume where you left off.                                                                                                                                                        |
-| **Daily log**                                       | Log folder, day starts at, task switch, ask about long sessions, this device's name. Buttons: Open today's log, Check log, Convert old log lines, Refresh task names, Export sessions.                                                  |
-| **Log tables**                                      | See [Log tables](#log-tables).                                                                                                                                                                                                          |
-| **Tasks**                                           | Where to find tasks, tasks folder, show task picker, how many days ahead; the 🍅 count and its tools.                                                                                                                                   |
+| Page                                                            | What's on it                                                                                                                                                                                                                            |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Timer**                                                       | Auto-open on startup; theme, day/night indicator and estimated end time; long break length (15 min) and focus sessions before a long break (4); daily focus goal (120 min) and its notice.                                              |
+| **Status bar** (computers)                                      | Show in status bar, which time it shows, and today's total as text.                                                                                                                                                                     |
+| **Sounds and notifications** (**Sounds** on phones and tablets) | **Timer sounds** and **Music sound**, to mute either. For the end of focus and of a break: which sound, whether it plays when time is up, whether the next session starts by itself, and a line saying what will happen. Notifications. |
+| **Music**                                                       | Three links and their names, show music player, loop, resume where you left off.                                                                                                                                                        |
+| **Daily log**                                                   | Log folder, day starts at, task switch, ask about long sessions, this device's name. Buttons: Open today's log, Check log, Convert old log lines, Refresh task names, Export sessions.                                                  |
+| **Log tables**                                                  | See [Log tables](#log-tables).                                                                                                                                                                                                          |
+| **Tasks**                                                       | Where to find tasks, tasks folder, show task picker, how many days ahead; the 🍅 count and its tools.                                                                                                                                   |
 
 A warning sign on **Music** means a link that isn't a YouTube link. On **Daily log**, it means a folder the log's tools can't use, such as the vault's top level.
 
@@ -125,13 +125,13 @@ Good to know:
 - **Timer sounds** covers every timer sound, the start drum and the end sound included, but not the music.
 - **Your own sound**: first put the file in your vault, then pick it. On your other devices it plays once the file has synced (with Obsidian Sync, **Sync audio** is on by default); until then the built-in sound plays.
 - **This device's name** is kept on this device only, never synced. Lines this device logs carry it as `Device`, to tell your devices apart. See [Privacy](#privacy).
-- **Log folder**: changing it leaves your older logs where they are.
+- **Pomodoro logs folder**: changing it leaves your older logs where they are.
 
 ### Timer panel (gear icon on the timer)
 
 Focus and break lengths (press Enter to apply; a session under way keeps its length), where to find tasks, **Timer sounds** and **Music sound** with their volumes, and for the end of focus and of a break a sound switch and auto-start. On computers, also notifications. **Reset to defaults** at the bottom resets these.
 
-The volumes are only here. The switches are in the settings too, and the two stay in step.
+The focus and break lengths and the volumes are only here. The switches are in the settings too, and the two stay in step.
 
 ## Log format
 
@@ -143,34 +143,34 @@ Each session adds a line to the day's log file (a line per task with **Split at 
 - ☕ Rest [Start:: 2026-10-02 11:00:00] [End:: 2026-10-02 11:15:00] [Scheduled:: 900] [Total:: 900] [Type:: long-break] [Session:: s5h2x8kv0b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 900] [Offset:: -300]
 ```
 
-| Field          | What it holds                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Task`         | Focus only. A link to the task's note, shown with the task's name and tags; `No Task` when none was linked.   |
-| `ID`           | Focus only, when the task has a `🆔`.                                                                         |
-| `Start`, `End` | Local time, `YYYY-MM-DD HH:mm:ss`, always with the digits 0–9.                                                |
-| `Scheduled`    | The session length in your settings when it started, in seconds.                                              |
-| `Pauses`       | Focus only. A list of `"start - end"` pauses.                                                                 |
-| `Total`        | Active seconds: `End` − `Start` − the pauses.                                                                 |
-| `Status`       | Focus only. `finished` (Stop, or time up) or `cancelled` (Skip). Skipped focus doesn't count toward the goal. |
-| `Type`         | `focus`, `short-break` or `long-break`.                                                                       |
-| `Overtime`     | Focus only. Active seconds past the planned end; 0 when it ended on time or early.                            |
+| Field          | What it holds                                                                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Task`         | Focus only. A link to the task's note, shown with the task's name and tags; just the name when the task has no note; `No Task` when none was linked. |
+| `ID`           | Focus only, when the task has a `🆔`.                                                                                                                |
+| `Start`, `End` | Local time, `YYYY-MM-DD HH:mm:ss`, always with the digits 0–9.                                                                                       |
+| `Scheduled`    | The session length in your settings when it started, in seconds.                                                                                     |
+| `Pauses`       | Focus only. A list of `"start - end"` pauses.                                                                                                        |
+| `Total`        | Active seconds: `End` − `Start` − the pauses.                                                                                                        |
+| `Status`       | Focus only. `finished` (Stop, or time up) or `cancelled` (Skip). Skipped focus doesn't count toward the goal.                                        |
+| `Type`         | `focus`, `short-break` or `long-break`.                                                                                                              |
+| `Overtime`     | Focus only. Active seconds past the planned end; 0 when it ended on time or early.                                                                   |
 
 Rest lines have no `Pauses` or `Status`.
 
 **Added in 0.7.0**, at the end of each line the timer writes. Some only when they apply:
 
-| Field          | What it holds                                                                                                         |
-| -------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `Session`      | An ID for the session, like `s7k2m9qx4w`. The lines of a session split at a task switch share it.                     |
-| `StartedBy`    | `start` (you pressed Start), `auto` (it began by itself), `reset` (after Reset) or `added` (**Add a session**).       |
-| `EndedBy`      | `time-up`, `stop`, `planned-end`, `skip`, `recovered`, `recovered-planned-end` (logged at the next start) or `added`. |
-| `Planned`      | The timer's planned length when it ended, in seconds, including any +5 or −5.                                         |
-| `Cycle`        | Focus only: 1 up to **Focus sessions before a long break**. Only on a focus that counted (time up or Stop).           |
-| `Offset`       | Minutes east of UTC when it began: `-300` is UTC−5.                                                                   |
-| `OffsetChange` | Minutes the clocks moved during the session. Only when a clock change happened.                                       |
-| `Slept`        | Computers only. About how many seconds the computer slept while the timer ran (an estimate). Only when above 0.       |
-| `Dropped`      | Seconds left out when a session was ended at its planned end. Only when above 0.                                      |
-| `Device`       | This device's name, when you've set one.                                                                              |
+| Field          | What it holds                                                                                                                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Session`      | An ID for the session, like `s7k2m9qx4w`. The lines of a session split at a task switch share it.                                                                                                           |
+| `StartedBy`    | `start` (you pressed Start), `auto` (it began by itself), `reset` (after Reset) or `added` (**Add a session**).                                                                                             |
+| `EndedBy`      | `time-up` (time ran out and the next session started by itself), `stop`, `planned-end` (Stop's **End at planned end**), `skip`, `recovered`, `recovered-planned-end` (logged at the next start) or `added`. |
+| `Planned`      | The timer's planned length when it ended, in seconds, including any +5 or −5.                                                                                                                               |
+| `Cycle`        | Focus only: 1 up to **Focus sessions before a long break**. Not on a skipped, recovered or added focus.                                                                                                     |
+| `Offset`       | Minutes east of UTC when it began: `-300` is UTC−5.                                                                                                                                                         |
+| `OffsetChange` | Minutes the clocks moved during the session. Only when a clock change happened.                                                                                                                             |
+| `Slept`        | Computers only. About how many seconds the timer was paused for a sleep of over 10 minutes (an estimate). Only when it paused for one.                                                                      |
+| `Dropped`      | Seconds left out when a session was ended at its planned end. Only when above 0.                                                                                                                            |
+| `Device`       | This device's name, when you've set one.                                                                                                                                                                    |
 
 - A line without `Session` is older: from before 0.7.0, converted, or written by a device still on 0.6.9. The new fields are unknown on it, not 0, and nothing adds them later.
 - **Add a session** writes these too, with `added` for how it began and ended. It has no `Cycle`, `Slept`, `Dropped` or `Device`.
@@ -227,7 +227,7 @@ The first lists your latest focus sessions. The second adds up each day's focus 
 ### If you have your own queries or scripts
 
 - **0.7.0** made lines longer, and `Overtime` is no longer the last field. A pattern anchored on the end, like `\[Overtime:: \d+\]$`, stops matching; read the field by name instead (`Overtime::\s*(\d+)`). Update every device that logs: a device still on 0.6.9 writes lines without the new fields.
-- **0.6.9** put each field in brackets. Before, lines looked like `- 🍅 Focus | Task:: … | Total:: 1500 | …`, and Dataview couldn't read them. A pattern for a number or a word, like `Total::\s*(\d+)`, reads both. One that ends a value at `|` or the end of the line must now also stop at `]`. Old lines stay as they are until you run **Convert old log lines**.
+- **0.6.9** put each field in brackets. Before, lines looked like `- 🍅 Focus | Task:: … | Total:: 1500 | …`, and Dataview couldn't read them. A pattern for a number or a word, like `Total::\s*(\d+)`, reads both. One that ends a value at `|` or the end of the line must now also stop at `]`. A script that splits a line on `|` reads only old lines. Old lines stay as they are until you run **Convert old log lines**, which adds no `Overtime`: a converted line has none (unknown, not 0).
 
 ## Log tables
 
@@ -252,10 +252,10 @@ A copy is a snapshot: change the settings and copy again. Older lines show `-` f
 - **Format**: CSV (for spreadsheets) or JSON Lines (for scripts).
 - **Folder**: `Pomodoro exports` by default. The dialog tells you if a folder can't be used, such as the vault's top level, a hidden folder, or a name some systems refuse.
 
-Your last format and folder are remembered. The file is named like `gentle-pomodoro-sessions-2026-09-23-to-2026-10-22-091500.csv`. Each export makes a new file (adding ` 2`, ` 3`… if the name is taken), never overwrites one, and never changes your log. It reads the file back and warns you if a sync changed it.
+Your last format and folder are remembered. The file is named like `gentle-pomodoro-sessions-2026-09-23-to-2026-10-22-091500.csv`. Each export makes a new file (adding ` 2`, ` 3`… if the name is taken), never overwrites a file it can see (one a sync drops there at that very moment can be replaced), and never changes your log. It reads the file back and warns you if a sync changed it.
 
-- **CSV** has a header row and opens in Excel with accents intact. The columns, in order: `date`, `kind`, `type`, `start`, `end`, `startIso`, `endIso`, `task`, `taskPath`, `id`, `scheduled`, `planned`, `total`, `overtime`, `pauseCount`, `pausedSeconds`, `status`, `sessionId`, `startedBy`, `endedBy`, `cycle`, `offset`, `endOffset`, `slept`, `dropped`, `device`, `logFile`. New columns are only added at the end.
-- **JSON Lines** has one object per line, with the same fields, except `task` is `{ name, path }` and `pauses` is a list of `{ start, end }`.
+- **CSV** is UTF-8 with a byte order mark (so Excel keeps accents and 🍅), with CRLF line ends and a header row. The columns, in order: `date`, `kind`, `type`, `start`, `end`, `startIso`, `endIso`, `task`, `taskPath`, `id`, `scheduled`, `planned`, `total`, `overtime`, `pauseCount`, `pausedSeconds`, `status`, `sessionId`, `startedBy`, `endedBy`, `cycle`, `offset`, `endOffset`, `slept`, `dropped`, `device`, `logFile`. New columns are only added at the end.
+- **JSON Lines** has one object per line, LF line ends and no header. It has the CSV's fields, except that `task` is `{ name, path }` in place of `task` and `taskPath`, and `pauses` is a list of `{ start, end }` in place of `pauseCount` and `pausedSeconds`.
 - `date` is the log's day, as **Day starts at** counts it. `startIso` and `endIso` add the time zone.
 - An empty cell (`null` in JSON) means the line doesn't have that value, as on older lines.
 - A text cell that starts like a formula (`=`, `+`, `-`, `@`) gets a `'` in front, so a spreadsheet doesn't run it.
@@ -285,18 +285,18 @@ if (pomo && date) {
 ```
 ````
 
-| Member               | What it gives                                                                                                                                                                                                   |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`            | `1`.                                                                                                                                                                                                            |
-| `dailyGoalMinutes()` | The daily goal setting in minutes; `0` when off.                                                                                                                                                                |
-| `dayStartHour()`     | **Day starts at**, `0`–`6`.                                                                                                                                                                                     |
-| `logPath(date)`      | The path of that day's log file, whether or not it exists; `null` with no log folder or a bad date.                                                                                                             |
-| `getDay(date)`       | `{ date, path, goalMinutes, focusSeconds, sessions }`. `goalMinutes` is the setting for today and later, and for an earlier day the goal its file recorded (or `null`). `focusSeconds` counts as the goal does. |
-| `getDays(from, to)`  | A `getDay` for each day from `from` to `to`, both included, up to 400 days.                                                                                                                                     |
+| Member               | What it gives                                                                                                                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`            | `1`.                                                                                                                                                                                                                                                                                        |
+| `dailyGoalMinutes()` | The daily goal setting in minutes; `0` when off.                                                                                                                                                                                                                                            |
+| `dayStartHour()`     | **Day starts at**, `0`–`6`.                                                                                                                                                                                                                                                                 |
+| `logPath(date)`      | The path of that day's log file, whether or not it exists; `null` with no log folder or a bad date.                                                                                                                                                                                         |
+| `getDay(date)`       | `{ date, path, goalMinutes, focusSeconds, sessions }`. `goalMinutes` is the setting for today and later, and for an earlier day the goal its file recorded (or `null`). `path` is `null` when the day has no file. `focusSeconds` counts as the goal does, without a session still running. |
+| `getDays(from, to)`  | A `getDay` for each day from `from` to `to`, both included, up to 400 days.                                                                                                                                                                                                                 |
 
 - Dates are `YYYY-MM-DD` text. A bad date or range makes `getDay` and `getDays` reject.
-- Each session has `kind` (`focus` or `rest`), `type`, `task` (`{ name, path }`), `id`, `start`, `end`, `scheduled`, `total`, `overtime`, `pauses` (a list of `{ start, end }`) and `status`. Times are the text as written; numbers are seconds. A field the line doesn't have is `null`.
-- Lines from 0.7.0 on also have `sessionId`, `startedBy`, `endedBy`, `planned`, `cycle`, `offset`, `endOffset` (the offset when it ended), `slept`, `dropped` and `device`, from the fields under [Log format](#log-format). On older lines they're all `null`.
+- Each session has `kind` (`focus` or `rest`), `type`, `task` (`{ name, path }`), `id`, `start`, `end`, `scheduled`, `total`, `overtime`, `pauses` (a list of `{ start, end }`) and `status`. Times are the text as written; numbers are seconds. A field the line doesn't have is `null`, except `pauses`: empty when there were none (and on Rest lines), `null` only when it can't be read, so check it.
+- Lines from 0.7.0 on also have `sessionId`, `startedBy`, `endedBy`, `planned`, `cycle`, `offset`, `endOffset` (the offset when it ended), `slept`, `dropped` and `device`, from the fields under [Log format](#log-format). On a line with `sessionId`, a missing `slept` or `dropped` is `0`. On older lines all ten are `null`. `startedBy` and `endedBy` may gain values in a later version.
 - The API only reads. It's there while the plugin is on (`?.api` is `undefined` when it's off), and its members keep their meaning while `version` stays the same.
 
 ## Commands
@@ -322,11 +322,11 @@ if (pomo && date) {
 - **Linked task**: reads its note to keep its name current and to see when you tick it off. With the 🍅 count on, it edits only that task's line.
 - **Daily log**: writes one file a day in your log folder, with the day's goal at the top, and reads today's for the goal. When a task with a `🆔` is renamed, its past lines in that folder take the new name.
 - **Log tools**: **Check log** only reads. **Convert old log lines** rewrites the files it changes; a day's file named in other digits (Obsidian in Arabic, Persian, Bengali or Nepali) is renamed, or merged into the 0–9 file and moved to the trash. **Add a session** and **Fix a logged session** write only the day they're about.
-- **Old log lines notice**: once, after updating from 0.6.8 or earlier, reads the log files to see whether any old lines remain. It writes nothing.
+- **Old log lines notice**: once (after an update, a new install or a reinstall, as soon as the log folder holds a log file), reads the log files to see whether any old lines remain. It writes nothing.
 - **Log tables**: read only the plugin's settings and your folder names, and write nothing; the code goes to the clipboard.
 - **Export sessions**: reads the days you ask for and creates one new file (and its folder, if needed).
 - **Kept on this device only**, never synced: the session in progress, log lines not yet written, a goal change not yet written, and this device's name.
-- **Sounds**: the sound picker lists the vault's audio files. The file you choose is read at each start, and again when it changes.
+- **Sounds**: the sound picker lists the vault's audio files. The file you choose is read when you pick it, when Obsidian starts, and again when it changes.
 - **🍅 count tools**: scan every note, only when you press them.
 
 Nothing here leaves your device. The only network use is YouTube, below.
