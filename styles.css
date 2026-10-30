@@ -4647,8 +4647,8 @@ body.is-tablet .gp-timer-time {
    longest name, and the code below came out as wide as its longest line
    (1488px in a 320px pane), scrolling the whole tab sideways. Stretched and
    held to the row, all three are the row's width, the buttons wrap, and the
-   code scrolls inside itself. Measured in headless Chrome under 1.14.5's
-   app.css. */
+   code scrolls inside itself. Measured in headless Chrome under 1.13.7's
+   and 1.14.5's app.css. */
 /* Positioned, so the hidden status line inside it is held by its own row:
    1.13 makes a setting row relative itself, 1.7 does not, and there the line
    sat against the modal, thousands of pixels from its row. */
@@ -4830,7 +4830,11 @@ body.is-mobile .gp-column-add .gp-column-chips button.gp-column-chip {
 }
 
 /* The code scrolls inside itself, both ways, so the page never scrolls
-   sideways at phone width. */
+   sideways at phone width. It reads left to right in every app language:
+   under a right-to-left one (Arabic, Hebrew, …) Obsidian makes the modal
+   direction: rtl, and the fence showed as dataview``` with the first line
+   cut off at the left (headless Chrome under 1.13.7's app.css). Obsidian's
+   own code blocks are direction: ltr too. */
 .gp-query-code-text {
   max-height: 16em;
   margin: var(--gp-space-4) 0 0;
@@ -4842,12 +4846,17 @@ body.is-mobile .gp-column-add .gp-column-chips button.gp-column-chip {
   font-size: var(--font-ui-smaller);
   white-space: pre;
   user-select: text;
+  direction: ltr;
+  text-align: left;
 }
 
-/* The code to copy by hand when the clipboard refuses (clipboard.ts). */
+/* The code to copy by hand when the clipboard refuses (clipboard.ts), left
+   to right in every app language, as the preview above. */
 .gp-copy-fallback {
   width: 100%;
   font-family: var(--font-monospace);
   font-size: var(--font-ui-smaller);
   resize: vertical;
+  direction: ltr;
+  text-align: left;
 }

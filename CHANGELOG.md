@@ -4,14 +4,14 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — 2026-10-22
+## [0.7.0] — 2026-10-30
 
 **Each log line now says how its session began and ended, the settings can
 copy a ready-made Dataview table or export your sessions to a file, and on
 Obsidian 1.13 the settings open on a short list of pages.**
 Update every device that logs. Lines are longer and `Overtime` is no longer
 the last field on a focus line, which matters only to your own queries or
-scripts that anchor on the end of a line — see the first entry under
+scripts that anchor on the end of a line — see the second entry under
 **Changed**.
 
 ### Added
@@ -110,8 +110,8 @@ scripts that anchor on the end of a line — see the first entry under
   so the file is read back once and a notice warns you if it isn't what was
   written. The CSV has a byte order mark (Excel reads accents), CRLF line
   ends and a header; its columns are fixed, with new ones added at the end.
-  Text cells that start like a formula (`=`, `+`, `-`, `@`, a tab) get a `'`
-  in front. The vault's top level and hidden folders are refused, and so is
+  Text cells that start like a formula (`=`, `+`, `-`, `@`, a tab or a
+  carriage return) get a `'` in front. The vault's top level and hidden folders are refused, and so is
   a folder Obsidian can't save the file in on every device — a name with
   `:`, `*`, `?`, `"`, `<`, `>` or `|`, or a new one that ends with a dot or a
   space or is a name Windows keeps (`CON`, `AUX`, `NUL`, …) — in the dialog,
@@ -195,7 +195,7 @@ scripts that anchor on the end of a line — see the first entry under
   with the setting read once, so the two agree even when the settings file
   was edited by hand or the setting changed while the session was being
   logged.
-- 2188 → 2614 tests, 36 → 40 files. Every rule added was broken on purpose
+- 2188 → 2615 tests, 36 → 40 files. Every rule added was broken on purpose
   to see a test fail: over 600 breakages, all caught except a few that
   change nothing a user can see.
 

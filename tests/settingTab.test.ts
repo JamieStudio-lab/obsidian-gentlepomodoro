@@ -3765,7 +3765,7 @@ describe("the Log tables group's stylesheet", () => {
     // Below 400px of settings pane app.css makes a setting row a column with
     // align-items: flex-start, so a child is as wide as its content: the code
     // came out 1488px wide in a 320px pane, and the whole tab scrolled
-    // sideways (headless Chrome under 1.14.5's app.css).
+    // sideways (headless Chrome under 1.13.7's and 1.14.5's app.css).
     for (const sel of [".gp-column-list", ".gp-column-add", ".gp-query-code"]) {
       expect(bodyOf(sel), sel).toMatch(/(^|;)\s*align-self: stretch;/);
       expect(bodyOf(sel), sel).toMatch(/(^|;)\s*max-width: 100%;/);
@@ -3775,6 +3775,18 @@ describe("the Log tables group's stylesheet", () => {
     expect(bodyOf(".gp-column-chip-name")).toMatch(/(^|;)\s*text-overflow: ellipsis;/);
     // And the code scrolls inside itself instead.
     expect(bodyOf(".gp-query-code-text")).toMatch(/(^|;)\s*overflow: auto;/);
+  });
+
+  it("shows the code left to right under a right-to-left app language", () => {
+    // Obsidian gives the modal direction: rtl in Arabic, Hebrew and the other
+    // right-to-left languages, and the code took it: the fence showed as
+    // dataview``` and the first line was cut off at the left (headless
+    // Chrome under 1.13.7's app.css). Both the preview and the window to copy
+    // by hand are code.
+    for (const sel of [".gp-query-code-text", ".gp-copy-fallback"]) {
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*direction: ltr;/);
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*text-align: left;/);
+    }
   });
 
   it("rings a focused arrow and Show the code with the plugin's own ring, on every version", () => {

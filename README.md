@@ -258,7 +258,7 @@ Your last format and folder are remembered. The file is named like `gentle-pomod
 - **JSON Lines** has one object per line, LF line ends and no header. It has the CSV's fields, except that `task` is `{ name, path }` in place of `task` and `taskPath`, and `pauses` is a list of `{ start, end }` in place of `pauseCount` and `pausedSeconds`.
 - `date` is the log's day, as **Day starts at** counts it. `startIso` and `endIso` add the time zone.
 - An empty cell (`null` in JSON) means the line doesn't have that value, as on older lines.
-- A text cell that starts like a formula (`=`, `+`, `-`, `@`) gets a `'` in front, so a spreadsheet doesn't run it.
+- A text cell that starts like a formula (`=`, `+`, `-`, `@`, a tab or a carriage return) gets a `'` in front, so a spreadsheet doesn't run it.
 
 To see the file in Obsidian, turn on **Show all file types** (Settings → Files and links). To sync it with Obsidian Sync, turn on **Sync all other types**.
 
