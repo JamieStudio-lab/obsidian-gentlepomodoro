@@ -202,6 +202,15 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   // What every earlier version did, so no upgrader's lines change.
   taskSwitchLogging: "last-task",
   longSessionPromptHours: 6,
+  // Simple, the last 7 days, focus only, skipped focus shown, newest first.
+  queryColumns:
+    "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset",
+  queryRange: "week",
+  queryKinds: "focus",
+  querySkipped: true,
+  querySort: "newest",
+  exportFormat: "csv",
+  exportFolder: "",
   showTaskSelector: true,
   // "folder" reproduces every pre-0.6.4 picker exactly, which is what this
   // object owes an upgrading user (see GentlePomoSettings.taskSource).

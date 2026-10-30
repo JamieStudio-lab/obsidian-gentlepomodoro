@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import moment from "moment";
-import { loggedTotalSeconds, type SessionLog } from "../logLine";
+import { formatLogLine, loggedTotalSeconds, parseLogLine, type SessionLog } from "../logLine";
 import {
   TASK_SWITCH_LOGGINGS,
   TASK_SWITCH_OPTIONS,
@@ -222,5 +222,99 @@ describe("segmentLogs", () => {
     expect(merged.map((l) => l.closedBySwitch)).toEqual([true]);
     const cut = segmentLogs(session({ endTime: t(9, 25), overtimeSeconds: 0 }), [docs(t(9, 28))]);
     expect(cut.map((l) => l.closedBySwitch)).toEqual([true]);
+  });
+});
+
+describe("segmentLogs — the tail on each line (0.7.0)", () => {
+  const ms = (h: number, m: number) => t(h, m).valueOf();
+  /** 09:00–09:30 for Review, switched from Write docs at 09:10; paused 09:05–09:15
+   *  with a sleep 09:06–09:14; 6 min past the plan, of which 300 s were left out. */
+  const whole = () =>
+    session({
+      pauses: [{ start: t(9, 5), end: t(9, 15) }],
+      sessionId: "s7k2m9qx4w",
+      startedBy: "auto",
+      endedBy: "planned-end",
+      plannedSeconds: 1200,
+      cycle: 2,
+      sleeps: [[ms(9, 6), ms(9, 14)]],
+      droppedSeconds: 300,
+      device: "Work laptop",
+    });
+  const fieldsOf = (lines: SessionLog[]) =>
+    lines.map((line) => parseLogLine(formatLogLine(line))?.values ?? new Map<string, string>());
+
+  it("gives every line the session's ID, start, end, plan, Cycle and device", () => {
+    const lines = fieldsOf(segmentLogs(whole(), [docs(t(9, 10))]));
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      for (const [key, value] of [
+        ["Session", "s7k2m9qx4w"],
+        ["StartedBy", "auto"],
+        ["EndedBy", "planned-end"],
+        ["Planned", "1200"],
+        ["Cycle", "2"],
+        ["Device", "Work laptop"],
+      ]) {
+        expect(line.get(key), key).toBe(value);
+      }
+    }
+  });
+
+  it("puts Dropped on the last line alone, as Overtime is spread from the end", () => {
+    const lines = fieldsOf(segmentLogs(whole(), [docs(t(9, 10))]));
+    expect(lines.map((line) => line.get("Dropped") ?? null)).toEqual([null, "300"]);
+    // Nothing to spread with one line.
+    expect(fieldsOf(segmentLogs(whole(), [])).map((line) => line.get("Dropped"))).toEqual(["300"]);
+    // A last part merged away (under a minute) leaves it on the one before.
+    const merged = segmentLogs(whole(), [docs(t(9, 29, 30))]);
+    expect(fieldsOf(merged).map((line) => line.get("Dropped") ?? null)).toEqual(["300"]);
+  });
+
+  it("gives each line its own share of the sleep, cut where the pause is cut", () => {
+    const parts = segmentLogs(whole(), [docs(t(9, 10))]);
+    // 09:06–09:10 in the first line, 09:10–09:14 in the second.
+    expect(fieldsOf(parts).map((line) => line.get("Slept"))).toEqual(["240", "240"]);
+    const paused = parts.map((part) =>
+      part.pauses.reduce((n, p) => n + (p.end.valueOf() - p.start.valueOf()) / 1000, 0)
+    );
+    expect(paused).toEqual([300, 300]);
+  });
+});
+
+describe("segmentLogs — each line's Offset, across a clock change (0.7.0)", () => {
+  // Chicago falls back at 02:00 CDT on 2026-11-01: the second line starts
+  // after the change, so its Offset is its own start's, not the session's.
+  let saved: string | undefined;
+  beforeAll(() => {
+    saved = process.env.TZ;
+    process.env.TZ = "America/Chicago";
+  });
+  afterAll(() => {
+    if (saved === undefined) delete process.env.TZ;
+    else process.env.TZ = saved;
+  });
+
+  it("reads Offset off each line's start and OffsetChange off its end", () => {
+    const night = (h: number, m: number, plusHours = 0) =>
+      moment(new Date(2026, 10, 1, h, m)).add(plusHours, "hours") as unknown as MomentLike;
+    const lines = segmentLogs(
+      session({
+        startTime: night(1, 30),
+        // 01:40 CST, an hour and ten minutes after 01:30 CDT.
+        endTime: night(1, 40, 1),
+        overtimeSeconds: 0,
+        sessionId: "s7k2m9qx4w",
+      }),
+      [
+        { ...docs(night(1, 50)), end: night(1, 50) },
+        { ...docs(night(1, 10, 1)), taskName: "C" },
+      ]
+    ).map((line) => parseLogLine(formatLogLine(line))?.values);
+    expect(lines.map((v) => [v?.get("Start"), v?.get("Offset"), v?.get("OffsetChange")])).toEqual([
+      ["2026-11-01 01:30:00", "-300", undefined],
+      ["2026-11-01 01:50:00", "-300", "-60"],
+      ["2026-11-01 01:10:00", "-360", undefined],
+    ]);
   });
 });

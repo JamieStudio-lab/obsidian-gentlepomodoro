@@ -1,15 +1,19 @@
 /**
  * The daily log's own commands (0.6.9): Open today's log, Check log, Convert
- * old log lines, Add a session and Fix a logged session. The rules are pure
- * and live elsewhere — logConvert.ts decides what a line becomes and what
- * looks wrong, logEditor.ts what a session line says and where it goes —
- * this reads and writes the files, asks first, and says what happened.
+ * old log lines, Add a session and Fix a logged session — and Export sessions
+ * (0.7.0). The rules are pure and live elsewhere — logConvert.ts decides what
+ * a line becomes and what looks wrong, logEditor.ts what a session line says
+ * and where it goes, logExport.ts what an export file holds — this reads and
+ * writes the files, asks first, and says what happened.
  *
  * Every write to an existing log goes through Vault.process, which reads and
  * writes in one step, so a session the timer appends meanwhile is never lost.
+ * Export writes no log: it reads through the read API, and creates its own
+ * file with Vault.create.
  */
 import { Notice, TFile, normalizePath, type App } from "obsidian";
 import type { ConfirmOptions } from "./confirmModal";
+import type { DayLog } from "./logApi";
 import {
   LOG_CONVERSION_KINDS,
   addConversionCounts,
@@ -39,14 +43,40 @@ import {
   type LoggedLine,
   type SessionForm,
 } from "./logEditor";
+import {
+  EXPORT_BUSY_NOTICE,
+  EXPORT_FAILED_NOTICE,
+  EXPORT_NAME_TRIES,
+  EXPORTING_NOTICE,
+  checkExportFolder,
+  checkExportForm,
+  exportChunks,
+  exportFileName,
+  exportFolderSetting,
+  exportNoNameMessage,
+  exportRangeDates,
+  exportReadBackMessage,
+  exportRecords,
+  exportText,
+  exportedMessage,
+  logFileDates,
+  noSessionsMessage,
+  resolveExportFormat,
+  withoutBom,
+  type ExportForm,
+  type ExportFormat,
+  type LogDateSpan,
+} from "./logExport";
 import { dailyLogFiles, dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
-import { formatLogLine, logicalDate, type SessionLog } from "./logLine";
-import { ensureLogFolder, type DuplicateTaskId } from "./logManager";
+import { formatLogLine, logicalDate, stamp, type SessionLog } from "./logLine";
+import { ensureLogFolder, isAlreadyExists, type DuplicateTaskId } from "./logManager";
 import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
 import {
   PickSessionModal,
+  askExportForm,
   askSessionForm,
+  type ExportFormOptions,
   type SessionFormAnswer,
   type SessionFormOptions,
   type SessionTaskChoice,
@@ -76,6 +106,12 @@ export interface LogToolsHost {
   logChanged(): void;
   /** The session dialog (sessionModals.ts) — a seam, so the flow can be driven in a test. */
   askSessionForm?: (options: SessionFormOptions) => Promise<SessionFormAnswer>;
+  /** The read API's getDays (logApi.ts): Export reads the log through it, as a template does. */
+  readDays(from: string, to: string): Promise<DayLog[]>;
+  /** data.json: Export remembers its format and folder there. */
+  saveSettings(): Promise<void>;
+  /** The Export dialog (sessionModals.ts), a seam like askSessionForm. */
+  askExportForm?: (options: ExportFormOptions) => Promise<ExportForm | null>;
 }
 
 /** What Check log found, for its Notice. */
@@ -103,6 +139,8 @@ const ANOMALY_PHRASES: Record<LogAnomalyKind, (n: number) => string> = {
   long: (n) => `${String(n)} session(s) longer than 12 hours`,
   endBeforeStart: (n) => `${String(n)} session(s) that end before they start`,
   idNames: (n) => `${String(n)} task ID(s) logged under different names`,
+  slept: (n) => `${String(n)} Slept value(s) longer than their line's pauses`,
+  cycle: (n) => `${String(n)} Cycle(s) on a break or a skipped session`,
 };
 
 /** Check log's Notice: what it counted, and only what is there. */
@@ -331,6 +369,9 @@ export class LogTools {
   // Check and Convert run one at a time: a second press while the first is
   // reading or asking would plan against files the first is about to write.
   private busy = false;
+  // One export at a time, its dialog included. Apart from `busy`: an export
+  // writes no log, so it need not wait for a Check.
+  private exporting = false;
 
   constructor(private readonly host: LogToolsHost) {}
 
@@ -674,6 +715,181 @@ export class LogTools {
     }
     for (const { file, target } of plan.renamesBlocked) {
       logger.warn(`"${file.path}" keeps its name: "${target}" already exists and is not a file.`);
+    }
+  }
+
+  /* ===== Export sessions (0.7.0) ===== */
+
+  /** The days the folder's log files are for, read now: a session logged meanwhile counts. */
+  private logDates(): LogDateSpan | null {
+    const folder = this.host.settings().logFolderPath;
+    return logFileDates(dailyLogFiles(this.host.app, folder).map((file) => file.path));
+  }
+
+  private askExport(options: ExportFormOptions): Promise<ExportForm | null> {
+    return this.host.askExportForm
+      ? this.host.askExportForm(options)
+      : askExportForm(this.host.app, options);
+  }
+
+  /**
+   * "Export sessions": the dialog, then the log read through the read API,
+   * then a new file — never one over a file it can see (createExportFile) —
+   * read back once to check it holds what was written. The log is only read.
+   */
+  async exportSessions(): Promise<void> {
+    if (this.exporting) {
+      new Notice(EXPORT_BUSY_NOTICE);
+      return;
+    }
+    const settings = this.host.settings();
+    const folder = settings.logFolderPath;
+    if (!folder) {
+      new Notice(NO_LOG_FOLDER_NOTICE);
+      return;
+    }
+    const app = this.host.app;
+    // The read API looks a day's file up by the path the setting names, which
+    // a stored problem does not lead to (F29): it would export nothing.
+    const problem = logFolderProblem(folder, app.vault);
+    if (problem) {
+      new Notice(logFolderProblemNotice(folder, problem));
+      return;
+    }
+    this.exporting = true;
+    let working: Notice | null = null;
+    try {
+      const today = this.today();
+      const datesFor = (range: ExportForm["range"]) =>
+        exportRangeDates(range, today, this.logDates());
+      const initial = exportRangeDates("30", today, null) ?? { from: today, to: today };
+      const configDir = app.vault.configDir;
+      const form = await this.askExport({
+        form: {
+          range: "30",
+          from: initial.from,
+          to: initial.to,
+          kinds: "all",
+          format: resolveExportFormat(settings.exportFormat),
+          folder: exportFolderSetting(settings.exportFolder),
+        },
+        datesFor,
+        check: (values) => checkExportForm(values, this.logDates(), app.vault, configDir),
+      });
+      if (form === null) return;
+      // Checked again: the vault may have changed while the dialog was open.
+      const folderCheck = checkExportFolder(form.folder, app.vault, configDir);
+      if (folderCheck.kind === "problem") {
+        new Notice(`Gentle pomodoro: ${folderCheck.message}`);
+        return;
+      }
+      const from = form.from.trim();
+      const to = form.to.trim();
+      working = new Notice(EXPORTING_NOTICE, 0);
+      const records = exportRecords(await this.readExportDays(from, to), form.kinds);
+      if (records.length === 0) {
+        new Notice(noSessionsMessage(from, to, form.kinds));
+        return;
+      }
+      const text = exportText(records, form.format);
+      await ensureLogFolder(app, folderCheck.path);
+      const path = await this.createExportFile(
+        folderCheck.path,
+        from,
+        to,
+        stamp(moment(), "HHmmss"),
+        form.format,
+        text
+      );
+      if (path === null) {
+        new Notice(exportNoNameMessage(folderCheck.path));
+        return;
+      }
+      // Remembered once a file is written, not when the dialog closes.
+      const current = this.host.settings();
+      current.exportFormat = form.format;
+      current.exportFolder = folderCheck.path;
+      await this.host.saveSettings();
+      new Notice(
+        (await this.readsBack(path, text))
+          ? exportedMessage(records.length, path)
+          : exportReadBackMessage(records.length, path),
+        10_000
+      );
+    } catch (e) {
+      logger.error("Failed to export the sessions", e);
+      new Notice(EXPORT_FAILED_NOTICE);
+    } finally {
+      working?.hide();
+      this.exporting = false;
+    }
+  }
+
+  /**
+   * The days from `from` to `to` through the read API, in the runs it takes
+   * in one call. Only the days that can have a log file are asked for — every
+   * session is on one of them — so "Everything", or a range typed to the year
+   * 9999, reads what the folder holds and no more.
+   */
+  private async readExportDays(from: string, to: string): Promise<DayLog[]> {
+    const span = this.logDates();
+    if (span === null) return [];
+    const first = from > span.earliest ? from : span.earliest;
+    const last = to < span.latest ? to : span.latest;
+    const days: DayLog[] = [];
+    if (first > last) return days;
+    for (const chunk of exportChunks(first, last)) {
+      days.push(...(await this.host.readDays(chunk.from, chunk.to)));
+    }
+    return days;
+  }
+
+  /**
+   * Write `text` to a new file in `folder`, under the first free name, and
+   * return its path — or null when all EXPORT_NAME_TRIES are taken. Only ever
+   * Vault.create, which refuses a path that is there; a name counts as free
+   * only when neither the vault's index nor the disk has it, since the index
+   * can lag the disk, and one create refuses anyway (a sync got there first)
+   * moves on to the next number. So no file the export can see is ever
+   * written over — but one a sync drops in between create's own check and its
+   * write can be: that gap is Obsidian's, and why the file is read back after.
+   */
+  private async createExportFile(
+    folder: string,
+    from: string,
+    to: string,
+    time: string,
+    format: ExportFormat,
+    text: string
+  ): Promise<string | null> {
+    const vault = this.host.app.vault;
+    for (let n = 1; n <= EXPORT_NAME_TRIES; n++) {
+      const path = normalizePath(`${folder}/${exportFileName(from, to, time, format, n)}`);
+      if (vault.getAbstractFileByPath(path) !== null || (await vault.adapter.exists(path))) {
+        continue;
+      }
+      try {
+        await vault.create(path, text);
+        return path;
+      } catch (e) {
+        if (isAlreadyExists(e)) continue;
+        throw e;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Whether the file at `path` holds `text`. Read from the disk: Vault.create
+   * can return before the index has the file. The byte order mark is left out
+   * of the comparison, as Vault.read leaves it out of what it returns.
+   */
+  private async readsBack(path: string, text: string): Promise<boolean> {
+    try {
+      return withoutBom(await this.host.app.vault.adapter.read(path)) === withoutBom(text);
+    } catch (e) {
+      logger.warn(`Could not read "${path}" back after exporting to it`, e);
+      return false;
     }
   }
 

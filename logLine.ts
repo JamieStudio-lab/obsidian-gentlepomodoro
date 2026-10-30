@@ -15,11 +15,62 @@
  * must add up the same. No other regex over log lines belongs anywhere else in
  * the plugin (tests/logLine.test.ts holds the sources to that).
  *
+ * 0.7.0 adds a TAIL after those fields, on the lines its timer, a recovery or
+ * "Add a session" writes — the ten fields before it byte for byte as 0.6.9
+ * wrote them (LOG_TAIL_KEYS says what, formatLogLine when):
+ *
+ *   … [Overtime:: 0] [Session:: s7k2m9qx4w] [StartedBy:: start] [EndedBy:: time-up] [Planned:: 1500] [Cycle:: 2] [Offset:: -240]
+ *
  * No `obsidian` import: the date helpers take the moment they are given.
  */
 import { NO_TASK_LABEL } from "./constants";
 import { frontmatterRowCount } from "./logFrontmatter";
 import type { MomentLike } from "./momentTypes";
+
+/** What opened a session: Start, an auto-start, a Reset while running, or "Add a session". */
+export const STARTED_BY = ["start", "auto", "reset", "added"] as const;
+export type StartedBy = (typeof STARTED_BY)[number];
+
+/**
+ * What ended it: the clock at zero with the next session starting by itself,
+ * Stop, Stop's "End at planned end", Skip, the startup's "Log it" and "Log up
+ * to planned end", or "Add a session". Every value is a lasting contract once
+ * written: a reader may match on it.
+ */
+export const ENDED_BY = [
+  "time-up",
+  "stop",
+  "planned-end",
+  "skip",
+  "recovered",
+  "recovered-planned-end",
+  "added",
+] as const;
+export type EndedBy = (typeof ENDED_BY)[number];
+
+/**
+ * The tail's fields, in the order a line writes them (0.7.0). On a line that
+ * has Session, a missing Slept, Dropped or OffsetChange means 0; a line with
+ * no Session is older, and every one of these is unknown on it — never
+ * worked out after the fact.
+ *
+ * No key may END in another log key (a review's greedy `.*Total::` or
+ * `.*Offset::` would read it — hence OffsetChange, not EndOffset), and none
+ * may be Day or Date: a list item's field of that name takes the place of
+ * Dataview's `file.day` for the whole file. tests/logLine.test.ts holds both.
+ */
+export const LOG_TAIL_KEYS = [
+  "Session",
+  "StartedBy",
+  "EndedBy",
+  "Planned",
+  "Cycle",
+  "Offset",
+  "OffsetChange",
+  "Slept",
+  "Dropped",
+  "Device",
+] as const;
 
 export interface SessionLog {
   mode: "focus" | "break";
@@ -37,6 +88,27 @@ export interface SessionLog {
   breakType?: "short" | "long" | null;
   // Seconds of active time past the planned end; focus lines only. Missing = 0.
   overtimeSeconds?: number;
+
+  // The tail (0.7.0). Written only with a sessionId (isSessionId): a session
+  // without one — Fix's template, a session a 0.6.9 run saved — gets a line
+  // exactly as 0.6.9 wrote it.
+  /** One ID per timed session, shared by every line a split session writes. */
+  sessionId?: string;
+  startedBy?: StartedBy;
+  endedBy?: EndedBy;
+  /** The clock's plan at the end in seconds, ±5 included: what Overtime is past. */
+  plannedSeconds?: number;
+  /** Its place in the long-break cycle, 1…longBreakEvery (cyclePosition): a
+   *  focus that moved the count only. */
+  cycle?: number;
+  /** The spans (ms) the sleep check paused for — about how long the computer
+   *  slept; a line's Slept is its share. */
+  sleeps?: readonly (readonly [number, number])[];
+  /** Active seconds a planned end left out, so Total + Dropped is what the
+   *  timer measured; only the last line of a split session carries it. */
+  droppedSeconds?: number;
+  /** This device's name as typed; sanitizeDevice cleans it on the way in. */
+  device?: string;
 }
 
 export const LOG_FOCUS_MARKER = "🍅 Focus";
@@ -277,8 +349,154 @@ export function formatTaskValue(name: string, path?: string): string {
   return alias || NO_TASK_LABEL;
 }
 
+// Crockford's base 32 in lower case: no i, l, o or u to misread.
+const SESSION_ID_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+const SESSION_ID_REGEX = /^s[0-9a-hjkmnp-tv-z]{9}$/;
+
+/** Whether `value` is a Session ID as newSessionId makes them. */
+export function isSessionId(value: unknown): value is string {
+  return typeof value === "string" && SESSION_ID_REGEX.test(value);
+}
+
+/**
+ * A new Session ID: `s` and nine characters of SESSION_ID_ALPHABET, e.g.
+ * `s7k2m9qx4w`. The letter first makes it text to Dataview, which reads an
+ * all-digit one as a number. Nine characters (45 bits) keep it apart from
+ * every other session ever logged, not just the day's. Each random byte is
+ * cut to 5 bits (`& 31`): 256 is a multiple of 32, so no character is more
+ * likely than another.
+ *
+ * From `crypto.getRandomValues`, which the desktop app, both phone web views
+ * and Node all have, and which needs no secure context; Math.random only where
+ * it is missing — the ID needs to be unlikely to repeat, not secret. `fill`
+ * stands in for it in tests.
+ */
+export function newSessionId(fill?: (bytes: Uint8Array) => void): string {
+  const bytes = new Uint8Array(9);
+  const random = fill ?? cryptoFill();
+  if (random) random(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  let id = "s";
+  for (const byte of bytes) id += SESSION_ID_ALPHABET[byte & 31];
+  return id;
+}
+
+/** The global `crypto`'s filler, or null where there is none. Read at each
+ *  call, never kept: a test takes it away. */
+function cryptoFill(): ((bytes: Uint8Array) => void) | null {
+  // `typeof` first: a bare name that is not declared would throw.
+  if (typeof crypto === "undefined" || typeof crypto?.getRandomValues !== "function") return null;
+  return (bytes) => {
+    crypto.getRandomValues(bytes);
+  };
+}
+
+/** The longest Device a line writes, in code points. */
+export const DEVICE_NAME_MAX = 40;
+
+/**
+ * A device name made safe to write as Device, or "" for none. In this order,
+ * which a fuzz of 200,000 names settled — any other re-forms `🍅 Focus` or
+ * leaves a trailing backslash:
+ *
+ * 1. Every 🍅, ☕ and # goes. The reviews find a focus line by `🍅 Focus`
+ *    anywhere on it, so a name holding it made a break count as focus; and
+ *    some take a session's area from the first `#task/` on the line.
+ * 2. Runs of white space become one space.
+ * 3. Cut to DEVICE_NAME_MAX code points, never inside one.
+ * 4. sanitizeAlias, as a task name: no bracket to close the field early, no
+ *    `::` to start another, no trailing backslash to escape its `]`.
+ * 5. Trimmed.
+ */
+export function sanitizeDevice(name: string): string {
+  const plain = name.replace(/[🍅☕#]/gu, "").replace(/\s+/gu, " ");
+  return sanitizeAlias([...plain].slice(0, DEVICE_NAME_MAX).join("")).trim();
+}
+
+/**
+ * The long-break cycle's length, from the setting: a whole number, at least
+ * 1 (data.json can hold any number; only the settings row floors it).
+ */
+export function cycleLength(every: number): number {
+  return Math.max(1, Math.floor(every));
+}
+
+/**
+ * A focus's place in the long-break cycle, 1…`every`: the line's Cycle. `count`
+ * is the day's counter as this session moves it — TimerEngine never resets it
+ * after a long break, so the 5th focus of a day of 4-and-a-long-break is 1.
+ * A long break follows the focus whose place is cycleLength(`every`), and
+ * TimerEngine decides it from this very number.
+ */
+export function cyclePosition(count: number, every: number): number {
+  return ((Math.max(1, Math.floor(count)) - 1) % cycleLength(every)) + 1;
+}
+
 /** Whole seconds since the epoch: what the written times show. */
 const wholeSeconds = (m: MomentLike): number => Math.floor(m.valueOf() / 1000);
+
+/**
+ * The seconds of a line's span the computer slept through: its `sleeps` cut to
+ * [Start, End], in whole seconds as the line's pauses are counted. Each sleep
+ * lies inside a pause (the sleep check pauses from the last tick), so this is
+ * never more than the line's paused time. An estimate (README): the gap from
+ * the last tick before the sleep to the first after it, which can hold up to
+ * about a minute awake at either end.
+ */
+export function sleptSeconds(
+  session: Pick<SessionLog, "startTime" | "endTime" | "sleeps">
+): number {
+  const from = wholeSeconds(session.startTime);
+  const to = wholeSeconds(session.endTime);
+  let slept = 0;
+  for (const [start, end] of session.sleeps ?? []) {
+    const overlap = Math.min(to, Math.floor(end / 1000)) - Math.max(from, Math.floor(start / 1000));
+    if (overlap > 0) slept += overlap;
+  }
+  return slept;
+}
+
+/** A count to write: whole and not below 0, or null when it is no number. */
+function wholeCount(value: number | undefined): number | null {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : null;
+}
+
+/** Minutes east of UTC at `m`, a whole number. */
+function minutesEast(m: MomentLike): number {
+  return Math.round(m.utcOffset());
+}
+
+/**
+ * The tail a session's line ends with (LOG_TAIL_KEYS), or none without a
+ * Session ID. What each field holds is the caller's (LogManager, the
+ * recovery, Add), except Offset and OffsetChange, read off the very moments
+ * Start and End are written from — so the Start text and Offset name the
+ * instant also for a session recovered the next day in another zone — and
+ * Slept, this line's share of the session's sleeps. Cycle only on a focus.
+ */
+function tailFields(session: SessionLog): [string, string][] {
+  if (!isSessionId(session.sessionId)) return [];
+  const fields: [string, string][] = [["Session", session.sessionId]];
+  if (session.startedBy) fields.push(["StartedBy", session.startedBy]);
+  if (session.endedBy) fields.push(["EndedBy", session.endedBy]);
+  const planned = wholeCount(session.plannedSeconds);
+  if (planned !== null) fields.push(["Planned", String(planned)]);
+  const cycle = wholeCount(session.cycle);
+  if (session.mode === "focus" && cycle !== null && cycle >= 1) {
+    fields.push(["Cycle", String(cycle)]);
+  }
+  const offset = minutesEast(session.startTime);
+  fields.push(["Offset", String(offset)]);
+  const change = minutesEast(session.endTime) - offset;
+  if (change !== 0) fields.push(["OffsetChange", String(change)]);
+  const slept = sleptSeconds(session);
+  if (slept > 0) fields.push(["Slept", String(slept)]);
+  const dropped = wholeCount(session.droppedSeconds) ?? 0;
+  if (dropped > 0) fields.push(["Dropped", String(dropped)]);
+  const device = sanitizeDevice(session.device ?? "");
+  if (device !== "") fields.push(["Device", device]);
+  return fields;
+}
 
 /**
  * A session's Total as its line writes it: worked out from the instants cut to
@@ -299,7 +517,10 @@ export function loggedTotalSeconds(
   );
 }
 
-/** Format a completed session as one line of the daily log (version 2). */
+/**
+ * Format a completed session as one line of the daily log (version 2): the
+ * ten fields 0.6.9 wrote, then the tail (tailFields) when it has a Session ID.
+ */
 export function formatLogLine(session: SessionLog): string {
   const pauseStrings = session.pauses.map(
     (p) => `${stamp(p.start, LOG_TIME_FORMAT)} - ${stamp(p.end, LOG_TIME_FORMAT)}`
@@ -335,6 +556,7 @@ export function formatLogLine(session: SessionLog): string {
       ["Type", session.breakType === "long" ? "long-break" : "short-break"]
     );
   }
+  fields.push(...tailFields(session));
   return formatV2Line("- ", session.mode === "focus" ? "focus" : "rest", fields);
 }
 
@@ -591,6 +813,77 @@ export function logTaskId(parsed: ParsedLogLine): string | null {
 export function logSeconds(parsed: ParsedLogLine, key: string): number | null {
   const digits = /^\d+/.exec(parsed.values.get(key) ?? "");
   return digits ? parseInt(digits[0], 10) : null;
+}
+
+/**
+ * A signed whole-number field, or null when it is not exactly one: Offset and
+ * OffsetChange (0.7.0) are negative west of UTC, and logSeconds, which reads
+ * the digits a value starts with, reads `-240` as nothing.
+ */
+export function logInteger(parsed: ParsedLogLine, key: string): number | null {
+  const value = parsed.values.get(key) ?? "";
+  return /^-?\d+$/.test(value) ? parseInt(value, 10) || 0 : null;
+}
+
+/**
+ * A line's tail (0.7.0) as read, the absence rules applied: one reading for
+ * the read API, Check log and Export, so they cannot take one line three ways.
+ * Values are as written, numbers when they are exactly a whole number — never
+ * one worked out from the line's other fields.
+ */
+export interface LogTail {
+  /** The Session field as written. */
+  sessionId: string;
+  /** As written (STARTED_BY, ENDED_BY); null when the field is missing. */
+  startedBy: string | null;
+  endedBy: string | null;
+  /** Seconds; null when missing or not a whole number. */
+  planned: number | null;
+  /** Null when missing too: the session moved no long-break count. */
+  cycle: number | null;
+  /** Minutes east of UTC at Start; null when missing or not a whole number. */
+  offset: number | null;
+  /** Minutes east of UTC at End: Offset + OffsetChange, a missing OffsetChange
+   *  being 0. Null when either cannot be read. */
+  endOffset: number | null;
+  /** Seconds — about how long the computer slept — and seconds a planned end
+   *  left out. A missing field is 0; one that is not a whole number, null. */
+  slept: number | null;
+  dropped: number | null;
+  /** As written; null when the field is missing. */
+  device: string | null;
+}
+
+/** A field that is exactly a whole number not below 0, or null. */
+function logCount(parsed: ParsedLogLine, key: string): number | null {
+  const value = logInteger(parsed, key);
+  return value !== null && value >= 0 ? value : null;
+}
+
+/**
+ * The tail of `parsed`, or null on a line with no Session: an older line, on
+ * which every tail field is unknown. On a line with Session, a missing Slept,
+ * Dropped or OffsetChange is 0 (LOG_TAIL_KEYS).
+ */
+export function readLogTail(parsed: ParsedLogLine): LogTail | null {
+  const values = parsed.values;
+  const sessionId = values.get("Session");
+  if (sessionId === undefined) return null;
+  const zeroWhenMissing = (key: string) => (values.has(key) ? logCount(parsed, key) : 0);
+  const offset = logInteger(parsed, "Offset");
+  const change = values.has("OffsetChange") ? logInteger(parsed, "OffsetChange") : 0;
+  return {
+    sessionId,
+    startedBy: values.get("StartedBy") ?? null,
+    endedBy: values.get("EndedBy") ?? null,
+    planned: logCount(parsed, "Planned"),
+    cycle: logCount(parsed, "Cycle"),
+    offset,
+    endOffset: offset === null || change === null ? null : offset + change,
+    slept: zeroWhenMissing("Slept"),
+    dropped: zeroWhenMissing("Dropped"),
+    device: values.get("Device") ?? null,
+  };
 }
 
 /**

@@ -51,9 +51,26 @@ describe("which sessions are asked about (Stop's question, and the startup's thi
   });
 
   it("ends the answer 'planned' where the plan was reached, with no Overtime", () => {
+    // Its Planned is the plan, and its Dropped (0.7.0) the active time left
+    // out past it: active − plan, never the Overtime, which counts the
+    // milliseconds past the end time.
     expect(
-      plannedSessionEnd({ activeSeconds: 9 * 3600, overtimeSeconds: 8 * 3600, plannedEndAt: 1234 })
-    ).toEqual({ endAt: 1234, overtimeSeconds: 0 });
+      plannedSessionEnd({
+        activeSeconds: 9 * 3600,
+        overtimeSeconds: 8 * 3600 - 1,
+        plannedEndAt: 1234,
+        plannedSeconds: 3600,
+      })
+    ).toEqual({ endAt: 1234, overtimeSeconds: 0, plannedSeconds: 3600, droppedSeconds: 8 * 3600 });
+    // Never below 0.
+    expect(
+      plannedSessionEnd({
+        activeSeconds: 60,
+        overtimeSeconds: 0,
+        plannedEndAt: 1,
+        plannedSeconds: 1500,
+      }).droppedSeconds
+    ).toBe(0);
   });
 });
 

@@ -13,6 +13,9 @@ export default defineConfig([
       "rollup.config.mjs",
       "vitest.config.ts",
       "tests/**",
+      // A copy of Dataview's bundle, byte for byte, that the tests run
+      // (tests/dataviewEngine.ts); named apart in case tests are ever linted.
+      "tests/fixtures/**",
       "__mocks__/**",
       // obsidianmd's recommended set applies type-aware rules globally, which crash
       // on package.json (no TS project for it). We only need it to lint our TS.

@@ -17,7 +17,14 @@
  * asks.
  */
 import { MIN_SESSION_SECONDS } from "./constants";
-import { LOG_FILE_SUFFIX, loggedTotalSeconds, type SessionLog } from "./logLine";
+import {
+  LOG_FILE_SUFFIX,
+  STARTED_BY,
+  isSessionId,
+  loggedTotalSeconds,
+  type SessionLog,
+  type StartedBy,
+} from "./logLine";
 import { activeReachedAt, pausesWithin, type ClosedSegment } from "./logSegments";
 import type { MomentLike } from "./momentTypes";
 import { describeDuration, isLongSession, type LongSessionQuestion } from "./sessionGaps";
@@ -76,6 +83,16 @@ export interface SavedSession {
   plannedMs: number | null;
   /** When it was last saved: the latest instant it is known to have run. */
   lastSeenMs: number;
+  /**
+   * The line's tail as far as it is known at the start (0.7.0): its Session ID,
+   * what opened it, and the spans the sleep check paused for, [start, end].
+   * All three or none: a session a 0.6.9 run saved has none, and is logged
+   * with no tail — it never kept which pauses were sleep, so a tail would
+   * claim it slept 0.
+   */
+  sessionId?: string;
+  startedBy?: StartedBy;
+  sleeps?: [number, number][];
 }
 
 /** Lines that failed to write, and where they were going. */
@@ -141,7 +158,31 @@ export function readSavedSession(raw: unknown): SavedSession | null {
     segments,
     plannedMs: r.plannedMs,
     lastSeenMs: r.lastSeenMs,
+    ...readSavedTail(r),
   };
+}
+
+/**
+ * A stored session's Session ID, StartedBy and sleeps — all three, or none
+ * when any of them is missing or not what LogManager saves: the session is
+ * then logged with no tail, as one a 0.6.9 run saved. A bad tail never costs
+ * the session itself.
+ */
+function readSavedTail(
+  r: Record<string, unknown>
+): Pick<SavedSession, "sessionId" | "startedBy" | "sleeps"> {
+  const { sessionId, startedBy, sleeps } = r;
+  if (!isSessionId(sessionId)) return {};
+  if (!STARTED_BY.some((value) => value === startedBy)) return {};
+  if (!Array.isArray(sleeps)) return {};
+  const read: [number, number][] = [];
+  for (const sleep of sleeps as unknown[]) {
+    if (!Array.isArray(sleep) || sleep.length !== 2) return {};
+    const [start, end] = sleep as unknown[];
+    if (!isMs(start) || !isMs(end) || end < start) return {};
+    read.push([start, end]);
+  }
+  return { sessionId, startedBy: startedBy as StartedBy, sleeps: read };
 }
 
 /** The stored list of unfinished sessions; anything unreadable is left out. */
@@ -204,8 +245,10 @@ export function savedSessionEnd(saved: SavedSession): number {
   return Math.max(saved.startMs, saved.pauseStartMs ?? saved.lastSeenMs);
 }
 
-/** Its planned active time in whole seconds: the clock's (±5 included), or else the scheduled length. */
-function plannedSeconds(saved: SavedSession): number {
+/** Its planned active time in whole seconds: the clock's (±5 included), or
+ *  else the scheduled length. Overtime is counted past it, and a 0.7.0 line
+ *  writes it as Planned. */
+export function plannedSeconds(saved: SavedSession): number {
   return Math.floor((saved.plannedMs ?? saved.scheduledMinutes * 60_000) / 1000);
 }
 
@@ -218,12 +261,17 @@ function plannedSeconds(saved: SavedSession): number {
  * `end` ends it elsewhere, as Stop's `SessionEnd` does: the startup's "Log up
  * to planned end" passes plannedSessionEnd (F18), so the line is the one
  * Stop's "End at planned end" writes — its pauses and its segments cut there,
- * and Overtime what `end` says.
+ * and Overtime and Dropped what `end` says.
+ *
+ * A session saved with a tail (0.7.0) keeps its Session ID, what opened it
+ * and its sleeps, and ends as "recovered" — "recovered-planned-end" with
+ * `end` — so its line differs from Stop's only in the ID, EndedBy and Cycle:
+ * a recovery moves no long-break count, so it has no place in the cycle.
  */
 export function recoveredSession(
   saved: SavedSession,
   at: (ms: number) => MomentLike,
-  end?: { endAt: number; overtimeSeconds: number }
+  end?: { endAt: number; overtimeSeconds: number; droppedSeconds?: number }
 ): { session: SessionLog; closed: ClosedSegment[] } {
   const start = at(saved.startMs);
   const lastSeen = at(savedSessionEnd(saved));
@@ -246,6 +294,14 @@ export function recoveredSession(
   else {
     session.overtimeSeconds =
       saved.mode === "focus" ? Math.max(0, loggedTotalSeconds(session) - plannedSeconds(saved)) : 0;
+  }
+  if (saved.sessionId !== undefined) {
+    session.sessionId = saved.sessionId;
+    session.startedBy = saved.startedBy;
+    session.endedBy = end ? "recovered-planned-end" : "recovered";
+    session.plannedSeconds = plannedSeconds(saved);
+    session.sleeps = saved.sleeps;
+    if (end?.droppedSeconds !== undefined) session.droppedSeconds = end.droppedSeconds;
   }
   const closed = saved.segments.map((segment) => ({
     taskName: segment.taskName,
@@ -277,6 +333,7 @@ export function recoveredLongSession(
     activeSeconds: active,
     overtimeSeconds: overtime,
     plannedEndAt: activeReachedAt(session.startTime, session.pauses, plannedSeconds(saved)),
+    plannedSeconds: plannedSeconds(saved),
   };
 }
 

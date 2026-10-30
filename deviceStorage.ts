@@ -26,6 +26,29 @@ export interface DeviceStorage {
   save(key: string, value: unknown): void;
 }
 
+/**
+ * This device's name, as the user typed it (0.7.0): each line the timer or a
+ * recovery writes on this device carries it as Device, cleaned then
+ * (logLine.ts's sanitizeDevice), and none when it is empty — typing it is the
+ * opt-in. Kept here, never in data.json: a name typed on the laptop must not
+ * reach the phone. The key carries the plugin's name like the others
+ * (sessionRecovery.ts), as Obsidian's local storage is shared by every plugin
+ * in the vault.
+ */
+export const DEVICE_NAME_KEY = "gentle-pomodoro-device-name";
+
+/** The device name as stored, or "" for none — and for anything not text. */
+export function readDeviceName(storage: DeviceStorage): string {
+  const value = storage.load(DEVICE_NAME_KEY);
+  return typeof value === "string" ? value : "";
+}
+
+/** Keep `name` as this device's name, trimmed; an empty one removes it. */
+export function saveDeviceName(storage: DeviceStorage, name: string): void {
+  const text = name.trim();
+  storage.save(DEVICE_NAME_KEY, text === "" ? null : text);
+}
+
 /** What the probe looks for; 1.8.7's two methods, and the id Obsidian keys them by. */
 interface LocalStorageApp {
   loadLocalStorage?: unknown;

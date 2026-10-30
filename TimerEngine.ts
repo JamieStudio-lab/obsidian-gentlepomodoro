@@ -5,7 +5,7 @@ import type { MomentFactory } from "./momentTypes";
 import type { SessionEnd } from "./logManager";
 import { NO_TASK_LABEL, ONE_MINUTE_MS, SLEEP_GAP_MS } from "./constants";
 import { logger } from "./logger";
-import { logicalDate } from "./logLine";
+import { cycleLength, cyclePosition, logicalDate } from "./logLine";
 import {
   isLongSession,
   plannedSessionEnd,
@@ -75,6 +75,13 @@ interface PlayingPreview {
   edge: CueEdge;
   source: AudioBufferSourceNode;
   gain: GainNode;
+}
+
+/** How a session the user ends stands at the press (endedByHand). */
+interface HandEnd {
+  endAt: number;
+  overtimeSeconds: number;
+  plannedSeconds: number;
 }
 
 /** A linked task, as one vault round trip saw it when it started. */
@@ -615,7 +622,10 @@ export class TimerEngine {
     }
     if (last < this.targetTime && this.targetTime <= now && this.autoStartsNext()) return false;
     this.state.remainingMs = this.targetTime - last;
-    this.halt(last);
+    // The pause runs from the last tick; the span to this one is about how
+    // long it slept — the line's Slept (0.7.0), an estimate, as the two ticks
+    // around a sleep can hold up to a minute awake.
+    this.halt(last, now);
     this.plugin.notifySleepPause(now - last);
     return true;
   }
@@ -747,12 +757,22 @@ export class TimerEngine {
    * app ended it, not the user, so however late the tick ran the line is the
    * session's planned length. Before 0.6.9 a crossing seen on waking a laptop
    * logged the whole night as finished focus (F3). The next session starts now.
+   *
+   * Its plan (the line's Planned) is read first, before anything is awaited:
+   * the crossing calls this straight after claiming the end, so it is the
+   * clock's plan as the session ran out.
    */
   private async completeNaturally(crossedAt: number) {
+    const plannedSeconds = Math.floor(this.state.totalMs / 1000);
     try {
       if (this.endChimeWanted()) this.playEndCue();
       // Natural completion only fires when the toggle is on → auto-start the next.
-      await this.handleFinished(true, { endAt: crossedAt, overtimeSeconds: 0 });
+      await this.handleFinished(true, {
+        endAt: crossedAt,
+        overtimeSeconds: 0,
+        endedBy: "time-up",
+        plannedSeconds,
+      });
     } finally {
       this.ending = false;
     }
@@ -770,21 +790,41 @@ export class TimerEngine {
     const sessionDay =
       this.plugin.logManager.openSessionDay() ??
       logicalDate(moment(), this.plugin.settings.dayStartHour);
+    // The long-break count this session moves the day to if it counts, and the
+    // cycle's length: worked out BEFORE the end, so the focus line can say its
+    // place in the cycle (Cycle, 0.7.0), and stored below from this same
+    // number, never worked out twice: a line has a Cycle exactly when the
+    // count moved, and it is that count's place. Nothing else writes the count
+    // while the end is claimed.
+    const counter =
+      this.plugin.settings.sessionCounterDate === sessionDay
+        ? this.plugin.settings.sessionsSinceLongBreak + 1
+        : 1;
+    // Its place in the cycle: the line's Cycle, and below what decides the
+    // long break, so the two cannot disagree — on a hand-edited data.json (a
+    // fractional length or count, or one below 1), or when the setting is
+    // changed while the end awaits the vault: the length is read once, here.
+    const cycleEvery = cycleLength(this.plugin.settings.longBreakEvery);
+    const cycle = cyclePosition(counter, cycleEvery);
+    const focus = this.state.mode === "focus";
 
     // Log the finished session. False when it was under a minute (F59): no
     // line, and below, no 🍅 and no step of the long-break count.
-    const counted = await this.plugin.logManager.endSession("finished", end);
+    const counted = await this.plugin.logManager.endSession("finished", {
+      ...end,
+      cycle: focus ? cycle : undefined,
+    });
 
     // For focus sessions: optionally increment the task's pomodoro count
     // BEFORE the unlink check so we don't skip on a just-completed task.
-    if (counted && this.state.mode === "focus") {
+    if (counted && focus) {
       await this.maybeIncrementTaskPomodoroCount(link);
     }
 
     // Check if task is completed and unlink if so
     await this.checkTaskCompletionAndUnlink();
 
-    if (this.state.mode === "focus") {
+    if (focus) {
       // A session that did not count earns no break of its own: short, since
       // the count it would have moved may already sit on a long one.
       let isLongBreak = false;
@@ -792,16 +832,12 @@ export class TimerEngine {
         // Advance the long-break counter, resetting when the day turns — the
         // day the log files this session under, so "Day starts at" moves this
         // rollover with the file's.
-        const counter =
-          this.plugin.settings.sessionCounterDate === sessionDay
-            ? this.plugin.settings.sessionsSinceLongBreak + 1
-            : 1;
         this.plugin.settings.sessionsSinceLongBreak = counter;
         this.plugin.settings.sessionCounterDate = sessionDay;
         await this.plugin.saveSettings();
 
-        const longBreakEvery = Math.max(1, this.plugin.settings.longBreakEvery);
-        isLongBreak = counter % longBreakEvery === 0;
+        // A long break follows the focus whose Cycle is the cycle's last place.
+        isLongBreak = cycle === cycleEvery;
       }
       this.switchMode("break", autoStartNext, isLongBreak);
     } else {
@@ -1354,7 +1390,8 @@ export class TimerEngine {
         minutes,
         this.currentTaskPath,
         this.currentTaskId,
-        breakType
+        breakType,
+        "auto"
       );
       this.targetTime = Date.now() + total;
       this.startLoop();
@@ -1391,7 +1428,8 @@ export class TimerEngine {
       minutes,
       this.currentTaskPath,
       this.currentTaskId,
-      this.state.breakType
+      this.state.breakType,
+      "start"
     );
 
     // Set target based on current remaining time
@@ -1413,9 +1451,10 @@ export class TimerEngine {
   }
 
   /** Stop the clock and open a pause in the log, from `pausedAt` (ms) or now.
-   *  Pause, and the sleep check, which pauses from the last tick. */
-  private halt(pausedAt?: number) {
-    this.plugin.logManager.pauseSession(pausedAt);
+   *  Pause, and the sleep check, which pauses from the last tick and says
+   *  when it woke (`sleptUntil`): the log keeps that span as a sleep. */
+  private halt(pausedAt?: number, sleptUntil?: number) {
+    this.plugin.logManager.pauseSession(pausedAt, sleptUntil);
     this.state.isRunning = false;
     this.targetTime = null;
     this.clearLoop();
@@ -1429,8 +1468,9 @@ export class TimerEngine {
    */
   async finish() {
     if (this.ending || this.askingLongSession) return;
-    let end = this.endedByHand();
-    const question = this.longSessionQuestion(end);
+    const hand = this.endedByHand();
+    let end: SessionEnd = { ...hand, endedBy: "stop" };
+    const question = this.longSessionQuestion(hand);
     if (question !== null) {
       // The end is claimed only once the answer lands, never while the
       // question is open: a claim held across it would leave every other
@@ -1442,7 +1482,7 @@ export class TimerEngine {
       const answer = await this.askLongSession(question);
       // Unloaded meanwhile (F19): the reloaded plugin offers the session.
       if (this.disposed || answer === "cancel" || this.sessionSerial !== askedFor) return;
-      if (answer === "planned") end = plannedSessionEnd(question);
+      if (answer === "planned") end = { ...plannedSessionEnd(question), endedBy: "planned-end" };
     }
     if (!this.beginEnding()) return;
     try {
@@ -1460,21 +1500,28 @@ export class TimerEngine {
    * the question turned off. The rule is isLongSession, which the startup
    * question about a session an earlier run left asks by too (F18).
    */
-  private longSessionQuestion(end: Required<SessionEnd>): LongSessionQuestion | null {
+  private longSessionQuestion(end: HandEnd): LongSessionQuestion | null {
     const logManager = this.plugin.logManager;
     const active = logManager.openSessionActiveSeconds(end.endAt);
     const hours = this.plugin.settings.longSessionPromptHours;
     if (active === null || !isLongSession(this.state.mode, active, end.overtimeSeconds, hours)) {
       return null;
     }
-    // The planned length off the clock, which allows for every ±5 (F20).
-    // Not `active - overtime`: active counts whole-second stamps and overtime
-    // the milliseconds past the end time, so about half of all answers ended
-    // a second past the plan — End 09:25:01, Total 1501 beside Scheduled 1500.
-    const planned = Math.floor(this.state.totalMs / 1000);
+    // The planned length off the clock, which allows for every ±5 (F20) —
+    // read with the end at the press (endedByHand), so the line's Planned is
+    // the plan it was ended at. Not `active - overtime`: active counts
+    // whole-second stamps and overtime the milliseconds past the end time, so
+    // about half of all answers ended a second past the plan — End 09:25:01,
+    // Total 1501 beside Scheduled 1500.
+    const planned = end.plannedSeconds;
     const plannedEndAt = logManager.openSessionReachedAt(planned, end.endAt);
     if (plannedEndAt === null) return null;
-    return { activeSeconds: active, overtimeSeconds: end.overtimeSeconds, plannedEndAt };
+    return {
+      activeSeconds: active,
+      overtimeSeconds: end.overtimeSeconds,
+      plannedEndAt,
+      plannedSeconds: planned,
+    };
   }
 
   /** Ask through the plugin, one question at a time. A dialog that cannot be
@@ -1512,15 +1559,21 @@ export class TimerEngine {
    * Where a session the user ends — Stop, Skip — ends: now, with its active
    * time past the planned end (0 before zero). While running that is read off
    * the end time, which already allows for every pause and every ±5; while
-   * paused, off the time the pause froze.
+   * paused, off the time the pause froze. The plan itself (the line's Planned)
+   * is read at the same instant: a ±5 stays open while Stop's question is, so
+   * a later read could disagree with the Overtime counted past it.
    */
-  private endedByHand(): Required<SessionEnd> {
+  private endedByHand(): HandEnd {
     const endAt = Date.now();
     const remaining =
       this.state.isRunning && this.targetTime !== null
         ? this.targetTime - endAt
         : this.state.remainingMs;
-    return { endAt, overtimeSeconds: remaining < 0 ? Math.floor(-remaining / 1000) : 0 };
+    return {
+      endAt,
+      overtimeSeconds: remaining < 0 ? Math.floor(-remaining / 1000) : 0,
+      plannedSeconds: Math.floor(this.state.totalMs / 1000),
+    };
   }
 
   /** Skip the current session; logs focus skips as "cancelled" and rest skips as "finished". */
@@ -1547,7 +1600,7 @@ export class TimerEngine {
     }
 
     const status = this.state.mode === "focus" ? "cancelled" : "finished";
-    await this.plugin.logManager.endSession(status, this.endedByHand());
+    await this.plugin.logManager.endSession(status, { ...this.endedByHand(), endedBy: "skip" });
 
     await this.checkTaskCompletionAndUnlink();
 
@@ -1592,13 +1645,16 @@ export class TimerEngine {
     if (discarded) void this.checkTaskCompletionAndUnlink();
 
     if (this.state.isRunning) {
+      // The fresh session says a Reset opened it (StartedBy, 0.7.0); the one
+      // thrown away writes nothing.
       this.plugin.logManager.startSession(
         this.state.mode,
         this.currentTaskName,
         minutes,
         this.currentTaskPath,
         this.currentTaskId,
-        this.state.breakType
+        this.state.breakType,
+        "reset"
       );
       this.targetTime = Date.now() + total;
       if (this.state.mode === "focus") void this.playSound("war-drum_short.mp3");

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 // Imported from the mock by path, not through the "obsidian" alias: the alias
@@ -6,18 +6,46 @@ import { resolve } from "node:path";
 // package (which has no recording stubs). Vitest points the alias at this very
 // file, so it is the same module instance the tab constructs.
 import {
+  ExtraButtonComponent,
   FuzzySuggestModal,
+  Modal,
   Notice,
   Platform,
   Setting,
+  clickEl,
+  pressKey,
+  stubEl,
+  stubFocus,
+  stubObsidian,
+  stubRequest,
+  type ModalContent,
   type RecordedComponent,
+  type StubEl,
 } from "../__mocks__/obsidian";
 import {
   BREAK_END_CUE_NAME,
   CHECK_LOG_NAME,
   CONVERT_LOG_NAME,
+  COLUMN_ADD_LABEL,
+  COLUMN_LAST_SHOWN_TOOLTIP,
+  columnAddedMessage,
+  columnMovedMessage,
+  columnPresetMessage,
+  columnRemovedMessage,
   CUE_MUTED_NOTICE,
   DAY_START_NAME,
+  DEVICE_NAME_NAME,
+  EXPORT_SESSIONS_NAME,
+  QUERY_CODE_SUMMARY,
+  QUERY_COLUMNS_NAME,
+  QUERY_COPIES,
+  QUERY_GROUP_HEADING,
+  QUERY_KINDS_NAME,
+  QUERY_NO_FOLDER_PREVIEW,
+  QUERY_RANGE_NAME,
+  QUERY_SKIPPED_NAME,
+  QUERY_SORT_NAME,
+  deviceNameNote,
   FOCUS_END_CUE_NAME,
   GentlePomoSettingTab,
   LONG_SESSION_NAME,
@@ -42,6 +70,23 @@ import { DEFAULT_THEME } from "../themes";
 import { TimerEngine } from "../TimerEngine";
 import type { GentlePomoSettings } from "../types";
 import { fakeVault } from "./fakeVault";
+import { parseRules, stripComments } from "./cssRules";
+import { DEVICE_NAME_KEY } from "../deviceStorage";
+import { NO_LOG_FOLDER_NOTICE } from "../logTools";
+import {
+  QUERY_COLUMNS,
+  QUERY_KINDS,
+  QUERY_PRESETS,
+  QUERY_RANGES,
+  QUERY_SORTS,
+  formatQueryColumns,
+  presetColumns,
+  queryCode,
+  queryOptions,
+  resolveQueryColumns,
+  sessionsTable,
+  sessionsTableJs,
+} from "../logQueries";
 import {
   LOG_FOLDER_DESC,
   LOG_FOLDER_NAME,
@@ -50,6 +95,7 @@ import {
   logFolderLeftMessage,
   logFolderProblem,
   logFolderProblemNote,
+  logFolderProblemNotice,
   logFolderRootMessage,
   resolveLogFolderInput,
 } from "../logFolder";
@@ -148,6 +194,10 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
       calls.push({ method: "refreshLogTaskNames", args: [] });
       return Promise.resolve();
     },
+    exportSessions: () => {
+      calls.push({ method: "exportSessions", args: [] });
+      return Promise.resolve();
+    },
     app_workspace: null,
   };
   // The tab reaches app.workspace only through applySettingsToOpenViews. Give
@@ -156,7 +206,15 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
   // be invisible to every assertion below — and that call is the only thing
   // keeping an open gear panel from showing a stale toggle. applySettingsToOpenViews
   // duck-types on `"applySettings" in view`, so this stub is enough.
+  // This device's storage (0.7.0, the device name row): Obsidian's own
+  // local storage, as 1.8.7 has it, so deviceStorage(app) finds it.
+  const local = new Map<string, unknown>();
   (plugin as unknown as { app: unknown }).app = {
+    loadLocalStorage: (key: string) => local.get(key) ?? null,
+    saveLocalStorage: (key: string, value: unknown) => {
+      if (value === null || value === undefined) local.delete(key);
+      else local.set(key, value);
+    },
     // The log folder row looks folders up as it is typed.
     vault: fakeVault(files),
     workspace: {
@@ -171,16 +229,51 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
   );
   const el = container();
   (tab as unknown as { containerEl: unknown }).containerEl = el;
-  return { tab, el, calls, settings };
+  return { tab, el, calls, settings, local };
+}
+
+/** A 1.13 definitions page (0.7.0): the tab's top level is these alone. */
+interface DefinitionPage {
+  type: string;
+  name: string;
+  desc: string;
+  displayValue?: () => string;
+  status?: () => "warning" | null;
+  items: { type: string; heading?: string; items: Record<string, unknown>[] }[];
+}
+
+function definitionPages(tab: GentlePomoSettingTab): DefinitionPage[] {
+  return tab.getSettingDefinitions() as unknown as DefinitionPage[];
+}
+
+/**
+ * Every group on every page, in order, as display() shows them: a group with
+ * no heading on 1.13 (its page says it) is given its page's name back — which
+ * is only right while such a group is its page's ONLY one (tested below).
+ */
+function definitionGroups(tab: GentlePomoSettingTab) {
+  return definitionPages(tab).flatMap((page) =>
+    page.items.map((group) => ({
+      page: page.name,
+      heading: group.heading ?? page.name,
+      items: group.items,
+    }))
+  );
+}
+
+/** The group with this heading, wherever its page is; throws if there is none. */
+function groupNamed(tab: GentlePomoSettingTab, heading: string) {
+  const found = definitionGroups(tab).find((g) => g.heading === heading);
+  if (!found) throw new Error(`no group headed ${heading}`);
+  return found;
 }
 
 /** Flatten the 1.13 definitions to (heading, name, desc) in render order. */
 function declarativeRows(tab: GentlePomoSettingTab) {
   const out: { heading: string; name: string; desc: string }[] = [];
-  for (const group of tab.getSettingDefinitions()) {
-    const g = group as { heading: string; items: { name: string; desc?: unknown }[] };
+  for (const g of definitionGroups(tab)) {
     for (const item of g.items) {
-      out.push({ heading: g.heading, name: item.name, desc: String(item.desc ?? "") });
+      out.push({ heading: g.heading, name: String(item.name), desc: String(item.desc ?? "") });
     }
   }
   return out;
@@ -237,13 +330,24 @@ describe("the two settings paths cannot drift", () => {
     // The comparison above only looks at names and descriptions, so a mapper
     // that dropped `render` would still line up — and every music link row
     // would render on 1.13 as a label with no box under it.
-    for (const group of ctx.tab.getSettingDefinitions()) {
-      const g = group as unknown as { heading: string; items: Record<string, unknown>[] };
-      for (const item of g.items) {
-        const kinds = ["control", "render", "action"].filter((k) => item[k] !== undefined);
-        expect(kinds, `${g.heading} / ${String(item.name)}`).toHaveLength(1);
+    const pages = definitionPages(ctx.tab);
+    // Every top-level item a page, every page's items groups, none empty.
+    expect(pages.length).toBeGreaterThan(0);
+    let rows = 0;
+    for (const page of pages) {
+      expect(page.type, page.name).toBe("page");
+      expect(page.items.length, page.name).toBeGreaterThan(0);
+      for (const group of page.items) {
+        expect(group.type, page.name).toBe("group");
+        expect(group.items.length, `${page.name} / ${String(group.heading)}`).toBeGreaterThan(0);
+        for (const item of group.items) {
+          const kinds = ["control", "render", "action"].filter((k) => item[k] !== undefined);
+          expect(kinds, `${page.name} / ${String(item.name)}`).toHaveLength(1);
+          rows++;
+        }
       }
     }
+    expect(rows).toBe(declarativeRows(ctx.tab).length);
   });
 
   it("keeps the music link rows as render rows, not declared controls", () => {
@@ -251,24 +355,29 @@ describe("the two settings paths cannot drift", () => {
     // the declarative `validate` hook is awaited inside the control's own
     // per-keystroke handler with no sequencing — a slow answer to an old
     // keystroke would land after a newer one.
-    const music = ctx.tab.getSettingDefinitions().find((g) => {
-      return (g as { heading?: string }).heading === "Music";
-    }) as unknown as { items: Record<string, unknown>[] };
+    const music = groupNamed(ctx.tab, "Music");
+    let seen = 0;
     for (const item of music.items) {
       const name = String(item.name);
       if (!name.startsWith("Music link") && !name.startsWith("Name for link")) continue;
       expect(typeof item.render, name).toBe("function");
+      seen++;
     }
+    expect(seen).toBe(6);
   });
 
   it("covers every group heading", () => {
     ctx.tab.display();
     const headings = ctx.el.settings.filter((s) => s.heading).map((s) => s.name);
+    // Page by page since 0.7.0 (the Timer page's four, then Status bar …),
+    // so Long break and Daily focus goal moved up from where they sat.
     expect(headings).toEqual([
       "Display & behavior",
+      "Timer appearance",
+      "Long break",
+      "Daily focus goal",
       // Desktop only (0.6.8) — phones and tablets have no status bar.
       "Status bar",
-      "Timer appearance",
       "Audio",
       // 0.6.7: one group per moment, as in the timer panel's gear.
       "When focus ends",
@@ -276,10 +385,10 @@ describe("the two settings paths cannot drift", () => {
       // Desktop only — the mock's Platform is the desktop app by default.
       "Notifications",
       "Music",
-      "Long break",
-      // 0.6.9: the folder, the log's three choices and its four commands.
+      // 0.6.9: the folder, the log's three choices and its five commands.
       "Daily log",
-      "Daily focus goal",
+      // 0.7.0: code to paste, right after the log it reads.
+      "Log tables",
       "Task picker",
       "Task integration",
     ]);
@@ -290,8 +399,10 @@ describe("the two settings paths cannot drift", () => {
     for (const setting of ctx.el.settings) {
       if (setting.heading) continue;
       // The moment groups' outcome lines are text, not controls — they carry no
-      // component by design and identify themselves with their own class.
+      // component by design and identify themselves with their own class. So
+      // is the Log tables' code preview (0.7.0).
       if (setting.settingEl.classes.includes("gp-setting-summary")) continue;
+      if (setting.settingEl.classes.includes("gp-setting-code")) continue;
       expect(setting.components.length, `${setting.name} rendered nothing`).toBeGreaterThan(0);
     }
   });
@@ -301,6 +412,360 @@ describe("the two settings paths cannot drift", () => {
     const first = ctx.el.settings.length;
     ctx.tab.display();
     expect(ctx.el.settings).toHaveLength(first);
+  });
+});
+
+describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
+  const raw = (tab: GentlePomoSettingTab) =>
+    definitionPages(tab).map((page) => [page.name, page.items.map((g) => g.heading ?? null)]);
+
+  it("puts every group on a page, in this order, the top level holding pages alone", () => {
+    expect(raw(ctx.tab)).toEqual([
+      ["Timer", ["Display & behavior", "Timer appearance", "Long break", "Daily focus goal"]],
+      // A group named as its page loses the heading: the page's title says it.
+      ["Status bar", [null]],
+      [
+        "Sounds and notifications",
+        ["Audio", "When focus ends", "When a break ends", "Notifications"],
+      ],
+      ["Music", [null]],
+      ["Daily log", [null]],
+      ["Log tables", [null]],
+      ["Tasks", ["Task picker", "Task integration"]],
+    ]);
+  });
+
+  it("drops a heading only when it is its page's name, on a page of that one group", () => {
+    // What definitionGroups relies on to give such a group its heading back,
+    // so the two paths can be compared row for row.
+    const flat: string[] = [];
+    ctx.tab.display();
+    for (const s of ctx.el.settings) if (s.heading) flat.push(s.name);
+    for (const page of definitionPages(ctx.tab)) {
+      for (const group of page.items) {
+        if (group.heading !== undefined) {
+          expect(group.heading, page.name).not.toBe(page.name);
+          continue;
+        }
+        expect(page.items, page.name).toHaveLength(1);
+        // display(), which has no page titles, shows the heading.
+        expect(flat, page.name).toContain(page.name);
+      }
+    }
+  });
+
+  it("builds no Status bar page and no Notifications group on a phone or tablet, and says Sounds", () => {
+    Platform.isDesktopApp = false;
+    try {
+      const pages = raw(makeTab().tab);
+      expect(pages.map(([name]) => name)).toEqual([
+        "Timer",
+        "Sounds",
+        "Music",
+        "Daily log",
+        "Log tables",
+        "Tasks",
+      ]);
+      expect(pages[1][1]).toEqual(["Audio", "When focus ends", "When a break ends"]);
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("gives every page a short description and names every page once", () => {
+    const pages = definitionPages(ctx.tab);
+    expect(new Set(pages.map((p) => p.name)).size).toBe(pages.length);
+    for (const page of pages) {
+      expect(page.desc.length, page.name).toBeGreaterThan(0);
+      // A phone shows the row's value beside it: one sentence, no more.
+      expect(page.desc.split(/(?<=\.) /), page.name).toHaveLength(1);
+    }
+  });
+
+  it("works each value out when it is drawn, from the settings as they are then", () => {
+    const c = makeTab({ logFolderPath: "Logs", queryColumns: "task" });
+    const value = (name: string) =>
+      definitionPages(c.tab)
+        .find((p) => p.name === name)
+        ?.displayValue?.();
+    expect(value("Daily log")).toBe("Logs");
+    expect(value("Log tables")).toBe("1 column · Last 7 days");
+    // Obsidian keeps the definitions it read at load: the same functions must
+    // give the new values, never the ones the tab started with.
+    const pages = definitionPages(c.tab);
+    c.settings.logFolderPath = "Elsewhere";
+    c.settings.queryColumns = "task,date";
+    c.settings.showMusicPlayer = false;
+    c.settings.soundEnabled = false;
+    c.settings.showTaskSelector = false;
+    c.settings.showInStatusBar = false;
+    c.settings.theme = "pixel-city";
+    const values = Object.fromEntries(pages.map((p) => [p.name, p.displayValue?.()]));
+    expect(values).toEqual({
+      Timer: "Pixel city",
+      "Status bar": "Off",
+      "Sounds and notifications": "Timer sounds off",
+      Music: "Off",
+      "Daily log": "Elsewhere",
+      "Log tables": "2 columns · Last 7 days",
+      Tasks: "Picker off",
+    });
+  });
+
+  it("puts a warning sign on Music for a link that isn't a YouTube link, and on Daily log for a folder it can't list — each for its own", () => {
+    const status = (c: ReturnType<typeof makeTab>, name: string) =>
+      definitionPages(c.tab)
+        .find((p) => p.name === name)
+        ?.status?.() ?? null;
+    const LOGS = { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" };
+    const GOOD_LINK = "https://youtu.be/abcdefghijk";
+    const ok = makeTab({ musicUrl: GOOD_LINK, logFolderPath: "Pomodoro_logs" }, LOGS);
+    expect(status(ok, "Music")).toBeNull();
+    expect(status(ok, "Daily log")).toBeNull();
+    // A bad link alone: only Music says so.
+    const badLink = makeTab(
+      { musicUrl2: "https://example.com/song", logFolderPath: "Pomodoro_logs" },
+      LOGS
+    );
+    expect(status(badLink, "Music")).toBe("warning");
+    expect(status(badLink, "Daily log")).toBeNull();
+    // The folder in other capitals alone (the timer writes there, the
+    // commands can't list it): only Daily log says so.
+    const badFolder = makeTab({ musicUrl: GOOD_LINK, logFolderPath: "pomodoro_logs" }, LOGS);
+    expect(status(badFolder, "Music")).toBeNull();
+    expect(status(badFolder, "Daily log")).toBe("warning");
+    expect(status(makeTab({ logFolderPath: "/" }), "Daily log")).toBe("warning");
+    expect(status(makeTab({ logFolderPath: "" }), "Daily log")).toBeNull();
+    // No other page has a sign.
+    for (const page of definitionPages(badLink.tab)) {
+      if (page.name === "Music" || page.name === "Daily log") continue;
+      expect(page.status, page.name).toBeUndefined();
+    }
+  });
+
+  it("works each warning out when it is drawn, as it does each value", () => {
+    // Obsidian keeps the definitions it read at load: a sign worked out then
+    // would show the state the plugin loaded with for the whole session.
+    const c = makeTab(
+      { musicUrl: "https://youtu.be/abcdefghijk", logFolderPath: "Pomodoro_logs" },
+      { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" }
+    );
+    const pages = definitionPages(c.tab);
+    const status = (name: string) => pages.find((p) => p.name === name)?.status?.() ?? null;
+    expect(status("Music")).toBeNull();
+    expect(status("Daily log")).toBeNull();
+    c.settings.musicUrl3 = "https://example.com/song";
+    c.settings.logFolderPath = "pomodoro_logs";
+    expect(status("Music")).toBe("warning");
+    expect(status("Daily log")).toBe("warning");
+  });
+
+  it("hands Obsidian values and warnings that cannot throw, whatever the settings hold", () => {
+    // 1.13.7 calls displayValue with no try: one throw takes the whole list
+    // down. The definitions must wrap every page's functions, not only the
+    // helpers in settingPages.ts that are careful today.
+    const c = makeTab();
+    for (const key of ["theme", "musicUrl", "logFolderPath", "queryColumns", "taskSource"]) {
+      Object.defineProperty(c.settings, key, {
+        get() {
+          throw new Error(`boom: ${key}`);
+        },
+      });
+    }
+    for (const page of definitionPages(c.tab)) {
+      expect(() => page.displayValue?.(), page.name).not.toThrow();
+      expect(() => page.status?.(), page.name).not.toThrow();
+    }
+    const value = (name: string) => definitionPages(c.tab).find((p) => p.name === name);
+    expect(value("Timer")?.displayValue?.()).toBe("");
+    expect(value("Music")?.status?.()).toBeNull();
+    expect(value("Daily log")?.status?.()).toBeNull();
+    expect(value("Log tables")?.displayValue?.()).toBe("");
+  });
+
+  it("never re-renders itself in place: no update() anywhere in the tab", () => {
+    // update() re-renders an open page on the SAME Setting objects, clearing
+    // only the control column, and every render row here builds outside it
+    // too — and it is 1.13-only besides. The page values refresh on Back.
+    const source = codeOnly(
+      readFileSync(resolve(__dirname, "..", "GentlePomoSettingTab.ts"), "utf8")
+    );
+    expect(source).not.toMatch(/\.update\(\s*\)/);
+  });
+});
+
+describe("render rows, built and torn down as a page opens and closes", () => {
+  /** Every render row on every page, rendered into a fresh Setting. */
+  const renderAll = (tab: GentlePomoSettingTab) =>
+    definitionGroups(tab).flatMap((group) =>
+      group.items
+        .filter((item) => typeof item.render === "function")
+        .map((item) => {
+          const setting = new Setting();
+          const render = item.render as (s: Setting) => (() => void) | void;
+          return {
+            name: `${group.heading} / ${String(item.name)}`,
+            setting,
+            teardown: render(setting),
+          };
+        })
+    );
+
+  it("takes out on teardown everything it built outside the control column", () => {
+    // Obsidian 1.13 clears only the control column when it re-renders a row
+    // in place; anything else a render row added would be there twice.
+    const c = makeTab({ logFolderPath: "Logs" });
+    const rows = renderAll(c.tab);
+    expect(rows.length).toBeGreaterThanOrEqual(13);
+    for (const row of rows) {
+      const settingEl = row.setting.settingEl as StubEl;
+      const infoEl = row.setting.infoEl as StubEl;
+      if (settingEl.children.length + infoEl.children.length === 0) continue;
+      expect(typeof row.teardown, row.name).toBe("function");
+      if (typeof row.teardown === "function") row.teardown();
+      expect(settingEl.children, row.name).toHaveLength(0);
+      expect(infoEl.children, row.name).toHaveLength(0);
+    }
+  });
+
+  it("stops a sound preview when the Sounds page closes, which does not call hide()", () => {
+    const c = makeTab();
+    const timer = (c.tab as unknown as { plugin: { timer: Record<string, unknown> } }).plugin.timer;
+    const seen: string[] = [];
+    timer.stopPreview = () => seen.push("stopPreview");
+    timer.setPreviewListener = (listener: unknown) =>
+      seen.push(listener === null ? "listener off" : "listener on");
+    const cues = renderAll(c.tab).filter(
+      (row) => row.name.endsWith(FOCUS_END_CUE_NAME) || row.name.endsWith(BREAK_END_CUE_NAME)
+    );
+    expect(cues).toHaveLength(2);
+    expect(seen).toEqual(["listener on", "listener on"]);
+    seen.length = 0;
+    for (const cue of cues) if (typeof cue.teardown === "function") cue.teardown();
+    expect(seen.filter((x) => x === "stopPreview").length).toBeGreaterThanOrEqual(1);
+    expect(seen.at(-1)).toBe("listener off");
+  });
+
+  it("lets go of an outcome line its teardown took out, and only its own", async () => {
+    const c = makeTab();
+    const summaryRows = () =>
+      renderAll(c.tab).filter((row) =>
+        (row.setting.settingEl as StubEl).classes.includes("gp-setting-summary")
+      );
+    const lineOf = (row: { setting: Setting }) => (row.setting.settingEl as StubEl).children[0];
+    const [first] = summaryRows();
+    const removed = lineOf(first);
+    const before = removed.text;
+    if (typeof first.teardown === "function") first.teardown();
+    await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
+    // Out of its row, and not written to after it went.
+    expect((first.setting.settingEl as StubEl).children).toHaveLength(0);
+    expect(removed.text).toBe(before);
+    // A late teardown of an old render does not take the newer render's line.
+    const [older] = summaryRows();
+    const [newer] = summaryRows();
+    if (typeof older.teardown === "function") older.teardown();
+    await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
+    expect(lineOf(newer).text).toBe(sessionEndSummary("focus", c.settings));
+    await c.tab.setControlValue("autoStartBreak", !c.settings.autoStartBreak);
+    expect(lineOf(newer).text).toBe(sessionEndSummary("focus", c.settings));
+  });
+
+  it("keeps the answer to a link pasted just before its page closed, for when it opens again", async () => {
+    // Back within a moment of pasting: the row's teardown makes it stale, and
+    // the answer used to be dropped before it was cached — no verdict, ever.
+    const url = "https://youtu.be/abcdefghijk";
+    const c = makeTab();
+    let answer: (status: number) => void = () => undefined;
+    stubRequest.handler = () =>
+      new Promise((resolve) => {
+        answer = (status) => resolve({ status, json: {} });
+      });
+    try {
+      const rows = renderAll(c.tab);
+      const link = rows.find((r) => r.name === "Music / Music link 1");
+      if (!link) throw new Error("no link row");
+      (link.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      await flushTab();
+      // The page closes while the request is out.
+      for (const row of rows) if (typeof row.teardown === "function") row.teardown();
+      answer(404);
+      await flushTab();
+      const cache = (
+        c.tab as unknown as { linkProbeCache: Map<string, { result: { status: number } }> }
+      ).linkProbeCache;
+      expect(cache.get(url)?.result.status).toBe(404);
+      // And the row built when it opens again says so, without asking again.
+      stubRequest.handler = () => Promise.reject(new Error("asked again"));
+      const reopened = renderAll(c.tab).find((r) => r.name === "Music / Music link 1");
+      const error = (reopened?.setting.controlEl as StubEl | undefined)?.children.find((x) =>
+        x.classes.includes("gp-setting-error")
+      );
+      expect(error?.text).toMatch(/link/i);
+      // Back before the request is even made (in Obsidian, inside the 800 ms
+      // debounce; here, while the save it waits for is pending): still asked.
+      const c3 = makeTab();
+      let asked = 0;
+      stubRequest.handler = () => {
+        asked++;
+        return Promise.resolve({ status: 200, json: { title: "Lofi beats", author_name: "A" } });
+      };
+      const rows3 = renderAll(c3.tab);
+      const link3 = rows3.find((r) => r.name === "Music / Music link 1");
+      (link3?.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      for (const row of rows3) if (typeof row.teardown === "function") row.teardown();
+      await flushTab();
+      expect(asked).toBe(1);
+      const cache3 = (
+        c3.tab as unknown as { linkProbeCache: Map<string, { result: { status: number } }> }
+      ).linkProbeCache;
+      expect(cache3.get(url)?.result.status).toBe(200);
+      // Its name is offered to no one: no box was up to offer it in.
+      expect(c3.settings.musicName1).toBe("");
+      // A link changed while the request was out: nothing kept, nothing painted.
+      const c2 = makeTab();
+      stubRequest.handler = () =>
+        new Promise((resolve) => {
+          answer = (status) => resolve({ status, json: {} });
+        });
+      const rows2 = renderAll(c2.tab);
+      const link2 = rows2.find((r) => r.name === "Music / Music link 1");
+      (link2?.setting.components[0] as unknown as { change?: (v: string) => void }).change?.(url);
+      await flushTab();
+      c2.settings.musicUrl = "https://youtu.be/bbbbbbbbbbb";
+      answer(404);
+      await flushTab();
+      const error2 = (link2?.setting.controlEl as StubEl | undefined)?.children.find((x) =>
+        x.classes.includes("gp-setting-error")
+      );
+      expect(error2?.text ?? "").toBe("");
+    } finally {
+      stubRequest.handler = null;
+    }
+  });
+
+  it("paints what YouTube said a moment ago when a link's row is built again", () => {
+    const url = "https://youtu.be/abcdefghijk";
+    const c = makeTab({ musicUrl: url });
+    const cache = (c.tab as unknown as { linkProbeCache: Map<string, unknown> }).linkProbeCache;
+    const linkRow = () => {
+      const row = renderAll(c.tab).find((r) => r.name === "Music / Music link 1");
+      if (!row) throw new Error("no link row");
+      const error = (row.setting.controlEl as StubEl).children.find((x) =>
+        x.classes.includes("gp-setting-error")
+      );
+      return error?.text ?? "";
+    };
+    expect(linkRow()).toBe("");
+    cache.set(url, { result: { status: 404, name: "" }, at: Date.now() });
+    expect(linkRow()).not.toBe("");
+    expect(linkRow()).toMatch(/link/i);
+    // Too old to stand in for asking: nothing, as the row says nothing it has not asked.
+    cache.set(url, { result: { status: 404, name: "" }, at: Date.now() - 10 * 60_000 });
+    expect(linkRow()).toBe("");
+    // A link YouTube has: nothing either way.
+    cache.set(url, { result: { status: 200, name: "Lofi" }, at: 0 });
+    expect(linkRow()).toBe("");
   });
 });
 
@@ -558,8 +1023,8 @@ describe("the end-of-session switches", () => {
   });
 
   it("rewrites the outcome line when a setting is written, not just on reopen", async () => {
-    // getSettingDefinitions() runs on every display(), but refreshDomState() —
-    // all Obsidian runs after setControlValue — only re-evaluates predicates and
+    // Obsidian 1.13.7 reads the definitions once, at load, and refreshDomState()
+    // — all it runs after setControlValue — only re-evaluates predicates and
     // does NOT re-render. A description baked in at definition time would sit
     // there contradicting the toggle the user just flipped.
     const c = makeTab();
@@ -735,10 +1200,7 @@ describe("the end-of-session switches", () => {
 // ---------------------------------------------------------------------------
 describe("the audio mixer across the two surfaces", () => {
   const audioGroup = (tab: GentlePomoSettingTab) => {
-    const group = tab
-      .getSettingDefinitions()
-      .find((g) => (g as { heading?: string }).heading === "Audio");
-    if (!group) throw new Error("no Audio group");
+    const group = groupNamed(tab, "Audio");
     return group as unknown as {
       heading: string;
       items: { name: string; desc?: string; control?: { key?: string } }[];
@@ -1270,9 +1732,8 @@ describe("the Notifications switch", () => {
     // A copy-paste from the Audio rows above would still carry the right
     // label and heading while flipping the break chime instead.
     const c = makeTab({ sessionEndNotification: false });
-    const item = c.tab
-      .getSettingDefinitions()
-      .flatMap((g) => (g as { items: { name: string; control?: { key?: string } }[] }).items)
+    const item = definitionGroups(c.tab)
+      .flatMap((g) => g.items as { name: string; control?: { key?: string } }[])
       .find((i) => i.name === SESSION_END_NOTIFICATION_LABEL);
     expect(item?.control?.key).toBe("sessionEndNotification");
 
@@ -1441,9 +1902,8 @@ describe("the sound rows", () => {
       BREAK_END_CUE_NAME,
       "Play it when break time is up",
     ]);
-    const cueItems = c.tab
-      .getSettingDefinitions()
-      .flatMap((g) => (g as unknown as { items: Record<string, unknown>[] }).items)
+    const cueItems = definitionGroups(c.tab)
+      .flatMap((g) => g.items)
       .filter((item) => item.name === FOCUS_END_CUE_NAME || item.name === BREAK_END_CUE_NAME);
     expect(cueItems).toHaveLength(2);
     // Not 1.13's `file` control: below 1.13 that renders as an empty row, and
@@ -1851,6 +2311,35 @@ describe("the sound rows", () => {
     expect(seen).toContainEqual(["Sounds/gong.mp3", true]);
   });
 
+  it("drops a pick that lands after its page closed, which runs the teardown and not hide()", async () => {
+    const c = makeTab();
+    let land: (l: Load) => void = () => {};
+    const asked = withTimer(
+      c,
+      () =>
+        new Promise<Load>((r) => {
+          land = r;
+        })
+    );
+    const item = groupNamed(c.tab, "When focus ends").items.find(
+      (i) => i.name === FOCUS_END_CUE_NAME
+    );
+    const setting = new Setting();
+    const teardown = (item?.render as (s: Setting) => (() => void) | void)(setting);
+    await flush();
+    setting.components.find((x) => x.kind === "button")?.click?.();
+    (FuzzySuggestModal.opened as unknown as { onChooseItem: (x: unknown) => void }).onChooseItem({
+      kind: "file",
+      path: "Sounds/slow.mp3",
+    });
+    if (typeof teardown === "function") teardown();
+    land({ ok: true, buffer: {} });
+    await flush();
+    expect(c.settings.focusEndSound).toBe("bell");
+    expect(asked).not.toContain("preview:focus");
+    expect(asked).toContain("stopPreview");
+  });
+
   it("drops a pick that lands after the tab was closed", async () => {
     const c = makeTab();
     let land: (l: Load) => void = () => {};
@@ -2022,9 +2511,9 @@ describe("the log folder row", () => {
   });
 
   it("is a render row on both paths: a control row has nowhere to say anything", () => {
-    const group = ctx.tab.getSettingDefinitions().find((g) => {
-      return (g as { heading?: string }).heading === "Daily log";
-    }) as unknown as { items: Record<string, unknown>[] };
+    const group = groupNamed(ctx.tab, "Daily log") as unknown as {
+      items: Record<string, unknown>[];
+    };
     const row = group.items.find((item) => item.name === LOG_FOLDER_NAME);
     expect(typeof row?.render).toBe("function");
   });
@@ -2182,10 +2671,14 @@ describe("the Daily log group", () => {
       DAY_START_NAME,
       TASK_SWITCH_NAME,
       LONG_SESSION_NAME,
+      // 0.7.0: with the choices that decide what a line holds, above the buttons.
+      DEVICE_NAME_NAME,
       OPEN_LOG_NAME,
       CHECK_LOG_NAME,
       CONVERT_LOG_NAME,
       REFRESH_NAMES_NAME,
+      // 0.7.0: with the log's other one-off buttons.
+      EXPORT_SESSIONS_NAME,
     ]);
     // Moved, not copied: the folder was under "Display & behavior".
     expect(declarativeRows(ctx.tab).filter((r) => r.name === LOG_FOLDER_NAME)).toHaveLength(1);
@@ -2207,7 +2700,7 @@ describe("the Daily log group", () => {
     Platform.isDesktopApp = false;
     try {
       const rows = declarativeRows(makeTab().tab).filter((r) => r.heading === "Daily log");
-      expect(rows).toHaveLength(8);
+      expect(rows).toHaveLength(10);
     } finally {
       Platform.isDesktopApp = true;
     }
@@ -2295,6 +2788,7 @@ describe("the Daily log group", () => {
     [CHECK_LOG_NAME, "Check", "checkLog"],
     [CONVERT_LOG_NAME, "Convert", "convertLog"],
     [REFRESH_NAMES_NAME, "Refresh", "refreshLogTaskNames"],
+    [EXPORT_SESSIONS_NAME, "Export", "exportSessions"],
   ] as const)('renders "%s" as a button that runs its command', (name, label, method) => {
     ctx.tab.display();
     const button = componentOf(ctx.el, name);
@@ -2306,10 +2800,16 @@ describe("the Daily log group", () => {
   });
 
   it("runs the same commands from the 1.13 definitions", () => {
-    const group = ctx.tab.getSettingDefinitions().find((g) => {
-      return (g as { heading?: string }).heading === "Daily log";
-    }) as unknown as { items: { name: string; action?: () => void }[] };
-    for (const name of [OPEN_LOG_NAME, CHECK_LOG_NAME, CONVERT_LOG_NAME, REFRESH_NAMES_NAME]) {
+    const group = groupNamed(ctx.tab, "Daily log") as unknown as {
+      items: { name: string; action?: () => void }[];
+    };
+    for (const name of [
+      OPEN_LOG_NAME,
+      CHECK_LOG_NAME,
+      CONVERT_LOG_NAME,
+      REFRESH_NAMES_NAME,
+      EXPORT_SESSIONS_NAME,
+    ]) {
       group.items.find((item) => item.name === name)?.action?.();
     }
     expect(ctx.calls.map((x) => x.method)).toEqual([
@@ -2317,6 +2817,1071 @@ describe("the Daily log group", () => {
       "checkLog",
       "convertLog",
       "refreshLogTaskNames",
+      "exportSessions",
     ]);
+  });
+});
+
+/* ===== 0.7.0: this device's name, and the Log tables ===== */
+
+describe("this device's name", () => {
+  it("shows the name this device keeps, and keeps what is typed there — never in data.json", async () => {
+    const c = makeTab();
+    c.local.set(DEVICE_NAME_KEY, "Work laptop");
+    c.tab.display();
+    const box = componentOf(c.el, DEVICE_NAME_NAME);
+    expect(box.kind).toBe("text");
+    expect(box.value).toBe("Work laptop");
+    expect(box.placeholder).toBe("Example: Work laptop");
+    box.change?.("  Phone  " as never);
+    await flushTab();
+    expect(c.local.get(DEVICE_NAME_KEY)).toBe("Phone");
+    // Nothing of the plugin's settings moved, and nothing was saved.
+    expect(c.calls).toEqual([]);
+    expect(JSON.stringify(c.settings)).not.toContain("Phone");
+    box.change?.("" as never);
+    expect(c.local.has(DEVICE_NAME_KEY)).toBe(false);
+  });
+
+  it("says under the row how a line will write it, when cleaning changes it", () => {
+    const c = makeTab();
+    c.tab.display();
+    const row = rowFor(c.el, DEVICE_NAME_NAME);
+    const note = (row.infoEl as StubEl).children.find((x) => x.classes.includes("gp-setting-note"));
+    if (!note) throw new Error("no note");
+    expect(note.classes).toContain("gp-setting-note-info");
+    expect(note.text).toBe("");
+    componentOf(c.el, DEVICE_NAME_NAME).change?.("Desk [home] #2" as never);
+    expect(note.text).toBe('Written as "Desk (home) 2".');
+    componentOf(c.el, DEVICE_NAME_NAME).change?.("Desk" as never);
+    expect(note.text).toBe("");
+  });
+
+  it("names the written form only when it differs, and says when nothing is left", () => {
+    expect(deviceNameNote("")).toBe("");
+    expect(deviceNameNote("  Work laptop  ")).toBe("");
+    expect(deviceNameNote("a::b")).toBe('Written as "a:b".');
+    expect(deviceNameNote("x".repeat(45))).toBe(`Written as "${"x".repeat(40)}".`);
+    expect(deviceNameNote("🍅 # ☕")).toMatch(/no Device is written/);
+  });
+});
+
+describe("the Log tables group", () => {
+  /**
+   * The Columns row as drawn: the columns in the table, each row's name and
+   * ↑ / ↓ / ✕ in order, and the "Add a column" buttons.
+   */
+  function columnList(el: { settings: Setting[] }) {
+    const row = rowFor(el, QUERY_COLUMNS_NAME);
+    const settingEl = row.settingEl as StubEl;
+    const find = (cls: string) => {
+      const found = settingEl.children.find((x) => x.classes.includes(cls));
+      if (!found) throw new Error(`no ${cls}`);
+      return found;
+    };
+    const list = find("gp-column-list");
+    const add = find("gp-column-add");
+    const chipsEl = add.children.find((x) => x.classes.includes("gp-column-chips"));
+    if (!chipsEl) throw new Error("no chips");
+    return {
+      list,
+      add,
+      chipsEl,
+      status: find("gp-column-status"),
+      items: list.children.map((item) => ({
+        el: item,
+        name: item.children.find((x) => x.tag === "span")?.text ?? "",
+        up: item.controls[0] as ExtraButtonComponent,
+        down: item.controls[1] as ExtraButtonComponent,
+        remove: item.controls[2] as ExtraButtonComponent,
+      })),
+      chips: chipsEl.children.map((chip) => ({
+        el: chip,
+        name: chip.children.find((x) => x.classes.includes("gp-column-chip-name"))?.text ?? "",
+      })),
+    };
+  }
+  const labels = (ids: readonly string[]) =>
+    ids.map((id) => QUERY_COLUMNS.find((c) => c.id === id)?.label);
+  const codeEl = (el: { settings: Setting[] }) => {
+    const row = el.settings.find((s) => s.settingEl.classes.includes("gp-setting-code"));
+    const details = (row?.settingEl as StubEl | undefined)?.children.find(
+      (x) => x.tag === "details"
+    );
+    if (!details) throw new Error("no code row");
+    const summaryEl = details.children.find((x) => x.tag === "summary") as StubEl;
+    return {
+      summary: summaryEl.text,
+      summaryEl,
+      pre: details.children.find((x) => x.tag === "pre") as StubEl,
+    };
+  };
+  const LOGS = { "Pomodoro_logs/2026-10-23-gentle-pomodoro-log.md": "" };
+  const withFolder = (over: Partial<GentlePomoSettings> = {}) =>
+    makeTab({ logFolderPath: "Pomodoro_logs", ...over }, LOGS);
+  const sessionsCode = (settings: GentlePomoSettings, folder = "Pomodoro_logs") =>
+    sessionsTable(queryOptions(settings, folder));
+
+  beforeEach(() => {
+    Notice.shown.length = 0;
+    Modal.opened = null;
+    stubFocus.el = null;
+    stubFocus.dropped = 0;
+  });
+
+  it("sits right after Daily log, in the order the design has it", () => {
+    const rows = declarativeRows(ctx.tab);
+    const headings = [...new Set(rows.map((r) => r.heading))];
+    expect(headings[headings.indexOf("Daily log") + 1]).toBe(QUERY_GROUP_HEADING);
+    expect(rows.filter((r) => r.heading === QUERY_GROUP_HEADING).map((r) => r.name)).toEqual([
+      QUERY_COLUMNS_NAME,
+      QUERY_RANGE_NAME,
+      QUERY_KINDS_NAME,
+      QUERY_SKIPPED_NAME,
+      QUERY_SORT_NAME,
+      "",
+      ...QUERY_COPIES.map((c) => c.name),
+    ]);
+    for (const row of rows.filter((r) => r.heading === QUERY_GROUP_HEADING)) {
+      expect(row.desc.split(/(?<=\.) /).length, row.name).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("is on every device", () => {
+    Platform.isDesktopApp = false;
+    try {
+      const rows = declarativeRows(makeTab().tab).filter((r) => r.heading === QUERY_GROUP_HEADING);
+      expect(rows).toHaveLength(10);
+    } finally {
+      Platform.isDesktopApp = true;
+    }
+  });
+
+  it("makes Columns and the code render rows on both paths, and the Copy rows findable by search", () => {
+    const group = groupNamed(ctx.tab, QUERY_GROUP_HEADING) as unknown as {
+      items: Record<string, unknown>[];
+    };
+    expect(typeof group.items[0].render).toBe("function");
+    expect(typeof group.items[5].render).toBe("function");
+    for (const item of group.items.slice(6)) {
+      expect(typeof item.action, String(item.name)).toBe("function");
+      expect(item.aliases, String(item.name)).toEqual(["dataview", "query", "copy"]);
+    }
+    // Only the Copy rows carry aliases.
+    expect(group.items.slice(0, 6).some((item) => "aliases" in item)).toBe(false);
+  });
+
+  const catalogLabelsWithout = (ids: readonly string[]) =>
+    QUERY_COLUMNS.filter((x) => !ids.includes(x.id)).map((x) => x.label);
+
+  it("lists the columns in the table and offers the rest to add, Simple and Detailed beside them", () => {
+    ctx.tab.display();
+    const { list, add, items, chips, chipsEl, status } = columnList(ctx.el);
+    expect(items.map((i) => i.name)).toEqual(labels(QUERY_PRESETS.simple));
+    // The rest, in catalog order: a column's place among them is nobody's choice.
+    expect(chips.map((c) => c.name)).toEqual(catalogLabelsWithout(QUERY_PRESETS.simple));
+    for (const chip of chips) {
+      expect(chip.el.tag, chip.name).toBe("button");
+      expect(chip.el.attrs.type, chip.name).toBe("button");
+      expect(chip.el.attrs["aria-label"], chip.name).toBe(`Add ${chip.name}`);
+      expect(chip.el.classes).toContain("gp-column-chip");
+      expect(chip.el.children.find((x) => x.classes.includes("gp-column-chip-icon"))?.icon).toBe(
+        "plus"
+      );
+    }
+    // Named by its visible label, never an aria-label: Obsidian shows any
+    // [aria-label] as a tooltip over everything inside it.
+    expect(add.attrs.role).toBe("group");
+    expect(add.children[0].text).toBe(COLUMN_ADD_LABEL);
+    expect(add.attrs["aria-labelledby"]).toBe(add.children[0].attrs.id);
+    expect(add.children[0].attrs.id).toMatch(/^gp-column-add-label-\d+$/);
+    expect(add.classes).not.toContain("gp-column-add-empty");
+    expect(chipsEl.children).toHaveLength(QUERY_COLUMNS.length - QUERY_PRESETS.simple.length);
+    expect(list.attrs.role).toBe("list");
+    // Only the buttons carry an aria-label, their tooltip and their name.
+    const labelled: StubEl[] = [];
+    const walk = (el: StubEl) => {
+      if (el.attrs["aria-label"] !== undefined) labelled.push(el);
+      el.children.forEach(walk);
+    };
+    walk(rowFor(ctx.el, QUERY_COLUMNS_NAME).settingEl as StubEl);
+    for (const el of labelled) {
+      expect(
+        el.tag === "button" || el.classes.includes("extra-setting-button"),
+        el.attrs["aria-label"]
+      ).toBe(true);
+    }
+    // A second render's label has an id of its own.
+    ctx.tab.display();
+    expect(columnList(ctx.el).add.attrs["aria-labelledby"]).not.toBe(add.attrs["aria-labelledby"]);
+    for (const item of items) {
+      expect(item.el.attrs.role).toBe("listitem");
+      expect([item.up.icon, item.down.icon, item.remove.icon]).toEqual([
+        "arrow-up",
+        "arrow-down",
+        "x",
+      ]);
+      for (const control of [item.up, item.down, item.remove]) {
+        expect(control.extraSettingsEl.attrs.role, item.name).toBe("button");
+      }
+      expect(item.remove.extraSettingsEl.classes).toContain("gp-column-remove");
+    }
+    expect(items[0].down.extraSettingsEl.attrs["aria-label"]).toBe("Move Date down");
+    expect(items[2].remove.extraSettingsEl.attrs["aria-label"]).toBe("Remove Task");
+    // The status line is there from the start, empty.
+    expect(status.attrs).toMatchObject({ role: "status", "aria-live": "polite" });
+    expect(status.text).toBe("");
+    const row = rowFor(ctx.el, QUERY_COLUMNS_NAME);
+    expect(row.settingEl.classes).toContain("gp-setting-wide");
+    expect(row.components.map((b) => b.buttonText)).toEqual(["Simple", "Detailed"]);
+  });
+
+  it("gives every button a role on 1.7 too, whose ExtraButton has none either", () => {
+    stubObsidian.extraButton = "1.7";
+    try {
+      ctx.tab.display();
+      for (const item of columnList(ctx.el).items) {
+        for (const control of [item.up, item.down, item.remove]) {
+          expect(control.extraSettingsEl.attrs.role, item.name).toBe("button");
+        }
+      }
+    } finally {
+      stubObsidian.extraButton = "1.13";
+    }
+  });
+
+  it("draws a stored order of the others in catalog order, writing nothing", () => {
+    const c = withFolder({ queryColumns: "-offset,task,-end,date,-device" });
+    c.tab.display();
+    const { items, chips } = columnList(c.el);
+    expect(items.map((i) => i.name)).toEqual(["Task", "Date"]);
+    expect(chips.map((x) => x.name)).toEqual(catalogLabelsWithout(["task", "date"]));
+    expect(c.calls).toEqual([]);
+    expect(c.settings.queryColumns).toBe("-offset,task,-end,date,-device");
+  });
+
+  it("the default in data.json is Simple, written as the setting stores it", () => {
+    expect(DEFAULT_SETTINGS.queryColumns).toBe(formatQueryColumns(presetColumns("simple")));
+  });
+
+  it("adds a column at the end of the table, writes at once, and repaints the code", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const before = columnList(c.el);
+    const end = before.chips.find((x) => x.name === "End");
+    if (!end) throw new Error("no End");
+    clickEl(end.el);
+    await flushTab();
+    const after = columnList(c.el);
+    expect(after.items.map((i) => i.name)).toEqual([...labels(QUERY_PRESETS.simple), "End"]);
+    // The rows already there are the same nodes, not rebuilt ones.
+    before.items.forEach((item, n) => expect(after.list.children[n]).toBe(item.el));
+    expect(after.chips.map((x) => x.name)).toEqual(
+      catalogLabelsWithout([...QUERY_PRESETS.simple, "end"])
+    );
+    expect(c.settings.queryColumns).toBe(
+      "date,start,task,minutes,status,end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+    );
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(codeEl(c.el).pre.text).toContain('AS "End"');
+    expect(after.status.text).toBe(columnAddedMessage("End", 6));
+  });
+
+  it("takes a column out back among the others, in catalog order, and repaints the code", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const before = columnList(c.el);
+    const task = before.items[2];
+    expect(task.name).toBe("Task");
+    task.remove.click();
+    await flushTab();
+    const after = columnList(c.el);
+    expect(after.items.map((i) => i.name)).toEqual(["Date", "Start", "Minutes", "Status"]);
+    for (const n of [0, 1, 3, 4]) expect(after.list.children).toContain(before.items[n].el);
+    // Between End and Planned, where the catalog has it — not at the end.
+    const names = after.chips.map((x) => x.name);
+    expect(names.indexOf("Task")).toBe(names.indexOf("End") + 1);
+    expect(names).toEqual(catalogLabelsWithout(["date", "start", "minutes", "status"]));
+    expect(c.settings.queryColumns).toBe(
+      "date,start,minutes,status,-end,-task,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+    );
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(codeEl(c.el).pre.text).not.toContain('AS "Task"');
+    expect(after.status.text).toBe(columnRemovedMessage("Task"));
+    // Added again, it goes last: its old place is not kept.
+    const again = after.chips.find((x) => x.name === "Task");
+    if (!again) throw new Error("no Task button");
+    clickEl(again.el);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Date",
+      "Start",
+      "Minutes",
+      "Status",
+      "Task",
+    ]);
+  });
+
+  it("moves focus off a removed row before taking it out: to the next ✕, or the one above", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { items } = columnList(c.el);
+    // The middle row: the ✕ of the row that takes its place.
+    stubFocus.el = items[2].remove.extraSettingsEl;
+    items[2].remove.click();
+    await flushTab();
+    expect(stubFocus.el).toBe(items[3].remove.extraSettingsEl);
+    // The last row: the ✕ of the row above.
+    stubFocus.el = items[4].remove.extraSettingsEl;
+    items[4].remove.click();
+    await flushTab();
+    expect(stubFocus.el).toBe(items[3].remove.extraSettingsEl);
+    expect(stubFocus.dropped).toBe(0);
+  });
+
+  it("moves focus to the column's own button when the one row left can't be removed", async () => {
+    const c = withFolder({ queryColumns: "task,date" });
+    c.tab.display();
+    const { items } = columnList(c.el);
+    stubFocus.el = items[1].remove.extraSettingsEl;
+    items[1].remove.click();
+    await flushTab();
+    const after = columnList(c.el);
+    // Task's ✕ is disabled now, and so are its arrows: nothing in the list
+    // can take focus, so it goes to the Date button that just appeared.
+    expect(after.items[0].remove.disabled).toBe(true);
+    expect(stubFocus.el).toBe(after.chips.find((x) => x.name === "Date")?.el);
+    expect(stubFocus.dropped).toBe(0);
+  });
+
+  it("moves focus off a pressed button before taking it out: to the next, or the one before", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const chip = (name: string) => {
+      const found = columnList(c.el).chips.find((x) => x.name === name);
+      if (!found) throw new Error(`no ${name}`);
+      return found.el;
+    };
+    stubFocus.el = chip("End");
+    const planned = chip("Planned (min)");
+    clickEl(chip("End"));
+    await flushTab();
+    expect(stubFocus.el).toBe(planned);
+    // One in the middle, where "the next" and "the one before" differ.
+    stubFocus.el = chip("Overtime (min)");
+    const pauses = chip("Pauses");
+    clickEl(chip("Overtime (min)"));
+    await flushTab();
+    expect(stubFocus.el).toBe(pauses);
+    // The last one: the one before it.
+    const last = QUERY_COLUMNS.at(-1)?.label ?? "";
+    const beforeLast = QUERY_COLUMNS.at(-2)?.label ?? "";
+    stubFocus.el = chip(last);
+    const target = chip(beforeLast);
+    clickEl(chip(last));
+    await flushTab();
+    expect(stubFocus.el).toBe(target);
+    expect(stubFocus.dropped).toBe(0);
+  });
+
+  it("moves focus to the new row's ↑ when the last button is pressed, and hides Add a column", async () => {
+    const all = QUERY_COLUMNS.map((x) => x.id);
+    const c = withFolder({ queryColumns: [...all.slice(0, -1), `-${all.at(-1) ?? ""}`].join(",") });
+    c.tab.display();
+    const before = columnList(c.el);
+    expect(before.chips).toHaveLength(1);
+    const oldLast = before.items.at(-1);
+    expect(oldLast?.down.disabled).toBe(true);
+    stubFocus.el = before.chips[0].el;
+    clickEl(before.chips[0].el);
+    await flushTab();
+    const after = columnList(c.el);
+    const added = after.items.at(-1);
+    expect(stubFocus.el).toBe(added?.up.extraSettingsEl);
+    expect(added?.up.disabled).toBe(false);
+    expect(added?.down.disabled).toBe(true);
+    expect(oldLast?.down.disabled).toBe(false);
+    expect(after.add.classes).toContain("gp-column-add-empty");
+    expect(after.chips).toHaveLength(0);
+    expect(stubFocus.dropped).toBe(0);
+  });
+
+  it("never lets the last column be taken out", async () => {
+    const c = withFolder({ queryColumns: "task" });
+    c.tab.display();
+    const { items } = columnList(c.el);
+    expect(items.map((i) => i.name)).toEqual(["Task"]);
+    const task = items[0];
+    for (const control of [task.up, task.down, task.remove]) {
+      expect(control.disabled).toBe(true);
+      expect(control.extraSettingsEl.attrs["aria-disabled"]).toBe("true");
+    }
+    // Still named for what it does, and to which column, then why it can't.
+    expect(task.remove.extraSettingsEl.attrs["aria-label"]).toBe(
+      `Remove Task. ${COLUMN_LAST_SHOWN_TOOLTIP}`
+    );
+    // A click reached anyway writes nothing.
+    task.remove.click();
+    await flushTab();
+    expect(c.settings.queryColumns).toBe("task");
+    expect(c.calls).toEqual([]);
+    // A second column frees it, and its name comes back.
+    const date = columnList(c.el).chips.find((x) => x.name === "Date");
+    if (!date) throw new Error("no Date");
+    clickEl(date.el);
+    await flushTab();
+    expect(task.remove.disabled).toBe(false);
+    expect(task.remove.extraSettingsEl.attrs["aria-label"]).toBe("Remove Task");
+    expect(task.remove.extraSettingsEl.attrs["aria-disabled"]).toBeUndefined();
+  });
+
+  it("disables ↑ on the first column and ↓ on the last, and says so with aria-disabled", async () => {
+    ctx.tab.display();
+    const { items } = columnList(ctx.el);
+    const disabledAttr = () =>
+      items.map((i) =>
+        [i.up, i.down, i.remove].map((x) => x.extraSettingsEl.attrs["aria-disabled"])
+      );
+    expect(items.map((i) => i.up.disabled)).toEqual(items.map((_i, n) => n === 0));
+    expect(items.map((i) => i.down.disabled)).toEqual(items.map((_i, n) => n === items.length - 1));
+    // Obsidian dims a clickable icon by [aria-disabled], not by is-disabled.
+    expect(disabledAttr()).toEqual(
+      items.map((_i, n) => [
+        n === 0 ? "true" : undefined,
+        n === items.length - 1 ? "true" : undefined,
+        undefined,
+      ])
+    );
+    // And it follows a move: Start up to the top, Date down to second.
+    items[1].up.click();
+    await flushTab();
+    expect(items[1].up.extraSettingsEl.attrs["aria-disabled"]).toBe("true");
+    expect(items[0].up.extraSettingsEl.attrs["aria-disabled"]).toBeUndefined();
+  });
+
+  it("moves a column with ↑ / ↓, the nodes kept, the focus on the pressed arrow", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { list, items } = columnList(c.el);
+    const task = items[2];
+    expect(task.name).toBe("Task");
+    stubFocus.el = task.up.extraSettingsEl;
+    task.up.click();
+    await flushTab();
+    // Swapped with Start; the setting, the drawn order and the code all agree.
+    const order = ["date", "task", "start", "minutes", "status"];
+    expect(c.settings.queryColumns.startsWith(`${order.join(",")},-end`)).toBe(true);
+    expect(list.children.map((x) => x.children.find((y) => y.tag === "span")?.text)).toEqual(
+      labels(
+        resolveQueryColumns(c.settings.queryColumns)
+          .filter((x) => x.on)
+          .map((x) => x.id)
+      )
+    );
+    // The same node, not a rebuilt one, and still focused on its ↑ — never
+    // having lost it: the neighbour moved, not the row holding the focus,
+    // so no blur and focus again for a screen reader to announce.
+    expect(list.children[1]).toBe(task.el);
+    expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+    expect(stubFocus.dropped).toBe(0);
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    expect(columnList(c.el).status.text).toBe(columnMovedMessage("Task", 2, 5));
+    // ↑ again: it reaches the top, its ↑ goes off, and focus moves to its ↓.
+    task.up.click();
+    await flushTab();
+    expect(list.children[0]).toBe(task.el);
+    expect(task.up.disabled).toBe(true);
+    expect(task.up.extraSettingsEl.attrs.tabindex).toBeUndefined();
+    expect(stubFocus.el).toBe(task.down.extraSettingsEl);
+    // And down to the end: ↓ goes off there, and focus moves to its ↑.
+    for (let n = 0; n < items.length - 1; n++) task.down.click();
+    await flushTab();
+    expect(list.children[items.length - 1]).toBe(task.el);
+    expect(task.down.disabled).toBe(true);
+    expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+    expect(stubFocus.dropped).toBe(0);
+    expect(
+      resolveQueryColumns(c.settings.queryColumns)
+        .filter((x) => x.on)
+        .at(-1)
+    ).toEqual({
+      id: "task",
+      on: true,
+    });
+  });
+
+  it("moves a column past the one above it in the table, whatever a stored value has between", async () => {
+    // Stored with hidden columns among the shown ones (as the first 0.7.0
+    // build could leave it): ↑ on Task must pass Date at once.
+    const c = withFolder({ queryColumns: "date,-start,task,-end,minutes" });
+    c.tab.display();
+    const { list, items } = columnList(c.el);
+    expect(items.map((i) => i.name)).toEqual(["Date", "Task", "Minutes"]);
+    items[1].up.click();
+    await flushTab();
+    expect(list.children.map((x) => x.children.find((y) => y.tag === "span")?.text)).toEqual([
+      "Task",
+      "Date",
+      "Minutes",
+    ]);
+    expect(
+      resolveQueryColumns(c.settings.queryColumns)
+        .filter((x) => x.on)
+        .map((x) => x.id)
+    ).toEqual(["task", "date", "minutes"]);
+  });
+
+  it("adds no key handling of its own on 1.13, whose buttons Enter and Space press already", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { list, items, chips } = columnList(c.el);
+    for (const item of items) {
+      for (const control of [item.up, item.down, item.remove]) {
+        expect(control.extraSettingsEl.listeners.keydown ?? []).toHaveLength(1);
+        expect(control.extraSettingsEl.attrs["data-gp-keyboard"]).toBeUndefined();
+      }
+    }
+    // The add buttons are real buttons, which the browser presses on Enter and Space.
+    for (const chip of chips) expect(chip.el.listeners.keydown ?? []).toHaveLength(0);
+    // One Enter, one move: a handler of the plugin's beside Obsidian's would move twice.
+    const task = items[2];
+    expect(pressKey(task.up.extraSettingsEl, "Enter")).toBe(true);
+    await flushTab();
+    expect(list.children[1]).toBe(task.el);
+    // And one remove.
+    expect(pressKey(items[4].remove.extraSettingsEl, "Enter")).toBe(true);
+    await flushTab();
+    expect(columnList(c.el).items).toHaveLength(4);
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings", "saveSettings"]);
+  });
+
+  describe("on Obsidian 1.7, whose ExtraButton Tab never reaches", () => {
+    beforeEach(() => {
+      stubObsidian.extraButton = "1.7";
+    });
+    afterEach(() => {
+      stubObsidian.extraButton = "1.13";
+    });
+
+    it("gives every button a tabindex, taken off while it is disabled", async () => {
+      const c = withFolder({ queryColumns: "task,date" });
+      c.tab.display();
+      const { items, chips } = columnList(c.el);
+      items.forEach((item, n) => {
+        expect(item.up.extraSettingsEl.attrs.tabindex, `${item.name} up`).toBe(
+          n === 0 ? undefined : "0"
+        );
+        expect(item.down.extraSettingsEl.attrs.tabindex, `${item.name} down`).toBe(
+          n === items.length - 1 ? undefined : "0"
+        );
+        expect(item.remove.extraSettingsEl.attrs.tabindex, `${item.name} remove`).toBe("0");
+        expect(item.remove.extraSettingsEl.attrs["data-gp-keyboard"]).toBe("true");
+      });
+      for (const chip of chips) expect(chip.el.listeners.keydown ?? []).toHaveLength(0);
+      // Down to one: its ✕ leaves the Tab order.
+      pressKey(items[1].remove.extraSettingsEl, "Enter");
+      await flushTab();
+      expect(items[0].remove.extraSettingsEl.attrs.tabindex).toBeUndefined();
+      expect(items[0].remove.disabled).toBe(true);
+    });
+
+    it("moves a column with Enter and Space, focus kept, and not from a disabled arrow", async () => {
+      const c = withFolder();
+      c.tab.display();
+      const { list, items } = columnList(c.el);
+      const task = items[2];
+      stubFocus.el = task.up.extraSettingsEl;
+      expect(pressKey(task.up.extraSettingsEl, "Enter")).toBe(true);
+      await flushTab();
+      expect(list.children[1]).toBe(task.el);
+      expect(stubFocus.el).toBe(task.up.extraSettingsEl);
+      // Space too; at the top the arrow goes off, its tabindex with it, and
+      // focus moves to ↓ — which a keyboard can reach.
+      expect(pressKey(task.up.extraSettingsEl, " ")).toBe(true);
+      await flushTab();
+      expect(list.children[0]).toBe(task.el);
+      expect(task.up.disabled).toBe(true);
+      expect(task.up.extraSettingsEl.attrs.tabindex).toBeUndefined();
+      expect(stubFocus.el).toBe(task.down.extraSettingsEl);
+      expect(task.down.extraSettingsEl.attrs.tabindex).toBe("0");
+      // A disabled arrow reached anyway moves nothing and writes nothing.
+      const saves = c.calls.length;
+      pressKey(task.up.extraSettingsEl, "Enter");
+      await flushTab();
+      expect(list.children[0]).toBe(task.el);
+      expect(c.calls).toHaveLength(saves);
+      // Other keys are left alone.
+      expect(pressKey(task.down.extraSettingsEl, "a")).toBe(false);
+      // Down again, and ↑ is back in the Tab order.
+      pressKey(task.down.extraSettingsEl, "Enter");
+      await flushTab();
+      expect(list.children[1]).toBe(task.el);
+      expect(task.up.extraSettingsEl.attrs.tabindex).toBe("0");
+      expect(stubFocus.dropped).toBe(0);
+    });
+
+    it("removes a column with Enter and Space, and moves the focus as a click does", async () => {
+      const c = withFolder();
+      c.tab.display();
+      const { items } = columnList(c.el);
+      stubFocus.el = items[2].remove.extraSettingsEl;
+      expect(pressKey(items[2].remove.extraSettingsEl, "Enter")).toBe(true);
+      await flushTab();
+      expect(stubFocus.el).toBe(items[3].remove.extraSettingsEl);
+      expect(pressKey(items[3].remove.extraSettingsEl, " ")).toBe(true);
+      await flushTab();
+      expect(columnList(c.el).items.map((i) => i.name)).toEqual(["Date", "Start", "Status"]);
+      expect(stubFocus.dropped).toBe(0);
+    });
+  });
+
+  it("takes a double click on any of a row's buttons or an add button as one press", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const { items, chips } = columnList(c.el);
+    // ✕ on Start, then a second click on what slid under the pointer.
+    items[1].remove.click(1);
+    items[2].remove.click(2);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Date",
+      "Task",
+      "Minutes",
+      "Status",
+    ]);
+    clickEl(chips[0].el, 1);
+    clickEl(chips[1].el, 2);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Date",
+      "Task",
+      "Minutes",
+      "Status",
+      "End",
+    ]);
+    // ↑ on Status: Status moves up, and Minutes, which it swapped with, takes
+    // its place under the pointer — the second click lands on Minutes' ↑ and
+    // must not move it straight back.
+    const before = columnList(c.el).items;
+    before[3].up.click(1);
+    before[2].up.click(2);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Date",
+      "Task",
+      "Status",
+      "Minutes",
+      "End",
+    ]);
+    // ↓ the same way, and two clicks that are two presses still move twice.
+    const now = columnList(c.el).items;
+    now[0].down.click(1);
+    now[1].down.click(2);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Task",
+      "Date",
+      "Status",
+      "Minutes",
+      "End",
+    ]);
+    const after = columnList(c.el).items;
+    after[4].up.click(1);
+    after[4].up.click(1);
+    await flushTab();
+    expect(columnList(c.el).items.map((i) => i.name)).toEqual([
+      "Task",
+      "Date",
+      "End",
+      "Status",
+      "Minutes",
+    ]);
+  });
+
+  it.each([
+    ["Simple", "simple"],
+    ["Detailed", "detailed"],
+  ] as const)("%s rewrites the whole list to its preset", async (label, preset) => {
+    const c = withFolder({ queryColumns: "offset,-date" });
+    c.tab.display();
+    const focused = stubEl("", "button");
+    stubFocus.el = focused;
+    rowFor(c.el, QUERY_COLUMNS_NAME)
+      .components.find((b) => b.buttonText === label)
+      ?.click?.();
+    await flushTab();
+    expect(c.settings.queryColumns).toBe(formatQueryColumns(presetColumns(preset)));
+    const { items, chips, status } = columnList(c.el);
+    expect(items.map((i) => i.name)).toEqual(labels(QUERY_PRESETS[preset]));
+    expect(chips.map((x) => x.name)).toEqual(catalogLabelsWithout(QUERY_PRESETS[preset]));
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+    expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+    expect(status.text).toBe(columnPresetMessage(preset, QUERY_PRESETS[preset].length));
+    // The button pressed keeps the focus.
+    expect(stubFocus.el).toBe(focused);
+    expect(stubFocus.dropped).toBe(0);
+  });
+
+  it("says each change in words a screen reader can read", () => {
+    expect(columnMovedMessage("Task", 2, 5)).toBe("Task moved: column 2 of 5.");
+    expect(columnAddedMessage("End", 6)).toBe("End added: column 6 of 6.");
+    expect(columnRemovedMessage("Task")).toBe("Task removed.");
+    expect(columnPresetMessage("simple", 5)).toBe("Simple: 5 columns.");
+    expect(columnPresetMessage("detailed", 1)).toBe("Detailed: 1 column.");
+  });
+
+  it.each([
+    [QUERY_RANGE_NAME, "queryRange", QUERY_RANGES, "week", "month"],
+    [QUERY_KINDS_NAME, "queryKinds", QUERY_KINDS, "focus", "all"],
+    [QUERY_SORT_NAME, "querySort", QUERY_SORTS, "newest", "oldest"],
+  ] as const)(
+    "%s offers its choices, shows a value it does not know as the default, and stores what is picked",
+    async (name, key, choices, fallback, pick) => {
+      const c = withFolder({ [key]: "fortnight" } as Partial<GentlePomoSettings>);
+      c.tab.display();
+      const row = componentOf(c.el, name);
+      expect(row.options).toEqual(choices.map((o) => ({ value: o.value, label: o.label })));
+      expect(row.value).toBe(fallback);
+      row.change?.(pick as never);
+      await flushTab();
+      expect(c.settings[key]).toBe(pick);
+      expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
+      expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+      // A value no row offers is stored as the default, never kept.
+      await c.tab.setControlValue(key, "fortnight");
+      expect(c.settings[key]).toBe(fallback);
+    }
+  );
+
+  it("includes skipped focus by default, and the switch repaints the code", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const row = componentOf(c.el, QUERY_SKIPPED_NAME);
+    expect(row.value).toBe(true);
+    expect(codeEl(c.el).pre.text).not.toContain('"cancelled"');
+    row.change?.(false as never);
+    await flushTab();
+    expect(c.settings.querySkipped).toBe(false);
+    expect(codeEl(c.el).pre.text).toContain('s.Status != "cancelled"');
+  });
+
+  it("shows the sessions table's code under a closed Show the code, kept in step", async () => {
+    const c = withFolder();
+    c.tab.display();
+    const code = codeEl(c.el);
+    expect(code.summary).toBe(QUERY_CODE_SUMMARY);
+    // In Obsidian 1.13's Tab order, which walks [tabindex] and not a bare
+    // summary (checked in Chromium under 1.13.7's own settings handler).
+    expect(code.summaryEl.attrs.tabindex).toBe("0");
+    expect(code.pre.classes).toContain("gp-query-code-text");
+    expect(code.pre.text).toBe(sessionsCode(c.settings));
+    // The day's start changes the code's "today".
+    await c.tab.setControlValue("dayStartHour", "4");
+    expect(code.pre.text).toContain("date(now).hour < 4");
+    expect(code.pre.text).toBe(sessionsCode(c.settings));
+  });
+
+  it("says where the code would be when no folder is set, and follows the folder row", async () => {
+    const c = makeTab({}, LOGS);
+    c.tab.display();
+    expect(codeEl(c.el).pre.text).toBe(QUERY_NO_FOLDER_PREVIEW);
+    componentOf(c.el, LOG_FOLDER_NAME).change?.("Pomodoro_logs" as never);
+    await flushTab();
+    expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
+  });
+
+  it("keeps a 1.13 render live when the render before it is torn down after it", async () => {
+    const c = withFolder();
+    const group = groupNamed(c.tab, QUERY_GROUP_HEADING) as unknown as {
+      items: { render?: (s: Setting) => (() => void) | void }[];
+    };
+    const render = (n: number) => {
+      const setting = new Setting();
+      const teardown = group.items[n].render?.(setting);
+      return { setting, teardown: teardown ?? (() => undefined) };
+    };
+    const oldCode = render(5);
+    const newCode = render(5);
+    const oldColumns = render(0);
+    const newColumns = render(0);
+    oldCode.teardown();
+    oldColumns.teardown();
+    await c.tab.setControlValue("querySort", "oldest");
+    const pre = (newCode.setting.settingEl as StubEl).children[0].children.find(
+      (x) => x.tag === "pre"
+    );
+    expect(pre?.text).toContain("SORT s.Start ASC");
+    const list = (newColumns.setting.settingEl as StubEl).children.find((x) =>
+      x.classes.includes("gp-column-list")
+    );
+    // ↓ on Date: the controls are ↑, ↓, ✕.
+    (list?.children[0].controls[1] as ExtraButtonComponent).click();
+    await flushTab();
+    expect(c.settings.queryColumns.startsWith("start,date,")).toBe(true);
+    expect(list?.children[1].children.find((x) => x.tag === "span")?.text).toBe("Date");
+    // And an add button on it adds to that list.
+    const chips = (newColumns.setting.settingEl as StubEl).children
+      .find((x) => x.classes.includes("gp-column-add"))
+      ?.children.find((x) => x.classes.includes("gp-column-chips"));
+    const first = chips?.children[0];
+    if (!first) throw new Error("no add button");
+    clickEl(first);
+    await flushTab();
+    expect(list?.children).toHaveLength(6);
+    // The old render's nodes went with its teardown.
+    expect(
+      (oldColumns.setting.settingEl as StubEl).children.some((x) =>
+        x.classes.includes("gp-column-list")
+      )
+    ).toBe(false);
+  });
+
+  describe("the Copy buttons", () => {
+    let written: string[];
+    let answer: Promise<void>;
+    let clipboard: { writeText: (text: string) => Promise<void> } | undefined;
+    beforeEach(() => {
+      written = [];
+      answer = Promise.resolve();
+      clipboard = {
+        writeText: (text: string) => {
+          written.push(text);
+          return answer;
+        },
+      };
+      vi.stubGlobal("window", {
+        navigator: {
+          get clipboard() {
+            return clipboard;
+          },
+        },
+      });
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const fallbackText = () => {
+      const content = (Modal.opened as unknown as { contentEl: ModalContent } | null)?.contentEl;
+      return content?.elements.find((x) => x.tag === "textarea");
+    };
+
+    it.each(QUERY_COPIES.map((copy) => [copy.name, copy] as const))(
+      "%s puts its code on the clipboard inside the click, then says so",
+      async (name, copy) => {
+        const c = withFolder({ queryRange: "today", dayStartHour: 3 });
+        c.tab.display();
+        const button = componentOf(c.el, name);
+        expect(button.kind).toBe("button");
+        expect(button.buttonText).toBe("Copy");
+        button.click?.();
+        // Before anything is awaited: iOS gives the clipboard only to the gesture.
+        expect(written).toEqual([queryCode(copy.kind, queryOptions(c.settings, "Pomodoro_logs"))]);
+        expect(Notice.shown).toEqual([]);
+        await flushTab();
+        expect(Notice.shown).toEqual([copy.copied]);
+        expect(Modal.opened).toBeNull();
+        // Copying writes nothing of the plugin's.
+        expect(c.calls).toEqual([]);
+      }
+    );
+
+    it("runs the same copy from the 1.13 definitions", () => {
+      const c = withFolder();
+      const group = groupNamed(c.tab, QUERY_GROUP_HEADING) as unknown as {
+        items: { name: string; action?: (el: unknown, i: number) => void }[];
+      };
+      group.items.find((i) => i.name === QUERY_COPIES[2].name)?.action?.({}, 0);
+      expect(written).toEqual([queryCode("totals", queryOptions(c.settings, "Pomodoro_logs"))]);
+    });
+
+    it("shows the code selected in a dialog when the clipboard refuses", async () => {
+      answer = Promise.reject(new Error("denied"));
+      const c = withFolder();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      await flushTab();
+      expect(Notice.shown).toEqual([]);
+      const area = fallbackText();
+      expect(area?.value).toBe(sessionsCode(c.settings));
+      expect(area?.selected).toBe(true);
+      expect(area?.attrs.readonly).toBe("");
+      expect(area?.classes).toContain("gp-copy-fallback");
+    });
+
+    it("shows the dialog straight away where there is no clipboard", () => {
+      clipboard = undefined;
+      const c = withFolder();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[1].name).click?.();
+      expect(fallbackText()?.value).toBe(
+        sessionsTableJs(queryOptions(c.settings, "Pomodoro_logs"))
+      );
+    });
+
+    it("copies nothing without a log folder, and says why", async () => {
+      const c = makeTab();
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      await flushTab();
+      expect(written).toEqual([]);
+      expect(Modal.opened).toBeNull();
+      expect(Notice.shown).toEqual([NO_LOG_FOLDER_NOTICE]);
+    });
+
+    it("copies nothing for the vault's top level, and says why", async () => {
+      const c = makeTab({ logFolderPath: "/" });
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[3].name).click?.();
+      await flushTab();
+      expect(written).toEqual([]);
+      expect(Notice.shown).toEqual([logFolderProblemNotice("/", { kind: "root" })]);
+    });
+
+    it("fills in the vault's own spelling of the folder, as Dataview's index needs", () => {
+      const c = makeTab({ logFolderPath: " pomodoro_LOGS " }, LOGS);
+      c.tab.display();
+      componentOf(c.el, QUERY_COPIES[0].name).click?.();
+      expect(written[0]).toContain('FROM "Pomodoro_logs"');
+      expect(codeEl(c.el).pre.text).toContain('FROM "Pomodoro_logs"');
+    });
+  });
+});
+
+describe("the Log tables group's stylesheet", () => {
+  const rules = parseRules(
+    stripComments(readFileSync(resolve(__dirname, "..", "styles.css"), "utf8"))
+  );
+  const bodyOf = (sel: string): string => {
+    const found = rules.filter((r) => r.sel === sel && r.context.length === 0);
+    expect(found, sel).toHaveLength(1);
+    return found[0].body.replace(/\s+/g, " ");
+  };
+
+  it("holds the column list and the code to the row's width when a narrow pane stacks the row", () => {
+    // Below 400px of settings pane app.css makes a setting row a column with
+    // align-items: flex-start, so a child is as wide as its content: the code
+    // came out 1488px wide in a 320px pane, and the whole tab scrolled
+    // sideways (headless Chrome under 1.13.7's and 1.14.5's app.css).
+    for (const sel of [".gp-column-list", ".gp-column-add", ".gp-query-code"]) {
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*align-self: stretch;/);
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*max-width: 100%;/);
+    }
+    // The add buttons wrap, and a long name is cut, never the row.
+    expect(bodyOf(".gp-column-chips")).toMatch(/(^|;)\s*flex-wrap: wrap;/);
+    expect(bodyOf(".gp-column-chip-name")).toMatch(/(^|;)\s*text-overflow: ellipsis;/);
+    // And the code scrolls inside itself instead.
+    expect(bodyOf(".gp-query-code-text")).toMatch(/(^|;)\s*overflow: auto;/);
+  });
+
+  it("shows the code left to right under a right-to-left app language", () => {
+    // Obsidian gives the modal direction: rtl in Arabic, Hebrew and the other
+    // right-to-left languages, and the code took it: the fence showed as
+    // dataview``` and the first line was cut off at the left (headless
+    // Chrome under 1.13.7's app.css). Both the preview and the window to copy
+    // by hand are code.
+    for (const sel of [".gp-query-code-text", ".gp-copy-fallback"]) {
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*direction: ltr;/);
+      expect(bodyOf(sel), sel).toMatch(/(^|;)\s*text-align: left;/);
+    }
+  });
+
+  it("rings a focused arrow and Show the code with the plugin's own ring, on every version", () => {
+    // Obsidian 1.7 draws no ring on a clickable icon and no version on a
+    // summary, so without this a focused one looked like the rest
+    // (headless Chromium under 1.7.7's and 1.13.7's app.css).
+    const ring = rules.filter(
+      (r) =>
+        r.context.length === 0 &&
+        r.sel.includes(".gp-column-item .extra-setting-button:focus-visible") &&
+        r.sel.includes(".gp-column-add .gp-column-chips button.gp-column-chip:focus-visible") &&
+        r.sel.includes(".gp-query-code > summary:focus-visible")
+    );
+    expect(ring).toHaveLength(1);
+    const body = ring[0].body.replace(/\s+/g, " ");
+    expect(body).toMatch(
+      /(^|;)\s*outline: var\(--gp-focus-ring-width\) solid var\(--gp-focus-ring-color\);/
+    );
+    expect(body).toMatch(/(^|;)\s*outline-offset: var\(--gp-focus-ring-offset\);/);
+    // 1.13's grey halo off, so the two versions show one ring.
+    expect(body).toMatch(/(^|;)\s*box-shadow: none;/);
+  });
+  /** (ids, classes, elements) of one selector, enough for the selectors here. */
+  const specificity = (selector: string): [number, number, number] => {
+    const noPseudoElements = selector.replace(/::[\w-]+/g, " ");
+    const ids = (noPseudoElements.match(/#[\w-]+/g) ?? []).length;
+    const classes = (noPseudoElements.match(/\.[\w-]+|\[[^\]]*\]|:(?!not\()[\w-]+/g) ?? []).length;
+    const elements = (
+      noPseudoElements.replace(/\[[^\]]*\]/g, "").match(/(^|[\s>+~(])[a-z][\w-]*/gi) ?? []
+    ).length;
+    return [ids, classes, elements];
+  };
+  const above = (a: [number, number, number], b: [number, number, number]) =>
+    a[0] !== b[0] ? a[0] > b[0] : a[1] !== b[1] ? a[1] > b[1] : a[2] > b[2];
+
+  it("styles the add buttons over app.css's button rules on specificity, never on load order", () => {
+    // `.is-tablet button:not(.clickable-icon)` is (0,2,1): a tie would be won
+    // only by where the stylesheets load (DESIGN.md's rule).
+    expect(specificity(".is-tablet button:not(.clickable-icon)")).toEqual([0, 2, 1]);
+    const chipSelectors = rules
+      .flatMap((r) => r.sel.split(", "))
+      .filter((sel) => /\.gp-column-chip(?![\w-])/.test(sel));
+    expect(chipSelectors.length).toBeGreaterThanOrEqual(4);
+    for (const sel of chipSelectors) expect(above(specificity(sel), [0, 2, 1]), sel).toBe(true);
+  });
+
+  it("takes app.css's button look off the add buttons, and keeps Obsidian's tooltip off them", () => {
+    const body = bodyOf(".gp-column-add .gp-column-chips button.gp-column-chip");
+    for (const decl of [
+      "height: auto;",
+      "box-shadow: none;",
+      "background-color: transparent;",
+      "min-width: 0;",
+      "max-width: 100%;",
+      "--no-tooltip: true;",
+    ]) {
+      expect(body, decl).toContain(decl);
+    }
+  });
+
+  it("gives an add button on a touch screen the arrows' 36px target", () => {
+    const minHeight = (sel: string) => /min-height: (\d+)px;/.exec(bodyOf(sel))?.[1];
+    expect(minHeight("body.is-mobile .gp-column-item .extra-setting-button")).toBe("36");
+    expect(minHeight("body.is-mobile .gp-column-add .gp-column-chips button.gp-column-chip")).toBe(
+      "36"
+    );
+  });
+
+  it("hides Add a column when every column is in the table, by the class the tab writes", () => {
+    expect(bodyOf(".gp-column-add.gp-column-add-empty")).toMatch(/(^|;)\s*display: none;/);
+    const source = readFileSync(resolve(__dirname, "..", "GentlePomoSettingTab.ts"), "utf8");
+    expect(source).toContain('toggleClass("gp-column-add-empty"');
+  });
+
+  it("keeps the status line where a screen reader reads it, out of sight", () => {
+    const body = bodyOf(".gp-column-status");
+    expect(body).toMatch(/(^|;)\s*opacity: 0;/);
+    expect(body).toMatch(/(^|;)\s*width: 1px;/);
+    expect(body).toMatch(/(^|;)\s*position: absolute;/);
+    const all = rules
+      .filter((r) => r.sel.includes("gp-column-status"))
+      .map((r) => r.body)
+      .join(" ");
+    expect(all).not.toMatch(/display:\s*none/);
+    expect(all).not.toMatch(/visibility:\s*hidden/);
+    expect(all).not.toMatch(/clip-path/);
+  });
+
+  it("holds the hidden status line to its own row, on 1.7 too", () => {
+    expect(bodyOf(".gp-setting-wide")).toMatch(/(^|;)\s*position: relative;/);
+  });
+
+  it("shows a disabled column button as one, with the cursor too", () => {
+    expect(bodyOf('.gp-column-item .extra-setting-button[aria-disabled="true"]')).toMatch(
+      /(^|;)\s*cursor: not-allowed;/
+    );
   });
 });

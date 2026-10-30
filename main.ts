@@ -169,6 +169,13 @@ export default class GentlePomoPlugin extends Plugin {
       logChanged: () => {
         this.logFolderChanged();
       },
+      // Export reads the log as a template does. A call: the API is set just
+      // below, and gone once the plugin unloads.
+      readDays: (from, to) =>
+        this.api
+          ? this.api.getDays(from, to)
+          : Promise.reject(new Error("Gentle Pomodoro is not loaded.")),
+      saveSettings: () => this.saveSettings(),
     });
     this.timer = new TimerEngine(this);
     this.api = createLogApi({
@@ -256,6 +263,15 @@ export default class GentlePomoPlugin extends Plugin {
       name: "Fix a logged session",
       callback: () => {
         this.fixSession();
+      },
+    });
+
+    // 0.7.0: a CSV or JSON Lines file of the log's sessions. Reads the log only.
+    this.addCommand({
+      id: "export-sessions",
+      name: "Export sessions",
+      callback: async () => {
+        await this.exportSessions();
       },
     });
 
@@ -600,6 +616,11 @@ export default class GentlePomoPlugin extends Plugin {
   /** Change or delete one logged session. */
   fixSession(): void {
     this.logTools.fixSession();
+  }
+
+  /** The sessions as a new CSV or JSON Lines file — the command and the settings button. */
+  exportSessions(): Promise<void> {
+    return this.logTools.exportSessions();
   }
 
   override onunload() {

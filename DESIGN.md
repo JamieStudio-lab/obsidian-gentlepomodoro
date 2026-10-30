@@ -69,8 +69,12 @@ container and a `.gp-root`-scoped block misses all four — invisibly, because t
 anyone would look to check, is fine:
 
 - `.gp-status*` — built from `addStatusBarItem()` in [main.ts](main.ts)
-- `.gp-confirm-modal` — [confirmModal.ts](confirmModal.ts)
-- `.gp-setting-with-error` / `.gp-setting-error` — [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
+- `.gp-confirm-modal` — [confirmModal.ts](confirmModal.ts), and `.gp-copy-fallback` —
+  [clipboard.ts](clipboard.ts) (0.7.0)
+- `.gp-setting-with-error` / `.gp-setting-error`, and since 0.7.0 the Log tables group's
+  `.gp-setting-wide`, `.gp-column-*` (the list, its ✕, the "Add a column" buttons and the status
+  line), `.gp-setting-code` and `.gp-query-code*` —
+  [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
 - `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor, the first rule in styles.css
 
 **Layer 0 — Obsidian's own variables.** Not ours. Listed above.
@@ -470,6 +474,26 @@ rounds found it weaker than its name each time it matched the shapes of code it 
 
 Thirty-six mutants, all killed, and two harmless edits (inserting a node before the square, renaming
 its local) left green.
+
+### 14. The "Add a column" buttons out-rank app.css's button rules, and hide nothing they need.
+
+The Log tables page's add buttons (0.7.0) are real `<button>`s — Tab reaches them and Enter and
+Space press them on every Obsidian, with no code of ours — so app.css's button rules all reach them:
+`button` (a fixed `height: var(--input-height)`, 44px on 1.13's phones), `button:not(.clickable-icon)`
+(a fill and a shadow), `button:focus-visible` (a 3px grey halo) and, on a tablet,
+`.is-tablet button:not(.clickable-icon)` at (0,2,1) (padding). Every rule naming the chip is
+therefore `.gp-column-add .gp-column-chips button.gp-column-chip`, (0,3,1) or more, so it wins on
+specificity rather than on where the stylesheets load (rule 2's reasoning). A test works out the
+specificity of every selector naming `.gp-column-chip` and fails one at or under (0,2,1). Three
+things in that rule look like tidy-up targets and are not:
+
+- **`--no-tooltip: true`.** The button's `aria-label` ("Add End") is what a screen reader reads, and
+  Obsidian shows a tooltip for any `[aria-label]` unless this is set — here, the visible name again.
+- **`box-shadow: none` with the focus ring rule beside it.** Taking the fill's shadow off takes
+  1.13's halo off too; the plugin's ring rule names the chip, or a focused one shows nothing.
+- **`.gp-column-status` is out of sight, not hidden.** 1px, `opacity: 0`, absolute: never
+  `display: none` or `visibility: hidden`, which take it from screen readers too, and no
+  `clip-path`, which Obsidian's review flags.
 
 ## Build
 

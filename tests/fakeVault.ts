@@ -42,6 +42,10 @@ export interface FakeVault {
   move(file: TFile, to: string): void;
   /** Take a file out of the vault, as fileManager.trashFile does. */
   remove(file: TFile): void;
+  /** Put a new file in the vault, its folders made as needed, as Vault.create does. */
+  add(path: string, content: string): TFile;
+  /** Put a new folder in the vault, as Vault.createFolder does. */
+  addFolder(path: string): TFolder;
 }
 
 /** Obsidian's rule: after the last dot, lower-cased; none for a leading dot. */
@@ -134,6 +138,13 @@ export function fakeVault(files: Record<string, string>, extraFolders: string[] 
       Reflect.deleteProperty(contents, file.path);
       unplace(file);
     },
+    add: (path, content) => {
+      const file = new TFile();
+      place(file, path);
+      contents[path] = content;
+      return file;
+    },
+    addFolder: (path) => folderAt(path),
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { LOG_PAGE } from "../settingPages";
 import { resolve } from "node:path";
 import type { App, TFile } from "obsidian";
 import {
@@ -476,6 +477,9 @@ describe("the notice's words", () => {
     expect(LOG_FORMAT_NOTICE).toContain(where);
     expect(NO_LOG_FOLDER_NOTICE).toContain(where);
     expect(tab).toContain('heading: "Daily log",');
+    // On 1.13 it is a page of that name (0.7.0), whose title says it.
+    expect(LOG_PAGE).toBe("Daily log");
+    expect(tab).toContain("name: LOG_PAGE,");
   });
 
   it("starts as the plugin's other notices start", () => {

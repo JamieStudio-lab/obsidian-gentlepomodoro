@@ -4,6 +4,201 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-10-30
+
+**Each log line now says how its session began and ended, the settings can
+copy a ready-made Dataview table or export your sessions to a file, and on
+Obsidian 1.13 the settings open on a short list of pages.**
+Update every device that logs. Lines are longer and `Overtime` is no longer
+the last field on a focus line, which matters only to your own queries or
+scripts that anchor on the end of a line — see the second entry under
+**Changed**.
+
+### Added
+
+- **Ten new fields at the end of the lines the timer, a recovery or Add a
+  session writes**, after `Overtime` (focus) or `Type` (rest), in this order.
+  Five are on every such line (`Session`, `StartedBy`, `EndedBy`, `Planned`
+  and `Offset`); the rest only when they apply. The ten fields before them
+  are written exactly as in 0.6.9.
+  - `Session` — an ID like `s7k2m9qx4w`: `s` and nine characters. The lines
+    of a session split at a task switch share it.
+  - `StartedBy` — `start`, `auto` (the one before ended and this one began by
+    itself), `reset` (you pressed Reset while the timer ran, which threw that
+    session away and began this one) or `added`.
+  - `EndedBy` — `time-up` (the time ran out and the next session began by
+    itself), `stop`, `planned-end` (Stop's **End at planned end**), `skip`,
+    `recovered`, `recovered-planned-end` (the startup's **Log it** and **Log
+    up to planned end**) or `added`.
+  - `Planned` — the timer's plan when it ended, in seconds, any +5 or −5
+    included: what `Overtime` is counted past. `Scheduled` is unchanged, the
+    length in your settings when the session began.
+  - `Cycle` — a focus's place in the long-break cycle, 1 up to **Focus
+    sessions before a long break**; the long break follows the focus whose
+    `Cycle` is that number. Only on a focus that counted (time up or Stop):
+    none on a break, a skipped, recovered or added session.
+  - `Offset` — minutes east of UTC when it began, like `-300`.
+  - `OffsetChange` — minutes the clocks moved while it ran. Only when it
+    isn't 0, which is only across a clock change.
+  - `Slept` — seconds, about how long the computer slept while the timer
+    was running: the sleep that made it pause (a sleep while you had paused
+    it yourself isn't counted). An estimate: it can hold up to about a
+    minute awake at either end, and a sleep of under about 10 minutes isn't
+    recorded. Not
+    on a session that ended at its planned time while the computer slept
+    (the next one starting on its own): that sleep counts as focus. Only
+    when above 0.
+  - `Dropped` — seconds of active time a planned end left out, so the
+    session's `Total` plus `Dropped` is what the timer measured (a split
+    session's `Total` added up over its lines). Only after Stop's **End at
+    planned end** or the startup's **Log up to planned end**, which now write
+    the same numbers, and then on the last line of a split session.
+  - `Device` — this device's name, when you have typed one.
+- **Old lines are never filled in.** A line from before 0.7.0, one a device
+  still on 0.6.9 wrote, and one **Convert old log lines** rewrote have none
+  of these, and nothing adds them afterwards — not Convert, not **Fix a
+  logged session**, not this update. On a line that has `Session`, a missing
+  `Dropped` or `OffsetChange` means 0, a missing `Slept` means the timer
+  paused for no sleep (a session that ended at its planned time while the
+  computer slept, with the next one starting on its own, has none: that
+  sleep counts as focus), and a missing `Cycle` means
+  the session moved no long-break count; on a line without it every one of
+  them is unknown. A session 0.6.9 left unfinished and 0.7.0 then logs from
+  the question at startup has none.
+- **A Log tables page in the settings** (a group, right after Daily log,
+  before Obsidian 1.13). The
+  plugin draws nothing in your notes: four **Copy** buttons give you code for
+  the Dataview plugin, with your log folder filled in, to paste into any note
+  and change as you like — **Copy sessions table**, **Copy sessions table for
+  DataviewJS** (which reads the log files itself, so it runs with the plugin
+  off), **Copy daily totals** and **Copy time by task**. You choose the
+  sessions table's **Columns** (the columns in the table, in order, each
+  with ↑ / ↓ and ✕, and under them **Add a column**, a button for each of
+  the others, 18 columns in all — one added goes at the end, and at least
+  one stays; with
+  **Simple** and **Detailed** buttons to start from), **Days** (this note's
+  day, today, the last 7 or 30 days, or all), **Sessions** (focus only, or
+  with breaks), **Include skipped focus** and **Order**, and **Show the
+  code** previews it. A line from before 0.7.0 shows `-` for what it doesn't
+  have (`Planned` never falls back to `Scheduled`). The code keeps your **Day
+  starts at** hour, leaves out any note in the log folder that isn't a daily
+  log or a note of your own in a log file, counts every line the daily goal
+  counts once it is in the new format (a line **Convert old log lines**
+  rewrote from a log older than the `Type` field has none, and is counted;
+  a line not yet converted Dataview can't read at all), counts a split
+  session once in the totals and in time by task (on 0.7.0
+  lines, which carry a `Session`), and, if the system refuses clipboard
+  access, shows the code in a window to copy by hand. The ↑ / ↓ / ✕ buttons,
+  the **Add a column** buttons and **Show the code** work from the keyboard on
+  every Obsidian the plugin runs on, a screen reader is told what each change
+  did, and a double click on ✕ or on an add button counts once.
+- **This device's name** (Daily log): optional, written as `Device` on what
+  this device's timer logs, to tell your devices apart. It is kept on that
+  device only, never in the settings file, so a name typed on the laptop
+  doesn't reach the phone. 🍅, ☕ and `#` are taken out and it is cut to 40
+  characters when a line is written, and a note under the row shows the
+  written form when it differs. **Add a session** writes no `Device`.
+- **Export sessions** — a command and a button under Daily log. A dialog asks
+  for the days (last 7 or 30 days, this or last month, this year,
+  everything, or dates you type), focus only or with breaks, CSV or JSON
+  Lines, and a folder you type (`Pomodoro exports` until you use another).
+  It saves a new file named like
+  `gentle-pomodoro-sessions-2026-09-23-to-2026-10-22-091500.csv`, with a
+  number added if that name is taken, reading the log the way a template
+  does and never changing it. It never overwrites a file it can see; a file a
+  sync drops there between Obsidian's own check and its write can be replaced,
+  so the file is read back once and a notice warns you if it isn't what was
+  written. The CSV has a byte order mark (Excel reads accents), CRLF line
+  ends and a header; its columns are fixed, with new ones added at the end.
+  Text cells that start like a formula (`=`, `+`, `-`, `@`, a tab or a
+  carriage return) get a `'` in front. The vault's top level and hidden folders are refused, and so is
+  a folder Obsidian can't save the file in on every device — a name with
+  `:`, `*`, `?`, `"`, `<`, `>` or `|`, or a new one that ends with a dot or a
+  space or is a name Windows keeps (`CON`, `AUX`, `NUL`, …) — in the dialog,
+  before anything is written.
+- **The read API gains ten session members**, `sessionId`, `startedBy`,
+  `endedBy`, `planned`, `cycle`, `offset`, `endOffset`, `slept`, `dropped` and
+  `device`, read from the fields above. They are `null` on a line without
+  `Session`, none worked out afterwards. The API stays version 1; nothing it
+  gave before has changed.
+- **Check log looks at the new fields**, on lines that have them: a `Slept`
+  longer than the line's pauses (on a break, which lists none, its time less
+  its `Total`), and a `Cycle` on a break or a skipped focus.
+  These are what a device still on 0.6.9 leaves stale when it fixes a 0.7.0
+  line. It changes nothing.
+- **Add a session** writes `Session`, `StartedBy` and `EndedBy` (both
+  `added`), `Planned` (the length you gave) and `Offset`, and no `Cycle`,
+  `Slept`, `Dropped` or `Device`. **Fix a logged session** keeps the new
+  fields as written, except what the fix makes untrue: a new length counts
+  `Overtime` past `Planned`, a new start or length takes out `Slept` and
+  `Dropped`, and making a focus a break or skipped takes out `Cycle`.
+  `Offset` and `OffsetChange` stay as written, so a fix that moves a start,
+  or changes a length, across a clock change leaves them an hour out. A line
+  without them gets none.
+
+### Changed
+
+- **On Obsidian 1.13 and later the settings open on a short list of pages**
+  — Timer, Status bar (computers only), Sounds and notifications (Sounds on
+  phones and tablets), Music, Daily log, Log tables and Tasks — each showing
+  its current value (the theme, the two end-of-session sounds, how many music
+  links, the log folder, the table's columns and days, where the task picker
+  looks), with a warning sign on Music for a link that isn't a YouTube link
+  the player can use and on Daily log for a folder the log's commands can't
+  list. Obsidian's settings
+  search still finds every setting, and opens its page. The settings are the
+  same ones; only where they sit is new. Before 1.13 they stay on one page, in
+  the pages' order, so **Long break** and **Daily focus goal** now come right
+  after **Timer appearance**, and **Status bar** after them. Leaving the
+  Sounds page stops a sound you are previewing, as closing the settings does.
+- **For your own log queries and scripts: lines are longer, and `Overtime`
+  is no longer last.** A focus line is about 108 characters longer (a break
+  about 92; more with a device name). The ten earlier fields, their order
+  and their values are as in 0.6.9, so a pattern that reads a field by name
+  (`Overtime::\s*(\d+)`, `Total::\s*(\d+)`) works on every line. One
+  anchored on `Overtime` being the last field (`\[Overtime:: \d+\]$`) no
+  longer matches new lines. None of the new names ends with an older
+  field's name (`OffsetChange`, not `EndOffset`), so a greedy `.*Total::`
+  can't read a new field by mistake, and none is `Day` or `Date`, which would
+  replace Dataview's own `file.day` for the whole file.
+- **Update every device that logs.** A device still on 0.6.9 writes lines
+  without the new fields, and when it fixes a 0.7.0 line it keeps them as they
+  were, even if the fix made one untrue. Check log points those out.
+- **`Offset` shows roughly where you were, and `Device` names a machine.** If
+  you publish your log folder or push it to a public repository, they go
+  with it. There is no switch for `Offset` — it is on every new line — but
+  `Device` is written only when you type a name.
+- The README's two example queries are replaced. They counted any note in the
+  log folder that quoted a log line, and had never been run in Dataview. The
+  new ones take your folder, filter on the daily log's file name and date,
+  count a focus line Convert rewrote without a `Type`, read each list item
+  as `s`, and run in Dataview 0.5.68 in the plugin's tests.
+
+### Internal
+
+- **Dataview's own engine runs the copied code in the tests.** A copy of
+  Dataview 0.5.68's `main.js` (MIT, with its licence, 1.3 MB) sits under
+  `tests/fixtures/dataview`; it isn't part of the plugin you install. A suite
+  parses made-up day files with Dataview's own worker and runs every table
+  the settings can make through its real query parser and evaluator, and the
+  DataviewJS tables through its inline API, holding each to the row count and
+  order worked out apart from Dataview. Dataview drops a row whose cell fails
+  without a word, so a table that quietly shows fewer lines is the failure it
+  looks for. The copy is excluded from prettier, eslint and `tsc`, kept
+  byte for byte (`.gitattributes`), and `.gitignore` lets it through.
+- **A log line is still formatted and parsed only in `logLine.ts`**, which
+  also reads the new fields once (`readLogTail`) for the API, Check log and
+  Export, so the three can't read one line three ways. The tests fail any
+  other source that names a new field followed by `::`, and any new field
+  whose name ends in an older one or is `Day` or `Date`.
+- The long break is decided from the same number the line's `Cycle` is,
+  with the setting read once, so the two agree even when the settings file
+  was edited by hand or the setting changed while the session was being
+  logged.
+- 2188 → 2616 tests, 36 → 40 files. Every rule added was broken on purpose
+  to see a test fail: over 600 breakages, all caught except a few that
+  change nothing a user can see.
+
 ## [0.6.9] — 2026-10-08
 
 **The daily log has a new line format, which Dataview can read.** It is

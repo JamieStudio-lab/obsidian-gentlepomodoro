@@ -4632,3 +4632,231 @@ body.is-tablet .gp-timer-time {
 .gp-setting-note.gp-setting-note-info {
   color: var(--text-muted);
 }
+
+/* ===== Settings-tab Log tables (0.7.0) ===== */
+
+/* The Columns row: its list and its "Add a column" buttons take the row's
+   whole width, under the name and description, while the Simple and Detailed
+   buttons stay in the control column — on a phone, where Obsidian makes a
+   settings button full width, they share the line there and the list still
+   gets the width it needs.
+
+   Below 400px of settings pane (every phone, and a narrow desktop pane)
+   app.css turns a setting row into a COLUMN with align-items: flex-start, so
+   a child is as wide as its content, not the row: the list ended at its
+   longest name, and the code below came out as wide as its longest line
+   (1488px in a 320px pane), scrolling the whole tab sideways. Stretched and
+   held to the row, all three are the row's width, the buttons wrap, and the
+   code scrolls inside itself. Measured in headless Chrome under 1.13.7's
+   and 1.14.5's app.css. */
+/* Positioned, so the hidden status line inside it is held by its own row:
+   1.13 makes a setting row relative itself, 1.7 does not, and there the line
+   sat against the modal, thousands of pixels from its row. */
+.gp-setting-wide {
+  position: relative;
+  flex-wrap: wrap;
+}
+
+/* The names at the size 1.13 gives a setting's name (1.7 gives it one step
+   more), not the page's body text, which made them the largest words on it. */
+.gp-column-list {
+  display: flex;
+  flex: 1 0 100%;
+  flex-direction: column;
+  align-self: stretch;
+  max-width: 100%;
+  gap: var(--gp-space-1);
+  min-width: 0;
+  margin-top: var(--gp-space-4);
+  font-size: var(--font-ui-small);
+}
+
+/* One line each: name, ↑, ↓, ✕. A long name is cut, never the buttons. */
+.gp-column-item {
+  display: flex;
+  align-items: center;
+  gap: var(--gp-space-4);
+  min-width: 0;
+}
+
+.gp-column-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Touch: each button a 36px target, as Tasks' edit and postpone are on a phone. */
+body.is-mobile .gp-column-item .extra-setting-button {
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+/* A disabled button says so on hover too, as app.css's button[disabled] does;
+   Obsidian's own [aria-disabled] rule dims it. */
+.gp-column-item .extra-setting-button[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* "Add a column": the columns not in the table, as small buttons that wrap.
+   Hidden while every column is in the table. */
+.gp-column-add {
+  flex: 1 0 100%;
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: var(--gp-space-5);
+}
+
+.gp-column-add.gp-column-add-empty {
+  display: none;
+}
+
+.gp-column-add-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.gp-column-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gp-space-3);
+  min-width: 0;
+  margin-top: var(--gp-space-3);
+}
+
+/* Lighter than a settings button, as they are offers, not actions: no fill,
+   a dashed outline, muted text. Three classes and the element, so this wins
+   over app.css's `button`, `button:not(.clickable-icon)` and the tablet's
+   `.is-tablet button:not(.clickable-icon)` (0,2,1) on specificity, not on
+   where the stylesheets load. */
+.gp-column-add .gp-column-chips button.gp-column-chip {
+  /* The label repeats the name; Obsidian would show it as a tooltip. */
+  --no-tooltip: true;
+  --icon-size: var(--icon-xs);
+  --icon-stroke: var(--icon-xs-stroke-width);
+  gap: var(--gp-space-1);
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 26px;
+  padding: var(--gp-space-1) var(--gp-space-4) var(--gp-space-1) var(--gp-space-3);
+  border: 1px dashed var(--background-modifier-border-hover);
+  border-radius: var(--gp-radius-pill);
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+@media (hover: hover) {
+  .gp-column-add .gp-column-chips button.gp-column-chip:hover {
+    border-style: solid;
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+}
+
+/* Touch: the same 36px target as the buttons above. */
+body.is-mobile .gp-column-add .gp-column-chips button.gp-column-chip {
+  min-height: 36px;
+  padding: var(--gp-space-2) var(--gp-space-5) var(--gp-space-2) var(--gp-space-4);
+}
+
+.gp-column-chip-icon {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.gp-column-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The Columns row's status line: read by a screen reader, never seen. Never
+   display:none or visibility:hidden, which take it from screen readers too,
+   and no clip-path, which Obsidian's review flags. */
+.gp-column-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* The code row has no name and no control, only the closed "Show the code". */
+.gp-setting-code {
+  flex-wrap: wrap;
+}
+
+.gp-setting-code .setting-item-info,
+.gp-setting-code .setting-item-control {
+  display: none;
+}
+
+.gp-query-code {
+  flex: 1 0 100%;
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.gp-query-code > summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+/* Tab reaches the arrows, the add buttons and "Show the code" on every
+   version, so they carry the plugin's ring: Obsidian 1.7 draws none on a
+   clickable icon (its `:focus { outline: none }`, and no
+   `.clickable-icon:focus-visible`), and no version draws one on a summary. On
+   1.13 this replaces the grey halo its `.clickable-icon:focus-visible` puts
+   on an arrow, and the 3px one `button:focus-visible` puts on a button, so
+   they all look alike. The add buttons' rule matches their own selector, which
+   would otherwise win on specificity and take the ring off again. */
+.gp-column-item .extra-setting-button:focus-visible,
+.gp-column-add .gp-column-chips button.gp-column-chip:focus-visible,
+.gp-query-code > summary:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+  box-shadow: none;
+}
+
+/* The code scrolls inside itself, both ways, so the page never scrolls
+   sideways at phone width. It reads left to right in every app language:
+   under a right-to-left one (Arabic, Hebrew, …) Obsidian makes the modal
+   direction: rtl, and the fence showed as dataview``` with the first line
+   cut off at the left (headless Chrome under 1.13.7's app.css). Obsidian's
+   own code blocks are direction: ltr too. */
+.gp-query-code-text {
+  max-height: 16em;
+  margin: var(--gp-space-4) 0 0;
+  padding: var(--gp-space-4);
+  overflow: auto;
+  border-radius: var(--gp-radius-sm);
+  background-color: var(--code-background);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  white-space: pre;
+  user-select: text;
+  direction: ltr;
+  text-align: left;
+}
+
+/* The code to copy by hand when the clipboard refuses (clipboard.ts), left
+   to right in every app language, as the preview above. */
+.gp-copy-fallback {
+  width: 100%;
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  resize: vertical;
+  direction: ltr;
+  text-align: left;
+}

@@ -13,6 +13,9 @@ export interface MomentLike {
   valueOf(): number;
   // The wall-clock hour, 0-23 (logLine.ts's logicalDate).
   hour(): number;
+  // Minutes east of UTC at this instant, in the zone it is shown in: a log
+  // line's Offset (0.7.0), so its Start text names one instant.
+  utcOffset(): number;
 
   format(formatString: string): string;
   diff(other: MomentLike, unit?: MomentUnit): number;

@@ -19,8 +19,10 @@ import {
   logSeconds,
   logTaskId,
   logicalDate,
+  newSessionId,
   parseLogLine,
   readLogPauses,
+  readLogTail,
   readLogTime,
   repeatedReading,
   stamp,
@@ -153,10 +155,16 @@ export type SessionFormResult = { ok: true; session: SessionLog } | { ok: false;
  * A new session from the dialog. Scheduled is the active length and Overtime
  * 0: a session typed in afterwards had no plan to run past, and no pauses are
  * kept, so the line's Total is exactly the minutes given.
+ *
+ * Its tail (0.7.0): a Session ID of its own, "added" for how it started and
+ * ended, and the length as Planned. Nothing the timer alone can know — no
+ * Cycle (it moves no long-break count), Slept or Dropped — and no Device: it
+ * was not timed on this device. `context.newSessionId` stands in for
+ * newSessionId in tests.
  */
 export function sessionFromForm(
   form: SessionForm,
-  context: { toMoment: ToMoment; nowMs: number }
+  context: { toMoment: ToMoment; nowMs: number; newSessionId?: () => string }
 ): SessionFormResult {
   const problem = timingProblem(form);
   if (problem !== null) return { ok: false, message: problem };
@@ -178,6 +186,10 @@ export function sessionFromForm(
       status: form.kind === "focus" ? form.status : "finished",
       breakType: form.kind === "long-break" ? "long" : form.kind === "short-break" ? "short" : null,
       overtimeSeconds: 0,
+      sessionId: (context.newSessionId ?? newSessionId)(),
+      startedBy: "added",
+      endedBy: "added",
+      plannedSeconds: minutes * 60,
     },
   };
 }
@@ -440,8 +452,12 @@ export function describeLoggedLine(line: LoggedLine): string {
   return parts.join(" · ");
 }
 
-// Every field the log has ever written. A field the line carries beyond
-// these — one a user added by hand — is kept as it is, at the end.
+// The fields Fix rebuilds from the form: the ten 0.6.9 wrote. Every other
+// field — 0.7.0's tail (logLine.ts's LOG_TAIL_KEYS) and any a user added by
+// hand — is kept as written, at the end in line order, less what the edit
+// makes untrue (editedLine). Never add the tail's keys here: Fix's template
+// has no tail (formatLogLine writes one only with a Session ID, and editedLine
+// never gives it one), so a key in this set would vanish from every fixed line.
 const LOG_FIELD_KEYS = new Set([
   "Task",
   "ID",
@@ -485,7 +501,21 @@ const sameForm = (a: SessionForm, b: SessionForm): boolean =>
  *
  * Nothing is invented: a field the line does not have stays away unless what
  * it describes changed, and Overtime is never added. A field the log never
- * writes stays, at the end, and so does text after the fields. A move to
+ * writes stays, at the end, and so does text after the fields.
+ *
+ * A line with 0.7.0's tail (it has a Session) keeps it as written, except
+ * what the edit makes untrue: new minutes count Overtime past its Planned —
+ * the plan the clock ended it at — so Total − Planned is the Overtime, as on
+ * a whole session's line. (A split session's part carries the whole
+ * session's Planned and an Overtime spread from the end, so a fixed part is
+ * counted as if it were the whole session, as 0.6.9 counted it past
+ * Scheduled.) A new start or length drops Slept (it named sleep inside pauses that moved
+ * or went) and Dropped (time past a plan the line no longer runs to); a focus
+ * made a break, or made skipped, drops Cycle (only a counted focus has a
+ * place in the cycle). Session, StartedBy, EndedBy, Planned, Offset,
+ * OffsetChange and Device stay as they are: they say how the session was
+ * timed, which a fix afterwards does not change. A line without the tail gets
+ * none: an old line is never filled in. A move to
  * another day's file is refused — this rewrites one line in one file — and so
  * is any line that would not read back the same. A start that stays on the
  * day it was on is not a move, even in a file named by another rule: files
@@ -545,8 +575,14 @@ export function editedLine(
   }
 
   const scheduled = logSeconds(line.parsed, "Scheduled") ?? minutes * 60;
+  // A 0.7.0 line's own plan, when it says one: Overtime is past that. Read
+  // as the read API, Check log and Export read it (readLogTail), so a
+  // Planned none of them can read is unknown here too, and Scheduled counts.
+  const hasTail = original.has("Session");
+  const planned = readLogTail(line.parsed)?.planned ?? null;
   const task = taskChanged ? form.task : initial.task;
   const at = (seconds: number) => context.toMoment(seconds * 1000);
+  // No sessionId, ever: the template is only the ten fields (LOG_FIELD_KEYS).
   const session: SessionLog = {
     mode: form.kind === "focus" ? "focus" : "break",
     taskName: task?.name ?? NO_TASK_LABEL,
@@ -558,7 +594,7 @@ export function editedLine(
     pauses: pauses.map(([a, b]) => ({ start: at(a), end: at(b) })),
     status: form.status,
     breakType: form.kind === "long-break" ? "long" : form.kind === "short-break" ? "short" : null,
-    overtimeSeconds: Math.max(0, minutes * 60 - scheduled),
+    overtimeSeconds: Math.max(0, minutes * 60 - (planned ?? scheduled)),
   };
   // The writer's own line gives the field order and every NEW value; a field
   // nothing changed keeps the line's own text, and stays away if the line had
@@ -584,8 +620,20 @@ export function editedLine(
     const value = changed[field.key] ? field.value : original.get(field.key);
     if (value !== undefined) fields.push([field.key, value]);
   }
+  // The tail's fields this edit makes untrue (see above); none on a line
+  // without one.
+  const untrue = new Set<string>();
+  if (hasTail) {
+    if (timingChanged) untrue.add("Slept").add("Dropped");
+    const noLongerCounted =
+      (initial.kind === "focus" && form.kind !== "focus") ||
+      (statusChanged && form.status === "cancelled");
+    if (noLongerCounted) untrue.add("Cycle");
+  }
   for (const field of line.parsed.fields) {
-    if (!LOG_FIELD_KEYS.has(field.key)) fields.push([field.key, field.value]);
+    if (!LOG_FIELD_KEYS.has(field.key) && !untrue.has(field.key)) {
+      fields.push([field.key, field.value]);
+    }
   }
 
   // The checkbox the oldest lines carried goes, as in the converter: it made

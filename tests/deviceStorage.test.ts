@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { App } from "obsidian";
-import { deviceStorage, type WebStorage } from "../deviceStorage";
+import {
+  DEVICE_NAME_KEY,
+  deviceStorage,
+  readDeviceName,
+  saveDeviceName,
+  type WebStorage,
+} from "../deviceStorage";
 
 /** A window.localStorage stand-in that records what it was asked. */
 function webStorage(): WebStorage & { items: Map<string, string> } {
@@ -133,5 +139,21 @@ describe("deviceStorage — the window's storage below 1.8.7", () => {
     const web = webStorage();
     web.items.set("a-k", "{not json");
     expect(deviceStorage(asApp({ appId: "a" }), () => web).load("k")).toBeNull();
+  });
+});
+
+describe("the device name's key", () => {
+  it("is gentle-pomodoro-device-name, for good", () => {
+    // The maintainer's call (2026-10-30): the plugin's name in front, like the
+    // other keys, as every plugin in the vault shares this storage. Each
+    // device keeps its name under this text, so a new key would quietly drop
+    // every name already typed. Every other test reads the constant, so this
+    // is the one that sees a rename.
+    expect(DEVICE_NAME_KEY).toBe("gentle-pomodoro-device-name");
+    const web = webStorage();
+    const storage = deviceStorage(asApp({ appId: "abc123" }), () => web);
+    saveDeviceName(storage, " Mac ");
+    expect([...web.items.entries()]).toEqual([["abc123-gentle-pomodoro-device-name", '"Mac"']]);
+    expect(readDeviceName(storage)).toBe("Mac");
   });
 });
