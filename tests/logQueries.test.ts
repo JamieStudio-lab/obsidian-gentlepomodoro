@@ -47,11 +47,14 @@ const SIMPLE_WEEK: QueryOptions = {
   sort: "newest",
 };
 
+const shownOf = (columns: readonly { id: string; on: boolean }[]) =>
+  columns.filter((c) => c.on).map((c) => c.id);
+
 describe("the columns setting", () => {
   it("offers every column once, with a header and both forms of its cell", () => {
     const ids = QUERY_COLUMNS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toHaveLength(18);
+    expect(ids).toHaveLength(19);
     for (const c of QUERY_COLUMNS) {
       expect(c.label, c.id).not.toBe("");
       expect(c.head, c.id).not.toBe("");
@@ -81,11 +84,36 @@ describe("the columns setting", () => {
 
   it("stores one string, a - before a column that is off, and reads it back", () => {
     expect(DEFAULT_SETTINGS.queryColumns).toBe(
-      "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+      "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note"
     );
     expect(resolveQueryColumns(DEFAULT_SETTINGS.queryColumns)).toEqual(presetColumns("simple"));
+    expect(formatQueryColumns(resolveQueryColumns(DEFAULT_SETTINGS.queryColumns))).toBe(
+      DEFAULT_SETTINGS.queryColumns
+    );
     const detailed = presetColumns("detailed");
     expect(resolveQueryColumns(formatQueryColumns(detailed))).toEqual(detailed);
+  });
+
+  it("offers the focus note last, off, in no preset — and off for a 0.7.0 string", () => {
+    // 0.7.1's column, at the end of the catalog: a value stored by 0.7.0
+    // lacks it, and reads with it off and last, every other choice kept.
+    expect(QUERY_COLUMNS[QUERY_COLUMNS.length - 1]).toEqual({
+      id: "note",
+      label: "Note",
+      head: "Note",
+      dql: "s.Note",
+      js: "s.Note ?? null",
+    });
+    for (const preset of Object.values(QUERY_PRESETS)) {
+      expect(preset as readonly string[]).not.toContain("note");
+    }
+    const v070 =
+      "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset";
+    expect(resolveQueryColumns(v070)).toEqual(presetColumns("simple"));
+    const detailed070 = "date,start,end,task,minutes,planned,overtime,pauses,status,endedby,device";
+    const read = resolveQueryColumns(detailed070);
+    expect(read[read.length - 1]).toEqual({ id: "note", on: false });
+    expect(shownOf(read)).toEqual(detailed070.split(","));
   });
 
   it("is never trusted as stored", () => {

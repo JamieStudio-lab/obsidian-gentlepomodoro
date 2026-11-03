@@ -195,6 +195,9 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   // Off for everyone, new installs included: an interruption at the end of a
   // session is something to ask for, never something to find turned on.
   sessionEndNotification: false,
+  // Off for everyone: the card is a question after each session, something
+  // to ask for (0.7.1, focusNote.ts).
+  focusNoteEnabled: false,
   tasksPath: "",
   logFolderPath: "",
   // Midnight, so an upgrading user's days and file names do not move.
@@ -204,7 +207,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   longSessionPromptHours: 6,
   // Simple, the last 7 days, focus only, skipped focus shown, newest first.
   queryColumns:
-    "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset",
+    "date,start,task,minutes,status,-end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note",
   queryRange: "week",
   queryKinds: "focus",
   querySkipped: true,

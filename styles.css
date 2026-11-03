@@ -1188,9 +1188,16 @@ body {
   flex: 0 0 auto;
 }
 
-.gp-segmented-btn {
+/* `button.gp-segmented-btn` under two ancestors, (0,3,1): app.css's
+   unconditional `button:not(.clickable-icon)` (0,1,1) gives every button a
+   fill and a shadow, and `.is-tablet button:not(.clickable-icon)` (0,2,1) its
+   padding, so a bare `.gp-segmented-btn` (0,1,0) lost both and every Low / Mid
+   / High that was not the active one took Obsidian's button fill (white on a
+   phone). Every rule naming it is written this way (DESIGN.md entry 14). */
+.gp-settings-row .gp-segmented button.gp-segmented-btn {
   background: transparent;
   border: none;
+  box-shadow: none;
   color: var(--text-muted);
   padding: 0 var(--gp-space-5);
   height: calc(var(--gp-control-h) - var(--gp-segmented-inset));
@@ -1204,21 +1211,22 @@ body {
     color 0.15s ease;
 }
 
-.gp-segmented-btn:hover:not(.is-active) {
+.gp-settings-row .gp-segmented button.gp-segmented-btn:hover:not(.is-active) {
   color: var(--text-normal);
 }
 
-.gp-segmented-btn.is-active {
+.gp-settings-row .gp-segmented button.gp-segmented-btn.is-active {
   background-color: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
 /* Inset, and without Obsidian's grey halo — see the shared ring rule. The
-   segmented rows live in the settings panel, which clips sideways. */
-.gp-segmented-btn:focus-visible {
+   segmented rows live in the settings panel, which clips sideways. The
+   resting look put back is the base rule's: no shadow (0.7.1). */
+.gp-settings-row .gp-segmented button.gp-segmented-btn:focus-visible {
   outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
   outline-offset: var(--gp-focus-ring-offset-inset);
-  box-shadow: var(--input-shadow);
+  box-shadow: none;
 }
 
 /* --- Reset-to-defaults link at the bottom of the in-view settings panel --- */
@@ -1248,7 +1256,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .gp-toggle-slider,
   .gp-toggle-slider::before,
-  .gp-segmented-btn {
+  .gp-settings-row .gp-segmented button.gp-segmented-btn {
     transition: none;
   }
 }
@@ -3956,6 +3964,332 @@ body {
 }
 
 /* =========================================================================
+   Focus note (0.7.1)
+   -------------------------------------------------------------------------
+   The card after a focus session is logged (focusNoteCard.ts): between the
+   task button and the music rule in the panel, and in the dialog the command
+   opens (.gp-note-in-modal). Chrome, not artwork: every colour is
+   Obsidian's, and the card has no fill. Spacing px, type rem.
+
+   Every selector that styles a <button> names an ancestor class, the element
+   and its class, (0,3,1) or more, so it wins over app.css's `button`,
+   `button:not(.clickable-icon)` (0,1,1) and `.is-tablet
+   button:not(.clickable-icon)` (0,2,1) on specificity, not on load order. A
+   button that cannot act is [aria-disabled="true"], never :disabled (it
+   keeps its focus). DESIGN.md entry 15.
+   ========================================================================= */
+.gp-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gp-space-7);
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--gp-space-6);
+  /* The panel's rows are 12px apart, but the closed task list above sits
+     between the task button and this card (its 8px margin + 2px frame + a
+     second 12px gap), so the card would hang 34px below the button and only
+     12px above the music rule. Pull it up a row gap and push the rule down
+     one: 22px above, 24px below. */
+  margin-top: calc(-1 * var(--gp-space-5));
+  margin-bottom: var(--gp-space-5);
+  /* The task list's open frame: same 1px rule colour, same radius. No fill,
+     so the card sits on the leaf's own ground in every theme. */
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--gp-radius-lg);
+}
+
+/* The pull-up above is for the CLOSED task list. Open, the list's own frame
+   sits right above the card; with the task picker off, the list is not
+   there at all. Both (0,3,0), over the base (0,1,0). */
+.gp-task-list.gp-visible + .gp-note,
+.gp-task-list.gp-hidden + .gp-note {
+  margin-top: 0;
+}
+
+.gp-note-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gp-space-1);
+  min-width: 0;
+}
+
+.gp-note-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gp-space-4);
+}
+
+/* Same eyebrow as the task button's "CURRENT TASK". */
+.gp-note-title {
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-strong);
+  text-transform: uppercase;
+  letter-spacing: var(--gp-tracking-eyebrow);
+  color: var(--text-muted);
+}
+
+.gp-note-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gp-space-1);
+  font-size: var(--gp-text-micro);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.gp-note-status-icon {
+  display: inline-flex;
+}
+
+/* A flex item: the WebKit sliver case, so the floor is on every platform
+   (DESIGN.md entry 6.1). */
+.gp-note-status svg {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  flex-shrink: 0;
+  stroke-width: 3px;
+  color: var(--interactive-accent);
+}
+
+.gp-note-session {
+  font-size: var(--gp-text-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.gp-note-form {
+  display: flex;
+  flex-direction: column;
+  /* The Start / Skip row's gap, so the card spaces like the panel around it. */
+  gap: var(--gp-control-gap);
+}
+
+/* --- Faces: three equal toggles, one row --- */
+.gp-note-faces {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--gp-control-gap);
+  /* The group's aria-label is for a screen reader; Obsidian would show it as
+     a tooltip over the whole row. The faces put theirs back below. */
+  --no-tooltip: true;
+}
+
+.gp-note .gp-note-faces button.gp-note-face {
+  height: var(--gp-control-h);
+  padding: 0;
+  border: none;
+  border-radius: var(--gp-radius-md);
+  background-color: var(--interactive-normal);
+  box-shadow: var(--input-shadow);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--gp-dur-instant) ease,
+    color var(--gp-dur-instant) ease;
+  /* "Rough" / "Okay" / "Good" on hover help. A custom property inherits, so
+     the group's `true` must be reset here, on the element Obsidian reads. */
+  --no-tooltip: false;
+}
+
+.gp-note .gp-note-faces button.gp-note-face:hover {
+  background-color: var(--interactive-hover);
+  color: var(--text-normal);
+}
+
+/* Selected: the panel's own selection language — the segmented control's and
+   the task list's accent fill with on-accent ink. Fill, ink and a heavier
+   stroke all change, so it never rests on hue alone. */
+.gp-note .gp-note-faces button.gp-note-face[aria-pressed="true"] {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  box-shadow: none;
+}
+
+.gp-note .gp-note-faces button.gp-note-face[aria-pressed="true"]:hover {
+  background-color: var(--interactive-accent-hover);
+}
+
+.gp-note .gp-note-faces button.gp-note-face svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2px;
+}
+
+.gp-note .gp-note-faces button.gp-note-face[aria-pressed="true"] svg {
+  stroke-width: 2.5px;
+}
+
+/* The same selector as the faces' base rule, so it ties and follows: never
+   weaker than the rule it stops (DESIGN.md entry 4). */
+@media (prefers-reduced-motion: reduce) {
+  .gp-note .gp-note-faces button.gp-note-face {
+    transition: none;
+  }
+}
+
+/* --- Text: two lines at rest, grows with the words up to five, no grip ---
+   field-sizing needs a current Chromium; elsewhere the box stays two lines
+   and scrolls. No JavaScript autosize. */
+.gp-note textarea.gp-note-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: calc(2lh + 2 * var(--gp-space-3) + 2px);
+  max-height: calc(5lh + 2 * var(--gp-space-3) + 2px);
+  field-sizing: content;
+  resize: none;
+  padding: var(--gp-space-3) var(--gp-space-5);
+  font-size: var(--gp-text-body);
+  line-height: 1.35;
+  border-radius: var(--gp-radius-md);
+  /* Its aria-label is the box's name, not a tip. */
+  --no-tooltip: true;
+}
+
+.gp-note textarea.gp-note-text::placeholder {
+  color: var(--text-faint);
+}
+
+/* Obsidian's grey 2px halo swapped for the plugin's ring. Inset by the
+   border's width so it lies on the box's own edge, inside the card padding. */
+.gp-note textarea.gp-note-text:focus {
+  border-color: transparent;
+  box-shadow: none;
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: -1px;
+}
+
+/* --- Actions: a paired row like Start + Skip. Clear left, Save right --- */
+.gp-note-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gp-control-gap);
+}
+
+.gp-note .gp-note-actions button.gp-note-btn {
+  height: var(--gp-control-h);
+  padding: 0 var(--gp-space-5);
+  border: none;
+  border-radius: var(--gp-radius-md);
+  font-size: var(--gp-text-label);
+  font-weight: var(--gp-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gp-note .gp-note-actions button.gp-note-save {
+  background-color: var(--interactive-normal);
+  color: var(--text-normal);
+  box-shadow: var(--input-shadow);
+}
+
+.gp-note .gp-note-actions button.gp-note-save:hover:not([aria-disabled="true"]) {
+  background-color: var(--interactive-hover);
+}
+
+/* Accent only while Save can act: `can-save` comes from saveActive, not from
+   dirty (a note being saved, and a saved note emptied, are dirty and
+   inactive), and the :not() keeps the accent off an inactive Save by
+   structure rather than by a source-order tie with the rule below. */
+.gp-note.can-save .gp-note-actions button.gp-note-save:not([aria-disabled="true"]) {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.gp-note.can-save .gp-note-actions button.gp-note-save:not([aria-disabled="true"]):hover {
+  background-color: var(--interactive-accent-hover);
+}
+
+/* Clear: "Reset to defaults"' look — no fill, muted ink, red only on hover.
+   It asks before it takes a saved note off the line. */
+.gp-note .gp-note-actions button.gp-note-clear {
+  background-color: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.gp-note .gp-note-actions button.gp-note-clear:hover:not([aria-disabled="true"]) {
+  color: var(--text-error);
+  background-color: var(--background-modifier-hover);
+}
+
+/* Nothing to do: faint ink, and an inactive Save keeps no shadow so it does
+   not read as a block. aria-disabled, not disabled: the pressed Save goes
+   inactive at once and must keep its focus. */
+.gp-note .gp-note-actions button.gp-note-btn[aria-disabled="true"] {
+  opacity: 1;
+  color: var(--text-faint);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* --- No folder set --- */
+.gp-note-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--gp-space-4);
+}
+
+.gp-note-hint {
+  margin: 0;
+  font-size: var(--gp-text-caption);
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+/* --- Focus: the plugin's ring, and each button's own resting edge put back
+   under it (Obsidian's button:focus-visible draws a grey halo). One rule per
+   resting look, each at least as specific as that look and after it. --- */
+.gp-note .gp-note-faces button.gp-note-face:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+  box-shadow: var(--input-shadow);
+}
+
+.gp-note .gp-note-faces button.gp-note-face[aria-pressed="true"]:focus-visible {
+  box-shadow: none;
+}
+
+.gp-note .gp-note-actions button.gp-note-save:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+  box-shadow: var(--input-shadow);
+}
+
+.gp-note .gp-note-actions button.gp-note-clear:focus-visible {
+  outline: var(--gp-focus-ring-width) solid var(--gp-focus-ring-color);
+  outline-offset: var(--gp-focus-ring-offset);
+  box-shadow: none;
+}
+
+.gp-note .gp-note-actions button.gp-note-btn[aria-disabled="true"]:focus-visible {
+  box-shadow: none;
+}
+
+/* In the dialog: the modal is the frame. Double-class, so it out-ranks
+   .gp-note on specificity (DESIGN.md entry 2). */
+.gp-note.gp-note-in-modal {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* Hidden parts, and the section itself, in the panel AND in the dialog,
+   which has no .gp-root ancestor for .gp-root .gp-hidden. Last in the
+   section, after every rule that gives a card part a display. */
+.gp-note.gp-hidden,
+.gp-note .gp-hidden {
+  display: none;
+}
+
+/* =========================================================================
    Music (audio-only lofi playback)
    -------------------------------------------------------------------------
    The ▶️ controls row is the entire visible UI; the YouTube iframe below it is
@@ -4255,6 +4589,13 @@ body:not(.is-mobile) .modal.gp-confirm-modal {
   max-width: min(24em, 90vw);
 }
 
+/* The focus note's dialog (0.7.1): the same cap, the same bottom sheet on a
+   phone. */
+body:not(.is-mobile) .modal.gp-note-modal {
+  width: auto;
+  max-width: min(24em, 90vw);
+}
+
 /* =========================================================================
    Mobile & touch
    -------------------------------------------------------------------------
@@ -4399,9 +4740,33 @@ body.is-tablet .gp-root {
    all size from --gp-control-h, which the token block above redefines for
    touch. Only the wider hit area is left, which is not derivable from a
    height. */
-body.is-mobile .gp-segmented-btn,
-body.is-tablet .gp-segmented-btn {
+body.is-mobile .gp-settings-row .gp-segmented button.gp-segmented-btn,
+body.is-tablet .gp-settings-row .gp-segmented button.gp-segmented-btn {
   min-width: 52px;
+}
+
+/* The focus note on touch (0.7.1). --gp-control-h is already --gp-tap-min
+   here, so the faces and the two buttons are 50px; the gap is the control
+   row's touch gap. */
+body.is-mobile .gp-note,
+body.is-tablet .gp-note {
+  --gp-control-gap: 14px; /* as .gp-controls-row on touch */
+}
+
+body.is-mobile .gp-note .gp-note-faces button.gp-note-face svg.svg-icon,
+body.is-tablet .gp-note .gp-note-faces button.gp-note-face svg.svg-icon {
+  width: 24px;
+  height: 24px;
+  /* WebKit flex-SVG sliver floor (DESIGN.md entry 6.1). */
+  min-width: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+}
+
+body.is-mobile .gp-note textarea.gp-note-text,
+body.is-tablet .gp-note textarea.gp-note-text {
+  font-size: var(--gp-text-body);
+  border-radius: var(--gp-radius-md);
 }
 
 /* Bigger task-picker button and dropdown rows — the primary touch targets for

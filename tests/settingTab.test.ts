@@ -65,6 +65,7 @@ import {
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
 import { SESSION_END_NOTIFICATION_LABEL } from "../sessionEndNotice";
+import { FOCUS_NOTE_DESC, FOCUS_NOTE_LABEL } from "../focusNote";
 import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import { DEFAULT_THEME } from "../themes";
 import { TimerEngine } from "../TimerEngine";
@@ -1056,11 +1057,17 @@ describe("the end-of-session switches", () => {
     expect(view).toContain("AUTO_START_BREAK_LABEL");
     expect(view).toContain("AUTO_START_FOCUS_LABEL");
     expect(view).toContain("MASTER_SOUND_LABEL");
+    expect(view).toContain("FOCUS_NOTE_LABEL");
     // ...and not a hand-typed copy that could drift from the tab's. Matched as
     // an ARGUMENT (`, "label")`) rather than as a bare substring: the label also
     // appears in prose comments, and a guard that cannot tell code from a
     // comment fails on the next person who explains why the const exists.
-    for (const label of [AUTO_START_BREAK_LABEL, AUTO_START_FOCUS_LABEL, MASTER_SOUND_LABEL]) {
+    for (const label of [
+      AUTO_START_BREAK_LABEL,
+      AUTO_START_FOCUS_LABEL,
+      MASTER_SOUND_LABEL,
+      FOCUS_NOTE_LABEL,
+    ]) {
       expect(view, `${label} must come from the shared const`).not.toContain(`, "${label}")`);
     }
 
@@ -1172,6 +1179,7 @@ describe("the end-of-session switches", () => {
       "autoStartFocus",
       "soundEnabled",
       "sessionEndNotification",
+      "focusNoteEnabled",
     ] as const) {
       const c = makeTab();
       c.settings[key] = false;
@@ -1648,6 +1656,43 @@ describe("the picker's live-reload guard has a trigger for every field it watche
   });
 });
 
+describe("the focus note's switch in the panel (0.7.1)", () => {
+  // A policy switch, so on both surfaces (0.6.3's rule): read as text, since
+  // nothing can import the view.
+  const panel = () => {
+    const src = codeOnly(readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8"));
+    return src.slice(src.indexOf("renderSettingsPanel() {"));
+  };
+
+  it("closes When focus ends, after the outcome line, as in the settings tab", () => {
+    const p = panel();
+    const heading = p.indexOf('section("When focus ends");');
+    const summary = p.indexOf('summaryFor("focus");');
+    const row = p.indexOf('sharedToggle("focusNoteEnabled", FOCUS_NOTE_LABEL);');
+    const next = p.indexOf('section("When a break ends");');
+    expect(heading).toBeGreaterThan(-1);
+    expect(row, "the panel has no focus note switch").toBeGreaterThan(-1);
+    expect(row).toBeGreaterThan(summary);
+    expect(summary).toBeGreaterThan(heading);
+    expect(next).toBeGreaterThan(row);
+    // Exactly one, and not hidden behind any other switch.
+    expect(p.match(/sharedToggle\("focusNoteEnabled"/g)).toHaveLength(1);
+  });
+
+  it("is a dual-surface key, so the settings tab's change re-seeds it", () => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const union = src.slice(src.indexOf("type SharedPanelKey ="));
+    expect(union.slice(0, union.indexOf(";"))).toContain('| "focusNoteEnabled"');
+  });
+
+  it("is restored to off by the panel's Reset, the value a new install gets", () => {
+    const p = panel();
+    const reset = p.slice(p.indexOf("const resetWrap"));
+    expect(reset).toContain("settings.focusNoteEnabled = DEFAULT_SETTINGS.focusNoteEnabled;");
+    expect(DEFAULT_SETTINGS.focusNoteEnabled).toBe(false);
+  });
+});
+
 describe("the panel's Reset to defaults", () => {
   const panel = () => {
     const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
@@ -1909,6 +1954,26 @@ describe("the sound rows", () => {
     // Not 1.13's `file` control: below 1.13 that renders as an empty row, and
     // it could not offer the built-ins anyway.
     for (const item of cueItems) expect(typeof item.render).toBe("function");
+  });
+
+  it("closes When focus ends with the focus note's switch, after the outcome line (0.7.1)", () => {
+    // The outcome line closes the sound/start pair; the note is no part of it.
+    const c = makeTab();
+    const items = groupNamed(c.tab, "When focus ends").items;
+    const last = items[items.length - 1];
+    expect(last.name).toBe(FOCUS_NOTE_LABEL);
+    expect(last.desc).toBe(FOCUS_NOTE_DESC);
+    expect(last).toMatchObject({ control: { type: "toggle", key: "focusNoteEnabled" } });
+    expect(FOCUS_NOTE_LABEL).toBe("Offer a focus note");
+    const summary = items[items.length - 2] as { name?: string; render?: unknown };
+    expect(summary.name).toBe("");
+    expect(typeof summary.render).toBe("function");
+    // Off by default, for a new install and an upgrade alike.
+    expect(DEFAULT_SETTINGS.focusNoteEnabled).toBe(false);
+    expect(c.tab.getControlValue("focusNoteEnabled")).toBe(false);
+    // And only there.
+    const named = declarativeRows(c.tab).filter((r) => r.name === FOCUS_NOTE_LABEL);
+    expect(named.map((r) => r.heading)).toEqual(["When focus ends"]);
   });
 
   it("describes the switch that sits BELOW it, since the order depends on it", () => {
@@ -3080,7 +3145,7 @@ describe("the Log tables group", () => {
       catalogLabelsWithout([...QUERY_PRESETS.simple, "end"])
     );
     expect(c.settings.queryColumns).toBe(
-      "date,start,task,minutes,status,end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+      "date,start,task,minutes,status,end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note"
     );
     expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
     expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
@@ -3104,7 +3169,7 @@ describe("the Log tables group", () => {
     expect(names.indexOf("Task")).toBe(names.indexOf("End") + 1);
     expect(names).toEqual(catalogLabelsWithout(["date", "start", "minutes", "status"]));
     expect(c.settings.queryColumns).toBe(
-      "date,start,minutes,status,-end,-task,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+      "date,start,minutes,status,-end,-task,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note"
     );
     expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
     expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));

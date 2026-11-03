@@ -33,6 +33,13 @@ import {
   type GoalNoticeHost,
 } from "./focusTotals";
 import { deviceStorage } from "./deviceStorage";
+import {
+  FOCUS_NOTE_COMMAND_NAME,
+  FocusNoteStore,
+  NO_SESSION_NOTICE,
+  chooseLastSession,
+} from "./focusNote";
+import { FocusNoteModal } from "./focusNoteCard";
 import { askRecovery } from "./recoveryModal";
 import { recoveryMessage, savedSessionSeconds } from "./sessionRecovery";
 import { LogManager, resolveLogLink } from "./logManager";
@@ -88,6 +95,11 @@ export default class GentlePomoPlugin extends Plugin {
   override settings!: GentlePomoSettings;
   timer!: TimerEngine;
   logManager!: LogManager;
+  /**
+   * The focus note's one state (focusNote.ts, 0.7.1): every open panel's
+   * card, the modal and the command read it, so they cannot disagree.
+   */
+  focusNotes!: FocusNoteStore;
   /** The daily log's own commands: open, check, convert, add, fix. */
   logTools!: LogTools;
   /**
@@ -133,6 +145,8 @@ export default class GentlePomoPlugin extends Plugin {
   // The session questions open now: Stop's about a long focus, and the
   // startup's about an unfinished session. Closed at unload (F19).
   private readonly sessionDialogs = new Set<{ close(): void }>();
+  // The focus note's dialog while it is open: one at a time.
+  private focusNoteDialog: FocusNoteModal | null = null;
   // Set by onunload, never cleared: Obsidian builds a new plugin to enable it
   // again. Work this one started and still awaits stops on it (F19).
   private unloaded = false;
@@ -158,6 +172,25 @@ export default class GentlePomoPlugin extends Plugin {
     this.logManager = new LogManager(this, {
       storage: deviceStorage(this.app),
       plannedMs: () => this.timer.getState().totalMs,
+    });
+    // The focus note (0.7.1): its state is kept on this device too, and the
+    // log manager tells it when a counted focus ends and when a focus opens.
+    this.focusNotes = new FocusNoteStore({
+      storage: deviceStorage(this.app),
+      enabled: () => this.settings.focusNoteEnabled,
+      write: (target, note, moved) => this.logManager.writeSessionNote(target, note, moved),
+      notice: (message) => {
+        new Notice(message);
+      },
+      now: () => Date.now(),
+    });
+    this.logManager.setFocusNoteHooks({
+      ended: (target) => {
+        this.focusNotes.ended(target);
+      },
+      focusStarted: () => {
+        this.focusNotes.focusStarted();
+      },
     });
     this.logTools = new LogTools({
       app: this.app,
@@ -231,6 +264,18 @@ export default class GentlePomoPlugin extends Plugin {
       name: "Open today's log",
       callback: async () => {
         await this.openTodayLog();
+      },
+    });
+
+    // 0.7.1: the focus note for the last session, with the panel closed and on
+    // a phone. Only while the note is offered at all.
+    this.addCommand({
+      id: "add-focus-note",
+      name: FOCUS_NOTE_COMMAND_NAME,
+      checkCallback: (checking: boolean) => {
+        if (!this.settings.focusNoteEnabled) return false;
+        if (!checking) void this.openFocusNote();
+        return true;
       },
     });
 
@@ -593,6 +638,52 @@ export default class GentlePomoPlugin extends Plugin {
     return this.logTools.openToday();
   }
 
+  /**
+   * The focus note of "the last session" in a dialog — the command and the
+   * status bar menu (0.7.1). Which session is chooseLastSession's call: this
+   * device's own while it is the newest of today's and yesterday's, else the
+   * newest focus line in those files. One dialog at a time: while it is open
+   * this does nothing more, as it is already in front.
+   */
+  async openFocusNote(): Promise<void> {
+    if (this.focusNoteDialog) return;
+    const store = this.focusNotes;
+    const file = await this.logManager.lastLoggedSessionNote();
+    if (this.unloaded || this.focusNoteDialog) return;
+    const dayStartHour = this.settings.dayStartHour;
+    const choice = chooseLastSession({
+      store: store.target,
+      file,
+      days: [
+        logicalDate(moment(), dayStartHour),
+        logicalDate(moment().subtract(1, "day"), dayStartHour),
+      ],
+      dayOf: (ms) => logicalDate(moment(ms), dayStartHour),
+    });
+    if (choice.kind === "none") {
+      new Notice(NO_SESSION_NOTICE);
+      return;
+    }
+    if (choice.kind === "file") {
+      store.adopt(choice.target, choice.saved);
+    } else if (store.target !== null) {
+      // This device's session: the note its line has, when this device knows
+      // of none (another device wrote it, or this one before a reinstall).
+      const target = store.target;
+      const note =
+        file !== null && file.line.sessionId === target.sessionId
+          ? file.note
+          : await this.logManager.readSessionNoteFor(target);
+      if (this.unloaded || this.focusNoteDialog) return;
+      store.knowSaved(target.sessionId, note);
+    }
+    const dialog = new FocusNoteModal(this.app, store, this.sessionDialogs, () => {
+      if (this.focusNoteDialog === dialog) this.focusNoteDialog = null;
+    });
+    this.focusNoteDialog = dialog;
+    dialog.open();
+  }
+
   /** Read-only: old lines, and anything in the log that looks wrong. */
   checkLog(): Promise<void> {
     return this.logTools.check();
@@ -634,6 +725,9 @@ export default class GentlePomoPlugin extends Plugin {
     // the session kept for the next start — and the disposed timer and log
     // manager act on neither.
     for (const dialog of [...this.sessionDialogs]) dialog.close();
+    // The store hears nothing more from this log manager: an end still
+    // writing at unload belongs to the reloaded plugin's store.
+    if (this.logManager) this.logManager.setFocusNoteHooks(null);
 
     // Best effort — saveSettings is async and a hard quit may cut it short,
     // which is what the MUSIC_POSITION_SAVE_MS interval backstops.
@@ -952,7 +1046,7 @@ export default class GentlePomoPlugin extends Plugin {
       }
     });
     const time = resolveStatusBarTime(this.settings.statusBarTime);
-    for (const entry of statusMenuEntries(state, time)) {
+    for (const entry of statusMenuEntries(state, time, this.settings.focusNoteEnabled)) {
       if (entry === null) {
         menu.addSeparator();
         continue;
@@ -1010,6 +1104,11 @@ export default class GentlePomoPlugin extends Plugin {
         return;
       case "log":
         await this.openTodayLog();
+        return;
+      // Needed: the default below reads any other action as a time display,
+      // and "note" would reset the time display to its default (hidden).
+      case "note":
+        await this.openFocusNote();
         return;
       default:
         await this.setStatusBarTime(action.slice("time:".length));

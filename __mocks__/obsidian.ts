@@ -37,6 +37,61 @@ export class Vault {
   }
 }
 
+/**
+ * Obsidian's Component, as its app.js has it: load() runs onload and loads
+ * the children; unload() unloads the children, runs every register()ed
+ * callback (registerDomEvent's removal among them), then onunload. Enough for
+ * a component that builds its own DOM (the focus note's card) to be loaded
+ * and unloaded on stub elements.
+ */
+export class Component {
+  private loaded = false;
+  private readonly children: Component[] = [];
+  private readonly cleanups: (() => void)[] = [];
+  load(): void {
+    if (this.loaded) return;
+    this.loaded = true;
+    this.onload();
+    for (const child of this.children) child.load();
+  }
+  onload(): void {}
+  unload(): void {
+    if (!this.loaded) return;
+    this.loaded = false;
+    while (this.children.length > 0) this.children.pop()?.unload();
+    while (this.cleanups.length > 0) this.cleanups.pop()?.();
+    this.onunload();
+  }
+  onunload(): void {}
+  addChild<T extends Component>(child: T): T {
+    this.children.push(child);
+    if (this.loaded) child.load();
+    return child;
+  }
+  removeChild<T extends Component>(child: T): T {
+    const at = this.children.indexOf(child);
+    if (at !== -1) {
+      this.children.splice(at, 1);
+      child.unload();
+    }
+    return child;
+  }
+  register(cb: () => void): void {
+    this.cleanups.push(cb);
+  }
+  registerDomEvent(
+    el: {
+      addEventListener: StubEl["addEventListener"];
+      removeEventListener?: StubEl["removeEventListener"];
+    },
+    type: string,
+    listener: (event: never) => void,
+    options?: boolean | { capture?: boolean }
+  ): void {
+    el.addEventListener(type, listener, options);
+    this.register(() => el.removeEventListener?.(type, listener, options));
+  }
+}
 export class Plugin {}
 export class ItemView {}
 export class PluginSettingTab {
@@ -320,6 +375,11 @@ export interface StubEl {
     listener: (event: never) => void,
     options?: boolean | { capture?: boolean }
   ) => void;
+  removeEventListener: (
+    type: string,
+    listener: (event: never) => void,
+    options?: boolean | { capture?: boolean }
+  ) => void;
   /** Node.contains: this element or one inside it. */
   contains: (node: unknown) => boolean;
   /** The icon setIcon put on it. */
@@ -408,6 +468,16 @@ export function stubEl(cls = "", tag = "div"): StubEl {
     ) => {
       const capture = options === true || (typeof options === "object" && options.capture === true);
       ((capture ? el.captureListeners : el.listeners)[type] ??= []).push(listener);
+    },
+    removeEventListener: (
+      type: string,
+      listener: (event: never) => void,
+      options?: boolean | { capture?: boolean }
+    ) => {
+      const capture = options === true || (typeof options === "object" && options.capture === true);
+      const list = (capture ? el.captureListeners : el.listeners)[type] ?? [];
+      const at = list.indexOf(listener);
+      if (at !== -1) list.splice(at, 1);
     },
     contains: (node: unknown) => {
       for (let n = node as StubEl | null; n !== null && n !== undefined; n = n.parent) {

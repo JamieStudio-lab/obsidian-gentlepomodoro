@@ -15,6 +15,8 @@ import {
   type SessionEndEdge,
 } from "./sessionEndSummary";
 import { SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
+import { FOCUS_NOTE_LABEL } from "./focusNote";
+import { FocusNoteCard } from "./focusNoteCard";
 
 /**
  * The dual-surface TOGGLES — the boolean settings that live on both the gear
@@ -35,7 +37,8 @@ type SharedPanelKey =
   | "focusEndSoundEnabled"
   | "breakEndSoundEnabled"
   | "musicSoundEnabled"
-  | "sessionEndNotification";
+  | "sessionEndNotification"
+  | "focusNoteEnabled";
 import {
   DEFAULT_SETTINGS,
   VIEW_TYPE_GENTLE_POMO,
@@ -254,6 +257,10 @@ export class GentlePomoView extends ItemView {
   private stationRows: HTMLDivElement[] = [];
   private stationRowLabels: HTMLElement[] = [];
   private stationListVisible = false;
+
+  // The focus note's card (0.7.1), a child component: built once in onOpen,
+  // unloaded with the view, painted from the plugin's one FocusNoteStore.
+  private focusNoteCard: FocusNoteCard | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -571,6 +578,22 @@ export class GentlePomoView extends ItemView {
         const scope = resolveTaskScope(this.plugin.app.workspace, source, settings.tasksPath);
         if (taskScopeKey(scope) === this.lastTaskScopeKey) return;
         void this.loadTasks();
+      })
+    );
+
+    // --- Focus note (0.7.1) ---
+    // After a focus session is logged: between the task button and the music
+    // rule, hidden until a counted focus ends and the setting is on. The card
+    // builds its own section here, once, and keeps its own listeners; a
+    // reopened view takes the old card down first, so no listener is left on
+    // the store for a section that is gone.
+    if (this.focusNoteCard) this.removeChild(this.focusNoteCard);
+    this.focusNoteCard = this.addChild(
+      new FocusNoteCard(controls, this.plugin.focusNotes, {
+        surface: "panel",
+        app: this.plugin.app,
+        moment,
+        enabled: () => this.plugin.settings.focusNoteEnabled,
       })
     );
 
@@ -980,6 +1003,11 @@ export class GentlePomoView extends ItemView {
     // property writes over rows that already exist, no allocation, no listener
     // churn. See syncSettingsPanel for why this must not re-render.
     this.syncSettingsPanel();
+
+    // The focus note's setting, from either surface. Behind the card's own
+    // key, so the 50ms tick touches no DOM; a note's own changes reach the
+    // card through the store's listener, not through here.
+    this.focusNoteCard?.sync();
 
     // Task-selector visibility. Idempotent, so safe to run on every tick. The
     // unlink-on-hide side effect lives in the settings toggle's onChange (calling
@@ -2009,6 +2037,10 @@ export class GentlePomoView extends ItemView {
     sharedToggle("focusEndSoundEnabled", "Play a sound");
     sharedToggle("autoStartBreak", AUTO_START_BREAK_LABEL);
     summaryFor("focus");
+    // After the outcome line, as in the settings tab: the line closes the
+    // sound/start pair, and the note is no part of that outcome. A policy
+    // switch, so on both surfaces (0.6.3's rule).
+    sharedToggle("focusNoteEnabled", FOCUS_NOTE_LABEL);
 
     section("When a break ends");
     sharedToggle("breakEndSoundEnabled", "Play a sound");
@@ -2062,6 +2094,8 @@ export class GentlePomoView extends ItemView {
       // the upgrade merge base (see settingsStore.deriveBreakEndChime). What a
       // reset should restore is the value a NEW install gets, which is on.
       settings.breakEndSoundEnabled = true;
+      // Off, the value a new install gets: the card is opt-in.
+      settings.focusNoteEnabled = DEFAULT_SETTINGS.focusNoteEnabled;
       // Only where the panel shows it. On a phone the row is not built, and a
       // panel reset does not speak for a setting it has no row for — nor
       // should a phone switch off the notification chosen on a computer.

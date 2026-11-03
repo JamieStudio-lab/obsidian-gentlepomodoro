@@ -4,6 +4,79 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-11-03
+
+**An optional focus note after each focus session, and the Low / Mid / High
+buttons no longer take Obsidian's button fill.**
+The note is off until you turn it on, and nothing changes while a focus is
+running.
+
+### Added
+
+- **A focus note** (**Offer a focus note**, last in **When focus ends**, in the
+  settings and in the timer panel's gear panel; off by default). After a focus
+  session ends and its line is in the log (Stop, Skip, or time up), a small
+  card under the task button asks how it went: three faces (**Rough**,
+  **Okay**, **Good**) and a box for a few words. The box's hint changes with
+  the face (_What got in the way?_, _What would make the next one easier?_,
+  _What went well?_). Your keyboard's dictation works in it. **Save** puts the
+  note on that session's line (the button reads **Update** once there is
+  one); **Clear** takes it off, and asks first. The card shows nothing while a
+  focus runs, doesn't ring or take focus when it appears, and stays until the
+  next **focus** session starts. A focus that ends in under a minute writes no
+  line and so gets no card, but it still closes the one before. Words you
+  haven't saved stay on the device, and a notice tells you when the card goes
+  away with them. With no log folder the card only says to set one.
+- **The note is stored as one more field, `Note`, last on the line**, after
+  `Device`. It is `smile`, `meh · stuck on the second paragraph` or just
+  `stuck on refs`: one of `frown`, `meh` or `smile`, then `·`, then your
+  words. It is written after the session, on a focus line that has a
+  `Session`, and on the **last** line of a session split at a task switch.
+  Never on a break. Words alone that read like a face (`meh`, `smile · fine`)
+  are saved as that face. Saving cleans the words so they can't break the
+  line: a `[[link]]` keeps only the text it shows, other `[` and `]` become
+  `(` and `)`, `::` becomes `:`, line breaks become
+  `/`, `#` becomes a look-alike `＃` (so it isn't a tag), `%%` becomes `%`,
+  🍅 and ☕ are dropped, and it is cut to 500 characters, in the box too, so
+  you see what was kept. A note is in your log in plain text.
+- **Add a note to the last session** — a command, and an entry in the status
+  bar's menu, for when the card is gone or the panel is closed (a phone). It
+  opens the same card in a window, for the session you just logged on this
+  device (today's or yesterday's), or the newest focus line in those two days'
+  files. Both are hidden while the setting is off.
+- **A Note column** under **Log tables** → **Columns**, off by default: add it
+  from **Add a column**. It shows the whole value, face word included.
+  Dataview reads a note as the type it looks like, so one that is exactly a
+  number, a date, a duration (`45 min`), `true` or `false`, or a comma list
+  shows that way, and `"quoted"` loses its quotes. A note of just `null` shows
+  as the word. No row is dropped for it.
+- **`face` and `note` in the read API**, after `device`: `face` is `frown`,
+  `meh`, `smile` or `null`, and `note` is the words without the face, or
+  `null`. `null` too on a line without `Session`, and on a break. The API stays
+  version 1.
+- **Two columns at the end of Export sessions**, `face` and `note`, after
+  `logFile` (the JSON Lines objects gain the same two members). They are
+  empty on a break and on a line without `Session`.
+
+### Changed
+
+- **`Note` is now the last field a focus line can carry**, after `Device`. A
+  pattern of yours anchored on `Device` being last stops matching a line that
+  has a note. One that reads a field by name (`Device::\s*…`) still works.
+- **Fix a logged session** keeps a line's note as written, whatever else it
+  changes (the task, the times, the length, skipped), and takes it off when
+  you make a focus a break.
+- The settings page **Sounds and notifications** describes the note in its
+  line.
+
+### Fixed
+
+- **The Low / Mid / High buttons in the timer panel took Obsidian's button
+  fill and shadow** on the ones not selected, on every device (white on a
+  phone), and an iPad's button padding. They are transparent again, with the
+  selected one filled, as drawn. A keyboard focus ring no longer adds a
+  shadow.
+
 ## [0.7.0] — 2026-10-30
 
 **Each log line now says how its session began and ended, the settings can

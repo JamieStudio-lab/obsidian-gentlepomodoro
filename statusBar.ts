@@ -1,3 +1,4 @@
+import { FOCUS_NOTE_COMMAND_NAME } from "./focusNote";
 import type { TimerState } from "./types";
 
 /**
@@ -216,10 +217,12 @@ export type StatusMenuAction =
   | "skip"
   | "open"
   | "log"
+  | "note"
   | `time:${StatusBarTime}`;
 
 /** The actions that change the timer. The rest (open the panel or today's
- *  log, choose the time display) are safe whatever the timer has done since. */
+ *  log, a note on the last logged session, choose the time display) are safe
+ *  whatever the timer has done since. */
 export function isTimerAction(action: StatusMenuAction): boolean {
   return (
     action === "start" ||
@@ -270,7 +273,8 @@ const TIME_MENU: Record<StatusBarTime, { title: string; icon: string }> = {
  */
 export function statusMenuEntries(
   state: TimerState,
-  time: StatusBarTime
+  time: StatusBarTime,
+  offerNote = false
 ): (StatusMenuEntry | null)[] {
   const phase = statusBarPhase(state);
   const entries: (StatusMenuEntry | null)[] = [];
@@ -286,6 +290,11 @@ export function statusMenuEntries(
   // The log is where a session goes once it ends (0.6.9, F56) — and the
   // hover over the item cannot open anything, so the menu is the way in.
   entries.push({ action: "log", title: "Open today's log", icon: "file-text" });
+  // The focus note (0.7.1), only while it is offered: it acts on a logged
+  // session, never on the clock.
+  if (offerNote) {
+    entries.push({ action: "note", title: FOCUS_NOTE_COMMAND_NAME, icon: "notebook-pen" });
+  }
   entries.push(null);
   for (const id of STATUS_BAR_TIME_IDS) {
     entries.push({

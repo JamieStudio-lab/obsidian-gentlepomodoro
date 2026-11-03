@@ -495,10 +495,19 @@ describe("focus rings", () => {
 
   it("puts the resting edge back instead of Obsidian's grey halo under the ring", () => {
     const code = stripComments(rules);
-    for (const start of [".gp-task-item:focus-visible {", ".gp-segmented-btn:focus-visible {"]) {
-      const rule = code.slice(code.indexOf(start));
-      expect(rule.slice(0, rule.indexOf("}")), start).toContain("box-shadow: var(--input-shadow)");
-    }
+    const task = code.slice(code.indexOf(".gp-task-item:focus-visible {"));
+    expect(task.slice(0, task.indexOf("}"))).toContain("box-shadow: var(--input-shadow)");
+    // The segmented button's resting look has no shadow since 0.7.1 (its base
+    // rule takes app.css's off), so its ring puts back the same: none. A
+    // shadow here would appear on keyboard focus only.
+    const shadow = (sel: string) => {
+      const found = styleRules.find((r) => r.sel === sel && r.context.length === 0);
+      expect(found, `${sel} is gone`).toBeDefined();
+      return /(?:^|;)\s*box-shadow:\s*([^;]+);/.exec(found?.body ?? "")?.[1]?.trim();
+    };
+    const base = ".gp-settings-row .gp-segmented button.gp-segmented-btn";
+    expect(shadow(base)).toBe("none");
+    expect(shadow(`${base}:focus-visible`)).toBe(shadow(base));
   });
 
   // box-shadow has no `solid` keyword, so a shared `outline` shorthand is
@@ -1544,5 +1553,244 @@ describe("the sticky square's backdrop", () => {
         insertedSquare.push(m[0]);
     }
     expect(insertedSquare, "the square is handed to a DOM insertion after it is built").toEqual([]);
+  });
+});
+
+/**
+ * (ids, classes, elements) of one selector: attribute selectors and
+ * pseudo-classes count as classes, a :not() as its argument, as the cascade
+ * weighs them — enough for the button rules below, which are where it
+ * matters: they face app.css's own button rules.
+ */
+const specificity = (selector: string): [number, number, number] => {
+  const noPseudoElements = selector.replace(/::[\w-]+/g, " ");
+  const ids = (noPseudoElements.match(/#[\w-]+/g) ?? []).length;
+  const cls = (noPseudoElements.match(/\.[\w-]+|\[[^\]]*\]|:(?!not\()[\w-]+/g) ?? []).length;
+  const elements = (
+    noPseudoElements.replace(/\[[^\]]*\]/g, "").match(/(^|[\s>+~(])[a-z][\w-]*/gi) ?? []
+  ).length;
+  return [ids, cls, elements];
+};
+const compare = (a: [number, number, number], b: [number, number, number]): number =>
+  a[0] !== b[0] ? a[0] - b[0] : a[1] !== b[1] ? a[1] - b[1] : a[2] - b[2];
+
+/** The one top-level rule with exactly this selector list. */
+const ruleNamed = (sel: string, context: string[] = []): CssRule => {
+  const found = styleRules.filter(
+    (r) => r.sel === sel && r.context.join("|") === context.join("|")
+  );
+  expect(found, `${sel} ${context.join(" ")}`).toHaveLength(1);
+  return found[0];
+};
+const declOf = (rule: CssRule, prop: string): string | undefined =>
+  new RegExp(`(?:^|;)\\s*${prop.replace(/[-]/g, "\\-")}\\s*:\\s*([^;]+);`)
+    .exec(rule.body)?.[1]
+    .trim();
+const REDUCE = ["@media (prefers-reduced-motion: reduce)"];
+
+describe("the focus note's card and the segmented buttons out-rank app.css (0.7.1)", () => {
+  // app.css: `button` (0,0,1), `button:not(.clickable-icon)` (0,1,1) — a fill
+  // and a shadow on every button — and `.is-tablet button:not(.clickable-icon)`
+  // (0,2,1), padding on an iPad. A tie is won only by where the stylesheets
+  // load (DESIGN.md entries 14 and 15).
+  const APP_TABLET: [number, number, number] = [0, 2, 1];
+  const SEG = ".gp-settings-row .gp-segmented button.gp-segmented-btn";
+  const FACE = ".gp-note .gp-note-faces button.gp-note-face";
+
+  it("weighs app.css's tablet rule as the bar", () => {
+    expect(specificity(".is-tablet button:not(.clickable-icon)")).toEqual(APP_TABLET);
+    expect(specificity(SEG)).toEqual([0, 3, 1]);
+  });
+
+  it("names every button class above (0,2,1), in every selector", () => {
+    const buttons = [
+      "gp-note-face",
+      "gp-note-btn",
+      "gp-note-save",
+      "gp-note-clear",
+      "gp-segmented-btn",
+    ];
+    const selectors = styleRules
+      .flatMap((r) => r.sel.split(", "))
+      .filter((sel) => buttons.some((b) => namesClass(sel, b)));
+    expect(selectors.length).toBeGreaterThanOrEqual(25);
+    for (const sel of selectors)
+      expect(compare(specificity(sel), APP_TABLET), sel).toBeGreaterThan(0);
+  });
+
+  it("takes Obsidian's fill and shadow off the Low / Mid / High buttons", () => {
+    const base = ruleNamed(SEG);
+    expect(declOf(base, "background")).toBe("transparent");
+    expect(declOf(base, "box-shadow")).toBe("none");
+  });
+
+  it("stops the segmented transition with a rule no weaker than its base, after it", () => {
+    const base = ruleNamed(SEG);
+    const reduce = styleRules.find(
+      (r) => r.context.join("|") === REDUCE[0] && r.sel.split(", ").includes(SEG)
+    );
+    expect(reduce, "the segmented button lost its reduced-motion rule").toBeDefined();
+    expect(declOf(reduce!, "transition")).toBe("none");
+    expect(reduce!.index).toBeGreaterThan(base.index);
+  });
+
+  it("widens the segmented button on touch with a rule that out-ranks its base", () => {
+    for (const sel of [`body.is-mobile ${SEG}`, `body.is-tablet ${SEG}`]) {
+      const touch = styleRules.find((r) => r.sel.split(", ").includes(sel));
+      expect(touch, sel).toBeDefined();
+      expect(declOf(touch!, "min-width"), sel).toBe("52px");
+      expect(compare(specificity(sel), specificity(SEG)), sel).toBeGreaterThan(0);
+    }
+  });
+
+  it("stops the faces' colour change under reduced motion, as strong as their base and after it", () => {
+    const base = ruleNamed(FACE);
+    expect(declOf(base, "transition")).toContain("var(--gp-dur-instant)");
+    const reduce = ruleNamed(FACE, REDUCE);
+    expect(declOf(reduce, "transition")).toBe("none");
+    expect(reduce.index).toBeGreaterThan(base.index);
+  });
+
+  it("never uses :disabled in a card rule: an inactive button is aria-disabled", () => {
+    const card = styleRules.filter((r) => /\.gp-note(?![\w-])|\.gp-note-/.test(r.sel));
+    expect(card.length).toBeGreaterThan(20);
+    for (const r of card) expect(r.sel, r.sel).not.toContain(":disabled");
+    expect(
+      card.some((r) => r.sel.includes('button.gp-note-btn[aria-disabled="true"]')),
+      "the inactive look is gone"
+    ).toBe(true);
+  });
+
+  it("gives the inactive look over Save's and Clear's resting looks on specificity, after them", () => {
+    // Save's resting rule sets normal ink and a shadow; under a weaker
+    // inactive rule an inactive Save would keep both and read as one that acts.
+    const inactive = ruleNamed(
+      '.gp-note .gp-note-actions button.gp-note-btn[aria-disabled="true"]'
+    );
+    expect(declOf(inactive, "color")).toBe("var(--text-faint)");
+    expect(declOf(inactive, "box-shadow")).toBe("none");
+    for (const sel of [
+      ".gp-note .gp-note-actions button.gp-note-save",
+      ".gp-note .gp-note-actions button.gp-note-clear",
+    ]) {
+      const rest = ruleNamed(sel);
+      expect(compare(specificity(inactive.sel), specificity(rest.sel)), sel).toBeGreaterThanOrEqual(
+        0
+      );
+      expect(inactive.index, sel).toBeGreaterThan(rest.index);
+    }
+  });
+
+  it("lets no accent Save rule match an inactive Save, and gates it on can-save", () => {
+    // can-save comes from saveActive; dirty and inactive happen together while
+    // a note is being saved and when a saved one is emptied.
+    const accent = styleRules.filter(
+      (r) =>
+        r.context.length === 0 &&
+        namesClass(r.sel, "gp-note-save") &&
+        /background(?:-color)?:\s*var\(--interactive-accent/.test(r.body)
+    );
+    expect(accent).toHaveLength(2);
+    for (const r of accent) {
+      for (const sel of r.sel.split(", ")) {
+        expect(sel).toContain(':not([aria-disabled="true"])');
+        expect(sel).toContain(".gp-note.can-save ");
+        expect(sel).not.toContain("is-dirty");
+      }
+    }
+  });
+
+  it("keeps Obsidian's tooltip off the faces' group and the box, and on each face", () => {
+    // Obsidian reads --no-tooltip on the [aria-label] element itself, and a
+    // custom property inherits: without the reset, the faces lose "Rough",
+    // "Okay" and "Good" on hover.
+    expect(declOf(ruleNamed(".gp-note-faces"), "--no-tooltip")).toBe("true");
+    expect(declOf(ruleNamed(".gp-note textarea.gp-note-text"), "--no-tooltip")).toBe("true");
+    expect(declOf(ruleNamed(FACE), "--no-tooltip")).toBe("false");
+  });
+
+  it("puts each card button's own resting edge back under its ring", () => {
+    const focus = styleRules.filter(
+      (r) =>
+        r.context.length === 0 &&
+        /\.gp-note-(face|btn|save|clear)/.test(r.sel) &&
+        r.sel.includes(":focus-visible")
+    );
+    expect(focus.length).toBe(5);
+    for (const f of focus) {
+      for (const sel of f.sel.split(", ")) {
+        const rest = ruleNamed(sel.replace(":focus-visible", ""));
+        expect(declOf(f, "box-shadow"), sel).toBe(declOf(rest, "box-shadow"));
+        expect(compare(specificity(sel), specificity(rest.sel)), sel).toBeGreaterThanOrEqual(0);
+        expect(f.index, sel).toBeGreaterThan(rest.index);
+      }
+    }
+    // The ones a keyboard user lands on at rest carry the plugin's ring.
+    for (const sel of [
+      `${FACE}:focus-visible`,
+      ".gp-note .gp-note-actions button.gp-note-save:focus-visible",
+      ".gp-note .gp-note-actions button.gp-note-clear:focus-visible",
+    ]) {
+      expect(declOf(ruleNamed(sel), "outline"), sel).toBe(
+        "var(--gp-focus-ring-width) solid var(--gp-focus-ring-color)"
+      );
+    }
+  });
+
+  it("drops the card's frame in the dialog by specificity, not by order", () => {
+    const modal = ruleNamed(".gp-note.gp-note-in-modal");
+    expect(compare(specificity(modal.sel), specificity(".gp-note"))).toBeGreaterThan(0);
+    // What it undoes: the panel card's frame, padding and pull-up margin.
+    const card = ruleNamed(".gp-note");
+    for (const prop of ["border", "padding", "margin-top", "margin-bottom"]) {
+      expect(declOf(card, prop), prop).toBeDefined();
+    }
+    expect(declOf(modal, "border")).toBe("none");
+    expect(declOf(modal, "padding")).toBe("0");
+    expect(declOf(modal, "margin")).toBe("0");
+    expect(declOf(ruleNamed("body:not(.is-mobile) .modal.gp-note-modal"), "max-width")).toBe(
+      "min(24em, 90vw)"
+    );
+  });
+
+  it("hides the card's parts in the dialog too, after every card rule that sets a display", () => {
+    const hidden = ruleNamed(".gp-note.gp-hidden, .gp-note .gp-hidden");
+    expect(declOf(hidden, "display")).toBe("none");
+    const shown = styleRules.filter(
+      (r) =>
+        r !== hidden &&
+        /\.gp-note(?![\w-])|\.gp-note-/.test(r.sel) &&
+        /(?:^|;)\s*display\s*:/.test(r.body)
+    );
+    expect(shown.length).toBeGreaterThanOrEqual(6);
+    for (const r of shown) expect(r.index, r.sel).toBeLessThan(hidden.index);
+    // And over the parts the card hides (the section, the form, the hint,
+    // the status icon) on specificity too: they are display flex, which the
+    // dialog, with no .gp-root around it, would otherwise keep.
+    for (const sel of [".gp-note", ".gp-note-form", ".gp-note-empty", ".gp-note-status-icon"]) {
+      expect(declOf(ruleNamed(sel), "display"), sel).toMatch(/flex/);
+      for (const hide of hidden.sel.split(", ")) {
+        expect(compare(specificity(hide), specificity(sel)), sel).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("gives the status icon the WebKit sliver floor on every platform", () => {
+    const svg = ruleNamed(".gp-note-status svg");
+    expect(declOf(svg, "min-width")).toBe("12px");
+    expect(declOf(svg, "min-height")).toBe("12px");
+    expect(declOf(svg, "flex-shrink")).toBe("0");
+  });
+
+  it("follows the task list's two states for the card's top margin", () => {
+    const pull = ruleNamed(".gp-note");
+    expect(declOf(pull, "margin-top")).toBe("calc(-1 * var(--gp-space-5))");
+    const rule = ruleNamed(
+      ".gp-task-list.gp-visible + .gp-note, .gp-task-list.gp-hidden + .gp-note"
+    );
+    expect(declOf(rule, "margin-top")).toBe("0");
+    for (const sel of rule.sel.split(", ")) {
+      expect(compare(specificity(sel), specificity(".gp-note")), sel).toBeGreaterThan(0);
+    }
   });
 });

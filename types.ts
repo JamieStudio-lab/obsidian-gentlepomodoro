@@ -66,6 +66,10 @@ export interface GentlePomoSettings {
   // switch for both edges. Independent of every sound setting on purpose — it
   // exists for people who keep the sound off.
   sessionEndNotification: boolean;
+  // Opt-in focus note (0.7.1): after a focus session is logged, a small card
+  // asks how it went and keeps a face and a few words on that session's line
+  // ([Note:: …], logLine.ts). Off by default; on both surfaces (a policy).
+  focusNoteEnabled: boolean;
 
   // Paths
   tasksPath: string;

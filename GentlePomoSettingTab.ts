@@ -89,6 +89,7 @@ import {
   resolveTaskSource,
 } from "./taskScope";
 import { SESSION_END_NOTIFICATION_DESC, SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
+import { FOCUS_NOTE_DESC, FOCUS_NOTE_LABEL } from "./focusNote";
 import { markDestructive } from "./confirmModal";
 import { CuePickerModal } from "./cuePicker";
 import {
@@ -1654,6 +1655,13 @@ export class GentlePomoSettingTab extends PluginSettingTab {
                 control: { type: "toggle", key: "autoStartBreak" },
               },
               this.endSummaryRow("focus"),
+              // 0.7.1. After the summary, which closes the sound/start pair:
+              // the note is no part of that outcome.
+              {
+                name: FOCUS_NOTE_LABEL,
+                desc: FOCUS_NOTE_DESC,
+                control: { type: "toggle", key: "focusNoteEnabled" },
+              },
             ],
           },
           {
@@ -2230,6 +2238,13 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         settings.breakEndSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();
         this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "focusNoteEnabled":
+        settings.focusNoteEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        // Dual-surface: the gear panel carries the same switch, and a card
+        // still open shows or hides with it.
         this.applySettingsToOpenViews();
         return;
       case "sessionEndNotification": {

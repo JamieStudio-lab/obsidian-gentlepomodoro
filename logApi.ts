@@ -105,6 +105,14 @@ export interface LogApiSession {
   dropped: number | null;
   /** The name typed for the device that logged it; null when none was. */
   device: string | null;
+
+  // 0.7.1: the focus note, kept on the session's last line after it ended.
+  // Both null on a rest line (which never carries one) and on a line with no
+  // Session, as the tail above.
+  /** "frown", "meh" or "smile"; null when the note has no face, or there is none. */
+  face: string | null;
+  /** The words, without the face; null when there are none. */
+  note: string | null;
 }
 
 /** One day of the log. */
@@ -258,6 +266,8 @@ function apiSession(
     slept: tail?.slept ?? null,
     dropped: tail?.dropped ?? null,
     device: tail?.device ?? null,
+    face: tail?.face ?? null,
+    note: tail?.note ?? null,
   };
 }
 

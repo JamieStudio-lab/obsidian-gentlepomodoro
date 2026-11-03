@@ -158,6 +158,9 @@ export const QUERY_COLUMNS = [
     dql: "choice(s.Offset != null, default(s.Offset, 0) / 60, null)",
     js: 'typeof s.Offset === "number" ? s.Offset / 60 : null',
   },
+  // The focus note (0.7.1), its whole value, face word included. No
+  // arithmetic, so no cell can fail and drop its row; a missing one is "-".
+  { id: "note", label: "Note", head: "Note", dql: "s.Note", js: "s.Note ?? null" },
 ] as const satisfies readonly QueryColumn[];
 
 export type QueryColumnId = (typeof QUERY_COLUMNS)[number]["id"];

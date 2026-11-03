@@ -40,7 +40,7 @@ const SKIPPED =
 const OLDEST =
   "- [x] ☕ Rest | Start:: 2026-10-02 12:00:00 | End:: 2026-10-02 12:05:00 | Scheduled:: 300 | Total:: 300";
 
-/** The 0.7.0 members on a line with no Session: every one unknown. */
+/** The 0.7.0 and 0.7.1 members on a line with no Session: every one unknown. */
 const NO_TAIL = {
   sessionId: null,
   startedBy: null,
@@ -52,6 +52,8 @@ const NO_TAIL = {
   slept: null,
   dropped: null,
   device: null,
+  face: null,
+  note: null,
 };
 
 /** Properties with a pasted example that reads as a session line. */
@@ -412,7 +414,7 @@ describe("getDay — the 0.7.0 tail", () => {
     expect(plain.total).toBe(1500);
   });
 
-  it("adds only those ten members, so a member is never there by accident", async () => {
+  it("adds only the tail's members and the note's two, so a member is never there by accident", async () => {
     expect(Object.keys((await sessions())[0])).toEqual([
       "kind",
       "type",
@@ -427,6 +429,43 @@ describe("getDay — the 0.7.0 tail", () => {
       "status",
       ...Object.keys(NO_TAIL),
     ]);
+  });
+});
+
+describe("getDay — the 0.7.1 focus note", () => {
+  // Made-up lines: a focus with a face and words, one with a face alone, one
+  // with words alone, one with none; a rest line and a Session-less focus
+  // line each with a Note written there by hand, which no reader takes.
+  const TAIL = (id: string) =>
+    `[Session:: ${id}] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 1] [Offset:: 0]`;
+  const LINE = (id: string, note: string) =>
+    `${FOCUS.replace(/2026-10-02/g, "2026-10-06")} ${TAIL(id)}${note}`;
+  const DAY = [
+    LINE("s1111111aa", " [Note:: meh · stuck on the second (paragraph)]"),
+    LINE("s1111111bb", " [Note:: smile]"),
+    LINE("s1111111cc", " [Note:: ＃idea, then refs]"),
+    LINE("s1111111dd", ""),
+    `${REST.replace(/2026-10-02/g, "2026-10-06")} [Session:: s1111111ee] [StartedBy:: auto] [EndedBy:: skip] [Planned:: 300] [Offset:: 0] [Note:: smile · by hand]`,
+    `${FOCUS.replace(/2026-10-02/g, "2026-10-06")} [Note:: frown · by hand]`,
+  ].join("\n");
+  const sessions = async () =>
+    (await setup({ ...FILES, [LOG("2026-10-06")]: `${DAY}\n` }).api.getDay("2026-10-06")).sessions;
+
+  it("gives the face and the words apart, the words as written", async () => {
+    const read = (await sessions()).map((s) => [s.face, s.note]);
+    expect(read.slice(0, 4)).toEqual([
+      ["meh", "stuck on the second (paragraph)"],
+      ["smile", null],
+      [null, "＃idea, then refs"],
+      [null, null],
+    ]);
+  });
+
+  it("reads no note on a rest line, nor on a line with no Session", async () => {
+    const [, , , , rest, plain] = await sessions();
+    expect(rest.sessionId).toBe("s1111111ee");
+    expect([rest.face, rest.note]).toEqual([null, null]);
+    expect(plain).toMatchObject(NO_TAIL);
   });
 });
 

@@ -371,6 +371,27 @@ describe("the menu", () => {
     }
   });
 
+  it("offers a note on the last session after today's log, only while the note is offered", () => {
+    // Two arguments, as every call before 0.7.1: no note.
+    expect(titles(statusMenuEntries(idle, "hidden"))).not.toContain(
+      "Add a note to the last session"
+    );
+    expect(titles(statusMenuEntries(running, "clock", false))).toEqual(
+      titles(statusMenuEntries(running, "clock"))
+    );
+    for (const s of [idle, running, paused]) {
+      const entries = statusMenuEntries(s, "hidden", true);
+      const at = entries.findIndex((e) => e?.action === "log");
+      expect(entries[at + 1]).toEqual({
+        action: "note",
+        title: "Add a note to the last session",
+        icon: "notebook-pen",
+      });
+      // Nothing else moved.
+      expect(entries.filter((e) => e?.action !== "note")).toEqual(statusMenuEntries(s, "hidden"));
+    }
+  });
+
   it("uses the names the panel and the command palette use", () => {
     const main = readFileSync(resolve(__dirname, "..", "main.ts"), "utf8");
     expect(main).toContain('name: "Finish & next"');
@@ -386,6 +407,8 @@ describe("the menu's guard against a timer that moved on", () => {
     for (const a of [
       "open",
       "log",
+      // It acts on a session already logged, never on the clock (0.7.1).
+      "note",
       "time:hidden",
       "time:minutes",
       "time:clock",
@@ -444,6 +467,21 @@ describe("the plugin's wiring", () => {
     expect(end, next).toBeGreaterThan(at);
     return main.slice(at, end);
   };
+
+  it("offers the note in the menu by the setting, and opens it from there (0.7.1)", () => {
+    const open = method(
+      "private openStatusMenu(evt: MouseEvent): void {",
+      "private closeStaleStatusMenu("
+    );
+    expect(open).toContain(
+      "for (const entry of statusMenuEntries(state, time, this.settings.focusNoteEnabled)) {"
+    );
+    // Its own case: the default reads any other action as a time display, and
+    // "note" would set it to "e".
+    const run = method("private async runStatusMenuAction(", "async setStatusBarTime(");
+    expect(run).toContain('case "note": await this.openFocusNote(); return;');
+    expect(run.indexOf('case "note":')).toBeLessThan(run.indexOf("default:"));
+  });
 
   it("opens the menu from a click and from a right-click, and does nothing else on either", () => {
     expect(create).toContain(

@@ -58,6 +58,10 @@ export type EndedBy = (typeof ENDED_BY)[number];
  * `.*Offset::` would read it — hence OffsetChange, not EndOffset), and none
  * may be Day or Date: a list item's field of that name takes the place of
  * Dataview's `file.day` for the whole file. tests/logLine.test.ts holds both.
+ *
+ * Note (0.7.1) is the focus note, and the one key formatLogLine never writes:
+ * the timer has none when the line is written, so it only ever arrives later,
+ * through setSessionNote, on the last line of a focus session.
  */
 export const LOG_TAIL_KEYS = [
   "Session",
@@ -70,6 +74,7 @@ export const LOG_TAIL_KEYS = [
   "Slept",
   "Dropped",
   "Device",
+  "Note",
 ] as const;
 
 export interface SessionLog {
@@ -320,16 +325,7 @@ export function readLogPauses(value: string): [number, number][] | null {
  * in this name.
  */
 export function sanitizeAlias(name: string): string {
-  let text = name;
-  for (;;) {
-    const flattened = text.replace(/\[\[([^[\]]*)\]\]/g, (_whole, inner: string) => {
-      const bar = inner.indexOf("|");
-      return bar === -1 ? inner : inner.slice(bar + 1);
-    });
-    if (flattened === text) break;
-    text = flattened;
-  }
-  return text
+  return flattenLinks(name)
     .replace(/\[/g, "(")
     .replace(/\]/g, ")")
     .replace(/:{2,}/g, ":")
@@ -337,6 +333,26 @@ export function sanitizeAlias(name: string): string {
     .replace(/ {2,}/g, " ")
     .replace(/[\s\\]+$/u, "")
     .trim();
+}
+
+/**
+ * Every `[[link]]` in `text` as the text it shows — its alias, else its
+ * target — to a fixpoint, so `[[a|[[b]]]]` is `b`. The first step of
+ * sanitizeAlias, and of sanitizeNote (0.7.1), which flattens right after
+ * taking out 🍅 and ☕ and before every step that takes something apart:
+ * flattening shortens text, and so can put back together what a later step
+ * took apart.
+ */
+export function flattenLinks(text: string): string {
+  let flat = text;
+  for (;;) {
+    const next = flat.replace(/\[\[([^[\]]*)\]\]/g, (_whole, inner: string) => {
+      const bar = inner.indexOf("|");
+      return bar === -1 ? inner : inner.slice(bar + 1);
+    });
+    if (next === flat) return flat;
+    flat = next;
+  }
 }
 
 /**
@@ -411,6 +427,117 @@ export const DEVICE_NAME_MAX = 40;
 export function sanitizeDevice(name: string): string {
   const plain = name.replace(/[🍅☕#]/gu, "").replace(/\s+/gu, " ");
   return sanitizeAlias([...plain].slice(0, DEVICE_NAME_MAX).join("")).trim();
+}
+
+/* ===== The focus note (0.7.1) ===== */
+
+/** The faces a focus note can start with, as the word the line stores. */
+export const NOTE_FACES = ["frown", "meh", "smile"] as const;
+export type NoteFace = (typeof NOTE_FACES)[number];
+
+/** Between the face and the words: space, middle dot (U+00B7), space. */
+export const NOTE_SEPARATOR = " · ";
+
+/** The longest note text a line keeps, in code points, after cleaning. */
+export const NOTE_TEXT_MAX = 500;
+
+/**
+ * A focus note: a face, words, or both. `text` is "" for a face alone. On the
+ * line it is one of `[Note:: meh · stuck on refs]`, `[Note:: smile]` or
+ * `[Note:: stuck on refs]` (formatNoteValue).
+ */
+export interface FocusNote {
+  face: NoteFace | null;
+  text: string;
+}
+
+// Every line break sanitizeNote puts on one line: CR, LF, VT, FF, NEL and the
+// Unicode line and paragraph separators.
+const NOTE_BREAKS = "\\r\\n\\v\\f\\u0085\\u2028\\u2029";
+// A run of them, with the horizontal white space around and between them.
+const NOTE_BREAK_RUN = new RegExp(
+  `(?:[^\\S${NOTE_BREAKS}]*[${NOTE_BREAKS}])+[^\\S${NOTE_BREAKS}]*`,
+  "gu"
+);
+
+/**
+ * Words typed for a focus note made safe to write as `[Note:: …]`, and whether
+ * the cap cut them (the card makes Save active then, so the box shows what was
+ * kept). In this order, so no step can re-form what an earlier one took out:
+ *
+ * 1. Every 🍅 and ☕ goes, with a U+FE0F after it: the reviews find a session
+ *    by `🍅 Focus` anywhere on the line. First, before the links: taken out of
+ *    `[🍅[x|%]🍅]%`, they leave a link whose flattening re-forms a `%%`.
+ * 2. flattenLinks: a link keeps the text it shows. Before every step that
+ *    takes something apart, since flattening shortens text — `[[x|%]]%` holds
+ *    no `%%` until it is flattened, `a [[x| ]] b` no run of spaces.
+ * 3. Each run of line breaks, with the space around it, becomes " / "; one at
+ *    the start or the end just goes.
+ * 4. Every `#` becomes `＃` (U+FF03): a `#tag` in a list item is a tag of the
+ *    item and of the log file's page, and some reviews take a session's area
+ *    from the first `#task/` on the line.
+ * 5. Every run of `%` becomes one: Obsidian's `%%` comment opens mid-line and
+ *    runs on over the lines after it, hiding later sessions in reading view.
+ * 6. Runs of white space become one space.
+ * 7. Cut to NOTE_TEXT_MAX code points, never inside one (as sanitizeDevice).
+ * 8. sanitizeAlias: no bracket to close the field early, no `::` to start
+ *    another, no trailing backslash to escape its `]`. None of these can
+ *    re-form a break, a 🍅, a `#`, a `%%` or a run of spaces.
+ * 9. Trimmed.
+ *
+ * `|`, `·`, quotes, backticks, `*`, URLs and other emoji stay as typed.
+ */
+export function cleanNoteText(text: string): { text: string; cut: boolean } {
+  let clean = flattenLinks(text.replace(/[🍅☕]\uFE0F?/gu, ""));
+  clean = clean.replace(NOTE_BREAK_RUN, (run: string, at: number, whole: string) =>
+    at === 0 || at + run.length === whole.length ? "" : " / "
+  );
+  clean = clean
+    .replace(/#/g, "＃")
+    .replace(/%{2,}/g, "%")
+    .replace(/\s+/gu, " ")
+    // Trimmed before the cut too, so space at either end never counts as cut.
+    .trim();
+  const points = [...clean];
+  const cut = points.length > NOTE_TEXT_MAX;
+  return { text: sanitizeAlias(points.slice(0, NOTE_TEXT_MAX).join("")).trim(), cut };
+}
+
+/** cleanNoteText's text: what a line stores of `text`. Idempotent. */
+export function sanitizeNote(text: string): string {
+  return cleanNoteText(text).text;
+}
+
+/**
+ * A Note value as read (its own text, as written) — null when there is none.
+ * Strict: a face is one only as the whole value, or followed by exactly
+ * NOTE_SEPARATOR and at least one character that is not a space, and only in
+ * lower case. `Smile · x`, `meh·x`, `meh - x` and `meh ·` are text.
+ */
+export function parseNoteValue(value: string | undefined): FocusNote | null {
+  const note = value?.trim() ?? "";
+  if (note === "") return null;
+  for (const face of NOTE_FACES) {
+    if (note === face) return { face, text: "" };
+    // The value is trimmed, so words follow a separator it starts with.
+    if (note.startsWith(face + NOTE_SEPARATOR)) {
+      return { face, text: note.slice(face.length + NOTE_SEPARATOR.length).trim() };
+    }
+  }
+  return { face: null, text: note };
+}
+
+/**
+ * The Note value for `note` — its text through sanitizeNote — or null when
+ * there is neither a face nor words, and so no field. Words alone that read
+ * as a face (`meh`) come back with that face: the card takes the face out of
+ * the words before saving (focusNote.ts), so what it shows is what is stored.
+ */
+export function formatNoteValue(note: FocusNote): string | null {
+  const face = NOTE_FACES.includes(note.face as NoteFace) ? note.face : null;
+  const text = sanitizeNote(note.text);
+  if (face && text) return `${face}${NOTE_SEPARATOR}${text}`;
+  return face ?? (text || null);
 }
 
 /**
@@ -852,6 +979,11 @@ export interface LogTail {
   dropped: number | null;
   /** As written; null when the field is missing. */
   device: string | null;
+  /** The focus note (0.7.1, parseNoteValue): its face, and its words without
+   *  the face — each null when there is none. Both null on a rest line, which
+   *  never carries a note: one written there by hand is not read. */
+  face: NoteFace | null;
+  note: string | null;
 }
 
 /** A field that is exactly a whole number not below 0, or null. */
@@ -872,6 +1004,7 @@ export function readLogTail(parsed: ParsedLogLine): LogTail | null {
   const zeroWhenMissing = (key: string) => (values.has(key) ? logCount(parsed, key) : 0);
   const offset = logInteger(parsed, "Offset");
   const change = values.has("OffsetChange") ? logInteger(parsed, "OffsetChange") : 0;
+  const note = parsed.kind === "focus" ? parseNoteValue(values.get("Note")) : null;
   return {
     sessionId,
     startedBy: values.get("StartedBy") ?? null,
@@ -883,7 +1016,143 @@ export function readLogTail(parsed: ParsedLogLine): LogTail | null {
     slept: zeroWhenMissing("Slept"),
     dropped: zeroWhenMissing("Dropped"),
     device: values.get("Device") ?? null,
+    face: note?.face ?? null,
+    note: note?.text || null,
   };
+}
+
+/** A log file's rows as every reader splits them, and the first past its
+ *  properties (logFrontmatter.ts): a property is no session line. */
+function bodyRows(content: string): { rows: string[]; from: number } {
+  return { rows: content.split("\n"), from: frontmatterRowCount(content) };
+}
+
+/** A focus line the plugin wrote in version 2, with the Session it carries. */
+function sessionLine(row: string): { parsed: ParsedLogLine; sessionId: string } | null {
+  const parsed = parseLogLine(row);
+  if (!parsed || parsed.kind !== "focus" || parsed.format !== "v2") return null;
+  const sessionId = parsed.values.get("Session");
+  return isSessionId(sessionId) ? { parsed, sessionId } : null;
+}
+
+/**
+ * The row of the session's LAST focus line past the properties, or null: the
+ * parts of a split session share its ID, and the note belongs to the last.
+ * The ID must be one exactly, never part of another.
+ */
+function lastSessionRow(
+  rows: readonly string[],
+  from: number,
+  sessionId: string
+): { index: number; parsed: ParsedLogLine } | null {
+  if (!isSessionId(sessionId)) return null;
+  for (let i = rows.length - 1; i >= from; i--) {
+    // Only a row that holds the ID somewhere is worth reading; the reading
+    // then decides, by its Session field exactly.
+    if (!rows[i].includes(sessionId)) continue;
+    const line = sessionLine(rows[i]);
+    if (line?.sessionId === sessionId) return { index: i, parsed: line.parsed };
+  }
+  return null;
+}
+
+/** A field's `[Key:: value]` with the one space before it, as [from, to). */
+function fieldSpan(row: string, field: LogField): [number, number] {
+  const open = row.lastIndexOf(`[${field.key}::`, field.start);
+  const close = row.indexOf("]", field.end) + 1;
+  return [open > 0 && row[open - 1] === " " ? open - 1 : open, close];
+}
+
+/**
+ * `content` with the focus note of session `sessionId` set to `note`, or null
+ * when no focus line of that session is in it (the caller says "not found").
+ * It formats the note itself (formatNoteValue), so nothing uncleaned reaches
+ * a line; a note with neither face nor words, or null, takes the field off.
+ *
+ * Only the session's last focus line past the properties changes: a Note
+ * there gets the new value in place and any second Note goes; else
+ * ` [Note:: …]` goes right after its last field, before any text after them.
+ * Every other byte stays — other rows, a CRLF row's `\r`, a byte order mark,
+ * the properties, the line's own fields. A note equal to the one there gives
+ * `content` back unchanged, so the caller writes nothing.
+ */
+export function setSessionNote(
+  content: string,
+  sessionId: string,
+  note: FocusNote | null
+): string | null {
+  const { rows, from } = bodyRows(content);
+  const target = lastSessionRow(rows, from, sessionId);
+  if (!target) return null;
+  const value = note ? formatNoteValue(note) : null;
+  const row = rows[target.index];
+  const notes = target.parsed.fields.filter((f) => f.key === "Note");
+  // Edits from the right, so each span is still where parseLogLine found it.
+  let line = row;
+  const kept = value === null ? [] : notes.slice(0, 1);
+  for (const field of notes.slice(kept.length).reverse()) {
+    const [start, end] = fieldSpan(line, field);
+    line = line.slice(0, start) + line.slice(end);
+  }
+  if (value !== null) {
+    const [first] = kept;
+    if (first) {
+      line = line.slice(0, first.start) + value + line.slice(first.end);
+    } else {
+      const last = target.parsed.fields[target.parsed.fields.length - 1];
+      const at = line.indexOf("]", last.end) + 1;
+      line = `${line.slice(0, at)} [Note:: ${value}]${line.slice(at)}`;
+    }
+  }
+  if (line === row) return content;
+  rows[target.index] = line;
+  return rows.join("\n");
+}
+
+/**
+ * The focus note on session `sessionId`'s last focus line (setSessionNote's
+ * line), read as parseNoteValue reads it: `found` false when no such line is
+ * in `content`, else the note, null when it has none.
+ */
+export function readSessionNote(
+  content: string,
+  sessionId: string
+): { found: false } | { found: true; note: FocusNote | null } {
+  const { rows, from } = bodyRows(content);
+  const target = lastSessionRow(rows, from, sessionId);
+  if (!target) return { found: false };
+  return { found: true, note: parseNoteValue(target.parsed.values.get("Note")) };
+}
+
+/** The last session a log file holds a focus note for (lastSessionNoteTarget). */
+export interface SessionNoteLine {
+  sessionId: string;
+  /** Start and End as written ("" when missing): readLogTime reads them. */
+  start: string;
+  end: string;
+  /** The Task's name as written, NO_TASK_LABEL when the line has no Task. */
+  taskName: string;
+}
+
+/**
+ * The file's last focus line that can take a note — version 2, past the
+ * properties, with a Session ID — or null. Rest lines and lines without
+ * Session are passed over: a note goes on neither.
+ */
+export function lastSessionNoteTarget(content: string): SessionNoteLine | null {
+  const { rows, from } = bodyRows(content);
+  for (let i = rows.length - 1; i >= from; i--) {
+    const line = sessionLine(rows[i]);
+    if (!line) continue;
+    const values = line.parsed.values;
+    return {
+      sessionId: line.sessionId,
+      start: values.get("Start") ?? "",
+      end: values.get("End") ?? "",
+      taskName: line.parsed.task?.name ?? NO_TASK_LABEL,
+    };
+  }
+  return null;
 }
 
 /**

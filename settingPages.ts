@@ -32,7 +32,8 @@ export const TASKS_PAGE = "Tasks";
 
 export const TIMER_PAGE_DESC = "Theme, long breaks, the daily goal, opening at startup.";
 export const STATUS_BAR_PAGE_DESC = "What the status bar at the bottom of the window shows.";
-export const SOUNDS_PAGE_DESC = "What plays, and what starts, when a session ends.";
+export const SOUNDS_PAGE_DESC =
+  "What plays, what starts, and the note you can keep, when a session ends.";
 export const MUSIC_PAGE_DESC = "Up to three links, and how they play.";
 export const LOG_PAGE_DESC = "Where sessions are written, and tools to check, fix and export them.";
 export const LOG_TABLES_PAGE_DESC =

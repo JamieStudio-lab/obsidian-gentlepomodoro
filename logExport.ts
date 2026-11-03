@@ -326,6 +326,10 @@ export interface ExportRecord {
   device: string | null;
   /** The day's file (DayLog.path). */
   logFile: string | null;
+  /** The focus note (0.7.1): its face and its words, as the API gives them —
+   *  after logFile, so a JSON Lines object keeps the order it had before. */
+  face: string | null;
+  note: string | null;
 }
 
 const LOG_TIME_TEXT = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
@@ -382,6 +386,8 @@ export function exportRecords(days: readonly DayLog[], kinds: ExportKinds): Expo
         dropped: s.dropped,
         device: s.device,
         logFile: day.path,
+        face: s.face,
+        note: s.note,
       });
     }
   }
@@ -422,6 +428,9 @@ export const CSV_COLUMNS = [
   "dropped",
   "device",
   "logFile",
+  // 0.7.1, the focus note.
+  "face",
+  "note",
 ] as const;
 type CsvColumn = (typeof CSV_COLUMNS)[number];
 
@@ -480,6 +489,8 @@ function csvValues(r: ExportRecord): Record<CsvColumn, string | number | null> {
     dropped: r.dropped,
     device: r.device,
     logFile: r.logFile,
+    face: r.face,
+    note: r.note,
   };
 }
 

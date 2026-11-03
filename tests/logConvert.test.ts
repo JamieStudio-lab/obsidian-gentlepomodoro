@@ -1105,6 +1105,37 @@ describe("scanLogAnomalies — what a 0.6.9 Fix leaves on a 0.7.0 line", () => {
   });
 });
 
+describe("a focus note (0.7.1) through Convert, the merge and Check", () => {
+  // Made up: a 0.7.0 focus line with a note on it, as setSessionNote leaves
+  // one, then its break. Convert leaves version 2 lines alone, the merge
+  // moves rows as they are, and Check reads no Note.
+  const NOTED =
+    "- 🍅 Focus [Task:: [[Projects/Garden.md|Weed]]] [Start:: 2026-06-15 09:00:00] [End:: 2026-06-15 09:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0] [Session:: s7k2m9qx4w] [StartedBy:: start] [EndedBy:: time-up] [Planned:: 1500] [Cycle:: 1] [Offset:: 120] [Note:: meh · stuck on (refs) / ＃idea | 50%]";
+  const BREAK =
+    "- ☕ Rest [Start:: 2026-06-15 09:25:00] [End:: 2026-06-15 09:30:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] [Session:: s3n8d1wa5b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 300] [Offset:: 120]";
+  const OTHER =
+    "- 🍅 Focus [Task:: No Task] [Start:: 2026-06-15 11:00:00] [End:: 2026-06-15 11:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]";
+
+  it("is left as it is by Convert", () => {
+    const file = `${NOTED}\n${BREAK}\n`;
+    const converted = convertLogContent(file);
+    expect(converted.content).toBe(file);
+    expect(converted.counts).toEqual(counts({ alreadyV2: 2 }));
+  });
+
+  it("moves with its line in a merge, and comes back out with it", () => {
+    const into = `${OTHER}\n`;
+    const from = `${NOTED}\n${BREAK}\n`;
+    const merged = mergeLogContent(into, from).content;
+    expect(merged).toBe(`${NOTED}\n${BREAK}\n${OTHER}\n`);
+    expect(unmergeLogContent(merged, from)).toBe(into);
+  });
+
+  it("is no anomaly to Check", () => {
+    expect(scanLogAnomalies([{ path: "Logs/a.md", content: `${NOTED}\n${BREAK}\n` }])).toEqual([]);
+  });
+});
+
 describe("describeSeconds", () => {
   it("says seconds under a minute, minutes and seconds under an hour, else hours and minutes", () => {
     expect(describeSeconds(0)).toBe("0s");

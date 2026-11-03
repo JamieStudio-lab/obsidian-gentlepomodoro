@@ -18,6 +18,7 @@ import { DEVICE_NAME_KEY, saveDeviceName } from "../deviceStorage";
 import { memoryStorage } from "./memoryStorage";
 import { formatLogLine, parseFocusTotalSeconds, parseLogLine, type SessionLog } from "../logLine";
 import type GentlePomoPlugin from "../main";
+import type { FocusNoteTarget } from "../focusNote";
 import type { MomentLike } from "../momentTypes";
 import { fakeVault, linkCache, type FakeVault } from "./fakeVault";
 import { ZERO_SESSION_ID, offsetAt, zeroSessionIds } from "./logTail";
@@ -1128,6 +1129,23 @@ describe("LogManager.updateLoggedTaskName — both formats", () => {
     expect(after).toEqual([v2("New name", "abc123") + TAIL]);
   });
 
+  // 0.7.1: the focus note is the tail's last field, and every rewrite here
+  // touches the Task value alone.
+  const NOTED = `${TAIL} [Note:: meh · stuck on (refs) / ＃idea | 50%]`;
+
+  it("renames a line with a focus note and keeps the note byte for byte", async () => {
+    const after = await rename([v2("Old", "abc123") + NOTED, REST], "New [name]");
+    expect(after).toEqual([v2("New (name)", "abc123") + NOTED, REST]);
+    const moved = taskLinkAfterMove(
+      v2("Old", "abc123") + NOTED,
+      "Projects/Docs.md",
+      "Done/Docs.md"
+    );
+    expect(moved).toBe(
+      v2("Old", "abc123").replace("[[Projects/Docs.md|", "[[Done/Docs.md|") + NOTED
+    );
+  });
+
   it("leaves a 0.7.0 line alone in Convert and Check, and its tail through a moved note", () => {
     const file = `${v2("Old", "abc123")}${TAIL}\n${REST} [Session:: s3n8d1wa2b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 300] [Offset:: -240]\n`;
     const converted = convertLogContent(file);
@@ -2023,5 +2041,469 @@ describe.each<[string, string, [number, number, number], string, string | null]>
     expect(line?.values.get("Total")).toBe("1500");
     expect(line?.values.get("Offset")).toBe(offset);
     expect(line?.values.get("OffsetChange") ?? null).toBe(change);
+  });
+});
+
+describe("LogManager — the focus note's write path (0.7.1)", () => {
+  let previousMoment: unknown;
+  beforeEach(() => {
+    const g = globalThis as unknown as { moment?: unknown };
+    previousMoment = g.moment;
+    g.moment = createRequire(import.meta.url)("moment");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    Notice.shown.length = 0;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
+  });
+
+  const LOG = "Logs/2026-10-02-gentle-pomodoro-log.md";
+  const at = (h: number, mi: number, s = 0) => vi.setSystemTime(new Date(2026, 9, 2, h, mi, s));
+  const ms = (h: number, mi: number) => new Date(2026, 9, 2, h, mi).getTime();
+
+  /** A LogManager writing today's log in a fake vault, its hooks recorded. */
+  function noted(files: Record<string, string> = { [LOG]: "" }, folders: string[] = []) {
+    const vault = fakeVault(files, folders);
+    Object.assign(vault, {
+      adapter: { exists: () => Promise.resolve(true) },
+      create: vi.fn((path: string, data: string) => {
+        vault.contents[path] = data;
+        return Promise.resolve();
+      }),
+      createFolder: () => Promise.resolve(),
+    });
+    const plugin = {
+      settings: { logFolderPath: "Logs", dayStartHour: 0, taskSwitchLogging: "last-task" },
+      app: { vault, metadataCache: linkCache(vault) },
+      invalidateFocusTotalCache: vi.fn(),
+    } as unknown as GentlePomoPlugin;
+    const storage = memoryStorage();
+    const lm = new LogManager(plugin, { storage, plannedMs: () => null });
+    const ended: FocusNoteTarget[] = [];
+    const started = vi.fn();
+    lm.setFocusNoteHooks({
+      ended: (target) => ended.push(target),
+      focusStarted: started,
+    });
+    return { vault, plugin, storage, lm, ended, started };
+  }
+  async function focus(
+    lm: LogManager,
+    from: [number, number],
+    to: [number, number, number?],
+    task = "No Task"
+  ) {
+    at(...from);
+    lm.startSession("focus", task, 25);
+    at(...to);
+    return lm.endSession("finished");
+  }
+  const sessionOf = (vault: FakeVault, row = 0, path = LOG) =>
+    parseLogLine((vault.contents[path] ?? "").split("\n").filter(Boolean)[row] ?? "")?.values.get(
+      "Session"
+    );
+  const noteOf = (vault: FakeVault, row = 0, path = LOG) =>
+    parseLogLine((vault.contents[path] ?? "").split("\n").filter(Boolean)[row] ?? "")?.values.get(
+      "Note"
+    );
+
+  describe("the hooks", () => {
+    it("tells the store once per counted focus end, with the line it wrote", async () => {
+      const { vault, lm, ended } = noted();
+      expect(await focus(lm, [9, 0], [9, 25], "Write docs")).toBe(true);
+      expect(ended).toEqual([
+        {
+          sessionId: sessionOf(vault),
+          path: LOG,
+          logged: "file",
+          startMs: ms(9, 0),
+          endMs: ms(9, 25),
+          taskName: "Write docs",
+          taskPath: undefined,
+        },
+      ]);
+    });
+
+    it("gives a Skip a card too (status cancelled)", async () => {
+      const { lm, ended } = noted();
+      at(9, 0);
+      lm.startSession("focus", "No Task", 25);
+      at(9, 10);
+      await lm.endSession("cancelled");
+      expect(ended).toHaveLength(1);
+    });
+
+    it("names the last line of a split session, its path and its task", async () => {
+      const { vault, plugin, lm, ended } = noted();
+      plugin.settings.taskSwitchLogging = "split";
+      at(9, 0);
+      lm.startSession("focus", "A", 25, "Projects/A.md");
+      at(9, 10);
+      lm.updateTask("B", "Projects/B.md");
+      at(9, 25);
+      await lm.endSession("finished");
+      expect(ended).toHaveLength(1);
+      expect(ended[0]).toMatchObject({ taskName: "B", taskPath: "Projects/B.md" });
+      expect(ended[0].sessionId).toBe(sessionOf(vault, 1));
+      expect(ended[0].startMs).toBe(ms(9, 0));
+    });
+
+    it("names the last part's task for a split session whose lines wait to be retried", async () => {
+      const { vault, plugin, lm, ended } = noted();
+      plugin.settings.taskSwitchLogging = "split";
+      vi.spyOn(vault, "process").mockRejectedValue(new Error("locked"));
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      at(9, 0);
+      lm.startSession("focus", "A", 25, "Projects/A.md");
+      at(9, 10);
+      lm.updateTask("B", "Projects/B.md");
+      at(9, 25);
+      await lm.endSession("finished");
+      expect(ended[0]).toMatchObject({ logged: "queued", taskName: "B" });
+    });
+
+    it("ends the card's session where the session ended, not when the end ran", async () => {
+      // The zero crossing ends a session at its planned end however late the
+      // tick ran (F3): the card's times are the line's.
+      const { lm, ended } = noted();
+      at(9, 0);
+      lm.startSession("focus", "No Task", 25);
+      at(9, 40);
+      await lm.endSession("finished", { endAt: ms(9, 25) });
+      expect(ended[0]).toMatchObject({ startMs: ms(9, 0), endMs: ms(9, 25) });
+    });
+
+    it("names the task as the line does, after a 🆔 rename", async () => {
+      const { lm, ended } = noted({
+        [LOG]: "",
+        "Projects/A.md": "- [ ] Renamed task 🆔 abc123\n",
+      });
+      at(9, 0);
+      lm.startSession("focus", "Old name", 25, "Projects/A.md", "abc123");
+      at(9, 25);
+      await lm.endSession("finished");
+      expect(ended[0].taskName).toBe("Renamed task");
+    });
+
+    it("says a line that waits to be retried is queued, and one with no folder is not logged", async () => {
+      const queued = noted();
+      vi.spyOn(queued.vault, "process").mockRejectedValue(new Error("locked"));
+      await focus(queued.lm, [9, 0], [9, 25]);
+      expect(queued.ended[0]).toMatchObject({ logged: "queued", path: LOG });
+
+      const none = noted();
+      none.plugin.settings.logFolderPath = "";
+      await focus(none.lm, [9, 0], [9, 25]);
+      expect(none.ended[0]).toMatchObject({ logged: "none", path: null });
+      expect(none.ended[0].sessionId).toMatch(/^s[0-9a-z]{9}$/);
+    });
+
+    it("tells it nothing for a break, a session under a minute or a Reset", async () => {
+      const { lm, ended } = noted();
+      at(9, 0);
+      lm.startSession("break", "No Task", 5, undefined, undefined, "short");
+      at(9, 5);
+      await lm.endSession("finished");
+      expect(await focus(lm, [9, 10], [9, 10, 30])).toBe(false);
+      at(9, 20);
+      lm.startSession("focus", "No Task", 25);
+      at(9, 30);
+      lm.discardSession();
+      expect(ended).toEqual([]);
+    });
+
+    it("tells it nothing for a recovered session (Stop, Skip and time-up only)", async () => {
+      const first = noted();
+      at(9, 0);
+      first.lm.startSession("focus", "No Task", 25);
+      at(9, 30);
+      first.lm.heartbeat();
+      at(10, 0);
+      const after = new LogManager(first.plugin, { storage: first.storage, plannedMs: () => null });
+      const ended = vi.fn();
+      after.setFocusNoteHooks({ ended, focusStarted: vi.fn() });
+      await after.offerUnfinishedSessions(() => Promise.resolve("log"));
+      expect(first.vault.contents[LOG]).toContain("🍅 Focus");
+      expect(ended).not.toHaveBeenCalled();
+    });
+
+    it("tells it nothing of an end whose write was still running at unload", async () => {
+      const { vault, lm, ended } = noted();
+      // The write waits here until the test lets it land.
+      const gate: { land: (() => void) | null } = { land: null };
+      const process = vault.process.bind(vault);
+      vi.spyOn(vault, "process").mockImplementation(
+        (file, fn) =>
+          new Promise((resolveProcess) => {
+            gate.land = () => {
+              void process(file, fn).then(resolveProcess);
+            };
+          })
+      );
+      at(9, 0);
+      lm.startSession("focus", "No Task", 25);
+      at(9, 25);
+      const ending = lm.endSession("finished");
+      await vi.waitFor(() => {
+        expect(gate.land).not.toBeNull();
+      });
+      lm.dispose();
+      gate.land?.();
+      expect(await ending).toBe(true);
+      expect(vault.contents[LOG]).toContain("🍅 Focus");
+      expect(ended).toEqual([]);
+    });
+
+    it("never lets a hook that throws break an end", async () => {
+      const { vault, lm } = noted();
+      lm.setFocusNoteHooks({
+        ended: () => {
+          throw new Error("card");
+        },
+        focusStarted: () => {
+          throw new Error("card");
+        },
+      });
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(await focus(lm, [9, 0], [9, 25])).toBe(true);
+      expect(sessionOf(vault)).toBeDefined();
+    });
+
+    it("hears nothing once its hooks are taken back", async () => {
+      const { lm, ended, started } = noted();
+      lm.setFocusNoteHooks(null);
+      await focus(lm, [9, 0], [9, 25]);
+      expect(ended).toEqual([]);
+      expect(started).not.toHaveBeenCalled();
+    });
+
+    it("says a focus opened on a fresh start and after a Reset, never on a resume or a break", () => {
+      const { lm, started } = noted();
+      at(9, 0);
+      lm.startSession("focus", "No Task", 25);
+      expect(started).toHaveBeenCalledTimes(1);
+      // A resume.
+      lm.pauseSession();
+      at(9, 5);
+      lm.startSession("focus", "No Task", 25);
+      expect(started).toHaveBeenCalledTimes(1);
+      // A Reset while running: the engine discards, then opens one anew.
+      lm.discardSession();
+      lm.startSession("focus", "No Task", 25, undefined, undefined, null, "reset");
+      expect(started).toHaveBeenCalledTimes(2);
+      // An auto-start into focus opens one too.
+      lm.discardSession();
+      lm.startSession("focus", "No Task", 25, undefined, undefined, null, "auto");
+      expect(started).toHaveBeenCalledTimes(3);
+      lm.discardSession();
+      lm.startSession("break", "No Task", 5, undefined, undefined, "short", "auto");
+      expect(started).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe("writeSessionNote", () => {
+    it("puts the note on the session's line, and says it saved it", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "stuck on [refs]" })).toBe(
+        "saved"
+      );
+      expect(noteOf(vault)).toBe("meh · stuck on (refs)");
+    });
+
+    it("writes nothing when the note is already there", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      await lm.writeSessionNote(ended[0], { face: "smile", text: "" });
+      const before = vault.contents[LOG];
+      expect(await lm.writeSessionNote(ended[0], { face: "smile", text: "" })).toBe("unchanged");
+      expect(vault.contents[LOG]).toBe(before);
+    });
+
+    it("decides on the file as it is, never on a cached read", async () => {
+      // Another device's change has not reached the cache: it says the note is
+      // there, the file says it is not.
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      const stale = `${vault.contents[LOG].trimEnd()} [Note:: smile]\n`;
+      vi.spyOn(vault, "cachedRead").mockResolvedValue(stale);
+      expect(await lm.writeSessionNote(ended[0], { face: "smile", text: "" })).toBe("saved");
+      expect(noteOf(vault)).toBe("smile");
+    });
+
+    it("takes a note off (null)", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      await lm.writeSessionNote(ended[0], { face: "meh", text: "x" });
+      expect(await lm.writeSessionNote(ended[0], null)).toBe("saved");
+      expect(noteOf(vault)).toBeUndefined();
+      expect(vault.contents[LOG]).not.toContain("[Note::");
+    });
+
+    it("says missing when the line is no longer in its file", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      vault.contents[LOG] = "";
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "" })).toBe("missing");
+      expect(vault.contents[LOG]).toBe("");
+    });
+
+    it("says no-file when the file is nowhere to be found", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      vault.remove(vault.getAbstractFileByPath(LOG) as TFile);
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "" })).toBe("no-file");
+    });
+
+    it("finds the line again under a renamed log folder, by its Session ID", async () => {
+      const { vault, plugin, lm, ended } = noted({ [LOG]: "" }, ["Renamed"]);
+      await focus(lm, [9, 0], [9, 25]);
+      const moved = "Renamed/2026-10-02-gentle-pomodoro-log.md";
+      vault.move(vault.getAbstractFileByPath(LOG) as TFile, moved);
+      plugin.settings.logFolderPath = "Renamed";
+      const told = vi.fn();
+      expect(await lm.writeSessionNote(ended[0], { face: "smile", text: "x" }, told)).toBe("saved");
+      expect(told).toHaveBeenCalledWith(moved);
+      expect(noteOf(vault, 0, moved)).toBe("smile · x");
+    });
+
+    it("finds a moved line in its own day's file, days after it was written", async () => {
+      // Neither today's nor yesterday's file: the session's own day is looked
+      // at first.
+      const OLD = "Logs/2026-09-28-gentle-pomodoro-log.md";
+      const { vault, plugin, lm, ended } = noted({ [OLD]: "" }, ["Renamed"]);
+      vi.setSystemTime(new Date(2026, 8, 28, 9, 0));
+      lm.startSession("focus", "No Task", 25);
+      vi.setSystemTime(new Date(2026, 8, 28, 9, 25));
+      await lm.endSession("finished");
+      const moved = "Renamed/2026-09-28-gentle-pomodoro-log.md";
+      vault.move(vault.getAbstractFileByPath(OLD) as TFile, moved);
+      plugin.settings.logFolderPath = "Renamed";
+      at(9, 0);
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "" })).toBe("saved");
+      expect(noteOf(vault, 0, moved)).toBe("meh");
+    });
+
+    it("does not take another file's session for its own", async () => {
+      const { vault, plugin, lm, ended } = noted({ [LOG]: "" }, ["Renamed"]);
+      await focus(lm, [9, 0], [9, 25]);
+      const moved = "Renamed/2026-10-02-gentle-pomodoro-log.md";
+      vault.move(vault.getAbstractFileByPath(LOG) as TFile, moved);
+      plugin.settings.logFolderPath = "Renamed";
+      // Another session's ID: no line of it is in the file.
+      const other = { ...ended[0], sessionId: "s999999999" };
+      expect(await lm.writeSessionNote(other, { face: "meh", text: "" })).toBe("no-file");
+    });
+
+    it("leaves a line still waiting in the queue as it is, and says so", async () => {
+      const { vault, storage, lm, ended } = noted();
+      const process = vi.spyOn(vault, "process").mockRejectedValue(new Error("locked"));
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      await focus(lm, [9, 0], [9, 25]);
+      const queued = storage.load(UNWRITTEN_LINES_KEY);
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "x" })).toBe("waiting");
+      expect(storage.load(UNWRITTEN_LINES_KEY)).toEqual(queued);
+      expect(JSON.stringify(queued)).not.toContain("Note::");
+      // Once it can be written, the retry writes it once, with no note.
+      process.mockRestore();
+      await lm.retryUnwrittenLines();
+      const rows = vault.contents[LOG].split("\n").filter(Boolean);
+      expect(rows).toHaveLength(1);
+      expect(noteOf(vault)).toBeUndefined();
+    });
+
+    it("writes the waiting lines first, then the note on its line", async () => {
+      const { vault, lm, ended } = noted();
+      const process = vi.spyOn(vault, "process").mockRejectedValueOnce(new Error("locked"));
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      await focus(lm, [9, 0], [9, 25]);
+      expect(ended[0].logged).toBe("queued");
+      expect(process).toHaveBeenCalledTimes(1);
+      expect(await lm.writeSessionNote(ended[0], { face: "smile", text: "" })).toBe("saved");
+      const rows = vault.contents[LOG].split("\n").filter(Boolean);
+      expect(rows).toHaveLength(1);
+      expect(noteOf(vault)).toBe("smile");
+    });
+
+    it("keeps a line written between two notes, and the notes on their own line", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      await lm.writeSessionNote(ended[0], { face: "meh", text: "one" });
+      await focus(lm, [9, 30], [9, 55]);
+      expect(await lm.writeSessionNote(ended[0], { face: "smile", text: "two" })).toBe("saved");
+      const rows = vault.contents[LOG].split("\n").filter(Boolean);
+      expect(rows).toHaveLength(2);
+      expect(noteOf(vault, 0)).toBe("smile · two");
+      expect(noteOf(vault, 1)).toBeUndefined();
+    });
+
+    it("writes nothing after unload", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      const before = vault.contents[LOG];
+      lm.dispose();
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "" })).toBe("failed");
+      expect(vault.contents[LOG]).toBe(before);
+    });
+
+    it("calls a write that throws failed, and keeps the file", async () => {
+      const { vault, lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      const before = vault.contents[LOG];
+      vi.spyOn(vault, "process").mockRejectedValue(new Error("locked"));
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(await lm.writeSessionNote(ended[0], { face: "meh", text: "" })).toBe("failed");
+      expect(vault.contents[LOG]).toBe(before);
+    });
+  });
+
+  describe("reading a session's note back", () => {
+    it("readSessionNoteFor: the note on the target's line, from a cached read", async () => {
+      const { lm, ended } = noted();
+      await focus(lm, [9, 0], [9, 25]);
+      expect(await lm.readSessionNoteFor(ended[0])).toBeNull();
+      await lm.writeSessionNote(ended[0], { face: "frown", text: "x" });
+      expect(await lm.readSessionNoteFor(ended[0])).toEqual({ face: "frown", text: "x" });
+      expect(await lm.readSessionNoteFor({ ...ended[0], path: null })).toBeNull();
+    });
+
+    it("lastLoggedSessionNote: the newest focus line of today's file, else yesterday's", async () => {
+      const yesterday = "Logs/2026-10-01-gentle-pomodoro-log.md";
+      const { vault, plugin, lm, ended } = noted({ [LOG]: "", [yesterday]: "" });
+      expect(await lm.lastLoggedSessionNote()).toBeNull();
+      // Yesterday's line only.
+      vi.setSystemTime(new Date(2026, 9, 1, 22, 0));
+      lm.startSession("focus", "Late", 25);
+      vi.setSystemTime(new Date(2026, 9, 1, 22, 25));
+      await lm.endSession("finished");
+      at(9, 0);
+      expect(await lm.lastLoggedSessionNote()).toMatchObject({
+        path: yesterday,
+        line: { sessionId: ended[0].sessionId, taskName: "Late" },
+        note: null,
+      });
+      // Then today's, with its note; a break after it is passed over.
+      await focus(lm, [9, 0], [9, 25], "Early");
+      await lm.writeSessionNote(ended[1], { face: "meh", text: "n" });
+      at(9, 30);
+      lm.startSession("break", "No Task", 5, undefined, undefined, "short");
+      at(9, 35);
+      await lm.endSession("finished");
+      expect(await lm.lastLoggedSessionNote()).toMatchObject({
+        path: LOG,
+        line: {
+          sessionId: ended[1].sessionId,
+          start: "2026-10-02 09:00:00",
+          end: "2026-10-02 09:25:00",
+        },
+        note: { face: "meh", text: "n" },
+      });
+      expect(vault.contents[LOG]).toContain("☕ Rest");
+      plugin.settings.logFolderPath = "";
+      expect(await lm.lastLoggedSessionNote()).toBeNull();
+    });
   });
 });
