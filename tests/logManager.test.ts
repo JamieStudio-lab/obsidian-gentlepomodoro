@@ -792,6 +792,34 @@ describe("LogManager — writing the log through failures (F38, F53)", () => {
     expect(vault.contents.get(PATH)).toBe(`${restLine(10)}\n${restLine(20)}\n`);
   });
 
+  it("knows a kept line that landed by its Session and Start, though a note was added since (0.7.1)", async () => {
+    // The line landed on a timeout (F38) and stayed kept; another device then
+    // saved a focus note on it and Sync brought that back. Matched by text,
+    // the retry appended the line a second time: the session counted twice.
+    const storage = memoryStorage();
+    storage.save(UNWRITTEN_LINES_KEY, [
+      { path: PATH, folder: "Logs", lines: [restLine(10), restLine(20)], focus: false },
+    ]);
+    // restLine(20) shares restLine(10)'s Session (zeroSessionIds) and differs
+    // in Start, as a split session's parts do: it is still missing.
+    const vault = disk({ [PATH]: `${restLine(10)} [Note:: meh · from the laptop]\n` });
+    await manager(vault, storage).lm.retryUnwrittenLines();
+    expect(vault.contents.get(PATH)).toBe(
+      `${restLine(10)} [Note:: meh · from the laptop]\n${restLine(20)}\n`
+    );
+  });
+
+  it("matches a kept line without a Session ID by its exact text, as before", async () => {
+    const storage = memoryStorage();
+    const bare = restLine(10).replace(/ \[Session:: [^\]]*\]/, "");
+    storage.save(UNWRITTEN_LINES_KEY, [
+      { path: PATH, folder: "Logs", lines: [bare], focus: false },
+    ]);
+    const vault = disk({ [PATH]: `${bare} #edited\n` });
+    await manager(vault, storage).lm.retryUnwrittenLines();
+    expect(vault.contents.get(PATH)).toBe(`${bare} #edited\n${bare}\n`);
+  });
+
   it("runs one retry at a time: a second call while one runs joins it", async () => {
     // Startup and a session's own write can both ask at once. Two runs would
     // each take the first kept entry, and each drop one for it — so the

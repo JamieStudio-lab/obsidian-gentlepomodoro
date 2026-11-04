@@ -519,10 +519,15 @@ export class FocusNoteStore {
   /**
    * A counted focus session ended: its card opens, empty. A draft for the
    * session before that was never saved is dropped, and the user told.
+   * With "Offer a focus note" off, the session becomes the target and nothing
+   * more: no card opens — or it would show for this session the moment the
+   * setting is turned on — and a dropped draft, which no card was showing,
+   * says nothing.
    */
   ended(target: FocusNoteTarget): void {
-    if (this.isDirty()) this.host.notice(DROPPED_NOTE_NOTICE);
-    this.state = { target: { ...target }, cardOpen: true, draft: EMPTY_NOTE, saved: null };
+    const enabled = this.host.enabled();
+    if (enabled && this.isDirty()) this.host.notice(DROPPED_NOTE_NOTICE);
+    this.state = { target: { ...target }, cardOpen: enabled, draft: EMPTY_NOTE, saved: null };
     this.changed(true);
   }
 
@@ -666,7 +671,8 @@ export class FocusNoteStore {
     return result;
   }
 
-  /** The line was found in another file (the folder renamed, say). */
+  /** The line was found in another file (the log folder setting changed to
+   *  where the files were moved, say). */
   private moved(sessionId: string, path: string): void {
     const target = this.state.target;
     if (target?.sessionId !== sessionId || target.path === path) return;

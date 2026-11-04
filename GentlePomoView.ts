@@ -54,6 +54,7 @@ import {
 import { TimerEngine } from "./TimerEngine";
 import {
   loadTasks as fetchTasks,
+  countFreeTaskName,
   groupTasksByDate,
   linkedTaskDisplayName,
   taskLineKey,
@@ -277,6 +278,16 @@ export class GentlePomoView extends ItemView {
   private lastNoteReadKey: string | null = null;
   /** The task part of the read key: a new task drops the old task's note at once. */
   private lastNoteTaskKey: string | null = null;
+  /** The task without its note's path: the same across a move of that note. */
+  private lastNoteIdentityKey: string | null = null;
+  /**
+   * The task's note was moved (a task without a 🆔, matched through the log's
+   * links to it): the read the move starts runs before Obsidian rewrites the
+   * log's links and finds nothing, and hiding then to show again once the log
+   * files settle (lastNoteLogTouched) is a blink. So that one read keeps what
+   * shows when it finds nothing; the next read, whatever moved it, decides.
+   */
+  private lastNoteMoveHold = false;
   private lastNotePaintKey: string | null = null;
   /** Monotonic, as taskLoadGeneration: a read overtaken by a newer one paints nothing. */
   private lastNoteGeneration = 0;
@@ -644,6 +655,8 @@ export class GentlePomoView extends ItemView {
     this.lastNoteTextEl = lastNoteBody.createSpan("gp-last-note-text gp-hidden");
     this.lastNoteReadKey = null;
     this.lastNoteTaskKey = null;
+    this.lastNoteIdentityKey = null;
+    this.lastNoteMoveHold = false;
     this.lastNotePaintKey = null;
     this.lastNote = null;
     // A save or a clear may be this task's; the card's open state decides
@@ -1085,8 +1098,9 @@ export class GentlePomoView extends ItemView {
    * applySettings (the 50ms tick while running, every setting change, the
    * view opening) and from every change of the focus note store (a keystroke
    * too), so the read key is what keeps the vault out of both: the setting,
-   * the picker, the folder, "Day starts at", today, the link (path, and the
-   * 🆔 — or the name, for a task without one) and two revisions: the store's,
+   * the picker, the folder, "Day starts at", today, the link (the 🆔 — or,
+   * for a task without one, its note's path and its name without the count)
+   * and two revisions: the store's,
    * which moves only when a write settles, and the log files'
    * (lastNoteLogTouched).
    */
@@ -1101,15 +1115,15 @@ export class GentlePomoView extends ItemView {
       path !== undefined &&
       settings.logFolderPath !== "";
     const today = logicalDate(moment(), settings.dayStartHour);
+    // A 🆔 task is matched by its 🆔 alone: a rename of its text or a move of
+    // its note must not drop and re-read what it shows (a blink). A task
+    // without one is matched by name, the counter's markers aside, and by the
+    // log's links to its note.
+    const id = timer.currentTaskId ?? null;
+    const name = id ? null : countFreeTaskName(timer.currentTaskName);
+    const identityKey = wanted ? JSON.stringify([settings.logFolderPath, id, name]) : null;
     const taskKey = wanted
-      ? JSON.stringify([
-          settings.logFolderPath,
-          path,
-          timer.currentTaskId ?? null,
-          // A 🆔 task is matched by its 🆔 alone: a rename of its text must
-          // not drop and re-read what it shows (a blink).
-          timer.currentTaskId ? null : timer.currentTaskName,
-        ])
+      ? JSON.stringify([settings.logFolderPath, id ? null : path, id, name])
       : null;
     const readKey =
       taskKey === null
@@ -1125,14 +1139,26 @@ export class GentlePomoView extends ItemView {
       this.lastNoteReadKey = readKey;
       const generation = ++this.lastNoteGeneration;
       // Another task (or none): its note must not show under this one while
-      // the read runs. The same task re-read keeps what it shows until then.
-      if (taskKey !== this.lastNoteTaskKey) this.lastNote = null;
+      // the read runs. The same task re-read keeps what it shows until then,
+      // and so does the same task whose note moved (lastNoteMoveHold).
+      if (taskKey !== this.lastNoteTaskKey) {
+        const moved = identityKey !== null && identityKey === this.lastNoteIdentityKey;
+        this.lastNoteMoveHold = moved && this.lastNote !== null;
+        if (!moved) this.lastNote = null;
+      } else {
+        // Anything else moved — the log files settled, a save or a clear: this
+        // read's answer stands, nothing found included.
+        this.lastNoteMoveHold = false;
+      }
       this.lastNoteTaskKey = taskKey;
+      this.lastNoteIdentityKey = identityKey;
       if (wanted) {
+        const hold = this.lastNoteMoveHold;
         const task = { path, id: timer.currentTaskId, name: timer.currentTaskName };
         void this.plugin.logManager.lastTaskNote(task).then(
           (found) => {
             if (generation !== this.lastNoteGeneration) return;
+            if (found === null && hold) return;
             this.lastNote = found;
             this.paintLastNote(today);
           },

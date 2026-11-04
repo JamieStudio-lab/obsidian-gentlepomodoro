@@ -349,6 +349,25 @@ describe("FocusNoteStore", () => {
     expect(store.cardOpen).toBe(false);
   });
 
+  it("with the setting off, an end opens no card and drops a draft quietly", () => {
+    let enabled = true;
+    const c = host();
+    const h = { ...c.h, enabled: () => enabled };
+    const store = new FocusNoteStore(h);
+    store.ended(target());
+    store.setDraft(null, "typed, then the setting turned off");
+    enabled = false;
+    store.focusStarted();
+    store.ended(target({ sessionId: OTHER }));
+    expect(c.notices).toEqual([]);
+    // The session is the target (the command, once on, finds it), but no card
+    // waits to appear for it the moment the setting is turned back on.
+    expect(store.target?.sessionId).toBe(OTHER);
+    expect(store.cardOpen).toBe(false);
+    enabled = true;
+    expect(store.cardOpen).toBe(false);
+  });
+
   it("says nothing when the words match what is saved", async () => {
     const c = host();
     const store = new FocusNoteStore(c.h);
@@ -1019,7 +1038,7 @@ describe("main.ts wires the focus note", () => {
   it("chooses among today's and yesterday's sessions, as the log names its days", () => {
     const open = callbackBody(main, "async openFocusNote(): Promise<void> {");
     expect(open).toContain(
-      'days: [ logicalDate(moment(), dayStartHour), logicalDate(moment().subtract(1, "day"), dayStartHour), ], dayOf: (ms) => logicalDate(moment(ms), dayStartHour),'
+      "days: [logicalDate(moment(), dayStartHour), logicalDateBefore(moment(), dayStartHour, 1)], dayOf: (ms) => logicalDate(moment(ms), dayStartHour),"
     );
     expect(open).toContain("const dayStartHour = this.settings.dayStartHour;");
   });

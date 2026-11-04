@@ -87,7 +87,7 @@ import type { GentlePomoSettings, PomoMode, TimerListener, TimerState } from "./
 import { MUSIC_STATION_LIMIT, normalizeMusicPositions } from "./youtubeMusic";
 import type { MusicResumeState } from "./youtubeMusic";
 import type { MomentFactory } from "./momentTypes";
-import { logicalDate } from "./logLine";
+import { logicalDate, logicalDateBefore } from "./logLine";
 
 declare const moment: MomentFactory;
 
@@ -654,10 +654,7 @@ export default class GentlePomoPlugin extends Plugin {
     const choice = chooseLastSession({
       store: store.target,
       file,
-      days: [
-        logicalDate(moment(), dayStartHour),
-        logicalDate(moment().subtract(1, "day"), dayStartHour),
-      ],
+      days: [logicalDate(moment(), dayStartHour), logicalDateBefore(moment(), dayStartHour, 1)],
       dayOf: (ms) => logicalDate(moment(ms), dayStartHour),
     });
     if (choice.kind === "none") {
@@ -726,7 +723,9 @@ export default class GentlePomoPlugin extends Plugin {
     // manager act on neither.
     for (const dialog of [...this.sessionDialogs]) dialog.close();
     // The store hears nothing more from this log manager: an end still
-    // writing at unload belongs to the reloaded plugin's store.
+    // writing at unload opens no card in either plugin (the reloaded one's
+    // log manager never ran it); its line is written, and the command finds
+    // it as the newest in the file.
     if (this.logManager) this.logManager.setFocusNoteHooks(null);
 
     // Best effort — saveSettings is async and a hard quit may cut it short,

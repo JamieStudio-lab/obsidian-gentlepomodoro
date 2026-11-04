@@ -11,6 +11,7 @@ import {
   TASK_RENAME_DELAY_MS,
 } from "./constants";
 import {
+  countFreeTaskName,
   duplicateTaskIds,
   filesInFolder,
   findTaskTextById,
@@ -23,6 +24,7 @@ import {
   lastSessionNoteTarget,
   logDateNames,
   logicalDate,
+  logicalDateBefore,
   logTaskId,
   loggedTotalSeconds,
   newSessionId,
@@ -240,10 +242,36 @@ interface WrittenLog {
   taskName: string;
 }
 
-/** `lines` without the ones `content` already holds. */
+/**
+ * `lines` without the ones `content` already holds — for a retry, whose lines
+ * may have landed on a timeout (F38). A line with a Session ID is there when a
+ * row has its Session and its Start (a split session's parts share the one and
+ * differ in the other): its text may have changed since, as a focus note saved
+ * on another device ends the row in `[Note:: …]` (0.7.1), and matched by text
+ * the retry appended it a second time, counting the session twice. A line
+ * without one (Fix's template) is matched by its exact text, as before.
+ */
 function linesNotIn(content: string, lines: readonly string[]): string[] {
-  const present = new Set(content.split(/\r?\n/));
-  return lines.filter((line) => !present.has(line));
+  const rows = content.split(/\r?\n/);
+  const present = new Set(rows);
+  const sessions = new Set<string>();
+  for (const row of rows) {
+    const key = sessionRowKey(row);
+    if (key !== null) sessions.add(key);
+  }
+  return lines.filter((line) => {
+    if (present.has(line)) return false;
+    const key = sessionRowKey(line);
+    return key === null || !sessions.has(key);
+  });
+}
+
+/** A row's Session ID and Start, or null without a valid Session ID. */
+function sessionRowKey(row: string): string | null {
+  const values = parseLogLine(row)?.values;
+  const session = values?.get("Session");
+  if (session === undefined || !isSessionId(session)) return null;
+  return `${session}\n${values?.get("Start") ?? ""}`;
 }
 
 /**
@@ -1341,15 +1369,17 @@ export class LogManager {
    * line (setSessionNote), and only when the text changes.
    *
    * 1. The lines still waiting are written first, oldest first. A line of
-   *    this session still waiting after that is "waiting": the queue is never
-   *    edited, as a queued line that landed on a timeout (F38) would then be
-   *    appended a second time, with the note, since linesNotIn matches by
-   *    exact text.
-   * 2. The file is the one the line went to. When that is gone — the log
-   *    folder renamed, the file moved, or the index behind the adapter's write
-   *    — the line is looked for by its Session ID under the folder as it is
-   *    now: its own day's file, then today's and the day before's. `moved` is
-   *    told where it was found. None: "no-file".
+   *    this session still waiting after that is "waiting": a note goes only
+   *    on a line in the file, never into the queue, which keeps each line as
+   *    the timer wrote it.
+   * 2. The file is the one the line went to. When that path is gone — the
+   *    index behind the adapter's write, or the log folder setting changed to
+   *    where the files now are — the line is looked for by its Session ID
+   *    under the log folder setting as it is now: its own day's file, then
+   *    today's and the day before's. `moved` is told where it was found.
+   *    None: "no-file". Nothing follows a log file or folder renamed in the
+   *    file explorer: until the setting names the new folder, that is
+   *    "no-file": the Notice says the file is not there, and the draft is kept.
    * 3. One Vault.process decides, on the file's text as it is then: no such
    *    line, "missing"; the note already there, "unchanged" (Obsidian writes
    *    nothing when the text comes back as it was given); else "saved". Never
@@ -1404,7 +1434,7 @@ export class LogManager {
     const days = [
       logicalDate(moment(target.startMs), settings.dayStartHour),
       logicalDate(moment(), settings.dayStartHour),
-      logicalDate(moment().subtract(1, "day"), settings.dayStartHour),
+      logicalDateBefore(moment(), settings.dayStartHour, 1),
     ];
     for (const path of new Set(days.map((day) => dailyLogPath(settings.logFolderPath, day)))) {
       const file = vault.getAbstractFileByPath(path);
@@ -1445,7 +1475,7 @@ export class LogManager {
     const vault = this.plugin.app.vault;
     const days = [
       logicalDate(moment(), settings.dayStartHour),
-      logicalDate(moment().subtract(1, "day"), settings.dayStartHour),
+      logicalDateBefore(moment(), settings.dayStartHour, 1),
     ];
     for (const day of days) {
       const path = dailyLogPath(settings.logFolderPath, day);
@@ -1474,7 +1504,8 @@ export class LogManager {
    *    forward keeps its 🆔, and its notes follow it;
    *  - without, those carrying no 🆔 whose link leads to the task's note
    *    (resolveLogLink, the log file as source) under the name the writer
-   *    gave it (sanitizeAlias). A task whose text was edited since loses its
+   *    gave it (sanitizeAlias), the counter's markers aside (countFreeTaskName:
+   *    a count is not a rename). A task whose text was edited since loses its
    *    earlier notes; accepted.
    * Cached reads: what is shown, not what is written. A missing file is
    * passed over, and so is one that cannot be read. Null with no folder.
@@ -1483,10 +1514,10 @@ export class LogManager {
     const settings = this.plugin.settings;
     if (!settings.logFolderPath) return null;
     const vault = this.plugin.app.vault;
-    const alias = sanitizeAlias(task.name);
+    const alias = countFreeTaskName(sanitizeAlias(task.name));
     const now = moment();
     for (let daysAgo = 0; daysAgo < FOCUS_NOTE_LOOKBACK_DAYS; daysAgo++) {
-      const day = logicalDate(now.clone().subtract(daysAgo, "day"), settings.dayStartHour);
+      const day = logicalDateBefore(now, settings.dayStartHour, daysAgo);
       const path = dailyLogPath(settings.logFolderPath, day);
       const file = vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile)) continue;
@@ -1502,7 +1533,8 @@ export class LogManager {
         if (task.id) return id === task.id;
         if (id !== null || parsed.task?.path === undefined) return false;
         return (
-          parsed.task.name === alias && this.resolveLink(parsed.task.path, file.path) === task.path
+          countFreeTaskName(parsed.task.name) === alias &&
+          this.resolveLink(parsed.task.path, file.path) === task.path
         );
       });
       if (found) return { ...found, daysAgo, day };

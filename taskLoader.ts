@@ -296,6 +296,19 @@ export function taskLineKey(lineText: string): string {
   return taskMatchKey(removeAnyPomodoroMarker(lineText)).replace(/\s+/gu, "");
 }
 
+/**
+ * A task name (or a logged alias) without the counter's markers, spaces
+ * collapsed: the same for every count. The "Last time" line (0.7.1) matches a
+ * task without a 🆔 to its logged sessions by name, and the name the timer
+ * holds keeps the count it was picked with ("Write docs 🍅 3") while the
+ * counter moves the line on — so the next pick, "Write docs 🍅 4", would
+ * otherwise lose every earlier note. A count is not a rename (0.6.9). A 🍅 the
+ * user typed (isCounterMarker) stays.
+ */
+export function countFreeTaskName(name: string): string {
+  return removeAnyPomodoroMarker(name).replace(/\s+/gu, " ").trim();
+}
+
 export function normalizeTaskTextForDisplay(text: string): string {
   const priorityMatch = text.match(PRIORITY_REGEX);
   let cleaned = text.replace(DISPLAY_CLEANUP_REGEX, "");

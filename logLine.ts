@@ -180,6 +180,17 @@ export function logDateNames(m: MomentLike, dayStartHour: unknown): string[] {
   return [...new Set([logicalDate(m, dayStartHour), appLanguageLogicalDate(m, dayStartHour)])];
 }
 
+/**
+ * The logical day `days` days before `m`'s own (logicalDate's rule). Stepped
+ * from the logical day's start, by date: `m.clone().subtract(n, "day")` keeps
+ * the clock time, and on the morning after a spring-forward night that time
+ * may not exist on the earlier date — moment moves it an hour on, past "Day
+ * starts at", and the walk reads one day twice and skips the day before it.
+ */
+export function logicalDateBefore(m: MomentLike, dayStartHour: unknown, days: number): string {
+  return stamp(logicalDay(m, dayStartHour).startOf("day").subtract(days, "day"), LOG_DATE_FORMAT);
+}
+
 function logicalDay(m: MomentLike, dayStartHour: unknown): MomentLike {
   const day = m.clone();
   if (day.hour() < resolveDayStartHour(dayStartHour)) day.subtract(1, "day");

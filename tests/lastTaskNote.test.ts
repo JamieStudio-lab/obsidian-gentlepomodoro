@@ -1,11 +1,11 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { TFile } from "obsidian";
 import { LogManager } from "../logManager";
-import { logTaskId, newestFocusNote, type ParsedLogLine } from "../logLine";
+import { logTaskId, logicalDateBefore, newestFocusNote, type ParsedLogLine } from "../logLine";
 import {
   FocusNoteStore,
   lastNoteWhen,
@@ -340,6 +340,23 @@ describe("LogManager.lastTaskNote: the day walk", () => {
     expect(await midnight.lm.lastTaskNote(toy)).toMatchObject({ daysAgo: 1 });
   });
 
+  it("a count is not a rename: a task without a 🆔 keeps its notes as the counter moves on", async () => {
+    // The line was logged under the name the task was picked with; the counter
+    // then wrote 🍅 4, and the next pick (after a restart, say) holds that.
+    const { lm } = manager({
+      [daysBack(0)]: [
+        focusLine({ session: S1, task: "[[Projects/Toy.md|Write docs 🍅 3]]", note: "counted" }),
+        focusLine({ session: S2, task: "[[Projects/Toy.md|Buy kg]]", note: "not typed 🍅" }),
+      ].join("\n"),
+    });
+    expect(await lm.lastTaskNote({ ...toy, name: "Write docs 🍅 4" })).toMatchObject({
+      sessionId: S1,
+    });
+    expect(await lm.lastTaskNote({ ...toy, name: "Write docs" })).toMatchObject({ sessionId: S1 });
+    // A 🍅 the user typed is the task's text, not a count.
+    expect(await lm.lastTaskNote({ ...toy, name: "Buy 🍅 2 kg" })).toBeNull();
+  });
+
   it("passes over a file it cannot read, and goes on to the day before", async () => {
     const { vault, lm } = manager({
       [daysBack(0)]: focusLine({ session: S1, note: "unreadable" }),
@@ -363,6 +380,66 @@ describe("LogManager.lastTaskNote: the day walk", () => {
     expect(await lm.lastTaskNote(toy)).toBeNull();
     plugin.settings.logFolderPath = "";
     expect(await lm.lastTaskNote(toy)).toBeNull();
+  });
+});
+
+describe("the day walk on the morning after a spring-forward night", () => {
+  // Chicago skips 02:00–03:00 on 2026-03-08. At 02:30 on 03-09 with "Day
+  // starts at" 3, today is 03-08; stepping the clock time back a day lands on
+  // 03-08 02:30, which does not exist, moment moves it to 03:30, and the walk
+  // read 03-08 twice and never 03-07.
+  let savedTz: string | undefined;
+  let previousMoment: unknown;
+  beforeAll(() => {
+    savedTz = process.env.TZ;
+    process.env.TZ = "America/Chicago";
+  });
+  afterAll(() => {
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  });
+  beforeEach(() => {
+    const g = globalThis as unknown as { moment?: unknown };
+    previousMoment = g.moment;
+    g.moment = moment;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 2, 9, 2, 30));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    (globalThis as unknown as { moment?: unknown }).moment = previousMoment;
+  });
+
+  it("steps back by date from the logical day", () => {
+    const now = moment(Date.now());
+    expect([0, 1, 2, 3].map((n) => logicalDateBefore(now, 3, n))).toEqual([
+      "2026-03-08",
+      "2026-03-07",
+      "2026-03-06",
+      "2026-03-05",
+    ]);
+    // Day starts at midnight: today is 03-09, and the night before is 03-08.
+    expect(logicalDateBefore(now, 0, 1)).toBe("2026-03-08");
+  });
+
+  it("finds the note in the day before the logical day", async () => {
+    const vault = fakeVault({
+      "Projects/Toy.md": "- [ ] Write docs",
+      "Logs/2026-03-07-gentle-pomodoro-log.md": focusLine({
+        start: "2026-03-07 09:00:00",
+        note: "the day before",
+      }),
+    });
+    const plugin = {
+      settings: { logFolderPath: "Logs", dayStartHour: 3 },
+      app: { vault, metadataCache: linkCache(vault) },
+      invalidateFocusTotalCache: vi.fn(),
+    } as unknown as GentlePomoPlugin;
+    const found = await new LogManager(plugin).lastTaskNote({
+      path: "Projects/Toy.md",
+      name: "Write docs",
+    });
+    expect(found).toMatchObject({ daysAgo: 1, day: "2026-03-07" });
   });
 });
 
@@ -391,11 +468,13 @@ describe("the view's Last time line", () => {
   });
 
   it("keys the read on everything it depends on, the store's revision included", () => {
+    expect(refresh).toContain("const id = timer.currentTaskId ?? null;");
+    expect(refresh).toContain("const name = id ? null : countFreeTaskName(timer.currentTaskName);");
     for (const part of [
       "settings.logFolderPath",
       "path",
-      "timer.currentTaskId",
-      "timer.currentTaskName",
+      "id",
+      "name",
       "settings.dayStartHour",
       "today",
       "this.plugin.focusNotes.revision",
@@ -416,9 +495,27 @@ describe("the view's Last time line", () => {
     );
   });
 
-  it("keys a 🆔 task without its name, so a rename of its text does not blink", () => {
-    expect(refresh).toContain("timer.currentTaskId ? null : timer.currentTaskName,");
-    expect(refresh).not.toMatch(/currentTaskId \?\? null, timer\.currentTaskName/);
+  it("keys a 🆔 task without its name or path, so a rename or a move does not blink", () => {
+    expect(refresh).toContain(
+      "const taskKey = wanted ? JSON.stringify([settings.logFolderPath, id ? null : path, id, name]) : null;"
+    );
+    // The same task across a move of its note: no path.
+    expect(refresh).toContain(
+      "const identityKey = wanted ? JSON.stringify([settings.logFolderPath, id, name]) : null;"
+    );
+  });
+
+  it("keeps what shows through a move of the note of a task without a 🆔, for the move's read only", () => {
+    expect(readBlock).toContain(
+      "if (taskKey !== this.lastNoteTaskKey) { const moved = identityKey !== null && identityKey === this.lastNoteIdentityKey; this.lastNoteMoveHold = moved && this.lastNote !== null; if (!moved) this.lastNote = null; } else { this.lastNoteMoveHold = false; }"
+    );
+    expect(readBlock).toContain("this.lastNoteIdentityKey = identityKey;");
+    // Taken before the read, and the read that finds nothing then keeps it.
+    expect(readBlock.indexOf("const hold = this.lastNoteMoveHold;")).toBeGreaterThan(-1);
+    expect(readBlock.indexOf("const hold = this.lastNoteMoveHold;")).toBeLessThan(
+      readBlock.indexOf("lastTaskNote(")
+    );
+    expect(readBlock).toContain("if (found === null && hold) return;");
   });
 
   it("re-reads after a daily log file changes, once a burst settles", () => {
@@ -452,12 +549,12 @@ describe("the view's Last time line", () => {
     expect(refresh).toContain("const generation = ++this.lastNoteGeneration;");
     // While the timer is idle nothing ticks, so the landing itself must paint.
     expect(refresh).toContain(
-      "if (generation !== this.lastNoteGeneration) return; this.lastNote = found; this.paintLastNote(today);"
+      "if (generation !== this.lastNoteGeneration) return; if (found === null && hold) return; this.lastNote = found; this.paintLastNote(today);"
     );
   });
 
   it("drops the old task's note at once when the task changes, before the read", () => {
-    const clear = "if (taskKey !== this.lastNoteTaskKey) this.lastNote = null;";
+    const clear = "if (!moved) this.lastNote = null;";
     expect(readBlock).toContain(clear);
     expect(readBlock).toContain("this.lastNoteTaskKey = taskKey;");
     expect(readBlock.indexOf(clear)).toBeLessThan(readBlock.indexOf("lastTaskNote("));
