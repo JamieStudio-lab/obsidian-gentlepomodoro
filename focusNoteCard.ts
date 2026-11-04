@@ -9,6 +9,7 @@ import {
   type FocusNoteStore,
 } from "./focusNote";
 import { NOTE_FACES, type NoteFace } from "./logLine";
+import { SlotPart, type SlotGroup } from "./slotMotion";
 import type { MomentFactory } from "./momentTypes";
 
 declare const moment: MomentFactory;
@@ -66,6 +67,12 @@ export interface FocusNoteCardOptions {
   moment: MomentFactory;
   /** The setting, read now. */
   enabled: () => boolean;
+  /**
+   * The panel's note slot (slotMotion.ts): the card folds away and unfolds
+   * there, taking turns with the "Last time" line. None in the dialog, and
+   * without it the card shows and hides at once.
+   */
+  slot?: SlotGroup;
 }
 
 /**
@@ -101,6 +108,8 @@ export class FocusNoteCard extends Component {
   private readonly saveBtn: HTMLButtonElement;
   /** What sync() last painted from: the DOM is touched only when it moves. */
   private lastKey: string | null = null;
+  /** The card's turn in the panel's note slot; null in the dialog. */
+  private readonly slotPart: SlotPart | null = null;
   /** The panel's Mod+Enter scope (shieldSaveShortcut); null in the dialog. */
   private shield: Scope | null = null;
   private readonly listener = (change: { reseed: boolean }) => {
@@ -117,6 +126,7 @@ export class FocusNoteCard extends Component {
     const titleId = `gp-note-title-${++titleIds}`;
     const cls = options.surface === "modal" ? "gp-note gp-note-in-modal" : "gp-note gp-hidden";
     this.sectionEl = parent.createEl("section", { cls, attr: { "aria-labelledby": titleId } });
+    if (options.slot) this.slotPart = new SlotPart(this.sectionEl, options.slot);
 
     const header = this.sectionEl.createDiv("gp-note-header");
     const titleRow = header.createDiv("gp-note-title-row");
@@ -278,7 +288,9 @@ export class FocusNoteCard extends Component {
     ]);
     if (key === this.lastKey) return;
     this.lastKey = key;
-    this.sectionEl.toggleClass("gp-hidden", !shown);
+    if (this.slotPart === null) this.sectionEl.toggleClass("gp-hidden", !shown);
+    else if (shown) this.slotPart.show();
+    else this.slotPart.hide();
     if (!shown) this.dropShield();
     const view = shown ? s.view(this.options.moment) : null;
     if (view === null) return;

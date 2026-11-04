@@ -4293,17 +4293,27 @@ body {
    task button (GentlePomoView, refreshLastNote). Never shown with the card
    above (one note at a time), so it takes the card's place in the flow: it
    is built after the card, and the closed task list sits between it and the
-   button. Not a control and no motion — nothing here transitions, so the
-   reduced-motion block has nothing to cover. Hidden by .gp-root .gp-hidden
-   (0,2,0), over every display below. --- */
+   button. Not a control. It and the card fold and unfold in their place
+   (slotMotion.ts, the Web Animations API with no fill), so nothing here
+   transitions and the reduced-motion block has nothing to cover: under
+   reduced motion the script changes them at once. Hidden by .gp-root
+   .gp-hidden (0,2,0), over every display below. --- */
 .gp-last-note {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gp-space-1);
+  /* Face in a chip: the face of that session in a round chip at the left,
+     the label and the words in a column beside it (the maintainer's pick,
+     2026-11-04, from five designs in the panel harness). The body is
+     display: contents, so the chip and the two lines are this grid's
+     cells; no new markup. A hidden part is .gp-root .gp-hidden (0,2,0),
+     over every display here (0,1,0). */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0;
+  row-gap: var(--gp-space-1);
+  align-content: center;
   width: 100%;
   box-sizing: border-box;
-  /* The button's own side padding (also on touch), so the label and the
-     words start under "CURRENT TASK" and the task name. */
+  /* The button's own side padding (also on touch), so the chip's left edge
+     sits under "CURRENT TASK". */
   padding: 0 var(--gp-space-7);
   /* Below the button: the 12px row gap, the closed list's 8px margin and 2px
      frame, then 12px again — 34px. Pulled up one row gap, as the card is:
@@ -4322,6 +4332,9 @@ body {
 }
 
 .gp-last-note-when {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
   font-size: var(--gp-text-micro);
   font-weight: var(--gp-weight-medium);
   color: var(--text-muted);
@@ -4330,35 +4343,47 @@ body {
   text-overflow: ellipsis;
 }
 
+/* Its children join the grid above. */
 .gp-last-note-body {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--gp-space-3);
-  min-width: 0;
+  display: contents;
 }
 
+/* The chip: one neutral for every face — a mood is never a hue. Beside two
+   lines it sits at the top; with the words and no face, there is no chip and
+   the words start at the chip's edge. */
 .gp-last-note-face {
-  display: inline-flex;
-  flex-shrink: 0;
-  /* One line of the words beside it: 0.8rem × 1.35. */
-  height: calc(var(--gp-text-caption) * 1.35);
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: start;
+  display: flex;
   align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  margin-right: var(--gp-space-5);
+  border-radius: var(--gp-radius-pill);
+  background-color: var(--background-modifier-hover);
   color: var(--text-muted);
 }
 
 /* A flex item: the WebKit sliver case, so the floor is on every platform
-   (DESIGN.md entry 6.1). */
+   (DESIGN.md entry 6.1). A CSS stroke width beats the icon's attribute. */
 .gp-last-note-face svg {
-  width: 14px;
-  height: 14px;
-  min-width: 14px;
-  min-height: 14px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
   flex-shrink: 0;
+  stroke-width: 1.75;
 }
 
 /* Two lines, then an ellipsis; the whole note is the span's title. As the
    task name above: white-space restated, a long word breaks. */
 .gp-last-note-text {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
   min-width: 0;
   font-size: var(--gp-text-caption);
   line-height: 1.35;
@@ -4369,6 +4394,21 @@ body {
   white-space: normal;
   overflow-wrap: break-word;
   overflow: hidden;
+}
+
+/* A face and no words: the label level with the chip's middle. Without
+   :has() (older iOS) it sits at the chip's top, which still reads. */
+.gp-last-note:has(.gp-last-note-text.gp-hidden) .gp-last-note-when {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+/* A note-slot part while it folds or unfolds (slotMotion.ts): its content is
+   clipped to the moving height, and nothing in it takes a click on the way.
+   The card has no overflow of its own, so this one class is all it needs. */
+.gp-slot-moving {
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* =========================================================================
@@ -4825,6 +4865,13 @@ body.is-tablet .gp-root {
 body.is-mobile .gp-settings-row .gp-segmented button.gp-segmented-btn,
 body.is-tablet .gp-settings-row .gp-segmented button.gp-segmented-btn {
   min-width: 52px;
+}
+
+/* The "Last time" chip a touch larger, as the panel's other touch sizes. */
+body.is-mobile .gp-last-note-face,
+body.is-tablet .gp-last-note-face {
+  width: 36px;
+  height: 36px;
 }
 
 /* The focus note on touch (0.7.1). --gp-control-h is already --gp-tap-min

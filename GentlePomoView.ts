@@ -18,6 +18,7 @@ import {
 import { SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
 import { FACE_LABELS, FOCUS_NOTE_LABEL, LAST_NOTE_LABEL, lastNoteWhen } from "./focusNote";
 import { FocusNoteCard } from "./focusNoteCard";
+import { SlotGroup, SlotPart, domSlotHost } from "./slotMotion";
 import { LOG_FILE_SUFFIX, logicalDate } from "./logLine";
 import type { LastTaskNote } from "./logManager";
 
@@ -275,6 +276,8 @@ export class GentlePomoView extends ItemView {
   private lastNoteWhenEl: HTMLDivElement | null = null;
   private lastNoteFaceEl: HTMLSpanElement | null = null;
   private lastNoteTextEl: HTMLSpanElement | null = null;
+  /** The line's turn in the note slot it shares with the card (slotMotion.ts). */
+  private lastNotePart: SlotPart | null = null;
   private lastNoteReadKey: string | null = null;
   /** The task part of the read key: a new task drops the old task's note at once. */
   private lastNoteTaskKey: string | null = null;
@@ -630,12 +633,16 @@ export class GentlePomoView extends ItemView {
     // reopened view takes the old card down first, so no listener is left on
     // the store for a section that is gone.
     if (this.focusNoteCard) this.removeChild(this.focusNoteCard);
+    // The card and the "Last time" line take turns in one place, folding and
+    // unfolding (slotMotion.ts) — instant until the panel has painted once.
+    const noteSlot = new SlotGroup(domSlotHost(controls.win));
     this.focusNoteCard = this.addChild(
       new FocusNoteCard(controls, this.plugin.focusNotes, {
         surface: "panel",
         app: this.plugin.app,
         moment,
         enabled: () => this.plugin.settings.focusNoteEnabled,
+        slot: noteSlot,
       })
     );
 
@@ -653,6 +660,12 @@ export class GentlePomoView extends ItemView {
       attr: { role: "img" },
     });
     this.lastNoteTextEl = lastNoteBody.createSpan("gp-last-note-text gp-hidden");
+    this.lastNotePart = new SlotPart(this.lastNoteEl, noteSlot);
+    // Two frames: the first paint (a card or a note already showing as the
+    // panel opens) lands before motion is allowed.
+    controls.win.requestAnimationFrame(() =>
+      controls.win.requestAnimationFrame(() => noteSlot.arm())
+    );
     this.lastNoteReadKey = null;
     this.lastNoteTaskKey = null;
     this.lastNoteIdentityKey = null;
@@ -1186,21 +1199,38 @@ export class GentlePomoView extends ItemView {
     );
     if (key === this.lastNotePaintKey) return;
     this.lastNotePaintKey = key;
-    el.toggleClass("gp-hidden", found === null);
-    if (found === null) return;
-    const when = lastNoteWhen(moment, found.daysAgo, found.start, found.day);
-    this.lastNoteWhenEl.setText(`${LAST_NOTE_LABEL} · ${when}`);
-    const { face, text } = found.note;
-    this.lastNoteFaceEl.toggleClass("gp-hidden", face === null);
-    if (face !== null) {
-      setIcon(this.lastNoteFaceEl, face);
-      this.lastNoteFaceEl.setAttribute("aria-label", FACE_LABELS[face]);
+    const part = this.lastNotePart;
+    if (found === null) {
+      if (part) part.hide();
+      else el.addClass("gp-hidden");
+      return;
     }
-    this.lastNoteTextEl.toggleClass("gp-hidden", text === "");
-    this.lastNoteTextEl.setText(text);
-    // The whole note for a pointer: the words are clamped to two lines.
-    if (text === "") this.lastNoteTextEl.removeAttribute("title");
-    else this.lastNoteTextEl.setAttribute("title", text);
+    const whenEl = this.lastNoteWhenEl;
+    const faceEl = this.lastNoteFaceEl;
+    const textEl = this.lastNoteTextEl;
+    // Written when the line starts to show, or in the middle of a dip when it
+    // is showing already — never under a fold, where the old words leave.
+    const write = () => {
+      const when = lastNoteWhen(moment, found.daysAgo, found.start, found.day);
+      whenEl.setText(`${LAST_NOTE_LABEL} · ${when}`);
+      const { face, text } = found.note;
+      faceEl.toggleClass("gp-hidden", face === null);
+      if (face !== null) {
+        setIcon(faceEl, face);
+        faceEl.setAttribute("aria-label", FACE_LABELS[face]);
+      }
+      textEl.toggleClass("gp-hidden", text === "");
+      textEl.setText(text);
+      // The whole note for a pointer: the words are clamped to two lines.
+      if (text === "") textEl.removeAttribute("title");
+      else textEl.setAttribute("title", text);
+    };
+    if (part) {
+      part.show(write);
+    } else {
+      write();
+      el.removeClass("gp-hidden");
+    }
   }
 
   applySettings() {

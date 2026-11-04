@@ -566,20 +566,25 @@ describe("the view's Last time line", () => {
   it("writes the label, the face and the words, and repaints when the note itself moves", () => {
     // An Update keeps the session and its Start: only the note tells it apart.
     expect(paint).toMatch(/const key = JSON\.stringify\([^;]*found\.note[^;]*\);/);
-    expect(paint).toContain("this.lastNoteWhenEl.setText(`${LAST_NOTE_LABEL} · ${when}`);");
-    expect(paint).toContain('this.lastNoteFaceEl.toggleClass("gp-hidden", face === null);');
-    expect(paint).toContain("setIcon(this.lastNoteFaceEl, face);");
-    expect(paint).toContain('this.lastNoteFaceEl.setAttribute("aria-label", FACE_LABELS[face]);');
-    expect(paint).toContain('this.lastNoteTextEl.toggleClass("gp-hidden", text === "");');
-    expect(paint).toContain("this.lastNoteTextEl.setText(text);");
-    expect(paint).toContain('else this.lastNoteTextEl.setAttribute("title", text);');
-    expect(paint).toContain('if (text === "") this.lastNoteTextEl.removeAttribute("title");');
+    expect(paint).toContain("whenEl.setText(`${LAST_NOTE_LABEL} · ${when}`);");
+    expect(paint).toContain('faceEl.toggleClass("gp-hidden", face === null);');
+    expect(paint).toContain("setIcon(faceEl, face);");
+    expect(paint).toContain('faceEl.setAttribute("aria-label", FACE_LABELS[face]);');
+    expect(paint).toContain('textEl.toggleClass("gp-hidden", text === "");');
+    expect(paint).toContain("textEl.setText(text);");
+    expect(paint).toContain('else textEl.setAttribute("title", text);');
+    expect(paint).toContain('if (text === "") textEl.removeAttribute("title");');
   });
 
   it("hides while the card shows in this panel, and writes text only", () => {
     expect(paint).toContain("const cardShowing = store.target !== null && store.cardOpen;");
     expect(paint).toMatch(/const found = [^;]*cardShowing \? null : this\.lastNote;/);
-    expect(paint).toContain('el.toggleClass("gp-hidden", found === null);');
+    // Folded away in its slot with nothing to show; shown with the words
+    // written as it starts to show (slotMotion.ts).
+    expect(paint).toContain(
+      'if (found === null) { if (part) part.hide(); else el.addClass("gp-hidden"); return; }'
+    );
+    expect(paint).toContain("if (part) { part.show(write); }");
     expect(paint).not.toMatch(/innerHTML|insertAdjacentHTML/);
     // Painted only when what it shows moves: the key checked, then kept.
     expect(paint).toContain(
@@ -666,7 +671,48 @@ describe("the Last time line's styles", () => {
       expect(rule.body).not.toMatch(/transition|animation/);
     }
     const svg = body(".gp-last-note-face svg");
-    expect(svg).toMatch(/min-width:\s*14px/);
+    expect(svg).toMatch(/min-width:\s*20px/);
+    expect(svg).toMatch(/min-height:\s*20px/);
     expect(svg).toMatch(/flex-shrink:\s*0/);
+  });
+
+  it("puts the face in one round chip beside the label and the words", () => {
+    // The body dissolves, so the chip and the two lines are the grid's cells.
+    expect(decl(".gp-last-note", "display")).toBe("grid");
+    expect(decl(".gp-last-note-body", "display")).toBe("contents");
+    expect(decl(".gp-last-note-face", "grid-row")).toBe("1 / span 2");
+    expect(decl(".gp-last-note-when", "grid-column")).toBe("2");
+    expect(decl(".gp-last-note-text", "grid-column")).toBe("2");
+    expect(decl(".gp-last-note-face", "border-radius")).toBe("var(--gp-radius-pill)");
+    expect(decl(".gp-last-note-face", "width")).toBe(decl(".gp-last-note-face", "height"));
+    // A face only: the label level with the chip's middle.
+    expect(
+      decl(".gp-last-note:has(.gp-last-note-text.gp-hidden) .gp-last-note-when", "align-self")
+    ).toBe("center");
+  });
+
+  it("gives every face the same chip: a mood is never a hue", () => {
+    for (const rule of rules.filter((r) => r.sel.includes("gp-last-note"))) {
+      expect(rule.sel).not.toMatch(/data-face|frown|meh|smile/);
+    }
+    expect(decl(".gp-last-note-face", "color")).toBe("var(--text-muted)");
+    expect(decl(".gp-last-note-face", "background-color")).toBe("var(--background-modifier-hover)");
+  });
+
+  it("never sets a display that a hidden part's .gp-root .gp-hidden would lose to", () => {
+    // Each display here is (0,1,0) — under .gp-root .gp-hidden (0,2,0) — so a
+    // hidden face, words or line stays hidden.
+    for (const sel of [".gp-last-note", ".gp-last-note-face", ".gp-last-note-text"]) {
+      expect(decl(sel, "display")).toBeDefined();
+      expect(sel.split(/[.:]/).filter(Boolean)).toHaveLength(1);
+    }
+    expect(decl(".gp-root .gp-hidden", "display")).toBe("none");
+  });
+
+  it("is a touch larger on a phone or tablet", () => {
+    const touch = "body.is-mobile .gp-last-note-face,\nbody.is-tablet .gp-last-note-face";
+    const rule = rules.find((r) => r.sel.replace(/\s+/g, " ") === touch.replace(/\s+/g, " "));
+    expect(rule?.body).toMatch(/width:\s*36px/);
+    expect(rule?.body).toMatch(/height:\s*36px/);
   });
 });

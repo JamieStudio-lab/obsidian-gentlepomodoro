@@ -55,6 +55,14 @@ running.
   with a 🆔 is matched by it; one without, by its note and name, so editing
   the task's text loses its earlier notes. It reads the log only when the task,
   the day, a saved note or a daily log file changes, never on the timer's tick.
+  The face sits in a small round chip, the same colour for every face, with the
+  label and the words beside it.
+- **The note card and the Last time line take turns gently.** When a focus
+  starts, the card fades and folds away, and then the line opens and fades in
+  where it was; when a session ends, the other way round. They never overlap,
+  and what sits below them glides rather than jumps. A note that changes while
+  the line is showing dips out and back. With your system's reduced-motion
+  setting on, and as the panel opens, they change at once.
 - **Add a note to the last session** — a command, and an entry in the status
   bar's menu, for when the card is gone or the panel is closed (a phone). It
   opens the same card in a window, for the session you just logged on this
