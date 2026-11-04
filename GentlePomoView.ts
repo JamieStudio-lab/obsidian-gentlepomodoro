@@ -1,4 +1,5 @@
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
+import type { TAbstractFile } from "obsidian";
 import { THEME_IDS, resolveTheme, themeClass } from "./themes";
 import { PIXEL_CITY_LAYERS } from "./pixelCityArt";
 import { activeSegmentIndex, VOLUME_OPTIONS } from "./segmentedChoice";
@@ -15,8 +16,10 @@ import {
   type SessionEndEdge,
 } from "./sessionEndSummary";
 import { SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
-import { FOCUS_NOTE_LABEL } from "./focusNote";
+import { FACE_LABELS, FOCUS_NOTE_LABEL, LAST_NOTE_LABEL, lastNoteWhen } from "./focusNote";
 import { FocusNoteCard } from "./focusNoteCard";
+import { LOG_FILE_SUFFIX, logicalDate } from "./logLine";
+import type { LastTaskNote } from "./logManager";
 
 /**
  * The dual-surface TOGGLES — the boolean settings that live on both the gear
@@ -46,6 +49,7 @@ import {
   ONE_MINUTE_MS,
   PEEK_REVEAL_MS,
   CAPTION_NAME_FADE_MS,
+  LAST_NOTE_LOG_SETTLE_MS,
 } from "./constants";
 import { TimerEngine } from "./TimerEngine";
 import {
@@ -261,6 +265,33 @@ export class GentlePomoView extends ItemView {
   // The focus note's card (0.7.1), a child component: built once in onOpen,
   // unloaded with the view, painted from the plugin's one FocusNoteStore.
   private focusNoteCard: FocusNoteCard | null = null;
+
+  // "Last time" (0.7.1): the linked task's newest focus note, one quiet line
+  // group under the task button. Read from the log only when what it depends
+  // on moves (lastNoteReadKey) — never on the tick — and painted only when
+  // what it shows moves (lastNotePaintKey).
+  private lastNoteEl: HTMLDivElement | null = null;
+  private lastNoteWhenEl: HTMLDivElement | null = null;
+  private lastNoteFaceEl: HTMLSpanElement | null = null;
+  private lastNoteTextEl: HTMLSpanElement | null = null;
+  private lastNoteReadKey: string | null = null;
+  /** The task part of the read key: a new task drops the old task's note at once. */
+  private lastNoteTaskKey: string | null = null;
+  private lastNotePaintKey: string | null = null;
+  /** Monotonic, as taskLoadGeneration: a read overtaken by a newer one paints nothing. */
+  private lastNoteGeneration = 0;
+  private lastNote: LastTaskNote | null = null;
+  private readonly lastNoteListener = () => this.refreshLastNote();
+  /**
+   * Moves when a daily log file changes on disk (lastNoteLogTouched), so the
+   * line re-reads what Fix, Delete, a sync or Obsidian's own link update put
+   * there. A rename of a task's note is the case that needs it: the timer
+   * follows the new path at once, before Obsidian rewrites the log's links
+   * to it, so the read that runs then finds no line of the task's.
+   */
+  private lastNoteLogRevision = 0;
+  private lastNoteLogTimer: number | null = null;
+  private lastNoteLogEventsOn = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: GentlePomoPlugin) {
     super(leaf);
@@ -596,6 +627,47 @@ export class GentlePomoView extends ItemView {
         enabled: () => this.plugin.settings.focusNoteEnabled,
       })
     );
+
+    // --- Last time (0.7.1) ---
+    // The linked task's newest focus note, under the task button. After the
+    // card in the DOM, never between the task list and the card: the card's
+    // spacing rules read `.gp-task-list… + .gp-note`, and the two never show
+    // at once (one note at a time), so this one sits where the card would.
+    // Not a control: a label, a face and the words, written with setText.
+    this.lastNoteEl = controls.createDiv("gp-last-note gp-hidden");
+    this.lastNoteWhenEl = this.lastNoteEl.createDiv("gp-last-note-when");
+    const lastNoteBody = this.lastNoteEl.createDiv("gp-last-note-body");
+    this.lastNoteFaceEl = lastNoteBody.createSpan({
+      cls: "gp-last-note-face gp-hidden",
+      attr: { role: "img" },
+    });
+    this.lastNoteTextEl = lastNoteBody.createSpan("gp-last-note-text gp-hidden");
+    this.lastNoteReadKey = null;
+    this.lastNoteTaskKey = null;
+    this.lastNotePaintKey = null;
+    this.lastNote = null;
+    // A save or a clear may be this task's; the card's open state decides
+    // whether this shows. Taken off at unload (register), and a Set, so a
+    // reopened view does not add it twice.
+    this.plugin.focusNotes.onChange(this.lastNoteListener);
+    this.register(() => this.plugin.focusNotes.offChange(this.lastNoteListener));
+    // Once per view: registerEvent releases at unload, never on a reopen.
+    if (!this.lastNoteLogEventsOn) {
+      this.lastNoteLogEventsOn = true;
+      const touched = (file: TAbstractFile, oldPath?: string) => {
+        if (file.path.endsWith(LOG_FILE_SUFFIX) || oldPath?.endsWith(LOG_FILE_SUFFIX)) {
+          this.lastNoteLogTouched();
+        }
+      };
+      this.registerEvent(this.app.vault.on("modify", (file) => touched(file)));
+      this.registerEvent(this.app.vault.on("create", (file) => touched(file)));
+      this.registerEvent(this.app.vault.on("delete", (file) => touched(file)));
+      this.registerEvent(this.app.vault.on("rename", (file, oldPath) => touched(file, oldPath)));
+      this.register(() => {
+        if (this.lastNoteLogTimer !== null) window.clearTimeout(this.lastNoteLogTimer);
+        this.lastNoteLogTimer = null;
+      });
+    }
 
     // --- Music (audio-only lofi playback) ---
     // Hairline between the task selector and the music row. Reconciled in
@@ -982,9 +1054,127 @@ export class GentlePomoView extends ItemView {
    * The element is hidden on desktop via CSS, so this is a cheap no-op there.
    */
   setGoalProgress(text: string, met: boolean) {
+    // "Last time" hangs off this too: main.ts calls it in every open panel
+    // when the log folder or "Day starts at" changes (logFolderChanged) and
+    // when today's total lands after midnight (the heartbeat) — the moments
+    // its read key moves while the timer is idle and nothing else runs
+    // applySettings. Two key compares when nothing moved.
+    this.refreshLastNote();
     if (!this.goalProgressEl) return;
     this.goalProgressEl.setText(text);
     this.goalProgressEl.toggleClass("gp-goal-met", met);
+  }
+
+  /**
+   * A daily log file changed: re-read the "Last time" line once things settle.
+   * One read for a burst — a rename's link update rewrites every log file
+   * that links the note, one modify each.
+   */
+  private lastNoteLogTouched(): void {
+    if (this.lastNoteLogTimer !== null) window.clearTimeout(this.lastNoteLogTimer);
+    this.lastNoteLogTimer = window.setTimeout(() => {
+      this.lastNoteLogTimer = null;
+      this.lastNoteLogRevision++;
+      this.refreshLastNote();
+    }, LAST_NOTE_LOG_SETTLE_MS);
+  }
+
+  /**
+   * The "Last time" line (0.7.1): read the linked task's newest focus note
+   * when something it depends on has moved, then paint. Runs from
+   * applySettings (the 50ms tick while running, every setting change, the
+   * view opening) and from every change of the focus note store (a keystroke
+   * too), so the read key is what keeps the vault out of both: the setting,
+   * the picker, the folder, "Day starts at", today, the link (path, and the
+   * 🆔 — or the name, for a task without one) and two revisions: the store's,
+   * which moves only when a write settles, and the log files'
+   * (lastNoteLogTouched).
+   */
+  private refreshLastNote(): void {
+    if (!this.lastNoteEl) return;
+    const settings = this.plugin.settings;
+    const timer = this.timer;
+    const path = timer.currentTaskPath;
+    const wanted =
+      settings.focusNoteEnabled &&
+      settings.showTaskSelector &&
+      path !== undefined &&
+      settings.logFolderPath !== "";
+    const today = logicalDate(moment(), settings.dayStartHour);
+    const taskKey = wanted
+      ? JSON.stringify([
+          settings.logFolderPath,
+          path,
+          timer.currentTaskId ?? null,
+          // A 🆔 task is matched by its 🆔 alone: a rename of its text must
+          // not drop and re-read what it shows (a blink).
+          timer.currentTaskId ? null : timer.currentTaskName,
+        ])
+      : null;
+    const readKey =
+      taskKey === null
+        ? null
+        : JSON.stringify([
+            taskKey,
+            settings.dayStartHour,
+            today,
+            this.plugin.focusNotes.revision,
+            this.lastNoteLogRevision,
+          ]);
+    if (readKey !== this.lastNoteReadKey) {
+      this.lastNoteReadKey = readKey;
+      const generation = ++this.lastNoteGeneration;
+      // Another task (or none): its note must not show under this one while
+      // the read runs. The same task re-read keeps what it shows until then.
+      if (taskKey !== this.lastNoteTaskKey) this.lastNote = null;
+      this.lastNoteTaskKey = taskKey;
+      if (wanted) {
+        const task = { path, id: timer.currentTaskId, name: timer.currentTaskName };
+        void this.plugin.logManager.lastTaskNote(task).then(
+          (found) => {
+            if (generation !== this.lastNoteGeneration) return;
+            this.lastNote = found;
+            this.paintLastNote(today);
+          },
+          () => undefined
+        );
+      }
+    }
+    this.paintLastNote(today);
+  }
+
+  /**
+   * Show or hide the "Last time" line, and write it, only when what it shows
+   * has moved. Hidden while the focus note card shows in this panel: one note
+   * at a time — the card holds the session just ended, and once the next
+   * focus starts the card closes and this shows the note just written.
+   */
+  private paintLastNote(today: string): void {
+    const el = this.lastNoteEl;
+    if (!el || !this.lastNoteWhenEl || !this.lastNoteFaceEl || !this.lastNoteTextEl) return;
+    const store = this.plugin.focusNotes;
+    const cardShowing = store.target !== null && store.cardOpen;
+    const found = this.lastNoteReadKey === null || cardShowing ? null : this.lastNote;
+    const key = JSON.stringify(
+      found === null ? null : [found.sessionId, found.start, found.daysAgo, found.note, today]
+    );
+    if (key === this.lastNotePaintKey) return;
+    this.lastNotePaintKey = key;
+    el.toggleClass("gp-hidden", found === null);
+    if (found === null) return;
+    const when = lastNoteWhen(moment, found.daysAgo, found.start, found.day);
+    this.lastNoteWhenEl.setText(`${LAST_NOTE_LABEL} · ${when}`);
+    const { face, text } = found.note;
+    this.lastNoteFaceEl.toggleClass("gp-hidden", face === null);
+    if (face !== null) {
+      setIcon(this.lastNoteFaceEl, face);
+      this.lastNoteFaceEl.setAttribute("aria-label", FACE_LABELS[face]);
+    }
+    this.lastNoteTextEl.toggleClass("gp-hidden", text === "");
+    this.lastNoteTextEl.setText(text);
+    // The whole note for a pointer: the words are clamped to two lines.
+    if (text === "") this.lastNoteTextEl.removeAttribute("title");
+    else this.lastNoteTextEl.setAttribute("title", text);
   }
 
   applySettings() {
@@ -1008,6 +1198,8 @@ export class GentlePomoView extends ItemView {
     // key, so the 50ms tick touches no DOM; a note's own changes reach the
     // card through the store's listener, not through here.
     this.focusNoteCard?.sync();
+    // And the "Last time" line: two key compares on the tick, no read.
+    this.refreshLastNote();
 
     // Task-selector visibility. Idempotent, so safe to run on every tick. The
     // unlink-on-hide side effect lives in the settings toggle's onChange (calling

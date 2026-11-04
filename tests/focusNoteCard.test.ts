@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { Modal, stubEl, stubFocus, type StubEl } from "../__mocks__/obsidian";
+import { Modal, Platform, Scope, stubEl, stubFocus, type StubEl } from "../__mocks__/obsidian";
 import {
   FACE_LABELS,
   FOCUS_NOTE_HINT,
@@ -19,6 +19,7 @@ import {
   FOCUS_NOTE_TEXT_LABEL,
   FocusNoteCard,
   FocusNoteModal,
+  isSaveShortcut,
 } from "../focusNoteCard";
 import type { FocusNote } from "../logLine";
 import type { MomentFactory } from "../momentTypes";
@@ -91,11 +92,21 @@ function one(el: StubEl, cls: string): StubEl {
 
 let enabled = true;
 
-function mount(store: FocusNoteStore, surface: "panel" | "modal" = "panel") {
+/** An app with a keymap that does nothing, for the tests that do not look at it. */
+const quietApp = () => ({
+  scope: new Scope(),
+  keymap: { pushScope: () => undefined, popScope: () => undefined },
+});
+
+function mount(
+  store: FocusNoteStore,
+  surface: "panel" | "modal" = "panel",
+  app: unknown = quietApp()
+) {
   const parent = stubEl("gp-controls");
   const card = new FocusNoteCard(parent as unknown as HTMLElement, store, {
     surface,
-    app: {} as never,
+    app: app as never,
     moment,
     enabled: () => enabled,
   });
@@ -131,6 +142,28 @@ function mount(store: FocusNoteStore, surface: "panel" | "modal" = "panel") {
       textarea.value = text;
       for (const listener of textarea.listeners.input ?? []) listener({} as never);
     },
+    /** A keydown in the box; says whether a listener called preventDefault. */
+    key(init: Partial<KeyboardEvent>) {
+      let prevented = false;
+      const event = {
+        key: "Enter",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        repeat: false,
+        isComposing: false,
+        keyCode: 13,
+        ...init,
+        preventDefault: () => (prevented = true),
+      };
+      for (const listener of textarea.listeners.keydown ?? []) listener(event as never);
+      return prevented;
+    },
+    /** The textarea's focus or blur, as the browser fires it. */
+    fire(type: "focus" | "blur") {
+      for (const listener of textarea.listeners[type] ?? []) listener({} as never);
+    },
   };
 }
 
@@ -140,6 +173,7 @@ const flush = async () => {
 
 beforeEach(() => {
   enabled = true;
+  Platform.isMacOS = false;
   stubFocus.el = null;
   stubFocus.dropped = 0;
   Modal.opened = null;
@@ -179,6 +213,7 @@ describe("the card's DOM", () => {
       rows: "2",
       maxlength: String(NOTE_DRAFT_MAX),
       "aria-label": FOCUS_NOTE_TEXT_LABEL,
+      "aria-keyshortcuts": "Control+Enter",
     });
     expect([c.clear.text, c.save.text]).toEqual(["Clear", "Save"]);
     expect([c.clear.attrs.type, c.save.attrs.type]).toEqual(["button", "button"]);
@@ -339,6 +374,268 @@ describe("the card's states", () => {
     store.ended(target());
     c.click(c.save);
     expect(hs.writes).toEqual([]);
+  });
+});
+
+describe("Save with Mod+Enter (Ctrl on Windows and Linux, Cmd on macOS)", () => {
+  const ctrl = { ctrlKey: true };
+  const cmd = { metaKey: true };
+
+  /** A card with a note typed, Save active. */
+  function ready(surface: "panel" | "modal" = "panel") {
+    const hs = host();
+    const store = new FocusNoteStore(hs.h);
+    const c = mount(store, surface);
+    store.ended(target());
+    c.click(c.face("smile"));
+    c.type("went fine");
+    return { hs, store, c };
+  }
+
+  it("saves what a click on Save saves, and types no newline", () => {
+    const { hs, c } = ready();
+    expect(c.key(ctrl)).toBe(true);
+    expect(hs.writes).toEqual([{ target: target(), note: { face: "smile", text: "went fine" } }]);
+    expect(c.status()).toBe("Saving…");
+  });
+
+  it("cleans the words as the click does: a face typed as a word is the face", () => {
+    const hs = host();
+    const store = new FocusNoteStore(hs.h);
+    const c = mount(store);
+    store.ended(target());
+    c.type("smile");
+    c.key(ctrl);
+    expect(hs.writes).toEqual([{ target: target(), note: { face: "smile", text: "" } }]);
+  });
+
+  it("is Cmd+Enter on macOS, and Ctrl+Enter there is not it", () => {
+    Platform.isMacOS = true;
+    const { hs, c } = ready();
+    expect(c.key(ctrl)).toBe(false);
+    expect(hs.writes).toEqual([]);
+    expect(c.key({ ...cmd, ctrlKey: true })).toBe(false);
+    expect(c.key({ ...cmd, shiftKey: true })).toBe(false);
+    expect(hs.writes).toEqual([]);
+    expect(c.key(cmd)).toBe(true);
+    expect(hs.writes).toHaveLength(1);
+  });
+
+  it("is Ctrl+Enter elsewhere, and Meta+Enter (the Windows key) there is not it", () => {
+    const { hs, c } = ready();
+    expect(c.key(cmd)).toBe(false);
+    expect(hs.writes).toEqual([]);
+  });
+
+  it("leaves Enter, Shift+Enter and the other chords to the box: new lines, no save", () => {
+    const { hs, c } = ready();
+    for (const init of [
+      {},
+      { shiftKey: true },
+      { ...ctrl, shiftKey: true },
+      { ...ctrl, altKey: true },
+      { ...ctrl, metaKey: true },
+      { ...ctrl, key: "s" },
+    ]) {
+      expect(c.key(init), JSON.stringify(init)).toBe(false);
+    }
+    expect(hs.writes).toEqual([]);
+  });
+
+  it("does nothing a click could not: no write while Save is inactive, nor while saving", async () => {
+    const hs = host();
+    const store = new FocusNoteStore(hs.h);
+    const c = mount(store);
+    store.ended(target());
+    // Fresh and empty: Save is inactive. The chord still types no newline.
+    expect(c.key(ctrl)).toBe(true);
+    expect(hs.writes).toEqual([]);
+    c.type("went fine");
+    c.key(ctrl);
+    expect(hs.writes).toHaveLength(1);
+    // Saving: inactive again, so a second press writes nothing.
+    c.key(ctrl);
+    expect(hs.writes).toHaveLength(1);
+    await hs.settle("saved");
+    // Saved and unchanged: Update is inactive.
+    c.key(ctrl);
+    expect(hs.writes).toHaveLength(1);
+    expect(c.save.text).toBe("Update");
+  });
+
+  it("does nothing with no session (the target is gone)", () => {
+    const hs = host();
+    const store = new FocusNoteStore(hs.h);
+    const c = mount(store);
+    c.type("words with nowhere to go");
+    c.key(ctrl);
+    expect(hs.writes).toEqual([]);
+  });
+
+  it("keeps the Enter of a composing input method: no save, nothing prevented", () => {
+    const { hs, c } = ready();
+    expect(c.key({ ...ctrl, isComposing: true })).toBe(false);
+    // WebKit's commit Enter: isComposing false, keyCode 229.
+    expect(c.key({ ...ctrl, keyCode: 229 })).toBe(false);
+    expect(hs.writes).toEqual([]);
+  });
+
+  it("saves once for a held chord: a repeat types no newline and writes nothing", () => {
+    const { hs, c } = ready();
+    expect(c.key({ ...ctrl, repeat: true })).toBe(true);
+    expect(hs.writes).toEqual([]);
+  });
+
+  it("works in the dialog too", () => {
+    const { hs, c } = ready("modal");
+    expect(c.key(ctrl)).toBe(true);
+    expect(hs.writes).toHaveLength(1);
+  });
+
+  it("isSaveShortcut reads Obsidian's Mod from Platform.isMacOS", () => {
+    const e = (init: Partial<KeyboardEvent>) =>
+      isSaveShortcut({
+        key: "Enter",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        ...init,
+      });
+    expect([e(ctrl), e(cmd)]).toEqual([true, false]);
+    Platform.isMacOS = true;
+    expect([e(ctrl), e(cmd)]).toEqual([false, true]);
+  });
+});
+
+describe("the shortcut is named without taking Save's name", () => {
+  it("puts it in Save's title, following the label, and in the box's aria-keyshortcuts", async () => {
+    const hs = host();
+    const store = new FocusNoteStore(hs.h);
+    const c = mount(store);
+    store.ended(target());
+    expect(c.save.attrs.title).toBe("Save (Ctrl+Enter)");
+    expect(c.textarea.attrs["aria-keyshortcuts"]).toBe("Control+Enter");
+    c.type("went fine");
+    c.click(c.save);
+    await hs.settle("saved");
+    expect(c.save.attrs.title).toBe("Update (Ctrl+Enter)");
+    // The button's name stays its text: no aria-label, no tooltip.
+    expect(c.save.attrs["aria-label"]).toBeUndefined();
+    expect(c.save.text).toBe("Update");
+  });
+
+  it("says ⌘ Enter on macOS", () => {
+    Platform.isMacOS = true;
+    const store = new FocusNoteStore(host().h);
+    const c = mount(store);
+    store.ended(target());
+    expect(c.save.attrs.title).toBe("Save (⌘ Enter)");
+    expect(c.textarea.attrs["aria-keyshortcuts"]).toBe("Meta+Enter");
+  });
+});
+
+/**
+ * Obsidian's keymap, as far as a key in the box is concerned (app.js 1.15.0,
+ * Keymap.onKeyEvent and Scope.handleKey): the top scope's keys in order, a
+ * match ends the walk — returning what its handler returned when the key or
+ * the modifiers are set, as every handler here has — else the parent. False
+ * means preventDefault and stopPropagation: the box never sees the key.
+ */
+function keymapWalk(scope: Scope | undefined, modifiers: string, key: string): unknown {
+  for (; scope; scope = scope.parent) {
+    for (const k of scope.keys) {
+      const mods = k.modifiers === null ? null : k.modifiers.join(",");
+      if (mods !== null && mods !== modifiers) continue;
+      if (k.key !== null && k.key !== key) continue;
+      const result = k.func({} as never, {} as never);
+      if (result !== undefined || k.key !== null || k.modifiers !== null) return result;
+    }
+  }
+  return undefined;
+}
+
+describe("in the timer panel, the box shields Mod+Enter from Obsidian's hotkeys", () => {
+  function app() {
+    const appScope = new Scope();
+    // The HotkeyManager's catch-all: Mod+Enter is "Open link under cursor in
+    // new tab" by default, and a command that ran answers false.
+    const ran: string[] = [];
+    appScope.register(null, null, () => {
+      ran.push("editor:open-link-in-new-leaf");
+      return false;
+    });
+    const stack: Scope[] = [];
+    const keymap = {
+      pushScope: (s: Scope) => {
+        if (stack[stack.length - 1] !== s) stack.push(s);
+      },
+      popScope: (s: Scope) => {
+        const at = stack.lastIndexOf(s);
+        if (at !== -1) stack.splice(at, 1);
+      },
+    };
+    const top = () => stack[stack.length - 1] ?? appScope;
+    return { scope: appScope, keymap, stack, ran, top };
+  }
+
+  it("pushes a scope on focus that lets Mod+Enter through to the box, and only that", () => {
+    const a = app();
+    const c = mount(new FocusNoteStore(host().h), "panel", a);
+    // Without it, the hotkey takes the key: the box would never see it.
+    expect(keymapWalk(a.top(), "Mod", "Enter")).toBe(false);
+    a.ran.length = 0;
+
+    c.fire("focus");
+    expect(a.stack).toHaveLength(1);
+    const shield = a.stack[0];
+    expect(shield.parent).toBe(a.scope);
+    expect(shield.keys.map((k) => [k.modifiers, k.key])).toEqual([[["Mod"], "Enter"]]);
+    // Mod+Enter: no hotkey runs, nothing is prevented.
+    expect(keymapWalk(a.top(), "Mod", "Enter")).not.toBe(false);
+    expect(a.ran).toEqual([]);
+    // Any other key still reaches the hotkeys.
+    expect(keymapWalk(a.top(), "Mod", "s")).toBe(false);
+    expect(keymapWalk(a.top(), "Mod,Shift", "Enter")).toBe(false);
+    expect(a.ran).toHaveLength(2);
+  });
+
+  it("takes it off on blur, and at unload while the box still has the caret", () => {
+    const a = app();
+    const c = mount(new FocusNoteStore(host().h), "panel", a);
+    c.fire("focus");
+    c.fire("blur");
+    expect(a.stack).toEqual([]);
+    c.fire("focus");
+    c.card.unload();
+    expect(a.stack).toEqual([]);
+    expect(c.textarea.listeners.focus ?? []).toEqual([]);
+    expect(c.textarea.listeners.blur ?? []).toEqual([]);
+    expect(c.textarea.listeners.keydown ?? []).toEqual([]);
+  });
+
+  it("takes it off when the card hides with the caret still in the box, blur or no blur", () => {
+    const a = app();
+    const store = new FocusNoteStore(host().h);
+    const c = mount(store, "panel", a);
+    store.ended(target());
+    expect(c.shown()).toBe(true);
+    c.fire("focus");
+    expect(a.stack).toHaveLength(1);
+    // The next focus starts on its own while the user types: the card hides,
+    // and a browser may drop the caret without a blur event.
+    store.focusStarted();
+    expect(c.shown()).toBe(false);
+    expect(a.stack).toEqual([]);
+    expect(keymapWalk(a.top(), "Mod", "Enter")).toBe(false);
+  });
+
+  it("is not used in the dialog: a Modal's own scope already runs no hotkey, and keeps Escape", () => {
+    const a = app();
+    const c = mount(new FocusNoteStore(host().h), "modal", a);
+    expect(c.textarea.listeners.focus ?? []).toEqual([]);
+    c.fire("focus");
+    expect(a.stack).toEqual([]);
   });
 });
 

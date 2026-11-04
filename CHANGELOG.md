@@ -39,6 +39,22 @@ running.
   `/`, `#` becomes a look-alike `＃` (so it isn't a tag), `%%` becomes `%`,
   🍅 and ☕ are dropped, and it is cut to 500 characters, in the box too, so
   you see what was kept. A note is in your log in plain text.
+- **Ctrl+Enter (⌘ Enter on a Mac or iPad) saves the note** from the box, the
+  same as pressing **Save** (and, like it, only when there is something to
+  save). Enter and Shift+Enter still make a new line. It is ignored while an
+  input method is composing, so a candidate can be confirmed with Enter, and on
+  key repeat. The Save button's hover text names the shortcut. In the timer
+  panel the shortcut takes over Obsidian's own Ctrl/⌘+Enter hotkey ("Open link
+  under cursor in new tab") while you type in the box; your own hotkey on that
+  chord does not run there.
+- **A "Last time" line under the task button**: the linked task's newest focus
+  note from the last 30 days, with its face and words (two lines; the whole
+  note on hover), labelled _Last time · today_, _yesterday_ or a date. It shows
+  only with **Offer a focus note** on, the task picker shown, a task linked and
+  a note found, and not while the note card is showing in that panel. A task
+  with a 🆔 is matched by it; one without, by its note and name, so editing
+  the task's text loses its earlier notes. It reads the log only when the task,
+  the day, a saved note or a daily log file changes, never on the timer's tick.
 - **Add a note to the last session** — a command, and an entry in the status
   bar's menu, for when the card is gone or the panel is closed (a phone). It
   opens the same card in a window, for the session you just logged on this

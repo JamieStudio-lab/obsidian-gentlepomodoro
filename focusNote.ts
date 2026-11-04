@@ -191,6 +191,30 @@ export function noteTime(moment: MomentFactory, ms: number): string {
   return moment(ms).format("LT");
 }
 
+/** The "Last time" line under the task button (0.7.1): its label's first word. */
+export const LAST_NOTE_LABEL = "Last time";
+
+/**
+ * When the linked task's newest note was, for the "Last time" label:
+ * "today" and "yesterday" by the logical day of the log file it was found in
+ * (`daysAgo`, as LogManager walks them, "Day starts at" counted), else the
+ * line's Start as a short date in the app's language — shown, never stored.
+ * The file's own logical day (`day`, YYYY-MM-DD) stands in when Start cannot
+ * be read — not today's date less `daysAgo`, which is a day late after
+ * midnight under "Day starts at".
+ */
+export function lastNoteWhen(
+  moment: MomentFactory,
+  daysAgo: number,
+  start: string,
+  day: string
+): string {
+  if (daysAgo <= 0) return "today";
+  if (daysAgo === 1) return "yesterday";
+  const seconds = readLogTime(start);
+  return (seconds === null ? moment(day) : moment(seconds * 1000)).format("ll");
+}
+
 /** What a card draws: the form or the hint, its words and its switches. */
 export interface CardView {
   mode: "form" | "hint";
@@ -415,6 +439,8 @@ export class FocusNoteStore {
   private readonly wrote = new Set<string>();
   private queue: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<FocusNoteListener>();
+  /** Settled writes so far (revision). */
+  private settled = 0;
 
   constructor(private readonly host: FocusNoteHost) {
     this.state = readFocusNoteState(host.storage.load(FOCUS_NOTE_KEY));
@@ -432,6 +458,15 @@ export class FocusNoteStore {
   }
   get saved(): SavedNote | null {
     return this.state.saved;
+  }
+  /**
+   * Moves each time a write of this store settles, whatever its result: the
+   * log may hold another note now. The panel's "Last time" line re-reads the
+   * log on it — and on nothing a keystroke changes, as every setDraft is a
+   * change too.
+   */
+  get revision(): number {
+    return this.settled;
   }
   /** What is typed, shared by every card. */
   get draft(): FocusNote {
@@ -597,6 +632,7 @@ export class FocusNoteStore {
       result = "failed";
     } finally {
       this.writes = this.writes.filter((w) => w !== entry);
+      this.settled++;
     }
     if (result === "saved" || result === "unchanged") this.wrote.add(target.sessionId);
     // A focus that ended meanwhile gave the store another session: this

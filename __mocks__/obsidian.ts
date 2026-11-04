@@ -162,7 +162,34 @@ export class WorkspaceLeaf {}
  * Desktop by default, and MUTABLE on purpose: a test that needs the mobile
  * app flips a field and puts it back. Only the fields the plugin reads.
  */
-export const Platform = { isDesktopApp: true, isMobile: false, isIosApp: false };
+export const Platform = { isDesktopApp: true, isMobile: false, isIosApp: false, isMacOS: false };
+/**
+ * Obsidian's key scope, as far as a test needs it: what register() was given,
+ * in order, and the parent, so a test can walk them the way the keymap does
+ * (Scope.handleKey in app.js).
+ */
+export class Scope {
+  readonly keys: {
+    scope: Scope;
+    modifiers: string[] | null;
+    key: string | null;
+    func: (evt: never, ctx: never) => unknown;
+  }[] = [];
+  constructor(readonly parent?: Scope) {}
+  register(
+    modifiers: string[] | null,
+    key: string | null,
+    func: (evt: never, ctx: never) => unknown
+  ): Scope["keys"][number] {
+    const handler = { scope: this, modifiers, key, func };
+    this.keys.push(handler);
+    return handler;
+  }
+  unregister(handler: Scope["keys"][number]): void {
+    const at = this.keys.indexOf(handler);
+    if (at !== -1) this.keys.splice(at, 1);
+  }
+}
 export class Notice {
   /** Every message shown, in order, so a test can read what the user was told. */
   static shown: string[] = [];

@@ -4289,6 +4289,88 @@ body {
   display: none;
 }
 
+/* --- "Last time" (0.7.1): the linked task's newest focus note, under the
+   task button (GentlePomoView, refreshLastNote). Never shown with the card
+   above (one note at a time), so it takes the card's place in the flow: it
+   is built after the card, and the closed task list sits between it and the
+   button. Not a control and no motion — nothing here transitions, so the
+   reduced-motion block has nothing to cover. Hidden by .gp-root .gp-hidden
+   (0,2,0), over every display below. --- */
+.gp-last-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gp-space-1);
+  width: 100%;
+  box-sizing: border-box;
+  /* The button's own side padding (also on touch), so the label and the
+     words start under "CURRENT TASK" and the task name. */
+  padding: 0 var(--gp-space-7);
+  /* Below the button: the 12px row gap, the closed list's 8px margin and 2px
+     frame, then 12px again — 34px. Pulled up one row gap, as the card is:
+     22px, the card's own place. Never further: the list shrinks over
+     --gp-dur-open after it closes, and a deeper pull-up laid this line over
+     its last rows for the whole collapse. */
+  margin-top: calc(-1 * var(--gp-space-5));
+  /* As the card's: this and the row gap put the music rule 24px below. */
+  margin-bottom: var(--gp-space-5);
+  min-width: 0;
+}
+
+/* Open, the list's own frame sits above it, as above the card. (0,3,0). */
+.gp-task-list.gp-visible ~ .gp-last-note {
+  margin-top: 0;
+}
+
+.gp-last-note-when {
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gp-last-note-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gp-space-3);
+  min-width: 0;
+}
+
+.gp-last-note-face {
+  display: inline-flex;
+  flex-shrink: 0;
+  /* One line of the words beside it: 0.8rem × 1.35. */
+  height: calc(var(--gp-text-caption) * 1.35);
+  align-items: center;
+  color: var(--text-muted);
+}
+
+/* A flex item: the WebKit sliver case, so the floor is on every platform
+   (DESIGN.md entry 6.1). */
+.gp-last-note-face svg {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  min-height: 14px;
+  flex-shrink: 0;
+}
+
+/* Two lines, then an ellipsis; the whole note is the span's title. As the
+   task name above: white-space restated, a long word breaks. */
+.gp-last-note-text {
+  min-width: 0;
+  font-size: var(--gp-text-caption);
+  line-height: 1.35;
+  color: var(--text-normal);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: break-word;
+  overflow: hidden;
+}
+
 /* =========================================================================
    Music (audio-only lofi playback)
    -------------------------------------------------------------------------

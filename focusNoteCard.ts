@@ -1,4 +1,4 @@
-import { Component, Modal, setIcon } from "obsidian";
+import { Component, Modal, Platform, Scope, setIcon } from "obsidian";
 import type { App } from "obsidian";
 import { confirmAction } from "./confirmModal";
 import {
@@ -20,6 +20,36 @@ export const FOCUS_NOTE_TEXT_LABEL = "A few words about this session";
 export const CLEAR_NOTE_TITLE = "Clear this focus note?";
 export const CLEAR_NOTE_BODY =
   "The face and the words are taken off the session's line in the log.";
+
+/**
+ * Mod+Enter saves from the box: Cmd on macOS, Ctrl elsewhere — Obsidian's own
+ * "Mod" (Platform.isMacOS is the flag its keymap reads). Exactly that chord:
+ * with Shift or Alt it is another key (Obsidian binds Mod+Alt+Enter to "Open
+ * link in new split"), and Ctrl on a Mac is not Mod.
+ */
+export function isSaveShortcut(
+  evt: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">
+): boolean {
+  if (evt.key !== "Enter" || evt.shiftKey || evt.altKey) return false;
+  return Platform.isMacOS ? evt.metaKey && !evt.ctrlKey : evt.ctrlKey && !evt.metaKey;
+}
+
+/**
+ * An input method is composing: the Enter commits a candidate, it is not the
+ * user's shortcut. WebKit (the iPad) sends that Enter with isComposing false
+ * and keyCode 229, hence both. keyCode is read through a structural type: it
+ * is deprecated in the DOM typings, and 229 is the only way to see that case.
+ */
+export function isComposing(evt: Pick<KeyboardEvent, "isComposing">): boolean {
+  return evt.isComposing || (evt as { keyCode?: number }).keyCode === 229;
+}
+
+/** The shortcut as the Save button's tooltip names it, and as ARIA names it. */
+export function saveShortcutText(): { label: string; aria: string } {
+  return Platform.isMacOS
+    ? { label: "⌘ Enter", aria: "Meta+Enter" }
+    : { label: "Ctrl+Enter", aria: "Control+Enter" };
+}
 
 /**
  * A module counter for the title's id: two cards (two panels, or a panel and
@@ -71,6 +101,8 @@ export class FocusNoteCard extends Component {
   private readonly saveBtn: HTMLButtonElement;
   /** What sync() last painted from: the DOM is touched only when it moves. */
   private lastKey: string | null = null;
+  /** The panel's Mod+Enter scope (shieldSaveShortcut); null in the dialog. */
+  private shield: Scope | null = null;
   private readonly listener = (change: { reseed: boolean }) => {
     this.seed(change.reseed);
     this.sync();
@@ -122,6 +154,7 @@ export class FocusNoteCard extends Component {
         rows: "2",
         maxlength: String(NOTE_DRAFT_MAX),
         "aria-label": FOCUS_NOTE_TEXT_LABEL,
+        "aria-keyshortcuts": saveShortcutText().aria,
       },
     });
     const actions = this.formEl.createDiv("gp-note-actions");
@@ -157,15 +190,67 @@ export class FocusNoteCard extends Component {
       if (this.saveBtn.contains(target)) void this.save();
       else if (this.clearBtn.contains(target)) void this.clear();
     });
-    // The card's own DOM, never through the timer's tick. Enter is a new
-    // line: no shortcut saves.
+    // The card's own DOM, never through the timer's tick.
     this.registerDomEvent(this.textarea, "input", () => {
       this.store.setDraft(this.store.draft.face, this.textarea.value);
     });
+    // Enter (and Shift+Enter) is a new line; Mod+Enter saves, through the
+    // click's own save(), so it does nothing a click on an inactive Save could
+    // not. The chord never types a newline, a held one included (Chromium
+    // reads Ctrl+Enter in a textarea as a new line), but a repeat saves
+    // nothing, and a composing input method keeps its Enter.
+    this.registerDomEvent(this.textarea, "keydown", (evt: KeyboardEvent) => {
+      if (!isSaveShortcut(evt) || isComposing(evt)) return;
+      evt.preventDefault();
+      if (!evt.repeat) void this.save();
+    });
+    if (this.options.surface === "panel") this.shieldSaveShortcut();
     this.store.onChange(this.listener);
     this.register(() => this.store.offChange(this.listener));
     this.seed(true);
     this.sync();
+  }
+
+  /**
+   * In the timer panel Mod+Enter never reaches the box on its own. Obsidian's
+   * keymap listens on the window in the capture phase and runs hotkeys before
+   * any element sees the key, and Mod+Enter is a default hotkey, "Open link
+   * under cursor in new tab" (editor:open-link-in-new-leaf). Its command runs
+   * even with no editor, executeCommand reports it ran, and the keymap then
+   * calls preventDefault and stopPropagation: the box's keydown never fires.
+   * (app.js 1.14.5 and 1.15.0, HotkeyManager.onTrigger on app.scope and
+   * Keymap.onKeyEvent; 1.7.7 the same.)
+   *
+   * So while the box has the caret, a scope sits on top of the keymap's stack
+   * that matches Mod+Enter and answers anything but false. A matched key ends
+   * the scope walk without asking the parent (Scope.handleKey), so no hotkey
+   * runs, and with no false nothing is prevented: the key goes on to the box.
+   * Every other key falls through to app.scope, the parent Obsidian documents
+   * for a view's own scope. Taken off on blur and at unload.
+   *
+   * The dialog needs none of this: a Modal pushes a scope with no parent and
+   * only Escape in it, so no hotkey runs while it is open — and pushing this
+   * one over it would hand Escape to the hotkeys instead of the dialog.
+   */
+  private shieldSaveShortcut(): void {
+    const { app } = this.options;
+    const shield = (this.shield = new Scope(app.scope));
+    shield.register(["Mod"], "Enter", () => true);
+    this.registerDomEvent(this.textarea, "focus", () => app.keymap.pushScope(shield));
+    this.registerDomEvent(this.textarea, "blur", () => app.keymap.popScope(shield));
+    // popScope does nothing for a scope that is not on a stack.
+    this.register(() => app.keymap.popScope(shield));
+  }
+
+  /**
+   * The card hid with the caret still in the box (a focus that starts on its
+   * own while the user types, or the setting turned off): take the scope off
+   * here too, not only on blur. A browser that blurs a hidden element without
+   * a blur event would otherwise leave it on the stack, swallowing Mod+Enter
+   * everywhere and keeping the active view's own keys from it.
+   */
+  private dropShield(): void {
+    if (this.shield !== null) this.options.app.keymap.popScope(this.shield);
   }
 
   /**
@@ -194,6 +279,7 @@ export class FocusNoteCard extends Component {
     if (key === this.lastKey) return;
     this.lastKey = key;
     this.sectionEl.toggleClass("gp-hidden", !shown);
+    if (!shown) this.dropShield();
     const view = shown ? s.view(this.options.moment) : null;
     if (view === null) return;
 
@@ -210,6 +296,9 @@ export class FocusNoteCard extends Component {
 
     this.sectionEl.toggleClass("can-save", view.saveActive);
     this.saveBtn.setText(view.saveLabel);
+    // `title`, never aria-label or setTooltip: those replace the button's
+    // name, "Save" / "Update" (DESIGN.md register entry 9).
+    this.saveBtn.setAttr("title", `${view.saveLabel} (${saveShortcutText().label})`);
     this.saveBtn.setAttr("aria-disabled", view.saveActive ? "false" : "true");
     this.clearBtn.setAttr("aria-disabled", view.clearActive ? "false" : "true");
     this.textarea.setAttr("placeholder", view.placeholder);

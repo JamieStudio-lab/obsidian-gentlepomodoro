@@ -1155,6 +1155,40 @@ export function lastSessionNoteTarget(content: string): SessionNoteLine | null {
   return null;
 }
 
+/** A focus note found on a log line (newestFocusNote), with its session. */
+export interface FoundFocusNote {
+  sessionId: string;
+  /** Start as written ("" when missing): readLogTime reads it. */
+  start: string;
+  note: FocusNote;
+}
+
+/**
+ * The newest focus note in a log file whose line `matches` says yes to — the
+ * "Last time" line under the task button (0.7.1) — or null. Read bottom-up,
+ * on the rows a note can be on (version 2, past the properties, a valid
+ * Session: lastSessionNoteTarget's rows), so a Note typed by hand on a break
+ * or on an older line is no focus note, as readLogTail says. A face alone is
+ * a note. The caller decides which lines are the task's: it resolves links,
+ * which this module cannot.
+ */
+export function newestFocusNote(
+  content: string,
+  matches: (parsed: ParsedLogLine) => boolean
+): FoundFocusNote | null {
+  const { rows, from } = bodyRows(content);
+  for (let i = rows.length - 1; i >= from; i--) {
+    // Only a row that holds a Note is worth reading.
+    if (!rows[i].includes("Note::")) continue;
+    const line = sessionLine(rows[i]);
+    if (!line) continue;
+    const note = parseNoteValue(line.parsed.values.get("Note"));
+    if (note === null || !matches(line.parsed)) continue;
+    return { sessionId: line.sessionId, start: line.parsed.values.get("Start") ?? "", note };
+  }
+  return null;
+}
+
 /**
  * Sum Total across the focus lines of a log file, either format. Skipped
  * sessions (Status cancelled) are forfeited — they don't count toward the

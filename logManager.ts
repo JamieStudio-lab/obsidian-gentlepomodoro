@@ -3,6 +3,7 @@ import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
 import { confirmAction, type ConfirmOptions } from "./confirmModal";
 import {
+  FOCUS_NOTE_LOOKBACK_DAYS,
   FOCUS_TOTAL_CACHE_TTL_MS,
   LOG_GOAL_WRITE_DELAY_MS,
   MIN_SESSION_SECONDS,
@@ -25,13 +26,16 @@ import {
   logTaskId,
   loggedTotalSeconds,
   newSessionId,
+  newestFocusNote,
   parseFocusTotalSeconds,
   parseLogLine,
   readSessionNote,
   replaceTaskValue,
+  sanitizeAlias,
   setSessionNote,
   type EndedBy,
   type FocusNote,
+  type FoundFocusNote,
   type SessionLog,
   type StartedBy,
 } from "./logLine";
@@ -273,6 +277,23 @@ export function resolveLogLink(app: App, linktext: string, sourcePath: string): 
   if (dest) return dest.path;
   const exact = app.vault.getAbstractFileByPath(linkpath);
   return exact instanceof TFile ? exact.path : null;
+}
+
+/** The task the "Last time" line is for: the timer's link, as it stands. */
+export interface LinkedTask {
+  path: string;
+  /** Its 🆔; undefined for a task without one. */
+  id?: string;
+  /** The timer's name for it (TimerEngine.currentTaskName). */
+  name: string;
+}
+
+/** A task's newest focus note (LogManager.lastTaskNote), and the file it was
+ *  found in: its logical day, and how many days back that is (0 today). */
+export interface LastTaskNote extends FoundFocusNote {
+  daysAgo: number;
+  /** The file's logical day, YYYY-MM-DD. */
+  day: string;
 }
 
 /** Obsidian's Vault.create rejects with this when the path is taken. */
@@ -1439,6 +1460,52 @@ export class LogManager {
       } catch (e) {
         logger.warn(`Could not read "${path}"`, e);
       }
+    }
+    return null;
+  }
+
+  /**
+   * The linked task's newest focus note, for the "Last time" line under the
+   * task button (0.7.1): today's log, then each logical day before it
+   * ("Day starts at" counted) for FOCUS_NOTE_LOOKBACK_DAYS days in all,
+   * stopping at the first file that holds one; within a file, the newest line
+   * (newestFocusNote). Which lines are the task's:
+   *  - with a 🆔, those carrying it, wherever they link — a task copied
+   *    forward keeps its 🆔, and its notes follow it;
+   *  - without, those carrying no 🆔 whose link leads to the task's note
+   *    (resolveLogLink, the log file as source) under the name the writer
+   *    gave it (sanitizeAlias). A task whose text was edited since loses its
+   *    earlier notes; accepted.
+   * Cached reads: what is shown, not what is written. A missing file is
+   * passed over, and so is one that cannot be read. Null with no folder.
+   */
+  async lastTaskNote(task: LinkedTask): Promise<LastTaskNote | null> {
+    const settings = this.plugin.settings;
+    if (!settings.logFolderPath) return null;
+    const vault = this.plugin.app.vault;
+    const alias = sanitizeAlias(task.name);
+    const now = moment();
+    for (let daysAgo = 0; daysAgo < FOCUS_NOTE_LOOKBACK_DAYS; daysAgo++) {
+      const day = logicalDate(now.clone().subtract(daysAgo, "day"), settings.dayStartHour);
+      const path = dailyLogPath(settings.logFolderPath, day);
+      const file = vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      let content: string;
+      try {
+        content = await vault.cachedRead(file);
+      } catch (e) {
+        logger.warn(`Could not read "${path}"`, e);
+        continue;
+      }
+      const found = newestFocusNote(content, (parsed) => {
+        const id = logTaskId(parsed);
+        if (task.id) return id === task.id;
+        if (id !== null || parsed.task?.path === undefined) return false;
+        return (
+          parsed.task.name === alias && this.resolveLink(parsed.task.path, file.path) === task.path
+        );
+      });
+      if (found) return { ...found, daysAgo, day };
     }
     return null;
   }

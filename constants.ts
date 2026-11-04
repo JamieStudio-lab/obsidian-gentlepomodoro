@@ -35,6 +35,17 @@ export const LOG_GOAL_WRITE_DELAY_MS = 1500;
 // two buttons to find, and it never comes back.
 export const LOG_FORMAT_NOTICE_MS = 15_000;
 
+// How many logical days of logs, today's included, the "Last time" line under
+// the task button searches for the linked task's newest focus note (0.7.1).
+// A month: a task picked up again after longer has moved on, and every day is
+// one cached read when the view opens or the link changes.
+export const FOCUS_NOTE_LOOKBACK_DAYS = 30;
+
+// How long the "Last time" line waits after a daily log file changes before it
+// re-reads: a rename's link update rewrites each log file that links the
+// note, and the line should read once, after the last of them.
+export const LAST_NOTE_LOG_SETTLE_MS = 400;
+
 // How long the tapped-to-peek countdown stays revealed on touch before auto-hiding.
 export const PEEK_REVEAL_MS = 2000;
 
