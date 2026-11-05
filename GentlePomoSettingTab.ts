@@ -19,6 +19,10 @@ import {
 import { THEMES, resolveTheme } from "./themes";
 import {
   LOG_PAGE,
+  FOCUS_NOTE_PAGE,
+  FOCUS_NOTE_PAGE_DESC,
+  focusNotePageValue,
+  focusNotePageWarning,
   LOG_PAGE_DESC,
   LOG_TABLES_PAGE,
   LOG_TABLES_PAGE_DESC,
@@ -89,6 +93,15 @@ import {
   resolveTaskSource,
 } from "./taskScope";
 import { SESSION_END_NOTIFICATION_DESC, SESSION_END_NOTIFICATION_LABEL } from "./sessionEndNotice";
+import {
+  FOCUS_NOTE_ACTION_DESC,
+  FOCUS_NOTE_COMMAND_NAME,
+  FOCUS_NOTE_DESC,
+  FOCUS_NOTE_LABEL,
+  FOCUS_NOTE_OFF_NOTICE,
+  LAST_NOTE_SETTING_DESC,
+  LAST_NOTE_SETTING_LABEL,
+} from "./focusNote";
 import { markDestructive } from "./confirmModal";
 import { CuePickerModal } from "./cuePicker";
 import {
@@ -1838,6 +1851,47 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         ],
       },
       {
+        // 0.7.1. Its own page (the maintainer's call, 2026-11-04): the switch
+        // sat last under "When focus ends" on the Sounds page, where nobody
+        // looking for a note would look. After the log, which keeps the
+        // notes, and before Log tables, which can show them as a column. The
+        // panel's gear keeps the switch under its own "When focus ends".
+        name: FOCUS_NOTE_PAGE,
+        desc: FOCUS_NOTE_PAGE_DESC,
+        value: () => focusNotePageValue(settings()),
+        warning: () => focusNotePageWarning(settings()),
+        groups: [
+          {
+            heading: FOCUS_NOTE_PAGE,
+            rows: [
+              {
+                name: FOCUS_NOTE_LABEL,
+                desc: FOCUS_NOTE_DESC,
+                control: { type: "toggle", key: "focusNoteEnabled" },
+              },
+              {
+                name: LAST_NOTE_SETTING_LABEL,
+                desc: LAST_NOTE_SETTING_DESC,
+                control: { type: "toggle", key: "lastNoteEnabled" },
+              },
+              {
+                name: FOCUS_NOTE_COMMAND_NAME,
+                desc: FOCUS_NOTE_ACTION_DESC,
+                action: () => {
+                  // The command's own rule: only while the note is offered.
+                  if (!this.plugin.settings.focusNoteEnabled) {
+                    new Notice(FOCUS_NOTE_OFF_NOTICE);
+                    return;
+                  }
+                  void this.plugin.openFocusNote();
+                },
+                buttonText: "Open",
+              },
+            ],
+          },
+        ],
+      },
+      {
         name: LOG_TABLES_PAGE,
         desc: LOG_TABLES_PAGE_DESC,
         value: () => logTablesPageValue(settings()),
@@ -2230,6 +2284,20 @@ export class GentlePomoSettingTab extends PluginSettingTab {
         settings.breakEndSoundEnabled = Boolean(value);
         await this.plugin.saveSettings();
         this.refreshEndSummaries();
+        this.applySettingsToOpenViews();
+        return;
+      case "lastNoteEnabled":
+        settings.lastNoteEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        // An open panel shows or hides the line now: its read key holds the
+        // setting, and the timer may be idle (no tick to repaint it).
+        this.applySettingsToOpenViews();
+        return;
+      case "focusNoteEnabled":
+        settings.focusNoteEnabled = Boolean(value);
+        await this.plugin.saveSettings();
+        // Dual-surface: the gear panel carries the same switch, and a card
+        // still open shows or hides with it.
         this.applySettingsToOpenViews();
         return;
       case "sessionEndNotification": {

@@ -35,6 +35,8 @@ import {
   logSeconds,
   parseFocusTotalSeconds,
   parseLogLine,
+  setSessionNote,
+  type FocusNote,
   type ParsedLogLine,
   type SessionLog,
 } from "../logLine";
@@ -59,6 +61,9 @@ import type { MomentLike } from "../momentTypes";
  * from, a split session that comes back to its task, a note in each log
  * folder with no date, a dated note there that quotes a log line, which only
  * the file-name guard keeps out, and a log-named file Dataview cannot date.
+ * Some 0.7.0 lines carry a focus note (0.7.1), written by setSessionNote —
+ * plain text only, so the oracle stays simple; the notes Dataview reads as
+ * another type have their own vault, at the end.
  */
 
 const require = createRequire(import.meta.url);
@@ -123,6 +128,20 @@ const tail = (id: string, more: Partial<SessionLog> = {}): Partial<SessionLog> =
   plannedSeconds: 1500,
   ...more,
 });
+
+/**
+ * `lines` with each session's focus note set, as the plugin sets one: on the
+ * last line of that Session (setSessionNote), cleaned as it cleans one.
+ */
+function withNotes(lines: string[], notes: [id: string, note: FocusNote][]): string[] {
+  let content = lines.join("\n");
+  for (const [id, note] of notes) {
+    const next = setSessionNote(content, `s00000000${id}`, note);
+    if (next === null) throw new Error(`no focus line of session ${id}`);
+    content = next;
+  }
+  return content.split("\n");
+}
 
 /** The days and their lines, latest last. Each day file has its own goal. */
 const DAYS: { day: string; goal: number; lines: string[] }[] = [
@@ -230,65 +249,74 @@ const DAYS: { day: string; goal: number; lines: string[] }[] = [
   {
     day: "2026-10-23",
     goal: 120,
-    lines: [
-      focus(
-        { day: "2026-10-23", from: "09:00", to: "09:25" },
-        WRITING,
-        tail("b", { taskId: "abc123", cycle: 2 } as Partial<SessionLog>)
-      ),
-      rest(
-        { day: "2026-10-23", from: "09:25", to: "09:30" },
-        "short",
-        tail("c", { startedBy: "auto", plannedSeconds: 300 })
-      ),
-      // A session split at a task switch: two lines, one Session.
-      focus(
-        { day: "2026-10-23", from: "10:00", to: "10:12" },
-        OUTLINE,
-        tail("d", { startedBy: "reset", endedBy: "stop", cycle: 3 })
-      ),
-      focus(
-        { day: "2026-10-23", from: "10:12", to: "10:25" },
-        ADMIN,
-        tail("d", { startedBy: "reset", endedBy: "stop", cycle: 3 })
-      ),
-      focus({ day: "2026-10-23", from: "13:00", to: "14:10" }, NO_TASK, {
-        ...tail("e", { startedBy: "auto", endedBy: "stop", cycle: 4 }),
-        pauses: [{ start: at("2026-10-23", "13:10"), end: at("2026-10-23", "13:50") }],
-        sleeps: [[at("2026-10-23", "13:10").valueOf(), at("2026-10-23", "13:50").valueOf()]],
-        overtimeSeconds: 300,
-        device: "Work laptop",
-      }),
-      focus({ day: "2026-10-23", from: "15:00", to: "15:03" }, ADMIN, {
-        ...tail("f", { endedBy: "skip" }),
-        status: "cancelled",
-      }),
-      rest(
-        { day: "2026-10-23", from: "16:00", to: "16:15" },
-        "long",
-        tail("g", { startedBy: "auto", plannedSeconds: 900 })
-      ),
-      focus(
-        { day: "2026-10-23", from: "17:00", to: "17:25" },
-        WRITING,
-        tail("h", { endedBy: "recovered-planned-end", cycle: 1 })
-      ),
-      focus(
-        { day: "2026-10-23", from: "18:00", to: "18:20" },
-        WRITING,
-        tail("j", { startedBy: "added", endedBy: "added" })
-      ),
-      focus({ day: "2026-10-23", from: "19:00", to: "19:31" }, ADMIN, {
-        ...tail("k", { startedBy: "auto", endedBy: "recovered", plannedSeconds: 1800, cycle: 2 }),
-        scheduledDurationMinutes: 30,
-        overtimeSeconds: 60,
-      }),
-      // Written by hand, and no session: a Type that is only PART of one of
-      // the plugin's. `contains()` would take both — it matches inside text,
-      // and inside each string of a list — so the kinds must be ORs.
-      "- A walk outside [Type:: break]",
-      "- Half a session, typed by hand [Type:: focu]",
-    ],
+    lines: withNotes(
+      [
+        focus(
+          { day: "2026-10-23", from: "09:00", to: "09:25" },
+          WRITING,
+          tail("b", { taskId: "abc123", cycle: 2 } as Partial<SessionLog>)
+        ),
+        rest(
+          { day: "2026-10-23", from: "09:25", to: "09:30" },
+          "short",
+          tail("c", { startedBy: "auto", plannedSeconds: 300 })
+        ),
+        // A session split at a task switch: two lines, one Session.
+        focus(
+          { day: "2026-10-23", from: "10:00", to: "10:12" },
+          OUTLINE,
+          tail("d", { startedBy: "reset", endedBy: "stop", cycle: 3 })
+        ),
+        focus(
+          { day: "2026-10-23", from: "10:12", to: "10:25" },
+          ADMIN,
+          tail("d", { startedBy: "reset", endedBy: "stop", cycle: 3 })
+        ),
+        focus({ day: "2026-10-23", from: "13:00", to: "14:10" }, NO_TASK, {
+          ...tail("e", { startedBy: "auto", endedBy: "stop", cycle: 4 }),
+          pauses: [{ start: at("2026-10-23", "13:10"), end: at("2026-10-23", "13:50") }],
+          sleeps: [[at("2026-10-23", "13:10").valueOf(), at("2026-10-23", "13:50").valueOf()]],
+          overtimeSeconds: 300,
+          device: "Work laptop",
+        }),
+        focus({ day: "2026-10-23", from: "15:00", to: "15:03" }, ADMIN, {
+          ...tail("f", { endedBy: "skip" }),
+          status: "cancelled",
+        }),
+        rest(
+          { day: "2026-10-23", from: "16:00", to: "16:15" },
+          "long",
+          tail("g", { startedBy: "auto", plannedSeconds: 900 })
+        ),
+        focus(
+          { day: "2026-10-23", from: "17:00", to: "17:25" },
+          WRITING,
+          tail("h", { endedBy: "recovered-planned-end", cycle: 1 })
+        ),
+        focus(
+          { day: "2026-10-23", from: "18:00", to: "18:20" },
+          WRITING,
+          tail("j", { startedBy: "added", endedBy: "added" })
+        ),
+        focus({ day: "2026-10-23", from: "19:00", to: "19:31" }, ADMIN, {
+          ...tail("k", { startedBy: "auto", endedBy: "recovered", plannedSeconds: 1800, cycle: 2 }),
+          scheduledDurationMinutes: 30,
+          overtimeSeconds: 60,
+        }),
+        // Written by hand, and no session: a Type that is only PART of one of
+        // the plugin's. `contains()` would take both — it matches inside text,
+        // and inside each string of a list — so the kinds must be ORs.
+        "- A walk outside [Type:: break]",
+        "- Half a session, typed by hand [Type:: focu]",
+      ],
+      [
+        ["b", { face: "smile", text: "" }],
+        ["e", { face: "meh", text: "stuck on [refs]" }],
+        ["h", { face: null, text: "#idea" }],
+        // On the split session's last line, the 10:12 one.
+        ["d", { face: "frown", text: "switched twice" }],
+      ]
+    ),
   },
 ];
 
@@ -489,6 +517,8 @@ function expectedCell(id: string, line: Expected, kinds: QueryOptions["kinds"]):
       const written = value("Offset");
       return written === undefined ? "-" : String(Number(written) / 60);
     }
+    case "note":
+      return text("Note");
   }
   throw new Error(`no expected cell for the column ${id}`);
 }
@@ -714,6 +744,109 @@ describe("the sessions table's cells", () => {
     expect(dql.rows.length).toBe(READABLE.filter((l) => l.kind !== "").length);
     expect(texts(js)).toEqual(texts(dql));
     expect(formatQueryColumns(columns)).toMatch(/^date,start,/);
+  });
+});
+
+describe("the focus note", () => {
+  const noteOn = options({
+    columns: [
+      { id: "start", on: true },
+      { id: "note", on: true },
+    ],
+    range: "today",
+    kinds: "all",
+    sort: "oldest",
+  });
+
+  it("shows the whole value, face word included, on the session's last line alone", async () => {
+    setNow(NOON);
+    const dql = await runDql(sessionsTable(noteOn), index, WEEK_NOTE);
+    const js = await runDataviewJs(sessionsTableJs(noteOn), index, WEEK_NOTE);
+    expect(dql.rowErrors).toEqual([]);
+    expect(texts(js)).toEqual(texts(dql));
+    expect(texts(dql).filter((row) => row[1] !== "-")).toEqual([
+      ['"09:00"', '"smile"'],
+      // The split session's two lines: the note on the last.
+      ['"10:12"', '"frown · switched twice"'],
+      ['"13:00"', '"meh · stuck on (refs)"'],
+      ['"17:00"', '"＃idea"'],
+    ]);
+    expect(texts(dql).find((row) => row[0] === '"10:00"')).toEqual(['"10:00"', "-"]);
+  });
+
+  // Notes Dataview reads as another type: a day of them, on their own vault
+  // so the fixture above stays plain text. Each is words alone, through
+  // setSessionNote as the card writes them.
+  const TYPED = [
+    "45 min",
+    "2026-11-03",
+    "7",
+    "true",
+    "null",
+    '"quoted"',
+    "1, 2",
+    "45 min, 2026-11-03",
+  ];
+  const DAY = "2026-10-23";
+  const typedLines = (withNote: boolean) =>
+    TYPED.map((text, i) => {
+      const id = `s0000000t${String(i)}`;
+      const time = `0${String(i + 1)}:00`;
+      const line = focus({ day: DAY, from: time, to: `0${String(i + 1)}:25` }, NO_TASK, {
+        sessionId: id,
+        startedBy: "start",
+        endedBy: "time-up",
+        plannedSeconds: 1500,
+      });
+      return withNote ? setSessionNote(line, id, { face: null, text })! : line;
+    });
+  const typedVault = (withNote: boolean): FakeFiles => ({
+    [`${PLAIN}/${DAY}-gentle-pomodoro-log.md`]: {
+      contents: `${typedLines(withNote).join("\n")}\n`,
+    },
+    [WEEK_NOTE]: { contents: "# Week review\n" },
+  });
+
+  it("drops no row for a note Dataview reads as a number, a date, a duration, a bool or a list", async () => {
+    setNow(NOON);
+    const o = options({
+      columns: [
+        { id: "start", on: true },
+        { id: "minutes", on: true },
+        { id: "note", on: true },
+      ],
+      range: "today",
+      sort: "oldest",
+    });
+    const typed = await buildIndex(typedVault(true));
+    const plain = await buildIndex(typedVault(false));
+    const dql = await runDql(sessionsTable(o), typed, WEEK_NOTE);
+    const js = await runDataviewJs(sessionsTableJs(o), typed, WEEK_NOTE);
+    expect(dql.rowErrors).toEqual([]);
+    expect(dql.rows.length).toBe(TYPED.length);
+    expect(dql.rows.length).toBe((await runDql(sessionsTable(o), plain, WEEK_NOTE)).rows.length);
+    expect(texts(js)).toEqual(texts(dql));
+    // Each as Dataview prints it — what the README says. `null` stays the
+    // word: Dataview 0.5.68 reads it as text, not as its null.
+    expect(texts(dql).map((row) => row[2])).toEqual([
+      "45 minutes",
+      "date(2026-11-03 00:00)",
+      "7",
+      "true",
+      '"null"',
+      '"quoted"',
+      "[1, 2]",
+      "[45 minutes, date(2026-11-03 00:00)]",
+    ]);
+    // The notes reach no total: the minutes, the day's sum, time by task.
+    const minutesCells = (table: TableResult) => texts(table).map((row) => row[1]);
+    expect(minutesCells(dql)).toEqual(TYPED.map(() => "25"));
+    for (const code of [dailyTotals(o), timeByTask(o)]) {
+      const withNotes = await runDql(code, typed, WEEK_NOTE);
+      expect(withNotes.rowErrors).toEqual([]);
+      expect(texts(withNotes)).toEqual(texts(await runDql(code, plain, WEEK_NOTE)));
+      expect(withNotes.rows.length).toBe(1);
+    }
   });
 });
 

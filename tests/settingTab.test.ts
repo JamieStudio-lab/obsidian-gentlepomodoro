@@ -65,6 +65,15 @@ import {
 } from "../sessionEndSummary";
 import { VOLUME_OPTIONS } from "../segmentedChoice";
 import { SESSION_END_NOTIFICATION_LABEL } from "../sessionEndNotice";
+import {
+  FOCUS_NOTE_COMMAND_NAME,
+  FOCUS_NOTE_DESC,
+  FOCUS_NOTE_LABEL,
+  FOCUS_NOTE_OFF_NOTICE,
+  LAST_NOTE_SETTING_DESC,
+  LAST_NOTE_SETTING_LABEL,
+} from "../focusNote";
+import { FOCUS_NOTE_PAGE, SOUNDS_PAGE_DESC } from "../settingPages";
 import { TASK_SOURCE_ORDER, TASK_SOURCE_LABELS, TASK_SOURCE_SETTING_NAME } from "../taskScope";
 import { DEFAULT_THEME } from "../themes";
 import { TimerEngine } from "../TimerEngine";
@@ -196,6 +205,10 @@ function makeTab(overrides: Partial<GentlePomoSettings> = {}, files: Record<stri
     },
     exportSessions: () => {
       calls.push({ method: "exportSessions", args: [] });
+      return Promise.resolve();
+    },
+    openFocusNote: () => {
+      calls.push({ method: "openFocusNote", args: [] });
       return Promise.resolve();
     },
     app_workspace: null,
@@ -387,6 +400,8 @@ describe("the two settings paths cannot drift", () => {
       "Music",
       // 0.6.9: the folder, the log's three choices and its five commands.
       "Daily log",
+      // 0.7.1: its own page, after the log that keeps the notes.
+      "Focus note",
       // 0.7.0: code to paste, right after the log it reads.
       "Log tables",
       "Task picker",
@@ -430,6 +445,7 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
       ],
       ["Music", [null]],
       ["Daily log", [null]],
+      ["Focus note", [null]],
       ["Log tables", [null]],
       ["Tasks", ["Task picker", "Task integration"]],
     ]);
@@ -463,6 +479,7 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
         "Sounds",
         "Music",
         "Daily log",
+        "Focus note",
         "Log tables",
         "Tasks",
       ]);
@@ -500,6 +517,7 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
     c.settings.showTaskSelector = false;
     c.settings.showInStatusBar = false;
     c.settings.theme = "pixel-city";
+    c.settings.focusNoteEnabled = true;
     const values = Object.fromEntries(pages.map((p) => [p.name, p.displayValue?.()]));
     expect(values).toEqual({
       Timer: "Pixel city",
@@ -507,6 +525,7 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
       "Sounds and notifications": "Timer sounds off",
       Music: "Off",
       "Daily log": "Elsewhere",
+      "Focus note": "On",
       "Log tables": "2 columns · Last 7 days",
       Tasks: "Picker off",
     });
@@ -536,9 +555,10 @@ describe("the settings pages (0.7.0, Obsidian 1.13+)", () => {
     expect(status(badFolder, "Daily log")).toBe("warning");
     expect(status(makeTab({ logFolderPath: "/" }), "Daily log")).toBe("warning");
     expect(status(makeTab({ logFolderPath: "" }), "Daily log")).toBeNull();
-    // No other page has a sign.
+    // No other page has a sign (Focus note has its own, tested below).
     for (const page of definitionPages(badLink.tab)) {
-      if (page.name === "Music" || page.name === "Daily log") continue;
+      if (page.name === "Music" || page.name === "Daily log" || page.name === "Focus note")
+        continue;
       expect(page.status, page.name).toBeUndefined();
     }
   });
@@ -1056,11 +1076,17 @@ describe("the end-of-session switches", () => {
     expect(view).toContain("AUTO_START_BREAK_LABEL");
     expect(view).toContain("AUTO_START_FOCUS_LABEL");
     expect(view).toContain("MASTER_SOUND_LABEL");
+    expect(view).toContain("FOCUS_NOTE_LABEL");
     // ...and not a hand-typed copy that could drift from the tab's. Matched as
     // an ARGUMENT (`, "label")`) rather than as a bare substring: the label also
     // appears in prose comments, and a guard that cannot tell code from a
     // comment fails on the next person who explains why the const exists.
-    for (const label of [AUTO_START_BREAK_LABEL, AUTO_START_FOCUS_LABEL, MASTER_SOUND_LABEL]) {
+    for (const label of [
+      AUTO_START_BREAK_LABEL,
+      AUTO_START_FOCUS_LABEL,
+      MASTER_SOUND_LABEL,
+      FOCUS_NOTE_LABEL,
+    ]) {
       expect(view, `${label} must come from the shared const`).not.toContain(`, "${label}")`);
     }
 
@@ -1172,6 +1198,8 @@ describe("the end-of-session switches", () => {
       "autoStartFocus",
       "soundEnabled",
       "sessionEndNotification",
+      "focusNoteEnabled",
+      "lastNoteEnabled",
     ] as const) {
       const c = makeTab();
       c.settings[key] = false;
@@ -1648,6 +1676,43 @@ describe("the picker's live-reload guard has a trigger for every field it watche
   });
 });
 
+describe("the focus note's switch in the panel (0.7.1)", () => {
+  // A policy switch, so on both surfaces (0.6.3's rule): read as text, since
+  // nothing can import the view.
+  const panel = () => {
+    const src = codeOnly(readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8"));
+    return src.slice(src.indexOf("renderSettingsPanel() {"));
+  };
+
+  it("closes When focus ends, after the outcome line, as in the settings tab", () => {
+    const p = panel();
+    const heading = p.indexOf('section("When focus ends");');
+    const summary = p.indexOf('summaryFor("focus");');
+    const row = p.indexOf('sharedToggle("focusNoteEnabled", FOCUS_NOTE_LABEL);');
+    const next = p.indexOf('section("When a break ends");');
+    expect(heading).toBeGreaterThan(-1);
+    expect(row, "the panel has no focus note switch").toBeGreaterThan(-1);
+    expect(row).toBeGreaterThan(summary);
+    expect(summary).toBeGreaterThan(heading);
+    expect(next).toBeGreaterThan(row);
+    // Exactly one, and not hidden behind any other switch.
+    expect(p.match(/sharedToggle\("focusNoteEnabled"/g)).toHaveLength(1);
+  });
+
+  it("is a dual-surface key, so the settings tab's change re-seeds it", () => {
+    const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
+    const union = src.slice(src.indexOf("type SharedPanelKey ="));
+    expect(union.slice(0, union.indexOf(";"))).toContain('| "focusNoteEnabled"');
+  });
+
+  it("is restored to off by the panel's Reset, the value a new install gets", () => {
+    const p = panel();
+    const reset = p.slice(p.indexOf("const resetWrap"));
+    expect(reset).toContain("settings.focusNoteEnabled = DEFAULT_SETTINGS.focusNoteEnabled;");
+    expect(DEFAULT_SETTINGS.focusNoteEnabled).toBe(false);
+  });
+});
+
 describe("the panel's Reset to defaults", () => {
   const panel = () => {
     const src = readFileSync(resolve(__dirname, "..", "GentlePomoView.ts"), "utf8");
@@ -1909,6 +1974,21 @@ describe("the sound rows", () => {
     // Not 1.13's `file` control: below 1.13 that renders as an empty row, and
     // it could not offer the built-ins anyway.
     for (const item of cueItems) expect(typeof item.render).toBe("function");
+  });
+
+  it("closes When focus ends with the outcome line: the note has its own page (0.7.1)", () => {
+    const c = makeTab();
+    const items = groupNamed(c.tab, "When focus ends").items;
+    const last = items[items.length - 1] as { name?: string; render?: unknown };
+    expect(last.name).toBe("");
+    expect(typeof last.render).toBe("function");
+    // Off by default, for a new install and an upgrade alike.
+    expect(DEFAULT_SETTINGS.focusNoteEnabled).toBe(false);
+    expect(c.tab.getControlValue("focusNoteEnabled")).toBe(false);
+    expect(FOCUS_NOTE_LABEL).toBe("Offer a focus note");
+    // And only on its page.
+    const named = declarativeRows(c.tab).filter((r) => r.name === FOCUS_NOTE_LABEL);
+    expect(named.map((r) => r.heading)).toEqual([FOCUS_NOTE_PAGE]);
   });
 
   it("describes the switch that sits BELOW it, since the order depends on it", () => {
@@ -2932,7 +3012,9 @@ describe("the Log tables group", () => {
   it("sits right after Daily log, in the order the design has it", () => {
     const rows = declarativeRows(ctx.tab);
     const headings = [...new Set(rows.map((r) => r.heading))];
-    expect(headings[headings.indexOf("Daily log") + 1]).toBe(QUERY_GROUP_HEADING);
+    // 0.7.1: the Focus note page sits between the log and its tables.
+    expect(headings[headings.indexOf("Daily log") + 1]).toBe(FOCUS_NOTE_PAGE);
+    expect(headings[headings.indexOf("Daily log") + 2]).toBe(QUERY_GROUP_HEADING);
     expect(rows.filter((r) => r.heading === QUERY_GROUP_HEADING).map((r) => r.name)).toEqual([
       QUERY_COLUMNS_NAME,
       QUERY_RANGE_NAME,
@@ -3080,7 +3162,7 @@ describe("the Log tables group", () => {
       catalogLabelsWithout([...QUERY_PRESETS.simple, "end"])
     );
     expect(c.settings.queryColumns).toBe(
-      "date,start,task,minutes,status,end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+      "date,start,task,minutes,status,end,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note"
     );
     expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
     expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
@@ -3104,7 +3186,7 @@ describe("the Log tables group", () => {
     expect(names.indexOf("Task")).toBe(names.indexOf("End") + 1);
     expect(names).toEqual(catalogLabelsWithout(["date", "start", "minutes", "status"]));
     expect(c.settings.queryColumns).toBe(
-      "date,start,minutes,status,-end,-task,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset"
+      "date,start,minutes,status,-end,-task,-planned,-overtime,-pauses,-type,-endedby,-startedby,-cycle,-slept,-dropped,-device,-session,-offset,-note"
     );
     expect(c.calls.map((x) => x.method)).toEqual(["saveSettings"]);
     expect(codeEl(c.el).pre.text).toBe(sessionsCode(c.settings));
@@ -3883,5 +3965,69 @@ describe("the Log tables group's stylesheet", () => {
     expect(bodyOf('.gp-column-item .extra-setting-button[aria-disabled="true"]')).toMatch(
       /(^|;)\s*cursor: not-allowed;/
     );
+  });
+});
+
+describe("the Focus note page (0.7.1)", () => {
+  it("holds the note's switch, the Last time switch and the card's button, in that order", () => {
+    const c = makeTab();
+    const items = groupNamed(c.tab, FOCUS_NOTE_PAGE).items as {
+      name: string;
+      desc: string;
+      control?: unknown;
+    }[];
+    expect(items.map((i) => i.name)).toEqual([
+      FOCUS_NOTE_LABEL,
+      LAST_NOTE_SETTING_LABEL,
+      FOCUS_NOTE_COMMAND_NAME,
+    ]);
+    expect(items[0]).toMatchObject({
+      desc: FOCUS_NOTE_DESC,
+      control: { type: "toggle", key: "focusNoteEnabled" },
+    });
+    expect(items[1]).toMatchObject({
+      desc: LAST_NOTE_SETTING_DESC,
+      control: { type: "toggle", key: "lastNoteEnabled" },
+    });
+  });
+
+  it("shows the Last time line by default, for a new install and an upgrade alike", () => {
+    expect(DEFAULT_SETTINGS.lastNoteEnabled).toBe(true);
+    expect(makeTab().tab.getControlValue("lastNoteEnabled")).toBe(true);
+  });
+
+  it("opens the card from its button only while the note is on, as the command does", () => {
+    Notice.shown.length = 0;
+    const off = makeTab({ focusNoteEnabled: false });
+    off.tab.display();
+    componentOf(off.el, FOCUS_NOTE_COMMAND_NAME).click?.();
+    expect(off.calls.map((x) => x.method)).not.toContain("openFocusNote");
+    expect(Notice.shown).toContain(FOCUS_NOTE_OFF_NOTICE);
+    const on = makeTab({ focusNoteEnabled: true });
+    on.tab.display();
+    const button = componentOf(on.el, FOCUS_NOTE_COMMAND_NAME);
+    expect(button.buttonText).toBe("Open");
+    button.click?.();
+    expect(on.calls.map((x) => x.method)).toContain("openFocusNote");
+  });
+
+  it("says On or Off, and warns while the note is on with no log folder", () => {
+    const page = (c: ReturnType<typeof makeTab>) =>
+      definitionPages(c.tab).find((p) => p.name === FOCUS_NOTE_PAGE);
+    const off = makeTab({ focusNoteEnabled: false, logFolderPath: "" });
+    expect(page(off)?.displayValue?.()).toBe("Off");
+    expect(page(off)?.status?.() ?? null).toBeNull();
+    const nowhere = makeTab({ focusNoteEnabled: true, logFolderPath: "  " });
+    expect(page(nowhere)?.displayValue?.()).toBe("On");
+    expect(page(nowhere)?.status?.()).toBe("warning");
+    const logged = makeTab({ focusNoteEnabled: true, logFolderPath: "Logs" });
+    expect(page(logged)?.status?.() ?? null).toBeNull();
+    // Worked out when drawn, from the settings as they are then.
+    logged.settings.logFolderPath = "";
+    expect(page(logged)?.status?.()).toBe("warning");
+  });
+
+  it("says Sounds' page no longer keeps the note", () => {
+    expect(SOUNDS_PAGE_DESC).not.toMatch(/note/i);
   });
 });

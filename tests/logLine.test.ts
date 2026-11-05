@@ -7,27 +7,41 @@ import {
   DAY_START_HOURS,
   DEVICE_NAME_MAX,
   LOG_TAIL_KEYS,
+  NOTE_FACES,
+  NOTE_SEPARATOR,
+  NOTE_TEXT_MAX,
+  cleanNoteText,
   cyclePosition,
   dailyLogFileName,
+  flattenLinks,
   formatLogLine,
+  formatNoteValue,
   formatTaskValue,
   isSessionId,
+  lastSessionNoteTarget,
   logInteger,
   logSeconds,
   logicalDate,
   newSessionId,
   parseFocusTotalSeconds,
   parseLogLine,
+  parseNoteValue,
   readLogTail,
   readLogTime,
+  readSessionNote,
   replaceTaskValue,
   resolveDayStartHour,
   sanitizeAlias,
   sanitizeDevice,
+  sanitizeNote,
+  setSessionNote,
   sleptSeconds,
   stamp,
+  type FocusNote,
+  type NoteFace,
   type SessionLog,
 } from "../logLine";
+import { NO_TASK_LABEL } from "../constants";
 import type { MomentLike } from "../momentTypes";
 import { offsetAt } from "./logTail";
 
@@ -614,7 +628,7 @@ const CORE_KEYS = [
 ];
 
 describe("the tail's keys (0.7.0)", () => {
-  it("are these ten, in the order a line writes them", () => {
+  it("are these eleven, in the order a line writes them: Note (0.7.1) last", () => {
     expect([...LOG_TAIL_KEYS]).toEqual([
       "Session",
       "StartedBy",
@@ -626,6 +640,7 @@ describe("the tail's keys (0.7.0)", () => {
       "Slept",
       "Dropped",
       "Device",
+      "Note",
     ]);
   });
 
@@ -915,6 +930,8 @@ describe("readLogTail (0.7.0)", () => {
       dropped: 600,
       // Text, though Dataview would read it as a number.
       device: "2026",
+      face: null,
+      note: null,
     });
     expect(tailOf(withField("OffsetChange", "60"))?.endOffset).toBe(-180);
     expect(tailOf(withField("Offset", "330"))?.endOffset).toBe(270);
@@ -994,6 +1011,8 @@ describe("readLogTail (0.7.0)", () => {
       slept: 0,
       dropped: 0,
       device: "Desk",
+      face: null,
+      note: null,
     });
   });
 });
@@ -1076,7 +1095,10 @@ describe("formatLogLine — the tail (0.7.0)", () => {
     const parsed = parseLogLine(line);
     const keys = parsed?.fields.map((f) => f.key) ?? [];
     expect(keys.slice(0, CORE_KEYS.length)).toEqual(CORE_KEYS);
-    expect(keys.slice(CORE_KEYS.length)).toEqual(LOG_TAIL_KEYS.filter((k) => k !== "OffsetChange"));
+    // Never a Note: the timer has none when it writes the line (0.7.1).
+    expect(keys.slice(CORE_KEYS.length)).toEqual(
+      LOG_TAIL_KEYS.filter((k) => k !== "OffsetChange" && k !== "Note")
+    );
   });
 
   it("writes it after Type on a rest line, with no Cycle: only a counted focus has a place", () => {
@@ -1192,5 +1214,515 @@ describe.each<[string, OffsetCase[]]>([
     const endOffset = Number(offset) + Number(change ?? 0);
     expect(endOffset).toBe(-new Date(end.valueOf()).getTimezoneOffset());
     expect(readLogTail(parsed)).toMatchObject({ offset: Number(offset), endOffset });
+  });
+});
+
+/* ===== The focus note (0.7.1) ===== */
+
+describe("flattenLinks (0.7.1)", () => {
+  it("shows each link as its alias, else its target, to a fixpoint", () => {
+    expect(flattenLinks("Read [[Some Paper]] and [[P/Q|the other]]")).toBe(
+      "Read Some Paper and the other"
+    );
+    expect(flattenLinks("[[a|[[b|[[c]]]]]]")).toBe("c");
+    expect(flattenLinks("[x] [[ ]] [[a")).toBe("[x]   [[a");
+  });
+
+  it("is what sanitizeAlias flattens with: a task name keeps what its link shows", () => {
+    for (const name of ["Read [[Paper]]", "[[a|[[b]]]]", "x [[p|y]] z [[q]]"]) {
+      expect(sanitizeAlias(name)).toBe(sanitizeAlias(flattenLinks(name)));
+    }
+  });
+});
+
+describe("sanitizeNote (0.7.1)", () => {
+  it("puts every run of line breaks, with the space around it, as ' / '", () => {
+    expect(sanitizeNote("stuck\non refs")).toBe("stuck / on refs");
+    expect(sanitizeNote("a  \r\n\t b")).toBe("a / b");
+    // A blank line is one run, not two.
+    expect(sanitizeNote("a\n\n \nb")).toBe("a / b");
+    for (const br of ["\r", "\v", "\f", "\u0085", "\u2028", "\u2029", "\r\n"]) {
+      expect(sanitizeNote(`a${br}b`), JSON.stringify(br)).toBe("a / b");
+    }
+  });
+
+  it("drops a line break at the start or the end", () => {
+    expect(sanitizeNote("\n  went fine \r\n")).toBe("went fine");
+    expect(sanitizeNote("\n\n")).toBe("");
+  });
+
+  it("takes out every 🍅 and ☕, with the U+FE0F after one", () => {
+    expect(sanitizeNote("🍅 Focus on ☕ Rest")).toBe("Focus on Rest");
+    expect(sanitizeNote("coffee ☕\uFE0F then")).toBe("coffee then");
+    expect(sanitizeNote("☕\uFE0F")).toBe("");
+  });
+
+  it("makes every # a full-width ＃, so no word is a tag", () => {
+    expect(sanitizeNote("#idea for #task/design/x")).toBe("＃idea for ＃task/design/x");
+  });
+
+  it("makes every run of % one, so no %% comment opens", () => {
+    expect(sanitizeNote("100%% sure %%% x %")).toBe("100% sure % x %");
+  });
+
+  it("flattens links first, so flattening cannot re-form what a later step took out", () => {
+    expect(sanitizeNote("[[x|%]]%")).toBe("%");
+    expect(sanitizeNote("a [[x| ]] b")).toBe("a b");
+    expect(sanitizeNote("a [[x|\n]] b")).toBe("a / b");
+    expect(sanitizeNote("[[x|#]]")).toBe("＃");
+    // The 🍅 goes before the links: taken out of here it leaves one, whose
+    // flattening would re-form a %%.
+    expect(sanitizeNote("[🍅[x|%]🍅]%")).toBe("%");
+  });
+
+  it("then makes it safe as a task name is: no bracket, no '::', no trailing backslash", () => {
+    expect(sanitizeNote("stuck] [Total:: 999")).toBe("stuck) (Total: 999");
+    expect(sanitizeNote("see a::b")).toBe("see a:b");
+    expect(sanitizeNote("done \\")).toBe("done");
+    expect(sanitizeNote("a\\b")).toBe("a\\b");
+  });
+
+  it("collapses white space and trims", () => {
+    expect(sanitizeNote("  a \t\u00a0 b  ")).toBe("a b");
+  });
+
+  it("keeps as typed what needs no escaping inside [Note:: …]", () => {
+    const kept = 'a | b · "c" `d` $e *f* https://x.org/?q=1&r=2 🎧 👩‍🌾 é';
+    expect(sanitizeNote(kept)).toBe(kept);
+  });
+
+  it(`cuts at ${NOTE_TEXT_MAX} code points, and says so`, () => {
+    expect(NOTE_TEXT_MAX).toBe(500);
+    expect(cleanNoteText("x".repeat(501))).toEqual({ text: "x".repeat(500), cut: true });
+    expect(cleanNoteText("x".repeat(500))).toEqual({ text: "x".repeat(500), cut: false });
+    // Space at either end is no text cut off.
+    expect(cleanNoteText(` ${"x".repeat(500)}\n `)).toEqual({ text: "x".repeat(500), cut: false });
+    // What is taken out costs none of the 500.
+    expect(cleanNoteText(`${"🍅".repeat(20)}${"x".repeat(500)}`).cut).toBe(false);
+  });
+
+  it("never cuts inside a code point", () => {
+    const cut = sanitizeNote("🎧".repeat(600));
+    expect(cut).toBe("🎧".repeat(500));
+    // Under the u flag a surrogate class matches only one left alone.
+    expect(cut).not.toMatch(/[\ud800-\udfff]/u);
+    expect(sanitizeNote(`x${"🎧".repeat(600)}`)).toBe(`x${"🎧".repeat(499)}`);
+  });
+
+  it("cuts before it takes a trailing backslash off, so none is left at the cut", () => {
+    expect(sanitizeNote(`${"x".repeat(499)}\\y`)).toBe("x".repeat(499));
+  });
+
+  it("is idempotent", () => {
+    for (const text of ["a\n\nb", "[[x|%]]%", "#a %%b", "x".repeat(700), "a]::b\\", "🍅\n☕"]) {
+      expect(sanitizeNote(sanitizeNote(text)), JSON.stringify(text)).toBe(sanitizeNote(text));
+    }
+  });
+});
+
+describe("parseNoteValue (0.7.1)", () => {
+  it.each<[string, FocusNote]>([
+    ["smile", { face: "smile", text: "" }],
+    ["meh · x", { face: "meh", text: "x" }],
+    ["frown · stuck on refs", { face: "frown", text: "stuck on refs" }],
+    ["x", { face: null, text: "x" }],
+    // A face only in lower case, and only before exactly " · " and words.
+    ["Smile · x", { face: null, text: "Smile · x" }],
+    ["meh·x", { face: null, text: "meh·x" }],
+    ["meh - x", { face: null, text: "meh - x" }],
+    ["meh · ", { face: null, text: "meh ·" }],
+    ["meh ·", { face: null, text: "meh ·" }],
+    ["mehx", { face: null, text: "mehx" }],
+    ["smiley", { face: null, text: "smiley" }],
+    // The face is the first word only.
+    ["meh · smile · x", { face: "meh", text: "smile · x" }],
+    ["  smile  ", { face: "smile", text: "" }],
+    // A hand-typed extra space after the separator is no part of the words.
+    ["meh ·  x", { face: "meh", text: "x" }],
+  ])("reads %j", (value, note) => {
+    expect(parseNoteValue(value)).toEqual(note);
+  });
+
+  it("is null for no value", () => {
+    expect(parseNoteValue(undefined)).toBeNull();
+    expect(parseNoteValue("")).toBeNull();
+    expect(parseNoteValue("   ")).toBeNull();
+  });
+
+  it("knows exactly three faces", () => {
+    expect([...NOTE_FACES]).toEqual(["frown", "meh", "smile"]);
+    expect([...NOTE_SEPARATOR].map((c) => c.codePointAt(0))).toEqual([0x20, 0xb7, 0x20]);
+  });
+});
+
+describe("formatNoteValue (0.7.1)", () => {
+  it("writes a face, words, or both", () => {
+    expect(formatNoteValue({ face: "meh", text: "stuck on the second paragraph" })).toBe(
+      "meh · stuck on the second paragraph"
+    );
+    expect(formatNoteValue({ face: "smile", text: "" })).toBe("smile");
+    expect(formatNoteValue({ face: null, text: "stuck on refs" })).toBe("stuck on refs");
+  });
+
+  it("is null for neither: no field", () => {
+    expect(formatNoteValue({ face: null, text: "" })).toBeNull();
+    expect(formatNoteValue({ face: null, text: " \n🍅 " })).toBeNull();
+  });
+
+  it("cleans the words, and a face with words cleaned away is the face alone", () => {
+    expect(formatNoteValue({ face: "frown", text: "a]\nb #c" })).toBe("frown · a) / b ＃c");
+    expect(formatNoteValue({ face: "frown", text: " ☕ " })).toBe("frown");
+  });
+
+  it("takes no face it does not know", () => {
+    const odd = { face: "grin" as NoteFace, text: "x" };
+    expect(formatNoteValue(odd)).toBe("x");
+  });
+
+  it("reads back as written (words that read as a face are the card's to move)", () => {
+    for (const face of [...NOTE_FACES, null]) {
+      for (const text of ["", "went fine", "smile · twice", "a]\nb"]) {
+        const value = formatNoteValue({ face, text });
+        if (value === null) continue;
+        if (face === null) continue;
+        expect(parseNoteValue(value)).toEqual({ face, text: sanitizeNote(text) });
+      }
+    }
+    // Words alone that read as a face come back with it: noteFromInput
+    // (focusNote.ts) takes the face out of the words before a save.
+    expect(parseNoteValue(formatNoteValue({ face: null, text: "meh" }) ?? "")).toEqual({
+      face: "meh",
+      text: "",
+    });
+  });
+});
+
+/** A made-up 0.7.0 day: properties, a split session's two parts, a break, another focus. */
+const NOTE_ID = "s7k2m9qx4w";
+const OTHER_ID = "s000000000";
+const REST_ID = "s111111111";
+const noteFocus = (id: string, task: string, extra = "") =>
+  `- 🍅 Focus [Task:: [[Projects/Docs.md|${task}]]] [Start:: 2026-11-03 10:00:00] ` +
+  "[End:: 2026-11-03 10:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] " +
+  `[Status:: finished] [Type:: focus] [Overtime:: 0] [Session:: ${id}] [StartedBy:: start] ` +
+  `[EndedBy:: stop] [Planned:: 1500] [Cycle:: 1] [Offset:: -300] [Device:: Desk]${extra}`;
+const NOTE_REST =
+  "- ☕ Rest [Start:: 2026-11-03 10:25:00] [End:: 2026-11-03 10:30:00] [Scheduled:: 300] " +
+  `[Total:: 300] [Type:: short-break] [Session:: ${REST_ID}] [StartedBy:: auto] ` +
+  "[EndedBy:: time-up] [Planned:: 300] [Offset:: -300]";
+const NOTE_PROPERTIES = [
+  "---",
+  "goal_minutes: 120",
+  "example: |",
+  // A session line inside a property is no session line.
+  `  ${noteFocus(OTHER_ID, "In a property")}`,
+  "---",
+];
+const NOTE_DAY = [
+  ...NOTE_PROPERTIES,
+  noteFocus(NOTE_ID, "Part one"),
+  noteFocus(NOTE_ID, "Part two"),
+  NOTE_REST,
+  noteFocus(NOTE_ID, "Part three", " ^block"),
+  noteFocus(OTHER_ID, `Follow up ${NOTE_ID}`),
+  "",
+].join("\n");
+const rowsOf = (content: string) => content.split("\n");
+const NOTE_ROW = NOTE_PROPERTIES.length + 3; // "Part three": the session's last line
+const set = (content: string, id: string, note: FocusNote | null) => {
+  const next = setSessionNote(content, id, note);
+  if (next === null) throw new Error(`no line for ${id}`);
+  return next;
+};
+/** Every row but `row` is as it was. */
+const onlyRowChanged = (before: string, after: string, row: number) => {
+  const a = rowsOf(before);
+  const b = rowsOf(after);
+  expect(b.length).toBe(a.length);
+  for (let i = 0; i < a.length; i++) if (i !== row) expect(b[i], `row ${i}`).toBe(a[i]);
+};
+
+describe("setSessionNote (0.7.1)", () => {
+  it("adds the note to the session's LAST focus line, after its last field and before text", () => {
+    const after = set(NOTE_DAY, NOTE_ID, { face: "meh", text: "stuck on refs" });
+    onlyRowChanged(NOTE_DAY, after, NOTE_ROW);
+    expect(rowsOf(after)[NOTE_ROW]).toBe(
+      noteFocus(NOTE_ID, "Part three", " [Note:: meh · stuck on refs] ^block")
+    );
+  });
+
+  it("puts it after Device, the last field, every other field as it was", () => {
+    const day = noteFocus(OTHER_ID, "Solo");
+    const after = set(day, OTHER_ID, { face: "smile", text: "" });
+    expect(after).toBe(`${day} [Note:: smile]`);
+    const before = parseLogLine(day)?.fields.map((f) => [f.key, f.value]);
+    const fields = parseLogLine(after)?.fields.map((f) => [f.key, f.value]);
+    expect(fields).toEqual([...(before ?? []), ["Note", "smile"]]);
+  });
+
+  it("puts it after a field someone added by hand after Device", () => {
+    const day = noteFocus(OTHER_ID, "Solo", " [Mood:: ok]");
+    expect(set(day, OTHER_ID, { face: null, text: "x" })).toBe(`${day} [Note:: x]`);
+  });
+
+  it("replaces the note there in place, and takes off a second one", () => {
+    const day = noteFocus(OTHER_ID, "Solo", " [Note:: frown] [Mood:: ok] [Note:: old]");
+    expect(set(day, OTHER_ID, { face: "smile", text: "better" })).toBe(
+      noteFocus(OTHER_ID, "Solo", " [Note:: smile · better] [Mood:: ok]")
+    );
+  });
+
+  it("takes every note off, each with the one space before it, for no note", () => {
+    const bare = noteFocus(OTHER_ID, "Solo", " [Mood:: ok]");
+    const day = noteFocus(OTHER_ID, "Solo", " [Note:: frown] [Mood:: ok] [Note:: old]");
+    expect(set(day, OTHER_ID, null)).toBe(bare);
+    expect(set(day, OTHER_ID, { face: null, text: " 🍅\n" })).toBe(bare);
+    // None there: nothing to write.
+    expect(set(bare, OTHER_ID, null)).toBe(bare);
+  });
+
+  it("formats the note itself: raw words never reach the line", () => {
+    const day = noteFocus(OTHER_ID, "Solo");
+    const after = set(day, OTHER_ID, { face: null, text: "a] [Total:: 9\nb #c %%" });
+    expect(after).toBe(`${day} [Note:: a) (Total: 9 / b ＃c %]`);
+    expect(parseLogLine(after)?.values.get("Total")).toBe("1500");
+    expect(rowsOf(after)).toHaveLength(1);
+  });
+
+  it("is null when no focus line of the session is there", () => {
+    expect(setSessionNote(NOTE_DAY, "s222222222", { face: "meh", text: "" })).toBeNull();
+    // A rest line takes no note.
+    expect(setSessionNote(NOTE_DAY, REST_ID, { face: "meh", text: "" })).toBeNull();
+    // Nor a session whose only line is inside the properties.
+    const props = `${NOTE_PROPERTIES.join("\n")}\n${NOTE_REST}\n`;
+    expect(setSessionNote(props, OTHER_ID, { face: "meh", text: "" })).toBeNull();
+    // Nor an ID that is not one, nor a line without Session, nor a v1 line.
+    expect(setSessionNote(NOTE_DAY, "s7k2", { face: "meh", text: "" })).toBeNull();
+    expect(setSessionNote(V1_FOCUS, NOTE_ID, { face: "meh", text: "" })).toBeNull();
+  });
+
+  it("finds the session by its ID exactly, never inside another value", () => {
+    // OTHER_ID's line, last in the file, names NOTE_ID in its task: not NOTE_ID's.
+    const after = set(NOTE_DAY, NOTE_ID, { face: "smile", text: "" });
+    expect(rowsOf(after)[NOTE_ROW]).toContain("[Note:: smile]");
+    expect(rowsOf(after)[NOTE_ROW + 1]).not.toContain("Note::");
+    const longer = noteFocus(OTHER_ID, "x").replace(OTHER_ID, `${OTHER_ID}0`);
+    expect(setSessionNote(longer, OTHER_ID, { face: "smile", text: "" })).toBeNull();
+  });
+
+  it("keeps a CRLF file's line endings and a byte order mark, every other byte too", () => {
+    const crlf = `\uFEFF${noteFocus(OTHER_ID, "A")}\r\n${noteFocus(NOTE_ID, "B")}\r\n${NOTE_REST}\r\n`;
+    const after = set(crlf, NOTE_ID, { face: "frown", text: "tired" });
+    expect(after).toBe(
+      `\uFEFF${noteFocus(OTHER_ID, "A")}\r\n${noteFocus(NOTE_ID, "B")} [Note:: frown · tired]\r\n${NOTE_REST}\r\n`
+    );
+    // The first line, behind the mark, can take one too.
+    expect(set(crlf, OTHER_ID, { face: "meh", text: "" })).toBe(
+      `\uFEFF${noteFocus(OTHER_ID, "A")} [Note:: meh]\r\n${noteFocus(NOTE_ID, "B")}\r\n${NOTE_REST}\r\n`
+    );
+  });
+
+  it("gives the content back unchanged for the note already there, and is idempotent", () => {
+    const note: FocusNote = { face: "meh", text: "half done" };
+    const once = set(NOTE_DAY, NOTE_ID, note);
+    expect(set(once, NOTE_ID, note)).toBe(once);
+    expect(set(once, NOTE_ID, { face: "meh", text: " half \n" })).not.toBe(once);
+    expect(set(once, NOTE_ID, { face: "meh", text: "  half   done " })).toBe(once);
+    const cleared = set(once, NOTE_ID, null);
+    expect(cleared).toBe(NOTE_DAY);
+    expect(set(cleared, NOTE_ID, null)).toBe(cleared);
+  });
+});
+
+describe("readSessionNote (0.7.1)", () => {
+  it("reads the note on the session's last focus line", () => {
+    expect(readSessionNote(NOTE_DAY, NOTE_ID)).toEqual({ found: true, note: null });
+    const after = set(NOTE_DAY, NOTE_ID, { face: "smile", text: "went well" });
+    expect(readSessionNote(after, NOTE_ID)).toEqual({
+      found: true,
+      note: { face: "smile", text: "went well" },
+    });
+    // A note on an earlier part is not the session's.
+    const early = rowsOf(NOTE_DAY);
+    early[NOTE_PROPERTIES.length] += " [Note:: frown]";
+    expect(readSessionNote(early.join("\n"), NOTE_ID)).toEqual({ found: true, note: null });
+  });
+
+  it("finds nothing where setSessionNote would write nothing", () => {
+    for (const id of ["s222222222", REST_ID, "s7k2"]) {
+      expect(readSessionNote(NOTE_DAY, id), id).toEqual({ found: false });
+    }
+  });
+});
+
+describe("lastSessionNoteTarget (0.7.1)", () => {
+  it("is the file's last focus line with a Session", () => {
+    expect(lastSessionNoteTarget(NOTE_DAY)).toEqual({
+      sessionId: OTHER_ID,
+      start: "2026-11-03 10:00:00",
+      end: "2026-11-03 10:25:00",
+      taskName: `Follow up ${NOTE_ID}`,
+    });
+  });
+
+  it("passes over rest lines, lines without Session and the properties", () => {
+    const day = [
+      ...NOTE_PROPERTIES,
+      noteFocus(NOTE_ID, "Mine"),
+      NOTE_REST,
+      formatLogLine(session()),
+      V1_FOCUS,
+      "",
+    ].join("\n");
+    expect(lastSessionNoteTarget(day)?.sessionId).toBe(NOTE_ID);
+    expect(lastSessionNoteTarget(`${NOTE_PROPERTIES.join("\n")}\n${NOTE_REST}`)).toBeNull();
+    expect(lastSessionNoteTarget("")).toBeNull();
+  });
+
+  it("names an unlinked session No Task", () => {
+    const line = noteFocus(NOTE_ID, "x").replace("[Task:: [[Projects/Docs.md|x]]] ", "");
+    expect(lastSessionNoteTarget(line)?.taskName).toBe(NO_TASK_LABEL);
+    const bare = noteFocus(NOTE_ID, "x").replace("[[Projects/Docs.md|x]]", "No Task");
+    expect(lastSessionNoteTarget(bare)?.taskName).toBe(NO_TASK_LABEL);
+  });
+});
+
+describe("readLogTail — the focus note (0.7.1)", () => {
+  const tailOf = (line: string) => {
+    const parsed = parseLogLine(line);
+    if (!parsed) throw new Error(`not a line: ${line}`);
+    return readLogTail(parsed);
+  };
+
+  it("reads the face and the words without it", () => {
+    const line = noteFocus(NOTE_ID, "x", " [Note:: meh · stuck on refs]");
+    expect(tailOf(line)).toMatchObject({ face: "meh", note: "stuck on refs" });
+    expect(tailOf(noteFocus(NOTE_ID, "x", " [Note:: smile]"))).toMatchObject({
+      face: "smile",
+      note: null,
+    });
+    expect(tailOf(noteFocus(NOTE_ID, "x", " [Note:: Smile · x]"))).toMatchObject({
+      face: null,
+      note: "Smile · x",
+    });
+    expect(tailOf(noteFocus(NOTE_ID, "x"))).toMatchObject({ face: null, note: null });
+  });
+
+  it("reads no note on a rest line, nor on a line without Session", () => {
+    expect(tailOf(`${NOTE_REST} [Note:: smile · by hand]`)).toMatchObject({
+      face: null,
+      note: null,
+    });
+    const old = `${formatLogLine(session())} [Note:: smile]`;
+    expect(tailOf(old)).toBeNull();
+  });
+});
+
+describe("a focus note on a line, whatever is typed (seeded fuzz, 0.7.1)", () => {
+  it("reads back exactly as formatted, moving nothing else, and cleans idempotently", () => {
+    // mulberry32, as the device fuzz above.
+    let seed = 71;
+    const next = (n: number) => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) % n;
+    };
+    const pieces = [
+      "[",
+      "]",
+      "[[",
+      "]]",
+      "|",
+      "\\",
+      "\\\\",
+      ":",
+      "::",
+      "#",
+      "%",
+      "%%",
+      "🍅",
+      "☕",
+      "\uFE0F",
+      "\n",
+      "\r\n",
+      "\r",
+      "\v",
+      "\u0085",
+      "\u2028",
+      " ",
+      "  ",
+      "\t",
+      "·",
+      " · ",
+      "meh",
+      "smile",
+      "frown",
+      "Smile",
+      " Focus",
+      "Total",
+      "Note",
+      "x",
+      "é",
+      "🎧",
+      "👩‍🌾",
+      "y".repeat(60),
+    ];
+    const faces = [...NOTE_FACES, null];
+    const base = rowsOf(NOTE_DAY);
+    const baseFields = JSON.stringify(
+      parseLogLine(base[NOTE_ROW])?.fields.map((f) => [f.key, f.value])
+    );
+    const UNCLEAN = /[🍅☕#[\]\r\n\v\f\u0085\u2028\u2029]|%%|\s{2}/u;
+    for (let n = 0; n < 100_000; n++) {
+      let text = "";
+      const count = next(40);
+      for (let i = 0; i < count; i++) text += pieces[next(pieces.length)];
+      const face = faces[next(faces.length)];
+      // Plain checks, and expect only for one that fails: a hundred
+      // thousand rounds of expect() would take the suite's time ten times over.
+      const check = (ok: boolean, what: string, got: unknown) => {
+        if (!ok) expect({ what, got }, JSON.stringify([face, text])).toBeUndefined();
+      };
+
+      const clean = sanitizeNote(text);
+      check(sanitizeNote(clean) === clean, "idempotent", clean);
+      check(!UNCLEAN.test(clean), "clean", clean);
+      check(!clean.endsWith("\\") && clean === clean.trim(), "ends", clean);
+      check([...clean].length <= NOTE_TEXT_MAX, "length", clean);
+
+      const value = formatNoteValue({ face, text });
+      const after = setSessionNote(NOTE_DAY, NOTE_ID, { face, text });
+      if (value === null) {
+        check(after === NOTE_DAY, "no note, no change", after);
+        continue;
+      }
+      const rows = rowsOf(after ?? "");
+      check(
+        rows.length === base.length && rows.every((row, i) => i === NOTE_ROW || row === base[i]),
+        "other rows",
+        after
+      );
+      const line = rows[NOTE_ROW];
+      const parsed = parseLogLine(line);
+      check(parsed?.values.get("Note") === value, "reads back", line);
+      const fields = parsed?.fields.filter((f) => f.key !== "Note").map((f) => [f.key, f.value]);
+      check(JSON.stringify(fields) === baseFields, "other fields", line);
+      check(parsed?.rest === "^block", "text after the fields", line);
+      check(
+        line.split("🍅 Focus").length === 2 && !/#|%%/.test(line),
+        "marker, tag, comment",
+        line
+      );
+      // The words come back as cleaned; words alone that read as a face come
+      // back with it (the card moves the face out first).
+      const read = parseNoteValue(value);
+      const readAs =
+        face !== null || read?.face === null
+          ? JSON.stringify(read) === JSON.stringify({ face, text: clean })
+          : `${read?.face}${read?.text ? NOTE_SEPARATOR + read.text : ""}` === clean;
+      check(readAs, "parses back", read);
+      check(setSessionNote(after ?? "", NOTE_ID, { face, text }) === after, "idempotent", line);
+    }
   });
 });

@@ -512,9 +512,11 @@ const sameForm = (a: SessionForm, b: SessionForm): boolean =>
  * Scheduled.) A new start or length drops Slept (it named sleep inside pauses that moved
  * or went) and Dropped (time past a plan the line no longer runs to); a focus
  * made a break, or made skipped, drops Cycle (only a counted focus has a
- * place in the cycle). Session, StartedBy, EndedBy, Planned, Offset,
- * OffsetChange and Device stay as they are: they say how the session was
- * timed, which a fix afterwards does not change. A line without the tail gets
+ * place in the cycle). A focus made a break also drops its focus note
+ * (0.7.1: a rest line never carries one); a skipped focus is still a focus
+ * and keeps it, as every other edit does. Session, StartedBy, EndedBy,
+ * Planned, Offset, OffsetChange and Device stay as they are: they say how the
+ * session was timed, which a fix afterwards does not change. A line without the tail gets
  * none: an old line is never filled in. A move to
  * another day's file is refused — this rewrites one line in one file — and so
  * is any line that would not read back the same. A start that stays on the
@@ -629,6 +631,7 @@ export function editedLine(
       (initial.kind === "focus" && form.kind !== "focus") ||
       (statusChanged && form.status === "cancelled");
     if (noLongerCounted) untrue.add("Cycle");
+    if (initial.kind === "focus" && form.kind !== "focus") untrue.add("Note");
   }
   for (const field of line.parsed.fields) {
     if (!LOG_FIELD_KEYS.has(field.key) && !untrue.has(field.key)) {

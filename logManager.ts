@@ -3,6 +3,7 @@ import type GentlePomoPlugin from "./main";
 import { logger } from "./logger";
 import { confirmAction, type ConfirmOptions } from "./confirmModal";
 import {
+  FOCUS_NOTE_LOOKBACK_DAYS,
   FOCUS_TOTAL_CACHE_TTL_MS,
   LOG_GOAL_WRITE_DELAY_MS,
   MIN_SESSION_SECONDS,
@@ -10,6 +11,7 @@ import {
   TASK_RENAME_DELAY_MS,
 } from "./constants";
 import {
+  countFreeTaskName,
   duplicateTaskIds,
   filesInFolder,
   findTaskTextById,
@@ -18,18 +20,28 @@ import {
 } from "./taskLoader";
 import {
   formatLogLine,
+  isSessionId,
+  lastSessionNoteTarget,
   logDateNames,
   logicalDate,
+  logicalDateBefore,
   logTaskId,
   loggedTotalSeconds,
   newSessionId,
+  newestFocusNote,
   parseFocusTotalSeconds,
   parseLogLine,
+  readSessionNote,
   replaceTaskValue,
+  sanitizeAlias,
+  setSessionNote,
   type EndedBy,
+  type FocusNote,
+  type FoundFocusNote,
   type SessionLog,
   type StartedBy,
 } from "./logLine";
+import type { FileNoteLine, FocusNoteHooks, FocusNoteTarget, NoteWriteResult } from "./focusNote";
 import {
   REFRESH_SKIPS,
   emptyRefreshSkips,
@@ -222,10 +234,44 @@ function storedWithout(raw: unknown, saved: SavedSession): unknown[] {
   });
 }
 
-/** `lines` without the ones `content` already holds. */
+/** What writeLog did with a session's lines: where they went, whether they
+ *  wait in the retry queue, and the last line's task name as written. */
+interface WrittenLog {
+  path: string;
+  queued: boolean;
+  taskName: string;
+}
+
+/**
+ * `lines` without the ones `content` already holds — for a retry, whose lines
+ * may have landed on a timeout (F38). A line with a Session ID is there when a
+ * row has its Session and its Start (a split session's parts share the one and
+ * differ in the other): its text may have changed since, as a focus note saved
+ * on another device ends the row in `[Note:: …]` (0.7.1), and matched by text
+ * the retry appended it a second time, counting the session twice. A line
+ * without one (Fix's template) is matched by its exact text, as before.
+ */
 function linesNotIn(content: string, lines: readonly string[]): string[] {
-  const present = new Set(content.split(/\r?\n/));
-  return lines.filter((line) => !present.has(line));
+  const rows = content.split(/\r?\n/);
+  const present = new Set(rows);
+  const sessions = new Set<string>();
+  for (const row of rows) {
+    const key = sessionRowKey(row);
+    if (key !== null) sessions.add(key);
+  }
+  return lines.filter((line) => {
+    if (present.has(line)) return false;
+    const key = sessionRowKey(line);
+    return key === null || !sessions.has(key);
+  });
+}
+
+/** A row's Session ID and Start, or null without a valid Session ID. */
+function sessionRowKey(row: string): string | null {
+  const values = parseLogLine(row)?.values;
+  const session = values?.get("Session");
+  if (session === undefined || !isSessionId(session)) return null;
+  return `${session}\n${values?.get("Start") ?? ""}`;
 }
 
 /**
@@ -259,6 +305,23 @@ export function resolveLogLink(app: App, linktext: string, sourcePath: string): 
   if (dest) return dest.path;
   const exact = app.vault.getAbstractFileByPath(linkpath);
   return exact instanceof TFile ? exact.path : null;
+}
+
+/** The task the "Last time" line is for: the timer's link, as it stands. */
+export interface LinkedTask {
+  path: string;
+  /** Its 🆔; undefined for a task without one. */
+  id?: string;
+  /** The timer's name for it (TimerEngine.currentTaskName). */
+  name: string;
+}
+
+/** A task's newest focus note (LogManager.lastTaskNote), and the file it was
+ *  found in: its logical day, and how many days back that is (0 today). */
+export interface LastTaskNote extends FoundFocusNote {
+  daysAgo: number;
+  /** The file's logical day, YYYY-MM-DD. */
+  day: string;
 }
 
 /** Obsidian's Vault.create rejects with this when the path is taken. */
@@ -301,6 +364,9 @@ export class LogManager {
   // at startup (F53).
   private unwritten: UnwrittenLines[] = [];
   private retrying: Promise<number> | null = null;
+  // The focus note's store (focusNote.ts), told when a counted focus ends
+  // and when a focus opens. Set by main.ts's onload, null at its unload.
+  private focusNoteHooks: FocusNoteHooks | null = null;
 
   constructor(plugin: GentlePomoPlugin, device: LogManagerDevice | null = null) {
     this.plugin = plugin;
@@ -381,6 +447,28 @@ export class LogManager {
       sleeps: [],
     };
     this.saveOpenSession();
+    // The one place a new focus opens — Start, an auto-start, a Reset while a
+    // focus runs. A resume returned above, and a break closes no card (0.7.1).
+    if (mode === "focus") this.callFocusNoteHook((hooks) => hooks.focusStarted());
+  }
+
+  /**
+   * Who hears of a focus ending and opening (the focus note, 0.7.1), or null.
+   * Hooks, not a reach into the plugin: LogManager's own tests need no stub,
+   * and a hook that throws is caught here — it must never break an end.
+   */
+  setFocusNoteHooks(hooks: FocusNoteHooks | null): void {
+    this.focusNoteHooks = hooks;
+  }
+
+  private callFocusNoteHook(call: (hooks: FocusNoteHooks) => void): void {
+    const hooks = this.focusNoteHooks;
+    if (!hooks) return;
+    try {
+      call(hooks);
+    } catch (e) {
+      logger.error("The focus note could not be told about the session", e);
+    }
   }
 
   /**
@@ -644,7 +732,26 @@ export class LogManager {
       // The whole session is judged, a split one too: its segments are
       // lines, not sessions.
       if (loggedTotalSeconds(session) < MIN_SESSION_SECONDS) return false;
-      await this.writeLog(segmentLogs(session, closed));
+      const parts = segmentLogs(session, closed);
+      const written = await this.writeLog(parts);
+      // Unload can land during the write; the reloaded plugin's store is
+      // another, and this one's must hear nothing more.
+      if (this.disposed) return true;
+      if (session.mode === "focus" && isSessionId(session.sessionId)) {
+        // The note goes on the last line: a split session's parts share the
+        // ID, and the task linked at the end is the one the card names.
+        const last = parts[parts.length - 1];
+        const target: FocusNoteTarget = {
+          sessionId: session.sessionId,
+          path: written?.path ?? null,
+          logged: written === null ? "none" : written.queued ? "queued" : "file",
+          startMs: session.startTime.valueOf(),
+          endMs: endTime.valueOf(),
+          taskName: written?.taskName ?? last.taskName,
+          taskPath: last.taskPath,
+        };
+        this.callFocusNoteHook((hooks) => hooks.ended(target));
+      }
       return true;
     } finally {
       // In a finally (F22): a session left open after a failed end was
@@ -1165,12 +1272,17 @@ export class LogManager {
     );
   }
 
-  /** Write a session's lines — one, or one per segment of a split session. */
-  private async writeLog(parts: SegmentLine[]) {
+  /**
+   * Write a session's lines — one, or one per segment of a split session.
+   * Says where they went (WrittenLog): null with no log folder, `queued` when
+   * the write failed and they wait to be retried. endSession hands that to the
+   * focus note; a recovered session's caller (logUnfinished) does not.
+   */
+  private async writeLog(parts: SegmentLine[]): Promise<WrittenLog | null> {
     // Lines that failed before go first, so the file keeps its order.
     await this.retryUnwrittenLines();
 
-    if (!this.keepsLog()) return; // Logging disabled if no path set
+    if (!this.keepsLog()) return null; // Logging disabled if no path set
     const folderPath = this.plugin.settings.logFolderPath;
 
     const app = this.plugin.app;
@@ -1238,7 +1350,7 @@ export class LogManager {
       });
       this.saveUnwritten();
       new Notice(UNWRITTEN_LINE_NOTICE);
-      return;
+      return { path: filePath, queued: true, taskName: parts[parts.length - 1].taskName };
     }
 
     if (session.mode === "focus") {
@@ -1248,6 +1360,186 @@ export class LogManager {
       // the end-of-session bell instead of up to a TTL later.
       this.invalidateTodayTotal();
     }
+    return { path: filePath, queued: false, taskName: parts[parts.length - 1].taskName };
+  }
+
+  /**
+   * Put `note` on a session's line, or take it off (null) — the focus note's
+   * one write (0.7.1). Only the line of `target.sessionId`, its last focus
+   * line (setSessionNote), and only when the text changes.
+   *
+   * 1. The lines still waiting are written first, oldest first. A line of
+   *    this session still waiting after that is "waiting": a note goes only
+   *    on a line in the file, never into the queue, which keeps each line as
+   *    the timer wrote it.
+   * 2. The file is the one the line went to. When that path is gone — the
+   *    index behind the adapter's write, or the log folder setting changed to
+   *    where the files now are — the line is looked for by its Session ID
+   *    under the log folder setting as it is now: its own day's file, then
+   *    today's and the day before's. `moved` is told where it was found.
+   *    None: "no-file". Nothing follows a log file or folder renamed in the
+   *    file explorer: until the setting names the new folder, that is
+   *    "no-file": the Notice says the file is not there, and the draft is kept.
+   * 3. One Vault.process decides, on the file's text as it is then: no such
+   *    line, "missing"; the note already there, "unchanged" (Obsidian writes
+   *    nothing when the text comes back as it was given); else "saved". Never
+   *    decided on a cached read, which can be behind another device's change.
+   */
+  async writeSessionNote(
+    target: FocusNoteTarget,
+    note: FocusNote | null,
+    moved: (path: string) => void = () => undefined
+  ): Promise<NoteWriteResult> {
+    if (this.disposed) return "failed";
+    try {
+      await this.retryUnwrittenLines();
+      if (this.disposed) return "failed";
+      const waiting = this.unwritten.some((entry) =>
+        entry.lines.some((line) => parseLogLine(line)?.values.get("Session") === target.sessionId)
+      );
+      if (waiting) return "waiting";
+
+      const file = await this.sessionNoteFile(target);
+      if (file === null) return "no-file";
+      if (file.path !== target.path) moved(file.path);
+
+      let result: NoteWriteResult = "missing";
+      await this.plugin.app.vault.process(file, (data) => {
+        const next = setSessionNote(data, target.sessionId, note);
+        if (next === null) {
+          result = "missing";
+          return data;
+        }
+        result = next === data ? "unchanged" : "saved";
+        return next;
+      });
+      return result;
+    } catch (e) {
+      logger.error("Could not save the focus note", e);
+      return "failed";
+    }
+  }
+
+  /**
+   * The log file holding `target`'s line: its own path, or else — the path
+   * gone — the first of its day's, today's and the day before's files under
+   * the log folder as it is now that holds a focus line of that session.
+   */
+  private async sessionNoteFile(target: FocusNoteTarget): Promise<TFile | null> {
+    const vault = this.plugin.app.vault;
+    const own = target.path === null ? null : vault.getAbstractFileByPath(target.path);
+    if (own instanceof TFile) return own;
+    const settings = this.plugin.settings;
+    if (!settings.logFolderPath) return null;
+    const days = [
+      logicalDate(moment(target.startMs), settings.dayStartHour),
+      logicalDate(moment(), settings.dayStartHour),
+      logicalDateBefore(moment(), settings.dayStartHour, 1),
+    ];
+    for (const path of new Set(days.map((day) => dailyLogPath(settings.logFolderPath, day)))) {
+      const file = vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      if (readSessionNote(await vault.read(file), target.sessionId).found) return file;
+    }
+    return null;
+  }
+
+  /**
+   * The note a target's line holds now, for display only — the command after
+   * a restart, when nothing on this device knows it. A cached read: it
+   * decides no write. Null when there is none, or no such line or file.
+   */
+  async readSessionNoteFor(target: FocusNoteTarget): Promise<FocusNote | null> {
+    if (target.path === null) return null;
+    const vault = this.plugin.app.vault;
+    const file = vault.getAbstractFileByPath(target.path);
+    if (!(file instanceof TFile)) return null;
+    try {
+      const read = readSessionNote(await vault.cachedRead(file), target.sessionId);
+      return read.found ? read.note : null;
+    } catch (e) {
+      logger.warn(`Could not read the focus note in "${target.path}"`, e);
+      return null;
+    }
+  }
+
+  /**
+   * The newest focus line a note can go on (lastSessionNoteTarget) in today's
+   * log, else the day before's ("Day starts at" counted) — for the command's
+   * choice of the last session (focusNote.ts, chooseLastSession). Cached
+   * reads: what is shown, not what is written. Null with no folder or none.
+   */
+  async lastLoggedSessionNote(): Promise<FileNoteLine | null> {
+    const settings = this.plugin.settings;
+    if (!settings.logFolderPath) return null;
+    const vault = this.plugin.app.vault;
+    const days = [
+      logicalDate(moment(), settings.dayStartHour),
+      logicalDateBefore(moment(), settings.dayStartHour, 1),
+    ];
+    for (const day of days) {
+      const path = dailyLogPath(settings.logFolderPath, day);
+      const file = vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      try {
+        const content = await vault.cachedRead(file);
+        const line = lastSessionNoteTarget(content);
+        if (line === null) continue;
+        const read = readSessionNote(content, line.sessionId);
+        return { path: file.path, line, note: read.found ? read.note : null };
+      } catch (e) {
+        logger.warn(`Could not read "${path}"`, e);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The linked task's newest focus note, for the "Last time" line under the
+   * task button (0.7.1): today's log, then each logical day before it
+   * ("Day starts at" counted) for FOCUS_NOTE_LOOKBACK_DAYS days in all,
+   * stopping at the first file that holds one; within a file, the newest line
+   * (newestFocusNote). Which lines are the task's:
+   *  - with a 🆔, those carrying it, wherever they link — a task copied
+   *    forward keeps its 🆔, and its notes follow it;
+   *  - without, those carrying no 🆔 whose link leads to the task's note
+   *    (resolveLogLink, the log file as source) under the name the writer
+   *    gave it (sanitizeAlias), the counter's markers aside (countFreeTaskName:
+   *    a count is not a rename). A task whose text was edited since loses its
+   *    earlier notes; accepted.
+   * Cached reads: what is shown, not what is written. A missing file is
+   * passed over, and so is one that cannot be read. Null with no folder.
+   */
+  async lastTaskNote(task: LinkedTask): Promise<LastTaskNote | null> {
+    const settings = this.plugin.settings;
+    if (!settings.logFolderPath) return null;
+    const vault = this.plugin.app.vault;
+    const alias = countFreeTaskName(sanitizeAlias(task.name));
+    const now = moment();
+    for (let daysAgo = 0; daysAgo < FOCUS_NOTE_LOOKBACK_DAYS; daysAgo++) {
+      const day = logicalDateBefore(now, settings.dayStartHour, daysAgo);
+      const path = dailyLogPath(settings.logFolderPath, day);
+      const file = vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      let content: string;
+      try {
+        content = await vault.cachedRead(file);
+      } catch (e) {
+        logger.warn(`Could not read "${path}"`, e);
+        continue;
+      }
+      const found = newestFocusNote(content, (parsed) => {
+        const id = logTaskId(parsed);
+        if (task.id) return id === task.id;
+        if (id !== null || parsed.task?.path === undefined) return false;
+        return (
+          countFreeTaskName(parsed.task.name) === alias &&
+          this.resolveLink(parsed.task.path, file.path) === task.path
+        );
+      });
+      if (found) return { ...found, daysAgo, day };
+    }
+    return null;
   }
 
   /** Forget today's focus total, here and in the plugin's tracker, so the next

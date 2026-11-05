@@ -871,6 +871,16 @@ describe("LogManager.refreshLoggedTaskNamesById — ask, then write (F12)", () =
     expect(Notice.shown).toEqual(["Gentle pomodoro: updated 1 line(s) in 1 file(s)."]);
   });
 
+  it("keeps a 0.7.1 focus note byte for byte: only the Task value changes", async () => {
+    const tail =
+      " [Session:: s7k2m9qx4w] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 1] [Offset:: 0] [Device:: Desk] [Note:: meh · stuck on (refs) / ＃idea | 50%]";
+    const vault = refreshVault("- [ ] One 🆔 a1\n", [v2(DOCS, "1", "a1") + tail]);
+
+    await managerFor(vault).refreshLoggedTaskNamesById(yes);
+
+    expect(vault.contents[LOG]).toBe(v2(DOCS, "One", "a1") + tail);
+  });
+
   it("leaves a session from before its task was created, comparing dates only", async () => {
     // The real case: a session on 09-05 under a 🆔 whose line says ➕ 09-11.
     // The last line was written under Arabic before 0.6.9 (F14): its date is

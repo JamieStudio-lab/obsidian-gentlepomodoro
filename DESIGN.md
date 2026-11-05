@@ -64,8 +64,8 @@ text. The ring colour now sits in a `body` block and the elevations on `.gp-time
 padding included — was tuned and approved without them, and a border adds 2px to each button, so
 `.gp-btn` and `.gp-reset-button` say `border: none` and `--gp-rule` is gone. Bringing them back is a
 design decision, not a fix. `tests/designTokens.test.ts` forbids a `:root` token that reads anything
-not itself declared on `:root`. Four plugin surfaces render outside the view
-container and a `.gp-root`-scoped block misses all four — invisibly, because the timer panel, where
+not itself declared on `:root`. Five plugin surfaces render outside the view
+container and a `.gp-root`-scoped block misses all five — invisibly, because the timer panel, where
 anyone would look to check, is fine:
 
 - `.gp-status*` — built from `addStatusBarItem()` in [main.ts](main.ts)
@@ -76,6 +76,10 @@ anyone would look to check, is fine:
   line), `.gp-setting-code` and `.gp-query-code*` —
   [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
 - `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor, the first rule in styles.css
+- `.gp-note-modal` and the card in it, `.gp-note.gp-note-in-modal` — the focus note's dialog,
+  [focusNoteCard.ts](focusNoteCard.ts) (0.7.1). The card's own rules are scoped `.gp-note`, never
+  `.gp-root`, so they reach it; its hidden parts take `.gp-note .gp-hidden`, since the dialog has
+  no `.gp-root` for `.gp-root .gp-hidden`
 
 **Layer 0 — Obsidian's own variables.** Not ours. Listed above.
 
@@ -494,6 +498,54 @@ things in that rule look like tidy-up targets and are not:
 - **`.gp-column-status` is out of sight, not hidden.** 1px, `opacity: 0`, absolute: never
   `display: none` or `visibility: hidden`, which take it from screen readers too, and no
   `clip-path`, which Obsidian's review flags.
+
+The second case is the panel's Low / Mid / High buttons (fixed in 0.7.1). `.gp-segmented-btn`
+alone is (0,1,0), so app.css's unconditional `button:not(.clickable-icon)` (0,1,1) gave every
+button that was not the active one Obsidian's fill and shadow, on every platform (white on a
+phone), and `.is-tablet button:not(.clickable-icon)` its padding on an iPad. Every rule naming it
+is now `.gp-settings-row .gp-segmented button.gp-segmented-btn` — base (0,3,1), hover (0,5,1),
+active and focus (0,4,1), reduced motion (0,3,1) after the base, touch (0,4,2) — substituted in
+place (rule 1). The base takes the shadow off (`box-shadow: none`), so the focus rule puts back
+`none` too: left at `var(--input-shadow)`, a shadow appeared on keyboard focus only.
+
+### 15. The focus note's buttons out-rank app.css, and go inactive without losing focus.
+
+The focus note's card (0.7.1, [focusNoteCard.ts](focusNoteCard.ts)) has five real `<button>`s —
+three faces, Clear, Save — so entry 14's reasoning holds for every one: each selector naming
+`.gp-note-face`, `.gp-note-btn`, `.gp-note-save` or `.gp-note-clear` names an ancestor class, the
+element and its class, (0,3,1) or more. A test works out the specificity of each and fails one at or
+under (0,2,1). The rest of the card's rules look like tidy-up targets and are not:
+
+- **Inactive is `aria-disabled="true"`, never `disabled`.** A `disabled` button that has focus drops
+  it to the document in Chromium (0.7.0's settings-row finding), and Save turns inactive the moment
+  it is pressed, so focus would vanish on every save. The inactive look is
+  `button.gp-note-btn[aria-disabled="true"]`; no card rule may say `:disabled`.
+- **Save's accent reads `can-save`, which the card sets from `saveActive`, not from `dirty`.** A note
+  being saved and a saved note emptied are dirty and inactive at once (states G and H). Both accent
+  rules also carry `:not([aria-disabled="true"])`, (0,5,1) and (0,6,1), so the accent can never meet
+  the inactive look on a tie decided by source order — the design's first cut had both at (0,4,1),
+  and the inactive rule left an accent fill under faint text.
+- **`--no-tooltip: true` on the faces' group and the box, `false` on each face.** Obsidian draws a
+  tooltip for any `[aria-label]` unless the element itself computes `--no-tooltip` as true; a custom
+  property inherits, so the group's `true` reaches the faces and must be reset there, or "Rough",
+  "Okay" and "Good" vanish on hover.
+- **One focus rule per resting look.** Obsidian's `button:focus-visible` draws a grey halo; each
+  focus rule puts its own button's resting `box-shadow` back — `var(--input-shadow)` for a face at
+  rest and for Save, `none` for a pressed face, Clear and any inactive button — each at least as
+  specific as the look it mirrors, and after it.
+- **The status icon's 12px floor is on every platform.** The check is a flex item of an inline-flex
+  span: entry 6.1's WebKit sliver case.
+- **The card's top margin reads the task list's two states.** The base pulls the card up a row gap
+  for the CLOSED list; `.gp-task-list.gp-visible + .gp-note` (an open list's frame would touch it)
+  and `.gp-task-list.gp-hidden + .gp-note` (task picker off, nothing to pull up from) set it back to
+  0, at (0,3,0).
+- **`.gp-note.gp-hidden, .gp-note .gp-hidden`, last in the section.** The form, the hint and the
+  status icon are `display: flex` / `inline-flex`, and in the dialog there is no `.gp-root` for
+  `.gp-root .gp-hidden`. It follows every card rule that sets a `display`.
+- **`.gp-note.gp-note-in-modal` is double-class** (rule 2), so it takes the frame, padding and
+  pull-up margin off by specificity. The dialog's width cap is `.gp-note-modal`'s, beside the
+  confirmation dialog's; a phone keeps its bottom sheet.
+- **The faces' reduced-motion rule has the faces' base selector**, (0,3,1), and follows it (rule 4).
 
 ## Build
 

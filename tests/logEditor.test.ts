@@ -786,6 +786,55 @@ describe("a 0.7.0 line, fixed: its tail (choice 4)", () => {
   });
 });
 
+describe("a 0.7.1 line, fixed: its focus note", () => {
+  // Made up: a Stop with a focus note on it, as setSessionNote leaves one —
+  // the last field, after Device.
+  const NOTE = "meh · stuck on (refs) / then ＃idea, 50% done";
+  const NOTED = `- 🍅 Focus [Task:: [[Projects/Writing.md|Draft intro]]] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:30:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1800] [Status:: finished] [Type:: focus] [Overtime:: 300] [Session:: sd4f6g8j2k] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 3] [Offset:: -240] [Device:: Work laptop] [Note:: ${NOTE}]`;
+
+  const edit = (text: string, set: Partial<SessionForm>) => {
+    const line = loggedLines(text)[0];
+    const initial = formFromLine(line, toMoment);
+    if (!initial) throw new Error("unreadable");
+    const result = editedLine(
+      line,
+      initial,
+      { ...initial, ...set },
+      { toMoment, nowMs: NOW, dayStartHour: 0, fileDate: "2026-10-02" }
+    );
+    if (result.kind !== "ok") throw new Error(result.kind);
+    return result.text;
+  };
+  const lastField = (text: string) => parseLogLine(text)?.fields.slice(-1)[0];
+
+  it.each([
+    ["the task", { task: { name: "Outline", path: "Projects/Writing.md" } }],
+    ["the start", { time: "10:20" }],
+    ["the length", { minutes: "40" }],
+    ["skipped", { status: "cancelled" as const }],
+  ])("keeps it as written, still last, when %s changes", (_what, set) => {
+    const fixed = edit(NOTED, set);
+    expect(fixed).not.toBe(NOTED);
+    expect(lastField(fixed)).toMatchObject({ key: "Note", value: NOTE });
+    expect(fixed.endsWith(` [Note:: ${NOTE}]`)).toBe(true);
+    expect(fixed.match(/\[Note::/g)).toHaveLength(1);
+  });
+
+  it("drops it, with Cycle, when the focus is made a break: a rest line never carries one", () => {
+    const rest = edit(NOTED, { kind: "short-break" });
+    expect(rest).toBe(
+      "- ☕ Rest [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:30:00] [Scheduled:: 1500] [Total:: 1800] [Type:: short-break] [Session:: sd4f6g8j2k] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Offset:: -240] [Device:: Work laptop]"
+    );
+    // Made a focus again, it gets none back: Fix never adds a field.
+    expect(edit(rest, { kind: "focus" })).not.toContain("Note::");
+  });
+
+  it("gives none to an added session", () => {
+    expect(lineFor()).not.toContain("Note::");
+    expect(lineFor({ kind: "short-break", minutes: "5" })).not.toContain("Note::");
+  });
+});
+
 /**
  * Runs a describe block's tests in another time zone, as tests/logLine.test.ts
  * does: Node re-reads TZ when it is assigned, and moment works on Date.

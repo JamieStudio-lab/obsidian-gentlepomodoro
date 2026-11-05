@@ -84,15 +84,17 @@ afterEach(() => {
 const LOG = (date: string) => `Logs/${date}-gentle-pomodoro-log.md`;
 
 // A 0.7.0 day: a focus, its break, a focus slept through and stopped late on
-// another device, a skip; then a 0.6.9 line, which has no tail.
+// another device, a skip with a focus note (0.7.1); then a 0.6.9 line, which
+// has no tail. The break carries a Note written there by hand, which is never
+// read: a rest line has none.
 const FOCUS =
   "- 🍅 Focus [Task:: [[Projects/Writing.md|Draft intro #task/research/paper]]] [ID:: abc123] [Start:: 2026-10-23 09:00:00] [End:: 2026-10-23 09:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0] [Session:: s7k2m9qx4a] [StartedBy:: start] [EndedBy:: time-up] [Planned:: 1500] [Cycle:: 2] [Offset:: -300]";
 const REST =
-  "- ☕ Rest [Start:: 2026-10-23 09:25:00] [End:: 2026-10-23 09:30:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] [Session:: s3n8d1wa5b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 300] [Offset:: -300]";
+  "- ☕ Rest [Start:: 2026-10-23 09:25:00] [End:: 2026-10-23 09:30:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] [Session:: s3n8d1wa5b] [StartedBy:: auto] [EndedBy:: time-up] [Planned:: 300] [Offset:: -300] [Note:: smile · by hand]";
 const SLEPT =
   '- 🍅 Focus [Task:: No Task] [Start:: 2026-10-23 13:00:00] [End:: 2026-10-23 14:10:00] [Scheduled:: 1500] [Pauses:: ["2026-10-23 13:10:00 - 2026-10-23 13:50:00"]] [Total:: 1800] [Status:: finished] [Type:: focus] [Overtime:: 300] [Session:: s0p4r8tz6c] [StartedBy:: auto] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 3] [Offset:: 480] [Slept:: 2400] [Device:: Work laptop]';
 const SKIPPED =
-  "- 🍅 Focus [Task:: [[Projects/Admin.md|Inbox]]] [Start:: 2026-10-23 15:00:00] [End:: 2026-10-23 15:03:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 180] [Status:: cancelled] [Type:: focus] [Overtime:: 0] [Session:: sb1c5e9h7d] [StartedBy:: start] [EndedBy:: skip] [Planned:: 1500] [Offset:: 60]";
+  '- 🍅 Focus [Task:: [[Projects/Admin.md|Inbox]]] [Start:: 2026-10-23 15:00:00] [End:: 2026-10-23 15:03:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 180] [Status:: cancelled] [Type:: focus] [Overtime:: 0] [Session:: sb1c5e9h7d] [StartedBy:: start] [EndedBy:: skip] [Planned:: 1500] [Offset:: 60] [Note:: meh · inbox, then "lunch"]';
 const V069 =
   "- 🍅 Focus [Task:: [[Projects/Writing.md|Draft intro #task/research/paper]]] [ID:: abc123] [Start:: 2026-10-23 16:00:00] [End:: 2026-10-23 16:25:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1500] [Status:: finished] [Type:: focus] [Overtime:: 0]";
 // Older days: a line Convert made from a pre-0.6.9 one (no Overtime), a
@@ -168,6 +170,8 @@ const RECORDS: ExportRecord[] = [
     dropped: null,
     device: null,
     logFile: LOG("2026-10-20"),
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-20",
@@ -196,6 +200,8 @@ const RECORDS: ExportRecord[] = [
     dropped: null,
     device: null,
     logFile: LOG("2026-10-20"),
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-21",
@@ -224,6 +230,8 @@ const RECORDS: ExportRecord[] = [
     dropped: 0,
     device: null,
     logFile: LOG("2026-10-21"),
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-23",
@@ -251,6 +259,8 @@ const RECORDS: ExportRecord[] = [
     dropped: 0,
     device: null,
     logFile: LOG_23,
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-23",
@@ -278,6 +288,8 @@ const RECORDS: ExportRecord[] = [
     dropped: 0,
     device: null,
     logFile: LOG_23,
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-23",
@@ -305,6 +317,8 @@ const RECORDS: ExportRecord[] = [
     dropped: 0,
     device: "Work laptop",
     logFile: LOG_23,
+    face: null,
+    note: null,
   },
   {
     date: "2026-10-23",
@@ -332,6 +346,8 @@ const RECORDS: ExportRecord[] = [
     dropped: 0,
     device: null,
     logFile: LOG_23,
+    face: "meh",
+    note: 'inbox, then "lunch"',
   },
   {
     date: "2026-10-23",
@@ -361,6 +377,8 @@ const RECORDS: ExportRecord[] = [
     dropped: null,
     device: null,
     logFile: LOG_23,
+    face: null,
+    note: null,
   },
 ];
 
@@ -643,6 +661,8 @@ describe("the records", () => {
       "dropped",
       "device",
       "logFile",
+      "face",
+      "note",
     ]);
   });
 
@@ -683,6 +703,7 @@ describe("the records", () => {
           ...{ scheduled: null, total: null, overtime: null, pauses: [], status: null },
           ...{ sessionId: "s1", startedBy: null, endedBy: null, planned: null, cycle: null },
           ...{ offset, endOffset: offset, slept: 0, dropped: 0, device: null },
+          ...{ face: null, note: null },
         },
       ],
     });
@@ -698,15 +719,15 @@ describe("the records", () => {
 
 /** The CSV rows of RECORDS, as a spreadsheet gets them. */
 const CSV_ROWS = [
-  "date,kind,type,start,end,startIso,endIso,task,taskPath,id,scheduled,planned,total,overtime,pauseCount,pausedSeconds,status,sessionId,startedBy,endedBy,cycle,offset,endOffset,slept,dropped,device,logFile",
-  "2026-10-20,focus,focus,2026-10-20 10:00:00,2026-10-20 10:25:00,,,No Task,,,1500,,1500,,0,0,finished,,,,,,,,,,Logs/2026-10-20-gentle-pomodoro-log.md",
-  "2026-10-20,rest,,2026-10-20 10:25:00,2026-10-20 10:30:00,,,,,,300,,300,,,,,,,,,,,,,,Logs/2026-10-20-gentle-pomodoro-log.md",
-  "2026-10-21,focus,focus,2026-10-21 01:30:00,2026-10-21 01:55:00,2026-10-21T01:30:00-04:00,2026-10-21T01:55:00-05:00,No Task,,,1500,1500,1500,0,0,0,finished,s9q8r7t6v5,start,time-up,1,-240,-300,0,0,,Logs/2026-10-21-gentle-pomodoro-log.md",
-  "2026-10-23,focus,focus,2026-10-23 09:00:00,2026-10-23 09:25:00,2026-10-23T09:00:00-05:00,2026-10-23T09:25:00-05:00,Draft intro #task/research/paper,Projects/Writing.md,abc123,1500,1500,1500,0,0,0,finished,s7k2m9qx4a,start,time-up,2,-300,-300,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md",
-  "2026-10-23,rest,short-break,2026-10-23 09:25:00,2026-10-23 09:30:00,2026-10-23T09:25:00-05:00,2026-10-23T09:30:00-05:00,,,,300,300,300,,,,,s3n8d1wa5b,auto,time-up,,-300,-300,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md",
-  "2026-10-23,focus,focus,2026-10-23 13:00:00,2026-10-23 14:10:00,2026-10-23T13:00:00+08:00,2026-10-23T14:10:00+08:00,No Task,,,1500,1500,1800,300,1,2400,finished,s0p4r8tz6c,auto,stop,3,480,480,2400,0,Work laptop,Logs/2026-10-23-gentle-pomodoro-log.md",
-  "2026-10-23,focus,focus,2026-10-23 15:00:00,2026-10-23 15:03:00,2026-10-23T15:00:00+01:00,2026-10-23T15:03:00+01:00,Inbox,Projects/Admin.md,,1500,1500,180,0,0,0,cancelled,sb1c5e9h7d,start,skip,,60,60,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md",
-  "2026-10-23,focus,focus,2026-10-23 16:00:00,2026-10-23 16:25:00,,,Draft intro #task/research/paper,Projects/Writing.md,abc123,1500,,1500,0,0,0,finished,,,,,,,,,,Logs/2026-10-23-gentle-pomodoro-log.md",
+  "date,kind,type,start,end,startIso,endIso,task,taskPath,id,scheduled,planned,total,overtime,pauseCount,pausedSeconds,status,sessionId,startedBy,endedBy,cycle,offset,endOffset,slept,dropped,device,logFile,face,note",
+  "2026-10-20,focus,focus,2026-10-20 10:00:00,2026-10-20 10:25:00,,,No Task,,,1500,,1500,,0,0,finished,,,,,,,,,,Logs/2026-10-20-gentle-pomodoro-log.md,,",
+  "2026-10-20,rest,,2026-10-20 10:25:00,2026-10-20 10:30:00,,,,,,300,,300,,,,,,,,,,,,,,Logs/2026-10-20-gentle-pomodoro-log.md,,",
+  "2026-10-21,focus,focus,2026-10-21 01:30:00,2026-10-21 01:55:00,2026-10-21T01:30:00-04:00,2026-10-21T01:55:00-05:00,No Task,,,1500,1500,1500,0,0,0,finished,s9q8r7t6v5,start,time-up,1,-240,-300,0,0,,Logs/2026-10-21-gentle-pomodoro-log.md,,",
+  "2026-10-23,focus,focus,2026-10-23 09:00:00,2026-10-23 09:25:00,2026-10-23T09:00:00-05:00,2026-10-23T09:25:00-05:00,Draft intro #task/research/paper,Projects/Writing.md,abc123,1500,1500,1500,0,0,0,finished,s7k2m9qx4a,start,time-up,2,-300,-300,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md,,",
+  "2026-10-23,rest,short-break,2026-10-23 09:25:00,2026-10-23 09:30:00,2026-10-23T09:25:00-05:00,2026-10-23T09:30:00-05:00,,,,300,300,300,,,,,s3n8d1wa5b,auto,time-up,,-300,-300,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md,,",
+  "2026-10-23,focus,focus,2026-10-23 13:00:00,2026-10-23 14:10:00,2026-10-23T13:00:00+08:00,2026-10-23T14:10:00+08:00,No Task,,,1500,1500,1800,300,1,2400,finished,s0p4r8tz6c,auto,stop,3,480,480,2400,0,Work laptop,Logs/2026-10-23-gentle-pomodoro-log.md,,",
+  '2026-10-23,focus,focus,2026-10-23 15:00:00,2026-10-23 15:03:00,2026-10-23T15:00:00+01:00,2026-10-23T15:03:00+01:00,Inbox,Projects/Admin.md,,1500,1500,180,0,0,0,cancelled,sb1c5e9h7d,start,skip,,60,60,0,0,,Logs/2026-10-23-gentle-pomodoro-log.md,meh,"inbox, then ""lunch"""',
+  "2026-10-23,focus,focus,2026-10-23 16:00:00,2026-10-23 16:25:00,,,Draft intro #task/research/paper,Projects/Writing.md,abc123,1500,,1500,0,0,0,finished,,,,,,,,,,Logs/2026-10-23-gentle-pomodoro-log.md,,",
 ];
 
 /** One record with only what a test sets, the rest as an old focus line has it. */
@@ -759,6 +780,19 @@ describe("the CSV file", () => {
     expect(row(record({ offset: -300, endOffset: -360 }))[at("endOffset")]).toBe("-360");
   });
 
+  it("puts the focus note's face and words last, after logFile, guarded and quoted as text", () => {
+    // Added at the end, never before a column a spreadsheet already points at.
+    expect(CSV_COLUMNS.slice(-4)).toEqual(["device", "logFile", "face", "note"]);
+    const cells = (r: ExportRecord) => csvText([r]).split("\r\n")[1];
+    expect(cells(record({ face: "smile", note: "=1+1" }))).toMatch(/,smile,'=1\+1$/);
+    expect(cells(record({ face: null, note: '"Dune", again' }))).toMatch(/,,"""Dune"", again"$/);
+    // A rest line never carries one: a Note written there by hand is not read.
+    const rest = RECORDS.filter((r) => r.kind === "rest" && r.date === "2026-10-23");
+    expect(rest).toHaveLength(1);
+    expect(rest[0]).toMatchObject({ face: null, note: null });
+    expect(csvText(rest).split("\r\n")[1]).toMatch(/log\.md,,$/);
+  });
+
   it("counts and adds up a focus line's pauses on its own wall clock", () => {
     const row = (r: ExportRecord) => csvText([r]).split("\r\n")[1].split(",");
     const count = CSV_COLUMNS.indexOf("pauseCount");
@@ -809,6 +843,16 @@ describe("the JSON Lines file", () => {
     expect(lines).toHaveLength(RECORDS.length);
     expect(lines.map((line) => JSON.parse(line) as unknown)).toEqual(RECORDS);
     expect(lines[0]).toContain('"overtime":null');
+    // The focus note's two members last (0.7.1), so the order a reader of
+    // the file relied on before is unchanged.
+    expect(Object.keys(JSON.parse(lines[0]) as object).slice(-3)).toEqual([
+      "logFile",
+      "face",
+      "note",
+    ]);
+    expect(lines.find((line) => line.includes("sb1c5e9h7d"))).toMatch(
+      /"logFile":"[^"]+","face":"meh","note":"inbox, then \\"lunch\\""\}$/
+    );
     expect(jsonLinesText([])).toBe("");
   });
 
