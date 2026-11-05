@@ -4,7 +4,7 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.1] — 2026-11-03
+## [0.7.1] — 2026-11-05
 
 **An optional focus note after each focus session, and the Low / Mid / High
 buttons no longer take Obsidian's button fill.**
