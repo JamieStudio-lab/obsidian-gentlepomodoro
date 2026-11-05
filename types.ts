@@ -70,6 +70,11 @@ export interface GentlePomoSettings {
   // asks how it went and keeps a face and a few words on that session's line
   // ([Note:: …], logLine.ts). Off by default; on both surfaces (a policy).
   focusNoteEnabled: boolean;
+  // The "Last time" line under the task button (0.7.1): the linked task's
+  // newest focus note. On by default, and shown only while the note itself
+  // is on; its own switch for the card without the line. Tab only: a
+  // display preference, not a policy the panel's gear needs.
+  lastNoteEnabled: boolean;
 
   // Paths
   tasksPath: string;

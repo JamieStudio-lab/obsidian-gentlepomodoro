@@ -13,8 +13,9 @@ running.
 
 ### Added
 
-- **A focus note** (**Offer a focus note**, last in **When focus ends**, in the
-  settings and in the timer panel's gear panel; off by default). After a focus
+- **A focus note** (**Offer a focus note**, on its own **Focus note** page in
+  the settings, and under **When focus ends** in the timer panel's gear panel;
+  off by default). After a focus
   session ends and its line is in the log (Stop, Skip, or time up), a small
   card under the task button asks how it went: three faces (**Rough**,
   **Okay**, **Good**) and a box for a few words. The box's hint changes with
@@ -57,6 +58,12 @@ running.
   the day, a saved note or a daily log file changes, never on the timer's tick.
   The face sits in a small round chip, the same colour for every face, with the
   label and the words beside it.
+  **Show “Last time” under the task**, on the Focus note page (on by default),
+  turns it off while keeping the card.
+- **A Focus note page in the settings**, after Daily log: the note's switch,
+  the Last time switch, and an **Open** button for the last session's card
+  (the command's own rule: only while the note is on). Its row warns when the
+  note is on and no log folder is set.
 - **The note card and the Last time line take turns gently.** When a focus
   starts, the card fades and folds away, and then the line opens and fades in
   where it was; when a session ends, the other way round. They never overlap,

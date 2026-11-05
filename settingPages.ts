@@ -26,16 +26,19 @@ export const SOUNDS_PAGE = "Sounds and notifications";
 export const SOUNDS_PAGE_MOBILE = "Sounds";
 export const MUSIC_PAGE = "Music";
 export const LOG_PAGE = "Daily log";
+/** The page and its group share the name. */
+export const FOCUS_NOTE_PAGE = "Focus note";
 /** The page and its group share the name: "what tables of the log". */
 export const LOG_TABLES_PAGE = "Log tables";
 export const TASKS_PAGE = "Tasks";
 
 export const TIMER_PAGE_DESC = "Theme, long breaks, the daily goal, opening at startup.";
 export const STATUS_BAR_PAGE_DESC = "What the status bar at the bottom of the window shows.";
-export const SOUNDS_PAGE_DESC =
-  "What plays, what starts, and the note you can keep, when a session ends.";
+export const SOUNDS_PAGE_DESC = "What plays and what starts when a session ends.";
 export const MUSIC_PAGE_DESC = "Up to three links, and how they play.";
 export const LOG_PAGE_DESC = "Where sessions are written, and tools to check, fix and export them.";
+export const FOCUS_NOTE_PAGE_DESC =
+  "A face and a few words after each focus session, and the last one under the task.";
 export const LOG_TABLES_PAGE_DESC =
   "Code for the Dataview plugin that shows your sessions as a table in any note.";
 export const TASKS_PAGE_DESC = "Where the task picker looks, and the 🍅 count on tasks.";
@@ -54,6 +57,7 @@ type PageSettings = Pick<
   | "musicUrl2"
   | "musicUrl3"
   | "logFolderPath"
+  | "focusNoteEnabled"
   | "queryColumns"
   | "queryRange"
   | "showTaskSelector"
@@ -103,6 +107,21 @@ export function musicPageWarning(s: PageSettings): boolean {
 export function logPageValue(s: PageSettings): string {
   const folder = typeof s.logFolderPath === "string" ? s.logFolderPath.trim() : "";
   return folder === "" ? "Off" : folder;
+}
+
+/** "On" or "Off": whether the card is offered after a focus session. */
+export function focusNotePageValue(s: PageSettings): string {
+  return s.focusNoteEnabled === true ? "On" : "Off";
+}
+
+/**
+ * The note is on and there is nowhere to keep it: with no log folder the
+ * card shows a hint and saves nothing, and the "Last time" line has nothing
+ * to read.
+ */
+export function focusNotePageWarning(s: PageSettings): boolean {
+  if (s.focusNoteEnabled !== true) return false;
+  return typeof s.logFolderPath !== "string" || s.logFolderPath.trim() === "";
 }
 
 /** How many columns the sessions table has, and which days the tables show. */

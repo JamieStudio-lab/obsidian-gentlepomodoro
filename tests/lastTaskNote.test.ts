@@ -491,7 +491,7 @@ describe("the view's Last time line", () => {
     const wanted = /const wanted = ([^;]*);/.exec(refresh)?.[1] ?? "";
     // The whole expression: a `!` before any guard must fail.
     expect(wanted).toBe(
-      'settings.focusNoteEnabled && settings.showTaskSelector && path !== undefined && settings.logFolderPath !== ""'
+      'settings.focusNoteEnabled && settings.lastNoteEnabled && settings.showTaskSelector && path !== undefined && settings.logFolderPath !== ""'
     );
   });
 

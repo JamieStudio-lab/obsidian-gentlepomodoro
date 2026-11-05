@@ -33,6 +33,15 @@ export const FOCUS_NOTE_LABEL = "Offer a focus note";
 export const FOCUS_NOTE_DESC =
   "After each focus session is logged, a small card in the timer panel asks how it went and keeps a few words on that session's line in the log. Needs a log folder. Your keyboard's dictation works in the box.";
 
+/** The Focus note page's switch for the "Last time" line (0.7.1). */
+export const LAST_NOTE_SETTING_LABEL = "Show “Last time” under the task";
+export const LAST_NOTE_SETTING_DESC =
+  "While a task is linked, its newest note from the last 30 days shows under the task button, so you see where you left off. Only while the focus note is on.";
+/** The Focus note page's button, which opens the card as the command does. */
+export const FOCUS_NOTE_ACTION_DESC =
+  "Open the card for the session you logged last, to add or change its note. Also a command.";
+export const FOCUS_NOTE_OFF_NOTICE = "Turn on “Offer a focus note” first.";
+
 /** The command's name, and the status bar menu entry's title. */
 export const FOCUS_NOTE_COMMAND_NAME = "Add a note to the last session";
 

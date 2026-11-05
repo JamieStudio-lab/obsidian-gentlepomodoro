@@ -209,6 +209,7 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   // Off for everyone: the card is a question after each session, something
   // to ask for (0.7.1, focusNote.ts).
   focusNoteEnabled: false,
+  lastNoteEnabled: true,
   tasksPath: "",
   logFolderPath: "",
   // Midnight, so an upgrading user's days and file names do not move.

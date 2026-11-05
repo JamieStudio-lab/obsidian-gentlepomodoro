@@ -1124,6 +1124,7 @@ export class GentlePomoView extends ItemView {
     const path = timer.currentTaskPath;
     const wanted =
       settings.focusNoteEnabled &&
+      settings.lastNoteEnabled &&
       settings.showTaskSelector &&
       path !== undefined &&
       settings.logFolderPath !== "";
