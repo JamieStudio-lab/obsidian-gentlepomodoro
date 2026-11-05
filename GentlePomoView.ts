@@ -653,12 +653,13 @@ export class GentlePomoView extends ItemView {
     // at once (one note at a time), so this one sits where the card would.
     // Not a control: a label, a face and the words, written with setText.
     this.lastNoteEl = controls.createDiv("gp-last-note gp-hidden");
-    this.lastNoteWhenEl = this.lastNoteEl.createDiv("gp-last-note-when");
-    const lastNoteBody = this.lastNoteEl.createDiv("gp-last-note-body");
-    this.lastNoteFaceEl = lastNoteBody.createSpan({
+    // The chip, then the body: the label over the words (styles.css).
+    this.lastNoteFaceEl = this.lastNoteEl.createSpan({
       cls: "gp-last-note-face gp-hidden",
       attr: { role: "img" },
     });
+    const lastNoteBody = this.lastNoteEl.createDiv("gp-last-note-body");
+    this.lastNoteWhenEl = lastNoteBody.createDiv("gp-last-note-when");
     this.lastNoteTextEl = lastNoteBody.createSpan("gp-last-note-text gp-hidden");
     this.lastNotePart = new SlotPart(this.lastNoteEl, noteSlot);
     // Two frames: the first paint (a card or a note already showing as the

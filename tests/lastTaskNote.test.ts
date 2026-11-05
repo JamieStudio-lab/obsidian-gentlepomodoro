@@ -677,18 +677,39 @@ describe("the Last time line's styles", () => {
   });
 
   it("puts the face in one round chip beside the label and the words", () => {
-    // The body dissolves, so the chip and the two lines are the grid's cells.
-    expect(decl(".gp-last-note", "display")).toBe("grid");
-    expect(decl(".gp-last-note-body", "display")).toBe("contents");
-    expect(decl(".gp-last-note-face", "grid-row")).toBe("1 / span 2");
-    expect(decl(".gp-last-note-when", "grid-column")).toBe("2");
-    expect(decl(".gp-last-note-text", "grid-column")).toBe("2");
+    // A row (chip, body) and the body's column (label, words).
+    expect(decl(".gp-last-note", "display")).toBe("flex");
+    expect(decl(".gp-last-note-body", "display")).toBe("flex");
+    expect(decl(".gp-last-note-body", "flex-direction")).toBe("column");
+    expect(decl(".gp-last-note-face", "flex")).toBe("0 0 auto");
     expect(decl(".gp-last-note-face", "border-radius")).toBe("var(--gp-radius-pill)");
     expect(decl(".gp-last-note-face", "width")).toBe(decl(".gp-last-note-face", "height"));
-    // A face only: the label level with the chip's middle.
-    expect(
-      decl(".gp-last-note:has(.gp-last-note-text.gp-hidden) .gp-last-note-when", "align-self")
-    ).toBe("center");
+    // A face only: the body is the chip's height and centres the label.
+    expect(decl(".gp-last-note-face:not(.gp-hidden) + .gp-last-note-body", "min-height")).toBe(
+      decl(".gp-last-note-face", "height")
+    );
+    // Only beside a chip: words with no face are only as tall as their lines.
+    expect(decl(".gp-last-note-body", "min-height")).toBeUndefined();
+    expect(decl(".gp-last-note-body", "justify-content")).toBe("center");
+    // The markup it is written for: the chip, then the label and the words
+    // inside the body.
+    const code = view.replace(/\s+/g, " ");
+    const face = code.indexOf('cls: "gp-last-note-face gp-hidden"');
+    const bodyAt = code.indexOf(
+      'const lastNoteBody = this.lastNoteEl.createDiv("gp-last-note-body")'
+    );
+    expect(face).toBeGreaterThan(-1);
+    expect(bodyAt).toBeGreaterThan(face);
+    expect(code).toContain('lastNoteBody.createDiv("gp-last-note-when")');
+    expect(code).toContain('lastNoteBody.createSpan("gp-last-note-text gp-hidden")');
+  });
+
+  it("uses nothing the plugin review flags: no :has(), display: contents or columns", () => {
+    // The review's CSS lint warns on each, at Obsidian 1.6's support level.
+    const css = stripComments(readFileSync(resolve(root, "styles.css"), "utf8"));
+    expect(css).not.toMatch(/:has\(/);
+    expect(css).not.toMatch(/display:\s*contents/);
+    expect(css).not.toMatch(/(^|[;{\s])(column-gap|column-count|column-width|columns)\s*:/m);
   });
 
   it("gives every face the same chip: a mood is never a hue", () => {
@@ -702,7 +723,12 @@ describe("the Last time line's styles", () => {
   it("never sets a display that a hidden part's .gp-root .gp-hidden would lose to", () => {
     // Each display here is (0,1,0) — under .gp-root .gp-hidden (0,2,0) — so a
     // hidden face, words or line stays hidden.
-    for (const sel of [".gp-last-note", ".gp-last-note-face", ".gp-last-note-text"]) {
+    for (const sel of [
+      ".gp-last-note",
+      ".gp-last-note-face",
+      ".gp-last-note-body",
+      ".gp-last-note-text",
+    ]) {
       expect(decl(sel, "display")).toBeDefined();
       expect(sel.split(/[.:]/).filter(Boolean)).toHaveLength(1);
     }

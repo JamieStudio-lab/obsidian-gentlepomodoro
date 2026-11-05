@@ -4301,15 +4301,14 @@ body {
 .gp-last-note {
   /* Face in a chip: the face of that session in a round chip at the left,
      the label and the words in a column beside it (the maintainer's pick,
-     2026-11-04, from five designs in the panel harness). The body is
-     display: contents, so the chip and the two lines are this grid's
-     cells; no new markup. A hidden part is .gp-root .gp-hidden (0,2,0),
-     over every display here (0,1,0). */
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 0;
-  row-gap: var(--gp-space-1);
-  align-content: center;
+     2026-11-04, from five designs in the panel harness). Two flex boxes, a
+     row (the chip, then the body) and the body's column (the label, then the
+     words): no grid, no display: contents and no :has(), which the plugin
+     review flags (partly supported by Obsidian 1.6; :has() is slow to
+     invalidate). A hidden part is .gp-root .gp-hidden (0,2,0), over every
+     display here (0,1,0). */
+  display: flex;
+  align-items: flex-start;
   width: 100%;
   box-sizing: border-box;
   /* The button's own side padding (also on touch), so the chip's left edge
@@ -4331,30 +4330,11 @@ body {
   margin-top: 0;
 }
 
-.gp-last-note-when {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: end;
-  font-size: var(--gp-text-micro);
-  font-weight: var(--gp-weight-medium);
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Its children join the grid above. */
-.gp-last-note-body {
-  display: contents;
-}
-
 /* The chip: one neutral for every face — a mood is never a hue. Beside two
    lines it sits at the top; with the words and no face, there is no chip and
    the words start at the chip's edge. */
 .gp-last-note-face {
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  align-self: start;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4378,12 +4358,35 @@ body {
   stroke-width: 1.75;
 }
 
+/* The label over the words, centred in the body. */
+.gp-last-note-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--gp-space-1);
+  min-width: 0;
+}
+
+/* Beside a chip, at least the chip's height: a face with no words puts the
+   label level with the chip's middle, and two lines (taller than the chip)
+   start at its top. With no chip the body is only as tall as its lines. */
+.gp-last-note-face:not(.gp-hidden) + .gp-last-note-body {
+  min-height: 32px;
+}
+
+.gp-last-note-when {
+  font-size: var(--gp-text-micro);
+  font-weight: var(--gp-weight-medium);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Two lines, then an ellipsis; the whole note is the span's title. As the
    task name above: white-space restated, a long word breaks. */
 .gp-last-note-text {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: start;
   min-width: 0;
   font-size: var(--gp-text-caption);
   line-height: 1.35;
@@ -4394,13 +4397,6 @@ body {
   white-space: normal;
   overflow-wrap: break-word;
   overflow: hidden;
-}
-
-/* A face and no words: the label level with the chip's middle. Without
-   :has() (older iOS) it sits at the chip's top, which still reads. */
-.gp-last-note:has(.gp-last-note-text.gp-hidden) .gp-last-note-when {
-  grid-row: 1 / span 2;
-  align-self: center;
 }
 
 /* A note-slot part while it folds or unfolds (slotMotion.ts): its content is
@@ -4872,6 +4868,12 @@ body.is-mobile .gp-last-note-face,
 body.is-tablet .gp-last-note-face {
   width: 36px;
   height: 36px;
+}
+
+/* The body keeps the chip's height, so a face alone still centres the label. */
+body.is-mobile .gp-last-note-face:not(.gp-hidden) + .gp-last-note-body,
+body.is-tablet .gp-last-note-face:not(.gp-hidden) + .gp-last-note-body {
+  min-height: 36px;
 }
 
 /* The focus note on touch (0.7.1). --gp-control-h is already --gp-tap-min
