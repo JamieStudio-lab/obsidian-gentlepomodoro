@@ -95,6 +95,7 @@ class Harness implements MusicHost {
   transportSelfReport: boolean[] = [];
   trackChanges = 0;
   ios = false;
+  rebuilds = 0;
 
   readonly controller: MusicController;
 
@@ -163,6 +164,10 @@ class Harness implements MusicHost {
   }
   isIosApp(): boolean {
     return this.ios;
+  }
+
+  rebuildPlayer(): void {
+    this.rebuilds++;
   }
 
   /* --- driving the fake embed --- */
@@ -234,6 +239,196 @@ function bootPlaying(h: Harness, plan: ResumePlan = PLAN, url = URL_A): void {
 let h: Harness;
 beforeEach(() => {
   h = new Harness();
+});
+
+describe("a frame that loads again", () => {
+  const URL_EMBED = "https://www.youtube-nocookie.com/embed/abcdefghijk";
+  /** The handshakes sent since `before`, once the delay after a load has passed. */
+  const handshakesSince = (before: number) => {
+    h.clock.advance(MUSIC_LISTENING_DELAY_MS);
+    return h.broadcasts.length - before;
+  };
+
+  it("hands the first load to the handshake, and rebuilds nothing", () => {
+    h.controller.build(URL_EMBED, PLAN, URL_A);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0);
+    expect(handshakesSince(0)).toBe(1);
+  });
+
+  it("treats a load before any play as a bounce: another handshake, no rebuild", () => {
+    boot(h);
+    const before = h.broadcasts.length;
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0);
+    expect(handshakesSince(before)).toBe(1);
+  });
+
+  it("rebuilds once a press has started the frame, before any state comes back", () => {
+    boot(h);
+    h.controller.pressPlay();
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("rebuilds when the frame played and is now paused", () => {
+    bootPlaying(h);
+    h.controller.pressPause();
+    h.clock.advance(MUSIC_FADE_OUT_MS + MUSIC_FADE_OUT_MS);
+    h.state(YT_STATE.PAUSED);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("counts sound with no press, as a media key starts it", () => {
+    boot(h);
+    h.state(YT_STATE.PLAYING);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("counts buffering too, the first thing a started player reports", () => {
+    boot(h);
+    h.state(YT_STATE.BUFFERING);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("does not count a quiet state as started", () => {
+    boot(h);
+    h.state(YT_STATE.CUED);
+    h.state(YT_STATE.UNSTARTED);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0);
+  });
+
+  it("counts a press the ⏭ hand-off made, which comes through no button", () => {
+    bootPlaying(h);
+    const snapshot = h.controller.snapshotHandOff();
+    h.controller.destroy();
+    h.controller.build(URL_EMBED, PLAN, URL_B);
+    h.controller.armHandOff(snapshot);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0); // armed, not started: this load is still a handshake
+    h.clock.advance(MUSIC_LISTENING_DELAY_MS);
+    h.ready();
+    expect(h.funcs()).toContain("playVideo");
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("does not count a press turned away before the embed was ready", () => {
+    h.controller.build(URL_EMBED, PLAN, URL_A);
+    h.controller.pressPlay();
+    expect(h.notices).toHaveLength(1);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0);
+    expect(handshakesSince(0)).toBe(1);
+  });
+
+  it("stays started after the track ended: a new document is still not that player", () => {
+    bootPlaying(h);
+    h.state(YT_STATE.ENDED);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("stays started after a landed ⏹", () => {
+    bootPlaying(h);
+    h.controller.pressStop();
+    h.clock.advance(MUSIC_FADE_OUT_MS + MUSIC_FADE_OUT_MS);
+    expect(h.funcs()).toContain("stopVideo");
+    h.state(YT_STATE.CUED);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("counts sound reported before the embed said it was ready", () => {
+    h.controller.build(URL_EMBED, PLAN, URL_A);
+    h.fireLoad();
+    h.state(YT_STATE.PLAYING);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("counts the state an infoDelivery carries as well as onStateChange", () => {
+    boot(h);
+    h.info({ playerState: YT_STATE.PLAYING });
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("keeps a press made between a load and its handshake, and the handshake still goes", () => {
+    boot(h);
+    const before = h.broadcasts.length;
+    h.fireLoad();
+    h.controller.pressPlay();
+    expect(handshakesSince(before)).toBe(1); // the new document has to hear us
+    expect(h.rebuilds).toBe(0);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
+
+  it("says so when a press still waiting for sound dies with the old player", () => {
+    boot(h);
+    h.controller.pressPlay();
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+    expect(h.notices).toEqual(["Gentle pomodoro: the music player reloaded. Press ▶️ again."]);
+  });
+
+  it("says nothing when the music was playing or paused: ▶️ showing is the whole story", () => {
+    bootPlaying(h);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+    expect(h.notices).toEqual([]);
+  });
+
+  it("says nothing on a plain handshake", () => {
+    boot(h);
+    h.fireLoad();
+    expect(h.notices).toEqual([]);
+  });
+
+  it("sends one handshake for two loads inside the delay", () => {
+    h.controller.build(URL_EMBED, PLAN, URL_A);
+    h.fireLoad();
+    h.fireLoad();
+    expect(handshakesSince(0)).toBe(1);
+  });
+
+  it("schedules no handshake on the frame it is giving up", () => {
+    bootPlaying(h);
+    const before = h.broadcasts.length;
+    h.fireLoad();
+    expect(handshakesSince(before)).toBe(0);
+  });
+
+  it("starts a rebuilt frame over, so a frame that bounces cannot loop", () => {
+    bootPlaying(h);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+    h.controller.destroy();
+    h.controller.build(URL_EMBED, PLAN, URL_A);
+    const before = h.broadcasts.length;
+    h.fireLoad();
+    h.clock.advance(MUSIC_LISTENING_DELAY_MS);
+    h.ready();
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+    expect(h.broadcasts.length).toBeGreaterThan(before);
+  });
+
+  it("a later play on the rebuilt frame starts the rule again", () => {
+    bootPlaying(h);
+    h.controller.destroy();
+    boot(h);
+    h.fireLoad();
+    expect(h.rebuilds).toBe(0);
+    h.controller.pressPlay();
+    h.fireLoad();
+    expect(h.rebuilds).toBe(1);
+  });
 });
 
 describe("handshake", () => {

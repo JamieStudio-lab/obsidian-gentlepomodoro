@@ -209,6 +209,9 @@ export default class GentlePomoPlugin extends Plugin {
           ? this.api.getDays(from, to)
           : Promise.reject(new Error("Gentle Pomodoro is not loaded.")),
       saveSettings: () => this.saveSettings(),
+      noteEdited: (sessionId, note) => {
+        this.focusNotes.lineEdited(sessionId, note);
+      },
     });
     this.timer = new TimerEngine(this);
     this.api = createLogApi({
@@ -449,6 +452,16 @@ export default class GentlePomoPlugin extends Plugin {
     );
     this.registerDomEvent(window, "focus", () => {
       void this.maybeRefreshFocusTotal();
+      this.timer.rewakeAudio();
+    });
+    // Coming back from another desktop shows the window before it is clicked
+    // (and sometimes without focusing it): wake the timer's sound output then,
+    // so the next cue does not start late or broken.
+    // The MAIN window's page, where the timer's audio lives, whichever window
+    // is active.
+    const mainPage = window.document;
+    this.registerDomEvent(mainPage, "visibilitychange", () => {
+      if (!mainPage.hidden) this.timer.rewakeAudio();
     });
 
     // The open session's once-a-minute save on this device (F23): a quit or a

@@ -265,3 +265,9 @@ export const DEFAULT_SETTINGS: GentlePomoSettings = {
   lastMusicSeconds: 0,
   lastMusicUrl: null,
 };
+
+// How long before a session's planned end the timer starts its sound output,
+// silently, when an end sound will play (0.7.2). An output idle for a whole
+// session, Bluetooth headphones above all, cuts off the start of the first
+// sound it is given; two seconds is enough for it to be running again.
+export const END_SOUND_PREWAKE_MS = 2000;

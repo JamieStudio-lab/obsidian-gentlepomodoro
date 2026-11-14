@@ -1,7 +1,22 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { App } from "obsidian";
 // The recording stubs, by path so `tsc` sees them (see tests/settingTab.test.ts).
-import { FuzzySuggestModal, Modal, type RecordedComponent } from "../__mocks__/obsidian";
+import {
+  FuzzySuggestModal,
+  Modal,
+  Platform,
+  clickEl,
+  type ModalContent,
+  type RecordedComponent,
+  type StubEl,
+} from "../__mocks__/obsidian";
+import { FACE_LABELS, FOCUS_NOTE_PROMPTS, NOTE_DRAFT_MAX } from "../focusNote";
+import {
+  FOCUS_NOTE_FACES_LABEL,
+  FOCUS_NOTE_TEXT_LABEL,
+  FOCUS_NOTE_TITLE,
+  saveShortcutText,
+} from "../focusNoteCard";
 import {
   PickSessionModal,
   askSessionForm,
@@ -183,6 +198,304 @@ describe("the session dialog", () => {
     const closed = open();
     closed.modal.close();
     await expect(closed.answer).resolves.toBeNull();
+  });
+});
+
+describe("the focus note box in the session dialog", () => {
+  const box = (d: ReturnType<typeof open>): ModalContent => {
+    const found = d.modal.contentEl.children.find((c) => c.classes.includes("gp-fix-note"));
+    if (!found) throw new Error("no box");
+    return found;
+  };
+  const parts = (d: ReturnType<typeof open>) =>
+    d.modal.contentEl.children.filter((c) => c.classes.includes("gp-fix-note"));
+  const inBox = (d: ReturnType<typeof open>, cls: string): StubEl[] =>
+    box(d).elements.filter((el) => el.classes.includes(cls));
+  const one = (d: ReturnType<typeof open>, cls: string): StubEl => {
+    const [el] = inBox(d, cls);
+    return el;
+  };
+  const face = (d: ReturnType<typeof open>, name: string): StubEl => {
+    const found = inBox(d, "gp-note-face").find((el) => el.attrs["data-face"] === name);
+    if (!found) throw new Error(`no face ${name}`);
+    return found;
+  };
+  const pressed = (d: ReturnType<typeof open>) =>
+    inBox(d, "gp-note-face")
+      .filter((el) => el.attrs["aria-pressed"] === "true")
+      .map((el) => el.attrs["data-face"]);
+  const type = (d: ReturnType<typeof open>, text: string) => {
+    const area = one(d, "gp-note-text");
+    area.value = text;
+    for (const listener of area.listeners.input ?? []) listener({} as never);
+  };
+  /** A keydown on the box; says whether it was prevented. */
+  const key = (d: ReturnType<typeof open>, set: Partial<KeyboardEvent>) => {
+    let prevented = false;
+    const event = {
+      key: "Enter",
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+      isComposing: false,
+      preventDefault: () => (prevented = true),
+      ...set,
+    };
+    for (const listener of one(d, "gp-note-text").listeners.keydown ?? []) listener(event as never);
+    return prevented;
+  };
+  const NOTE = { face: null, text: "" };
+  const withNote = (note: SessionForm["note"] = NOTE) => ({ form: { ...FORM, note } });
+
+  it("builds the card's own parts, so the card's rules apply", () => {
+    const d = open(withNote());
+    expect(box(d).classes).toEqual(["gp-note", "gp-note-in-modal", "gp-fix-note"]);
+    const title = one(d, "gp-note-title");
+    expect(title.tag).toBe("div");
+    expect(box(d).paragraphs).toEqual([FOCUS_NOTE_TITLE]);
+    expect(FOCUS_NOTE_TITLE).toBe("Focus note");
+    expect(one(d, "gp-note-form").tag).toBe("div");
+    expect(one(d, "gp-note-faces").attrs).toMatchObject({
+      role: "group",
+      "aria-label": FOCUS_NOTE_FACES_LABEL,
+    });
+    expect(inBox(d, "gp-note-face").map((el) => [el.tag, el.icon, el.attrs])).toEqual(
+      (["frown", "meh", "smile"] as const).map((name) => [
+        "button",
+        name,
+        {
+          type: "button",
+          "data-face": name,
+          "aria-label": FACE_LABELS[name],
+          "aria-pressed": "false",
+        },
+      ])
+    );
+    const area = one(d, "gp-note-text");
+    expect(area.tag).toBe("textarea");
+    expect(area.attrs).toMatchObject({
+      "aria-label": FOCUS_NOTE_TEXT_LABEL,
+      // The card's two lines, and the chord named as the card names it.
+      rows: "2",
+      "aria-keyshortcuts": saveShortcutText().aria,
+      maxlength: String(NOTE_DRAFT_MAX),
+      placeholder: FOCUS_NOTE_PROMPTS.none,
+    });
+  });
+
+  it("sits after the six rows' values and before the line that says what's wrong", () => {
+    const d = open(withNote());
+    const kids = d.modal.contentEl.children;
+    expect(kids.indexOf(box(d))).toBeLessThan(
+      kids.findIndex((c) => c.classes.includes("gp-setting-note"))
+    );
+  });
+
+  it("opens on the note it was given", () => {
+    const d = open(withNote({ face: "meh", text: "stuck on refs" }));
+    expect(pressed(d)).toEqual(["meh"]);
+    expect(one(d, "gp-note-text").value).toBe("stuck on refs");
+    expect(one(d, "gp-note-text").attrs.placeholder).toBe(FOCUS_NOTE_PROMPTS.meh);
+  });
+
+  it("has neither a box nor a hint when the form has no note and no hint was given", () => {
+    expect(parts(open())).toEqual([]);
+  });
+
+  it("toggles a face, and the placeholder follows it", () => {
+    const d = open(withNote());
+    clickEl(face(d, "smile"));
+    expect(pressed(d)).toEqual(["smile"]);
+    expect(one(d, "gp-note-text").attrs.placeholder).toBe(FOCUS_NOTE_PROMPTS.smile);
+    clickEl(face(d, "frown"));
+    expect(pressed(d)).toEqual(["frown"]);
+    expect(one(d, "gp-note-text").attrs.placeholder).toBe(FOCUS_NOTE_PROMPTS.frown);
+    clickEl(face(d, "frown"));
+    expect(pressed(d)).toEqual([]);
+    expect(one(d, "gp-note-text").attrs.placeholder).toBe(FOCUS_NOTE_PROMPTS.none);
+  });
+
+  it("answers with what the box holds, the face kept when the words change", async () => {
+    const d = open(withNote());
+    clickEl(face(d, "meh"));
+    type(d, "half a thought");
+    d.button("Add").click?.();
+    await expect(d.answer).resolves.toMatchObject({
+      form: { note: { face: "meh", text: "half a thought" } },
+    });
+  });
+
+  it("keeps the words when the face changes after them", async () => {
+    const d = open(withNote());
+    type(d, "half a thought");
+    clickEl(face(d, "smile"));
+    d.button("Add").click?.();
+    await expect(d.answer).resolves.toMatchObject({
+      form: { note: { face: "smile", text: "half a thought" } },
+    });
+  });
+
+  it("assigns a new note for each change: nothing shared with what it was given or answered", async () => {
+    const given = { face: "meh" as const, text: "as logged" };
+    const d = open(withNote(given));
+    type(d, "edited");
+    clickEl(face(d, "meh"));
+    expect(given).toEqual({ face: "meh", text: "as logged" });
+    expect(d.options.form.note).toBe(given);
+    // A check sees the note of that moment, and keeps it if it wants.
+    const seen: SessionForm["note"][] = [];
+    let live: SessionForm | null = null;
+    const checked = open({
+      ...withNote(),
+      check: (form) => {
+        live = form;
+        seen.push(form.note);
+        return form.note?.text === "second" ? null : "Not yet.";
+      },
+    });
+    type(checked, "first");
+    checked.button("Add").click?.();
+    type(checked, "second");
+    expect(seen[0]).toEqual({ face: null, text: "first" });
+    checked.button("Add").click?.();
+    const answer = await checked.answer;
+    // The answer is a copy of what the dialog was editing.
+    expect(answer).toMatchObject({ form: { note: { text: "second" } } });
+    expect(answer && answer.action === "save" ? answer.form : null).not.toBe(live);
+  });
+
+  it("stays open with what was typed when the note can't be saved", async () => {
+    const d = open({
+      ...withNote(),
+      check: (form) => (form.note?.text === "too long" ? "Shorten it." : null),
+    });
+    type(d, "too long");
+    d.button("Add").click?.();
+    await Promise.resolve();
+    expect(d.settled()).toBe(false);
+    expect(d.problem()).toBe("Shorten it.");
+    expect(one(d, "gp-note-text").value).toBe("too long");
+    type(d, "short");
+    d.button("Add").click?.();
+    await expect(d.answer).resolves.toMatchObject({ form: { note: { text: "short" } } });
+  });
+
+  describe("Mod+Enter in the box", () => {
+    it("runs the same submit as the Save button, the check included", async () => {
+      const d = open({
+        ...withNote(),
+        check: (form) => (form.note?.text === "no" ? "Not that." : null),
+      });
+      type(d, "no");
+      expect(key(d, { ctrlKey: true })).toBe(true);
+      await Promise.resolve();
+      expect(d.settled()).toBe(false);
+      expect(d.problem()).toBe("Not that.");
+      type(d, "yes");
+      expect(key(d, { ctrlKey: true })).toBe(true);
+      await expect(d.answer).resolves.toMatchObject({
+        action: "save",
+        form: { note: { text: "yes" } },
+      });
+      expect(d.problem()).toBe("");
+    });
+
+    it("is Cmd on a Mac", async () => {
+      Platform.isMacOS = true;
+      try {
+        const d = open(withNote());
+        expect(key(d, { ctrlKey: true })).toBe(false);
+        await Promise.resolve();
+        expect(d.settled()).toBe(false);
+        expect(key(d, { metaKey: true })).toBe(true);
+        await expect(d.answer).resolves.toMatchObject({ action: "save" });
+      } finally {
+        Platform.isMacOS = false;
+      }
+    });
+
+    it("leaves plain Enter and Shift+Enter to the box as a new line", async () => {
+      const d = open(withNote());
+      expect(key(d, {})).toBe(false);
+      expect(key(d, { shiftKey: true })).toBe(false);
+      expect(key(d, { ctrlKey: true, shiftKey: true })).toBe(false);
+      expect(key(d, { key: "a", ctrlKey: true })).toBe(false);
+      await Promise.resolve();
+      expect(d.settled()).toBe(false);
+    });
+
+    it.each([
+      ["a composing input method", { isComposing: true }],
+      ["WebKit's composing Enter", { keyCode: 229 }],
+      ["a key held down", { repeat: true }],
+    ])("never submits on %s, and still never types a new line", async (_name, set) => {
+      let checks = 0;
+      const d = open({
+        ...withNote(),
+        check: () => {
+          checks++;
+          return null;
+        },
+      });
+      expect(key(d, { ctrlKey: true, ...set })).toBe(true);
+      await Promise.resolve();
+      expect(d.settled()).toBe(false);
+      expect(checks).toBe(0);
+    });
+  });
+
+  describe("the kind", () => {
+    it("hides the box away from focus, and brings it back with what was typed", async () => {
+      const d = open(withNote());
+      type(d, "half a thought");
+      clickEl(face(d, "meh"));
+      expect(box(d).classes).not.toContain("gp-hidden");
+      d.field("Kind").change?.("short-break" as never);
+      expect(box(d).classes).toContain("gp-hidden");
+      d.field("Kind").change?.("long-break" as never);
+      expect(box(d).classes).toContain("gp-hidden");
+      d.field("Kind").change?.("focus" as never);
+      expect(box(d).classes).not.toContain("gp-hidden");
+      expect(one(d, "gp-note-text").value).toBe("half a thought");
+      expect(pressed(d)).toEqual(["meh"]);
+      d.button("Add").click?.();
+      await expect(d.answer).resolves.toMatchObject({
+        form: { kind: "focus", note: { face: "meh", text: "half a thought" } },
+      });
+    });
+
+    it("opens hidden on a break, and shows once it is made a focus", () => {
+      const d = open({ form: { ...FORM, kind: "short-break", note: NOTE } });
+      expect(box(d).classes).toContain("gp-hidden");
+      d.field("Kind").change?.("focus" as never);
+      expect(box(d).classes).not.toContain("gp-hidden");
+    });
+  });
+
+  describe("the hint", () => {
+    it("is one plain line in the card's wrapper, with no box", () => {
+      const d = open({ noteHint: "Can't hold a note." });
+      const [hint] = parts(d);
+      expect(hint.classes).toEqual(["gp-note", "gp-note-in-modal", "gp-fix-note"]);
+      expect(hint.elements.map((el) => [el.tag, el.classes])).toEqual([["p", ["gp-note-hint"]]]);
+      expect(hint.paragraphs).toEqual(["Can't hold a note."]);
+    });
+
+    it("hides away from focus, and comes back", () => {
+      const d = open({ noteHint: "Can't hold a note." });
+      const [hint] = parts(d);
+      d.field("Kind").change?.("short-break" as never);
+      expect(hint.classes).toContain("gp-hidden");
+      d.field("Kind").change?.("focus" as never);
+      expect(hint.classes).not.toContain("gp-hidden");
+    });
+
+    it("opens hidden on a break", () => {
+      const d = open({ form: { ...FORM, kind: "short-break" }, noteHint: "Can't hold a note." });
+      expect(parts(d)[0].classes).toContain("gp-hidden");
+    });
   });
 });
 

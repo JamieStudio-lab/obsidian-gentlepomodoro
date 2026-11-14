@@ -2,7 +2,7 @@
 
 A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture changes slowly from day to night as you focus. Link a session to a task from the Tasks plugin, and keep a daily log you can read with Dataview.
 
-> **v0.7.1 (beta).** In the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
+> **v0.7.2 (beta).** In the Obsidian [Community Plugins catalog](https://obsidian.md/plugins?id=gentle-pomo). See [Install](#install).
 
 ## Features
 
@@ -49,7 +49,7 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - **Copy a ready-made table** into any note from **Settings → Log tables**. See [Log tables](#log-tables).
 - **Export sessions** to a CSV or JSON Lines file. See [Export sessions](#export-sessions).
 - **Focus note** (opt-in): after a focus session is logged, a small card asks how it went. Press a face (Rough, Okay or Good) and write a few words; your keyboard's dictation works in the box. The note is saved on that session's line; **Ctrl+Enter** (**⌘ Enter** on a Mac or iPad) in the box saves it too, and plain Enter makes a new line. Needs a log folder. The card shows nothing during a focus, and stays until the next focus starts. A focus under a minute isn't logged, so it gets no card, but it still closes the last one. The command **Add a note to the last session** brings the card back, on a phone too. While a task is linked, a quiet **Last time** line under the task button shows that task's newest note from the last 30 days (its face in a small round chip, and the words), so you see how it went before (turn it off with **Show “Last time” under the task**). The card and this line take turns in the same place, folding and unfolding gently (at once with reduced motion on). See [Log format](#log-format).
-- **Add a session** you did away from the timer, or **fix a logged session** (its task, kind, start, length or status, or delete it), without editing the line by hand.
+- **Add a session** you did away from the timer, or **fix a logged session** (its task, kind, start, length, status or focus note, or delete it), without editing the line by hand.
 - **Open today's log** from the command palette, the status bar's menu or the settings. On a phone, tap today's total in the timer panel.
 - **Day starts at** (midnight to 6:00), for night owls: a session that starts before that hour goes into the day before's file.
 - **Task switch**: if you change task during a focus, the whole session goes to the last task. Choose **Split at the switch** to log a line for each task instead.
@@ -74,6 +74,7 @@ A calm Pomodoro timer for Obsidian. Instead of a ticking clock, a picture change
 - Fades in and out, and dips quietly under the timer's sounds.
 - Loops by default, and each link resumes where you paused it. **⏹** starts it over next time.
 - Its own mute and volume, separate from the timer's. It never starts by itself, and it stops when you close the panel.
+- Works with the timer panel in its own window. Moving the panel, to another window or within one, stops the music; **▶️** picks up where it was.
 - **Desktop only**: on iPhone and iPad, YouTube won't load its player inside Obsidian (error 153), whatever the link. Android hasn't been tested.
 - It uses YouTube over the network; see [Network use](#network-use).
 
@@ -196,6 +197,7 @@ With **Offer a focus note** on (Settings → Focus note), saving the card adds `
 - It goes on a focus line that has a `Session`, and on the **last** line of a session split at a task switch. A break never has one. Words alone that read like a face (`meh`, `smile · fine`) are saved as that face.
 - Saving cleans the words so they can't break the line: a `[[link]]` keeps only the text it shows, other `[` and `]` become `(` and `)`, `::` becomes `:`, line breaks become `/`, `#` becomes a look-alike `＃` (so it isn't a tag), `%%` becomes `%`, 🍅 and ☕ are dropped, and it is cut to 500 characters. The box shows what was kept. Other marks, such as `*`, stay and show as Markdown in the log note.
 - **Clear** takes the whole field off. **Update** replaces it. No other part of the line changes.
+- **Fix a logged session** has the same faces and box, for the session you opened. They show while **Offer a focus note** is on, or when the session already has a note. Empty both and **Save** to take the note off. A note over 500 characters isn't cut here: Fix asks you to shorten it. A session logged before 0.7.0 can't hold a note, and on a split session the note stays on the last part.
 - A line that has no `Note` has no note. Nothing is filled in for older lines.
 - Dataview reads the words as the type they look like. A note that is exactly `7` is a number, `2026-11-03` a date, `45 min` a duration, `true` a yes/no, and `1, 2` a list, and `"quoted"` loses its quotes; a note that is just `null` stays the word. The Log tables column shows each as Dataview prints it. The read API and Export give the words as written.
 - Words you haven't saved stay on this device. **Add a note to the last session** (the command, or the status bar menu) opens the card in a window for the session you just logged on this device, or the newest focus line in today's and yesterday's files.
@@ -349,7 +351,7 @@ if (pomo && date) {
 - **Linked task**: reads its note to keep its name current and to see when you tick it off. With the 🍅 count on, it edits only that task's line.
 - **Daily log**: writes one file a day in your log folder, with the day's goal at the top, and reads today's for the goal. When a task with a `🆔` is renamed, its past lines in that folder take the new name.
 - **Log tools**: **Check log** only reads. **Convert old log lines** rewrites the files it changes; a day's file named in other digits (Obsidian in Arabic, Persian, Bengali or Nepali) is renamed, or merged into the 0–9 file and moved to the trash. **Add a session** and **Fix a logged session** write only the day they're about.
-- **Focus note**: saving or clearing one edits only the `Note` field on that session's line, in the file it was logged to. The words you haven't saved stay on this device.
+- **Focus note**: saving or clearing one edits only the `Note` field on that session's line, in the file it was logged to. The words you haven't saved stay on this device. Changing one in **Fix a logged session** is an ordinary fix of that line.
 - **Old log lines notice**: once (after an update, a new install or a reinstall, as soon as the log folder holds a log file), reads the log files to see whether any old lines remain. It writes nothing.
 - **Log tables**: read only the plugin's settings and your folder names, and write nothing; the code goes to the clipboard.
 - **Export sessions**: reads the days you ask for and creates one new file (and its folder, if needed).

@@ -3,7 +3,7 @@ import type GentlePomoPlugin from "./main";
 import type { PomoMode, TimerListener, TimerState } from "./types";
 import type { MomentFactory } from "./momentTypes";
 import type { SessionEnd } from "./logManager";
-import { NO_TASK_LABEL, ONE_MINUTE_MS, SLEEP_GAP_MS } from "./constants";
+import { END_SOUND_PREWAKE_MS, NO_TASK_LABEL, ONE_MINUTE_MS, SLEEP_GAP_MS } from "./constants";
 import { logger } from "./logger";
 import { cycleLength, cyclePosition, logicalDate } from "./logLine";
 import {
@@ -152,6 +152,12 @@ export class TimerEngine {
   // aligned to the second. It runs the same tick, whose `prev > 0` guard makes
   // a double fire a no-op. Re-armed wherever targetTime moves while running.
   private endWakeId: number | null = null;
+
+  // A second one-shot, END_SOUND_PREWAKE_MS before the planned end: it starts
+  // the sound output early, silently, when an end sound is about to play.
+  // Nothing has sounded for a whole session by then, so the output — Bluetooth
+  // headphones above all — has gone idle and would swallow the sound's start.
+  private endPrewakeId: number | null = null;
 
   // When the tick last ran (or the loop started), for the sleep check in
   // tick(). Null while the loop is stopped.
@@ -490,6 +496,10 @@ export class TimerEngine {
       window.clearTimeout(this.endWakeId);
       this.endWakeId = null;
     }
+    if (this.endPrewakeId !== null) {
+      window.clearTimeout(this.endPrewakeId);
+      this.endPrewakeId = null;
+    }
   }
 
   /**
@@ -507,6 +517,25 @@ export class TimerEngine {
       this.endWakeId = null;
       this.tick();
     }, delay + 1);
+    if (delay > END_SOUND_PREWAKE_MS) {
+      this.endPrewakeId = window.setTimeout(() => {
+        this.endPrewakeId = null;
+        this.prewakeEndSound();
+      }, delay - END_SOUND_PREWAKE_MS);
+    }
+  }
+
+  /**
+   * Start the sound output shortly before the planned end, with silence that
+   * lasts past it. Only when the end will ring (the chime is on for this edge
+   * and the timer's sounds are audible): otherwise no context is made and
+   * nothing runs. It plays nothing and changes nothing about the crossing.
+   */
+  private prewakeEndSound() {
+    if (this.disposed || !this.state.isRunning) return;
+    if (!this.endChimeWanted() || !this.cueIsAudible()) return;
+    if (!this.getAudioContext()) return;
+    this.rewakeAudio((END_SOUND_PREWAKE_MS + 500) / 1000);
   }
 
   private startLoop() {
@@ -960,7 +989,11 @@ export class TimerEngine {
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextCtor) return null;
 
-    this.audioCtx = new AudioContextCtor();
+    // "playback", not the default "interactive": the default asks for the
+    // smallest output buffer, which underruns — the cue crackles or starts
+    // late — when the app is busy or was just brought back from another
+    // desktop. A chime does not need low latency; it needs to play cleanly.
+    this.audioCtx = new AudioContextCtor({ latencyHint: "playback" });
     return this.audioCtx;
   }
 
@@ -1245,6 +1278,30 @@ export class TimerEngine {
     const ctx = this.getAudioContext();
     if (ctx && (ctx.state === "suspended" || ctx.state === "interrupted")) {
       void ctx.resume().catch(() => {});
+    }
+  }
+
+  /**
+   * The window came back into view (another desktop, a covering window, a
+   * wake from sleep). Get the audio output going again BEFORE the next cue:
+   * resume a parked context, and run one moment of silence through it so an
+   * output that went idle is started by this and not by the cue, whose first
+   * part it would otherwise swallow. Never creates a context — a session that
+   * has played nothing has nothing to wake — and makes no sound.
+   */
+  rewakeAudio(seconds = 0.1) {
+    const ctx = this.audioCtx;
+    if (this.disposed || !ctx || ctx.state === "closed") return;
+    try {
+      if (ctx.state === "suspended" || ctx.state === "interrupted") {
+        void ctx.resume().catch(() => {});
+      }
+      const source = ctx.createBufferSource();
+      source.buffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * seconds), ctx.sampleRate);
+      source.connect(ctx.destination);
+      source.start(0);
+    } catch (e) {
+      logger.debug("Could not rewake audio", e);
     }
   }
 

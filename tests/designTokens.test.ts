@@ -1753,6 +1753,21 @@ describe("the focus note's card and the segmented buttons out-rank app.css (0.7.
     );
   });
 
+  it("makes the session dialog's box one of its rows, by specificity, and never shows it hidden", () => {
+    const row = ruleNamed(".gp-note.gp-note-in-modal.gp-fix-note");
+    expect(compare(specificity(row.sel), specificity(".gp-note.gp-note-in-modal"))).toBeGreaterThan(
+      0
+    );
+    expect(declOf(row, "padding")).toBe("var(--gp-space-7) 0");
+    expect(declOf(row, "border-top")).toBe("1px solid var(--background-modifier-border)");
+    // The card's radius would bend that hairline at both ends.
+    expect(declOf(ruleNamed(".gp-note"), "border-radius")).toBeDefined();
+    expect(declOf(row, "border-radius")).toBe("0");
+    // A dialog has no .gp-root: the card's own rule is what hides it, so this
+    // rule must not give it a display that would beat that one.
+    expect(declOf(row, "display")).toBeUndefined();
+  });
+
   it("hides the card's parts in the dialog too, after every card rule that sets a display", () => {
     const hidden = ruleNamed(".gp-note.gp-hidden, .gp-note .gp-hidden");
     expect(declOf(hidden, "display")).toBe("none");

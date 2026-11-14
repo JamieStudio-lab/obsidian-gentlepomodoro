@@ -53,7 +53,7 @@ function rampSteps(durationMs: number, stepMs: number): number {
  * and a recording message sink can.
  */
 export interface MusicHost {
-  /* --- clock: window.* in the app, a controllable fake in tests --- */
+  /* --- clock: the window holding the player in the app (frameWindow.ts), a controllable fake in tests --- */
   now(): number;
   setTimeout(fn: () => void, ms: number): number;
   clearTimeout(id: number): void;
@@ -61,7 +61,9 @@ export interface MusicHost {
   clearInterval(id: number): void;
 
   /* --- the hidden player --- */
-  /** Mount the iframe at `src`; call `onLoad` when it fires its load event. */
+  /** Mount the iframe at `src`; call `onLoad` when it fires its load event. A
+   *  load in another window than it was mounted in is a move: the host rebuilds
+   *  through destroy and build instead of calling `onLoad`. */
   mountPlayer(src: string, onLoad: () => void): void;
   /** Remove it. Removal is what stops playback — there is no stop command here. */
   unmountPlayer(): void;
@@ -82,6 +84,9 @@ export interface MusicHost {
   setTransportPlaying(playing: boolean): void;
   /** The track under the current station changed (its title, or the playlist context). */
   onTrackChanged(): void;
+  /** A started frame loaded a new document: the player it was playing is gone.
+   *  Tear it down and build it again (destroy, then build, with a fresh resume plan). */
+  rebuildPlayer(): void;
   notice(message: string): void;
   /** Platform.isIosApp — error 153 is a platform limit there, not a bad link. */
   isIosApp(): boolean;
@@ -119,6 +124,9 @@ export class MusicController {
   private handshakeInterval: number | null = null; // re-sends until the embed answers
   private handshakeAttempts = 0;
   private playerReady = false;
+  // True once this frame has been told to play or has reported sound. From then
+  // on a load means the player it was playing has gone (see build).
+  private frameStarted = false;
   // Where to address commands. Depending on the video the embed bounces from
   // the nocookie origin we loaded to www.youtube.com, and postMessage delivers
   // nothing when targetOrigin doesn't match the frame's *current* origin — so
@@ -290,6 +298,24 @@ export class MusicController {
     this.playerMounted = true;
     this.frameGeneration++;
     this.host.mountPlayer(embedUrl, () => {
+      // Every load is a new document in the frame, and a new document is a new
+      // player, stopped at the start. Moving the panel does this (the browser
+      // reloads an iframe taken out of the page and put back), and only a load
+      // can show it: the panel still says playing, and ▶️ would play from the top
+      // and overwrite the saved position. Rebuilt, it says what is true and
+      // resumes. A frame not started has nothing to lose, and the embed can bounce
+      // to www.youtube.com while it starts, which loads too; that stays a plain
+      // handshake. It cannot loop: only a press or real sound starts a frame, and
+      // destroy resets the flag. A press still waiting for sound dies with the old
+      // player. It is not carried: on a video that navigates when played, carrying
+      // it would rebuild for ever. So it says so, and ▶️ is back.
+      if (this.frameStarted) {
+        if (this.fadePhase === "armed") {
+          this.host.notice("Gentle pomodoro: the music player reloaded. Press ▶️ again.");
+        }
+        this.host.rebuildPlayer();
+        return;
+      }
       if (this.listenTimeout !== null) this.host.clearTimeout(this.listenTimeout);
       this.listenTimeout = this.host.setTimeout(() => {
         this.listenTimeout = null;
@@ -303,7 +329,7 @@ export class MusicController {
    * Also resets the handshake/volume state so a rebuilt player starts fresh.
    */
   destroy(): void {
-    // Teardown is a boundary: closing the panel, moving the leaf, or changing
+    // Teardown is a boundary: closing the panel, moving it to another window, or changing
     // the URL all end playback. The pending position is keyed by the video it
     // came from, so saving the *outgoing* one here is correct even mid-swap —
     // unless ⏹ was pressed and its fade never landed, in which case the stop is
@@ -349,6 +375,7 @@ export class MusicController {
     this.host.unmountPlayer();
     this.playerMounted = false;
     this.playerReady = false;
+    this.frameStarted = false;
     // Back to the origin the next frame is loaded from — a learned one belongs
     // to the frame that taught it, and the next video may not bounce at all.
     this.playerOrigin = YT_EMBED_ORIGIN;
@@ -713,6 +740,7 @@ export class MusicController {
    * gap. Shared with the ⏭ hand-off so the two can never drift apart.
    */
   private startPlayback(): void {
+    this.frameStarted = true;
     this.armFadeIn();
     this.postToPlayer(buildPlayerCommand("playVideo"));
   }
@@ -1028,6 +1056,8 @@ export class MusicController {
    * *previous* state, so it must stay last.
    */
   private handleState(state: number): void {
+    // Sound with no press counts too: hardware media keys drive the embed.
+    if (this.isAudibleState(state)) this.frameStarted = true;
     if (state !== this.playerState) {
       // A ⏹ whose stopVideo has gone out (no fade still running) is settled the
       // moment the embed reports a halt: the straggler window stopPending

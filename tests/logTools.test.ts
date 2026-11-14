@@ -7,6 +7,7 @@ import type { App, TFile } from "obsidian";
 // The recording stubs, by path so `tsc` sees `shown` and `opened` (see tests/settingTab.test.ts).
 import { Modal, Notice } from "../__mocks__/obsidian";
 import {
+  DELETE_NOTE_SENTENCE,
   LINE_CHANGED_NOTICE,
   LogTools,
   NO_LOG_FILES_NOTICE,
@@ -20,9 +21,18 @@ import {
 } from "../logTools";
 import { emptyConversionCounts, countAnomalies } from "../logConvert";
 import { logFolderProblemNotice } from "../logFolder";
-import { formFromLine, loggedLines, type LoggedLine, type SessionForm } from "../logEditor";
+import {
+  FORM_NOTE_EARLIER_PART_HINT,
+  FORM_NOTE_LONG_MESSAGE,
+  FORM_NOTE_OLD_LINE_HINT,
+  formFromLine,
+  loggedLines,
+  type LoggedLine,
+  type SessionForm,
+} from "../logEditor";
 import type { MomentLike } from "../momentTypes";
 import type { ConfirmOptions } from "../confirmModal";
+import type { FocusNote } from "../logLine";
 import type { SessionFormAnswer, SessionFormOptions } from "../sessionModals";
 import { DEFAULT_SETTINGS } from "../constants";
 import type { GentlePomoSettings } from "../types";
@@ -96,6 +106,8 @@ interface Harness {
   changed: number;
   forms: SessionFormOptions[];
   formAnswers: SessionFormAnswer[];
+  /** What the focus note's store was told, in order. */
+  noted: [string, FocusNote | null][];
   /** The note Obsidian calls active, and the open tabs: what the picker's note scopes read. */
   active: string | null;
   tabs: string[];
@@ -126,6 +138,7 @@ function harness(
     changed: 0,
     forms: [],
     formAnswers: [],
+    noted: [],
     active: null,
     tabs: [],
     missing: new Set(),
@@ -202,6 +215,9 @@ function harness(
     // Export's own (0.7.0): tests/logExport.test.ts drives it.
     readDays: () => Promise.reject(new Error("no read API here")),
     saveSettings: () => Promise.resolve(),
+    noteEdited: (sessionId, note) => {
+      h.noted.push([sessionId, note]);
+    },
     ...extra,
   });
   return h;
@@ -1123,6 +1139,264 @@ describe("Fix a logged session (C6)", () => {
     expect(Notice.shown).toEqual([LINE_CHANGED_NOTICE]);
   });
 
+  describe("the focus note", () => {
+    const DATE = "2026-10-02";
+    const ID = "sd4f6g8j2k";
+    const tail = (id = ID) =>
+      `[Session:: ${id}] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Offset:: -240]`;
+    const FOCUS = `${V2_FOCUS} ${tail()}`;
+    const LATER = `${V2_LATER} ${tail("s000000002")}`;
+    const NOTED = `${FOCUS} [Note:: meh · stuck on refs]`;
+    const PART = `${V2_LATER} ${tail()}`;
+    const REST = `- ☕ Rest [Start:: 2026-10-02 10:25:00] [End:: 2026-10-02 10:30:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] ${tail("s000000003")}`;
+    const OLD_REST = V1_REST.replace(/2026-10-01/g, DATE);
+    const ON = { focusNoteEnabled: true };
+    const MEH: FocusNote = { face: "meh", text: "stuck on refs" };
+    const EMPTY: FocusNote = { face: null, text: "" };
+
+    /** The dialog `fixLine` opens on the file's line `at`, with no answer. */
+    const opened = async (file: string, set: Partial<GentlePomoSettings> = {}, at = 0) => {
+      const h = harness({ [LOG(DATE)]: file }, set);
+      await h.tools.fixLine(DATE, loggedLines(file)[at]);
+      return h.forms[0];
+    };
+    /** `fixLine` on the file's line `at`, saving what the dialog opened on with `set`. */
+    const saved = async (file: string, set: Partial<SessionForm>, at = 0) => {
+      const line = loggedLines(file)[at];
+      const h = harness({ [LOG(DATE)]: file }, ON, {
+        askSessionForm: (options) => {
+          h.forms.push(options);
+          return Promise.resolve({ action: "save", form: { ...options.form, ...set } });
+        },
+      });
+      await h.tools.fixLine(DATE, line);
+      return h;
+    };
+
+    it("opens the box empty on a line that can take a note, with the note on", async () => {
+      const options = await opened(`${FOCUS}\n`, ON);
+      expect(options.form.note).toEqual(EMPTY);
+      expect(options.noteHint).toBeUndefined();
+    });
+
+    it("opens the box on the line's own note", async () => {
+      expect((await opened(`${NOTED}\n`, ON)).form.note).toEqual(MEH);
+      const face = await opened(`${FOCUS} [Note:: smile]\n`, ON);
+      expect(face.form.note).toEqual({ face: "smile", text: "" });
+    });
+
+    it("has no box with the note off, unless the line already has a note", async () => {
+      const off = await opened(`${FOCUS}\n`);
+      expect(off.form.note).toBeUndefined();
+      expect(off.noteHint).toBeUndefined();
+      expect((await opened(`${NOTED}\n`)).form.note).toEqual(MEH);
+    });
+
+    it("explains a line before 0.7.0 instead of offering a box, with the note on only", async () => {
+      const old = await opened(`${V2_FOCUS}\n`, ON);
+      expect(old.form.note).toBeUndefined();
+      expect(old.noteHint).toBe(FORM_NOTE_OLD_LINE_HINT);
+      expect(FORM_NOTE_OLD_LINE_HINT).toBe(
+        "Logged before 0.7.0, so this session can't hold a note."
+      );
+      const v1 = await opened(`${V1_FOCUS.replace(/2026-10-01/g, DATE)}\n`, ON);
+      expect(v1.noteHint).toBe(FORM_NOTE_OLD_LINE_HINT);
+      expect((await opened(`${V2_FOCUS}\n`)).noteHint).toBeUndefined();
+    });
+
+    it("explains an earlier part of a split session, with the note on only", async () => {
+      const file = `${FOCUS}\n${PART}\n`;
+      const earlier = await opened(file, ON);
+      expect(earlier.form.note).toBeUndefined();
+      expect(earlier.noteHint).toBe(FORM_NOTE_EARLIER_PART_HINT);
+      expect(FORM_NOTE_EARLIER_PART_HINT).toBe(
+        "Split at a task switch. Its note goes on the last part."
+      );
+      expect((await opened(file)).noteHint).toBeUndefined();
+      // The last part has the box.
+      expect((await opened(file, ON, 1)).form.note).toEqual(EMPTY);
+      // A note typed by hand on the earlier part is no reason for one there.
+      const hand = await opened(`${NOTED}\n${PART}\n`);
+      expect(hand.form.note).toBeUndefined();
+    });
+
+    it("decides by the file as it reads now, not as it read when the line was picked", async () => {
+      const h = harness({ [LOG(DATE)]: `${FOCUS}\n` }, ON);
+      const line = loggedLines(`${FOCUS}\n`)[0];
+      h.vault.contents[LOG(DATE)] = `${FOCUS}\n${PART}\n`;
+      await h.tools.fixLine(DATE, line);
+      expect(h.forms[0].form.note).toBeUndefined();
+      expect(h.forms[0].noteHint).toBe(FORM_NOTE_EARLIER_PART_HINT);
+    });
+
+    it("offers the box on a rest line with a Session, none on one without", async () => {
+      expect((await opened(`${REST}\n`, ON)).form.note).toEqual(EMPTY);
+      const old = await opened(`${OLD_REST}\n`, ON);
+      expect(old.form.note).toBeUndefined();
+      expect(old.noteHint).toBeUndefined();
+    });
+
+    it("opens the dialog with no box when the file can't be read again", async () => {
+      const h = harness({ [LOG(DATE)]: `${NOTED}\n` }, ON);
+      const line = loggedLines(`${NOTED}\n`)[0];
+      vi.spyOn(h.vault, "read").mockRejectedValueOnce(new Error("locked"));
+      await h.tools.fixLine(DATE, line);
+      expect(h.forms).toHaveLength(1);
+      expect(h.forms[0].form.note).toBeUndefined();
+      expect(h.forms[0].noteHint).toBeUndefined();
+      expect(warnings.join("\n")).toContain("to find the session's focus note");
+    });
+
+    it("opens the dialog with no box when the line is no longer there as it was read", async () => {
+      const h = harness({ [LOG(DATE)]: `${LATER}\n` }, ON);
+      await h.tools.fixLine(DATE, loggedLines(`${NOTED}\n`)[0]);
+      expect(h.forms).toHaveLength(1);
+      expect(h.forms[0].form.note).toBeUndefined();
+      expect(h.forms[0].noteHint).toBeUndefined();
+      expect(warnings.join("\n")).toContain("no longer in the log");
+    });
+
+    it("finds a line that moved in the file, by its text", async () => {
+      const h = harness({ [LOG(DATE)]: `${LATER}\n${NOTED}\n` }, ON);
+      await h.tools.fixLine(DATE, loggedLines(`${NOTED}\n`)[0]);
+      expect(h.forms[0].form.note).toEqual(MEH);
+      expect(warnings).toEqual([]);
+    });
+
+    it("has neither on Add a session", async () => {
+      const h = harness({}, ON);
+      await h.tools.addSession();
+      expect(h.forms).toHaveLength(1);
+      expect(h.forms[0].form.note).toBeUndefined();
+      expect(h.forms[0].noteHint).toBeUndefined();
+    });
+
+    it("writes the note from the box, moving nothing else", async () => {
+      const h = await saved(`${FOCUS}\n${LATER}\n`, { note: { face: "smile", text: "went well" } });
+      expect(h.vault.contents[LOG(DATE)]).toBe(`${FOCUS} [Note:: smile · went well]\n${LATER}\n`);
+      expect(Notice.shown).toEqual(["Gentle pomodoro: session updated."]);
+      expect(h.noted).toEqual([[ID, { face: "smile", text: "went well" }]]);
+    });
+
+    it("keeps CRLF and the line's own ending", async () => {
+      const h = await saved(`${FOCUS}\r\n${LATER}\r\n`, { note: { face: "meh", text: "" } });
+      expect(h.vault.contents[LOG(DATE)]).toBe(`${FOCUS} [Note:: meh]\r\n${LATER}\r\n`);
+    });
+
+    it("checks the box with the rest of the dialog, so it stays open past the cap", async () => {
+      const options = await opened(`${FOCUS}\n`, ON);
+      expect(options.check({ ...options.form, note: { face: null, text: "x".repeat(501) } })).toBe(
+        FORM_NOTE_LONG_MESSAGE
+      );
+      expect(
+        options.check({ ...options.form, note: { face: null, text: "x".repeat(500) } })
+      ).toBeNull();
+    });
+
+    it("tells the store what a line holds after any fix, the time as much as the note", async () => {
+      const h = await saved(`${NOTED}\n`, { status: "cancelled" });
+      expect(h.noted).toEqual([[ID, MEH]]);
+    });
+
+    it("tells the store the note went: emptied, or the focus made a break", async () => {
+      const emptied = await saved(`${NOTED}\n`, { note: EMPTY });
+      expect(emptied.vault.contents[LOG(DATE)]).toBe(`${FOCUS}\n`);
+      expect(emptied.noted).toEqual([[ID, null]]);
+      // The Save is the question: an emptied box asks nothing more.
+      expect(emptied.asked).toEqual([]);
+      const rest = await saved(`${NOTED}\n`, { kind: "short-break" });
+      expect(rest.noted).toEqual([[ID, null]]);
+    });
+
+    it("tells the store nothing when nothing was written, or the line has no Session", async () => {
+      const unchanged = await saved(`${NOTED}\n`, {});
+      expect(unchanged.noted).toEqual([]);
+      const old = await saved(`${V2_FOCUS}\n`, { status: "cancelled" });
+      expect(old.vault.contents[LOG(DATE)]).toContain("cancelled");
+      expect(old.noted).toEqual([]);
+      // Refused: the line changed after it was opened.
+      const h = harness({ [LOG(DATE)]: `${NOTED}\n` }, ON, {
+        askSessionForm: (options) => {
+          h.vault.contents[LOG(DATE)] = `${LATER}\n`;
+          return Promise.resolve({
+            action: "save",
+            form: { ...options.form, status: "cancelled" },
+          });
+        },
+      });
+      await h.tools.fixLine(DATE, loggedLines(`${NOTED}\n`)[0]);
+      expect(Notice.shown).toContain(LINE_CHANGED_NOTICE);
+      expect(h.noted).toEqual([]);
+    });
+
+    it("tells the store nothing when a delete is refused, or the Session isn't one", async () => {
+      const h = harness({ [LOG(DATE)]: `${NOTED}\n` }, ON, {
+        askSessionForm: () => {
+          h.vault.contents[LOG(DATE)] = `${FOCUS} [Note:: changed since]\n`;
+          return Promise.resolve({ action: "delete" });
+        },
+      });
+      h.answers.push(true);
+      await h.tools.fixLine(DATE, loggedLines(`${NOTED}\n`)[0]);
+      expect(Notice.shown).toContain(LINE_CHANGED_NOTICE);
+      expect(h.noted).toEqual([]);
+
+      const invalid = await saved(`${V2_FOCUS} [Session:: nope]\n`, { status: "cancelled" });
+      expect(invalid.vault.contents[LOG(DATE)]).toContain("cancelled");
+      expect(invalid.noted).toEqual([]);
+    });
+
+    it("changes nothing in the store when the file can't be read back", async () => {
+      const h = harness({ [LOG(DATE)]: `${NOTED}\n` }, ON, {
+        askSessionForm: (options) => {
+          vi.spyOn(h.vault, "read").mockRejectedValueOnce(new Error("locked"));
+          return Promise.resolve({ action: "save", form: { ...options.form, note: EMPTY } });
+        },
+      });
+      await h.tools.fixLine(DATE, loggedLines(`${NOTED}\n`)[0]);
+      expect(h.vault.contents[LOG(DATE)]).toBe(`${FOCUS}\n`);
+      expect(h.noted).toEqual([]);
+      expect(warnings.join("\n")).toContain("back after fixing a session");
+    });
+
+    it("adds a sentence to Delete's question when the line has a note, and tells the store", async () => {
+      const h = harness({ [LOG(DATE)]: `${NOTED}\n${LATER}\n` });
+      const line = loggedLines(`${NOTED}\n${LATER}\n`)[0];
+      h.formAnswers.push({ action: "delete" }, { action: "delete" });
+      await h.tools.fixLine(DATE, line);
+      expect(DELETE_NOTE_SENTENCE).toBe("Its focus note goes with it.");
+      expect(h.asked[0].body).toBe(
+        `10:00 · Focus · 25m · No Task, from the log for ${DATE}. Its focus note goes with it. This can't be undone.`
+      );
+      // Declined: nothing is written, nothing told.
+      expect(h.noted).toEqual([]);
+      h.answers.push(true);
+      await h.tools.fixLine(DATE, line);
+      expect(h.vault.contents[LOG(DATE)]).toBe(`${LATER}\n`);
+      expect(h.noted).toEqual([[ID, null]]);
+    });
+
+    it("asks as before when the line has no note, and a blank Note is none", async () => {
+      for (const file of [`${FOCUS}\n`, `${FOCUS} [Note:: ]\n`]) {
+        const h = harness({ [LOG(DATE)]: file });
+        h.formAnswers.push({ action: "delete" });
+        await h.tools.fixLine(DATE, loggedLines(file)[0]);
+        expect(h.asked[0].body).toBe(
+          `10:00 · Focus · 25m · No Task, from the log for ${DATE}. This can't be undone.`
+        );
+      }
+    });
+
+    it("tells the store the earlier part's note when the last part is deleted", async () => {
+      const file = `${NOTED}\n${PART}\n`;
+      const h = harness({ [LOG(DATE)]: file });
+      h.formAnswers.push({ action: "delete" });
+      h.answers.push(true);
+      await h.tools.fixLine(DATE, loggedLines(file)[1]);
+      expect(h.noted).toEqual([[ID, MEH]]);
+    });
+  });
+
   describe("the command", () => {
     beforeEach(() => {
       Modal.opened = null;
@@ -1325,6 +1599,10 @@ describe("the plugin's wiring", () => {
       'readDays: (from, to) => this.api ? this.api.getDays(from, to) : Promise.reject(new Error("Gentle Pomodoro is not loaded.")),'
     );
     expect(main).toContain("saveSettings: () => this.saveSettings(),");
+    // Fix tells the focus note's store what a rewritten line now holds.
+    expect(main).toContain(
+      "noteEdited: (sessionId, note) => { this.focusNotes.lineEdited(sessionId, note); },"
+    );
   });
 
   it("opens today's log from the status bar's menu", () => {

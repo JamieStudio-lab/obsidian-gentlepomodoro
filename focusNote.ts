@@ -184,15 +184,25 @@ function sameNote(a: FocusNote, b: FocusNote): boolean {
   return a.face === b.face && a.text === b.text;
 }
 
-/** Whether `draft` would change the line: it differs from `saved` once made
- *  what the line stores, or the cap cut it (so Save shows what was kept). */
+/**
+ * Whether `draft` would change the line: it differs from `saved` once made what
+ * the line stores, or the cap cut it (so Save shows what was kept). A draft that
+ * IS the saved note never would, even where the cleaner would change it: a Note
+ * typed by hand (`a#b`, or over the cap) is read back raw, and nothing was typed.
+ */
 export function noteIsDirty(draft: FocusNote, saved: FocusNote | null): boolean {
-  return cleanedIsDirty(noteFromInput(draft.face, draft.text), saved);
+  return cleanedIsDirty(draft, noteFromInput(draft.face, draft.text), saved);
 }
 
-/** noteIsDirty for a draft already cleaned (cardView cleans it once). */
-function cleanedIsDirty(note: ReturnType<typeof noteFromInput>, saved: FocusNote | null): boolean {
-  return note.cut || !sameNote(note, saved ?? EMPTY_NOTE);
+/** noteIsDirty with the draft's cleaned form in hand (cardView cleans it once). */
+function cleanedIsDirty(
+  draft: FocusNote,
+  note: ReturnType<typeof noteFromInput>,
+  saved: FocusNote | null
+): boolean {
+  const held = saved ?? EMPTY_NOTE;
+  if (sameNote(draft, held)) return false;
+  return note.cut || !sameNote(note, held);
 }
 
 /** One time format for the card's two lines: the app's, as "Ends 15:30" is. */
@@ -253,7 +263,7 @@ export interface CardState {
 export function cardView(state: CardState, moment: MomentFactory): CardView {
   const { target, saved, draft, busy } = state;
   const note = noteFromInput(draft.face, draft.text);
-  const dirty = cleanedIsDirty(note, saved);
+  const dirty = cleanedIsDirty(draft, note, saved);
   let status = "";
   if (busy) status = "Saving…";
   else if (dirty) status = "Not saved";
@@ -424,7 +434,8 @@ interface PendingWrite {
 }
 
 /** A store change. `reseed`: every card takes the store's draft, the one
- *  being typed in too — after a save, a clear, or a new session. */
+ *  being typed in too — after a save, a clear, a new session, or a Fix that
+ *  changed the note under an untouched draft. */
 export interface FocusNoteChange {
   reseed: boolean;
 }
@@ -444,11 +455,12 @@ export class FocusNoteStore {
    * another session waits its turn, so two never run at once.
    */
   private writes: PendingWrite[] = [];
-  /** Sessions whose line a write of this store has settled on. */
+  /** Sessions whose line this device has written since the store took them: a
+   *  write of this store that settled, or a Fix (lineEdited). */
   private readonly wrote = new Set<string>();
   private queue: Promise<unknown> = Promise.resolve();
   private readonly listeners = new Set<FocusNoteListener>();
-  /** Settled writes so far (revision). */
+  /** Settled writes and Fix note edits so far (revision). */
   private settled = 0;
 
   constructor(private readonly host: FocusNoteHost) {
@@ -469,10 +481,10 @@ export class FocusNoteStore {
     return this.state.saved;
   }
   /**
-   * Moves each time a write of this store settles, whatever its result: the
-   * log may hold another note now. The panel's "Last time" line re-reads the
-   * log on it — and on nothing a keystroke changes, as every setDraft is a
-   * change too.
+   * Moves each time a write of this store settles, whatever its result, and
+   * when a Fix changes the note of the store's session: the log may hold another
+   * note now. The panel's "Last time" line re-reads the log on it — and on
+   * nothing a keystroke changes, as every setDraft is a change too.
    */
   get revision(): number {
     return this.settled;
@@ -496,8 +508,8 @@ export class FocusNoteStore {
   /**
    * Whether the card holds words that will not reach the line — what the
    * UNSAVED and DROPPED notices ask. An empty card is not: nothing typed can
-   * be lost, and a saved note it emptied is still in the log (only Clear
-   * takes it off). While its session's write runs, what lands is the note
+   * be lost, and a saved note it emptied is still in the log (Clear takes
+   * it off, or an emptied box in Fix). While its session's write runs, what lands is the note
    * being written, so the draft is judged against that by content (the cut
    * does not count: the write cut it the same way).
    */
@@ -507,7 +519,7 @@ export class FocusNoteStore {
     const note = noteFromInput(draft.face, draft.text);
     if (note.face === null && note.text === "") return false;
     const pending = this.pendingFor(target.sessionId);
-    if (pending === null) return cleanedIsDirty(note, saved);
+    if (pending === null) return cleanedIsDirty(draft, note, saved);
     return draft !== pending.typed && !sameNote(note, pending.note ?? EMPTY_NOTE);
   }
 
@@ -618,6 +630,32 @@ export class FocusNoteStore {
       saved: { face: note.face, text: note.text, at: null },
     };
     this.changed(true);
+  }
+
+  /**
+   * Fix a logged session rewrote a line (logTools.ts): `note` is what session
+   * `sessionId` holds now, as read back from the file, so the card, the command
+   * and the "Last time" line show no stale note. Only for the session the store
+   * is on, and not while its own write is pending: that write settles after, and
+   * sets `saved` itself. Words the user typed that differ from the old note stay
+   * as they are.
+   */
+  lineEdited(sessionId: string, note: FocusNote | null): void {
+    const s = this.state;
+    if (s.target?.sessionId !== sessionId || this.pendingFor(sessionId) !== null) return;
+    const kept = note !== null && (note.face !== null || note.text !== "") ? note : null;
+    if (sameNote(kept ?? EMPTY_NOTE, s.saved ?? EMPTY_NOTE)) return;
+    this.wrote.add(sessionId);
+    this.settled++;
+    const draft = noteIsDirty(s.draft, s.saved)
+      ? s.draft
+      : { face: kept?.face ?? null, text: kept?.text ?? "" };
+    this.state = {
+      ...s,
+      saved: kept ? { face: kept.face, text: kept.text, at: null } : null,
+      draft,
+    };
+    this.changed(!sameNote(draft, s.draft));
   }
 
   private write(target: FocusNoteTarget, note: FocusNote | null): Promise<NoteWriteResult | null> {

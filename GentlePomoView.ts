@@ -79,6 +79,7 @@ import {
   type DayNightIcon,
 } from "./icons";
 import { MusicController, type MusicHost } from "./MusicController";
+import { FrameWindow } from "./frameWindow";
 import type { MomentFactory } from "./momentTypes";
 import { formatEndTime } from "./endTime";
 import {
@@ -225,6 +226,10 @@ export class GentlePomoView extends ItemView {
   // host object below.
   private musicIframe: HTMLIFrameElement | null = null;
   private readonly music: MusicController;
+  // Where the frame's messages arrive and the controller's timers run: the
+  // window holding the frame, which a pop-out makes a different one.
+  private readonly frameWindow: FrameWindow;
+  private windowMigratedOn = false;
 
   private timerListener: TimerListener | null = null;
   private lastState: TimerState | null = null;
@@ -236,7 +241,8 @@ export class GentlePomoView extends ItemView {
   // Last end-time string rendered; gates the ~once/minute DOM write (mirrors lastTimeText).
   private lastEndText: string | null = null;
   // Music reconciliation guards (same write-guard family). lastMusicKey gates the
-  // whole (toggle, url) reconcile to actual changes; lastMusicEmbedUrl and
+  // whole (toggle, url) reconcile to actual changes (panelChangedWindows clears
+  // all three, as a move needs a new frame with no edit); lastMusicEmbedUrl and
   // lastMusicSourceUrl together gate iframe rebuilds (an offset no longer shows
   // up in the URL). Volume convergence is the controller's own bookkeeping.
   private lastMusicKey: string | null = null;
@@ -311,6 +317,13 @@ export class GentlePomoView extends ItemView {
     super(leaf);
     this.plugin = plugin;
     this.timer = plugin.timer;
+    // Only messages from *our* frame get through; the controller checks the
+    // origin against its allowlist and learns the origin to address commands to
+    // from it.
+    this.frameWindow = new FrameWindow(window, (evt) => {
+      if (!this.musicIframe || evt.source !== this.musicIframe.contentWindow) return;
+      this.music.handleFrameMessage(evt.origin, evt.data);
+    });
     this.music = new MusicController(this.createMusicHost());
   }
 
@@ -891,13 +904,16 @@ export class GentlePomoView extends ItemView {
 
     this.musicPlayerContainer = this.musicSection.createDiv("gp-music-player");
 
-    // The embed talks back over the shared window message bus. Only messages
-    // from *our* frame get through; the controller checks the origin against
-    // its allowlist and learns the origin to address commands to from it.
-    this.registerDomEvent(window, "message", (evt: MessageEvent) => {
-      if (!this.musicIframe || evt.source !== this.musicIframe.contentWindow) return;
-      this.music.handleFrameMessage(evt.origin, evt.data);
-    });
+    // One listener while the view is loaded: onOpen can run again on an open view,
+    // and closing a view unloads it, so a later open has to put this back.
+    if (!this.windowMigratedOn) {
+      this.windowMigratedOn = true;
+      const off = this.containerEl.onWindowMigrated(() => this.panelChangedWindows());
+      this.register(() => {
+        off();
+        this.windowMigratedOn = false;
+      });
+    }
 
     // Daily-goal progress. Hidden on desktop via CSS (the status bar carries it
     // there); revealed on mobile, where Obsidian hides the status bar. Populated by
@@ -1060,6 +1076,28 @@ export class GentlePomoView extends ItemView {
   }
 
   /**
+   * The tab moved to another window, which moves this same view and its DOM.
+   * Moving an iframe between documents reloads it, so the player has restarted
+   * from nothing while the controller still believes its old state. Build a
+   * fresh frame there instead: position is flushed (or a pending ⏹ honoured) by
+   * destroy, ▶️ shows, and the reconcile plans the resume. Playback is not
+   * carried across.
+   */
+  private panelChangedWindows(): void {
+    if (this.containerEl.win === this.frameWindow.win) return;
+    this.rebuildMusicFrame();
+  }
+
+  /** A fresh frame in the panel's window now: position kept, ▶️ showing, not playing. */
+  private rebuildMusicFrame(): void {
+    this.music.destroy();
+    this.lastMusicKey = null;
+    this.lastMusicEmbedUrl = null;
+    this.lastMusicSourceUrl = null;
+    this.applySettings();
+  }
+
+  /**
    * Add .gp-compact to the panel when it's a short, wide leaf (e.g. iPhone
    * landscape), so styles.css can shrink + un-pin the timer. Detection keys off the
    * panel's measured *aspect ratio* (wider than tall) rather than an absolute height
@@ -1115,7 +1153,8 @@ export class GentlePomoView extends ItemView {
    * the picker, the folder, "Day starts at", today, the link (the 🆔 — or,
    * for a task without one, its note's path and its name without the count)
    * and two revisions: the store's,
-   * which moves only when a write settles, and the log files'
+   * which moves when a write settles or a Fix changes the store's session's
+   * note, and the log files'
    * (lastNoteLogTouched).
    */
   private refreshLastNote(): void {
@@ -1343,7 +1382,8 @@ export class GentlePomoView extends ItemView {
     // Music player reconciliation. Runs here so the per-tick call and the settings
     // tab's applySettingsToOpenViews() converge on the same DOM. The lastMusicKey
     // string guard keeps the ~20Hz hot path to one concat + compare — the URL is
-    // only parsed when the (toggle, loop, url) triple actually changes. Removing
+    // only parsed when the (toggle, loop, url) triple actually changes, or the
+    // panel changed windows (panelChangedWindows clears the key). Removing
     // the iframe is what stops playback, which implements "toggle off = hide + stop".
     // Loop is baked into the embed URL, so flipping it rebuilds the iframe too.
     // Only the ACTIVE station's URL is in this key. Names are display-only and
@@ -1405,7 +1445,8 @@ export class GentlePomoView extends ItemView {
       // to equal the offset the last build used compares equal too, which is the
       // same failure one step removed. Null when nothing is embedded, so a view
       // that has never had a player doesn't rebuild on its first tick. Bounded
-      // by the musicKey guard, so it can only fire on a real edit.
+      // by the musicKey guard, so it fires only on a real edit, or when the panel
+      // changed windows (panelChangedWindows clears the keys).
       const sourceUrl = embedUrl === null ? null : activeMusicUrl;
       // Visible whenever a link is configured — deliberately NOT `embedUrl !==
       // null`, which would hide the whole section, picker included, exactly when
@@ -1752,13 +1793,13 @@ export class GentlePomoView extends ItemView {
   private createMusicHost(): MusicHost {
     return {
       now: () => Date.now(),
-      setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+      setTimeout: (fn, ms) => this.frameWindow.setTimeout(fn, ms),
       clearTimeout: (id) => {
-        window.clearTimeout(id);
+        this.frameWindow.clearTimeout(id);
       },
-      setInterval: (fn, ms) => window.setInterval(fn, ms),
+      setInterval: (fn, ms) => this.frameWindow.setInterval(fn, ms),
       clearInterval: (id) => {
-        window.clearInterval(id);
+        this.frameWindow.clearInterval(id);
       },
       mountPlayer: (src, onLoad) => {
         const iframe = this.musicPlayerContainer.createEl("iframe", {
@@ -1771,11 +1812,23 @@ export class GentlePomoView extends ItemView {
           },
         });
         this.musicIframe = iframe;
-        this.registerDomEvent(iframe, "load", onLoad);
+        this.frameWindow.listen(iframe.win);
+        // A frame adopted into another window fires load again. This catches a
+        // move onWindowMigrated misses: that one rides a CSS animation, which
+        // waits for the panel to be shown and never starts if a theme kills
+        // animations.
+        this.registerDomEvent(iframe, "load", () => {
+          if (iframe.win !== this.frameWindow.win) {
+            this.panelChangedWindows();
+            return;
+          }
+          onLoad();
+        });
       },
       unmountPlayer: () => {
         this.musicIframe?.remove();
         this.musicIframe = null;
+        this.frameWindow.stop();
       },
       postToPlayer: (payload, origin) => {
         this.musicIframe?.contentWindow?.postMessage(payload, origin);
@@ -1810,6 +1863,9 @@ export class GentlePomoView extends ItemView {
         // it repaints from this one call rather than being recomputed — see
         // MusicController.setButtonsPlaying for the two reasons that matters.
         this.renderStationCaption();
+      },
+      rebuildPlayer: () => {
+        this.rebuildMusicFrame();
       },
       onTrackChanged: () => {
         this.renderStationCaption();

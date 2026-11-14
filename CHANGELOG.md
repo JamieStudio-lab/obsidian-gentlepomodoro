@@ -4,6 +4,48 @@ All notable changes to **Gentle Pomodoro** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] — 2026-11-14
+
+**Change a focus note on any session from Fix a logged session, and play music
+with the timer panel in its own window.**
+
+### Added
+
+- **A focus note box in Fix a logged session.** Under **Status**, the dialog now
+  has the card's three faces and box, so you can add, change or remove the note
+  of the session you opened, not only the last one. Empty both and **Save** to
+  take the note off. **Ctrl+Enter** (**⌘ Enter** on a Mac) saves from the box.
+  A note over 500 characters is refused with a message, and your words stay in
+  the box. A box you don't touch leaves the note exactly as written.
+- The box shows while **Offer a focus note** is on, or when the session already
+  has a note, so a note can be changed with the setting off.
+- **Which sessions can hold a note** hasn't changed. A session logged before
+  0.7.0 has no `Session` field, and the plugin never adds one, so Fix says it
+  can't hold a note. A session split at a task switch keeps its note on its last
+  part, and Fix says so on the earlier parts.
+- Deleting a session that has a note says the note goes with it.
+
+### Fixed
+
+- **Music didn't work with the timer panel in a pop-out window.** ▶️ only ever
+  said the player hadn't loaded, because the plugin listened for the player on
+  the main window. It now listens on the window holding the player, and runs its
+  fades on that window's timers, so a fade doesn't crawl while the main window is
+  covered.
+- **Moving the panel** reloads the player, to another window or within one (say,
+  from the main area to a sidebar). That used to leave it showing ⏸ with no sound,
+  and the next ▶️ played from the top and overwrote your place. The music now stops
+  cleanly, ▶️ comes back, and pressing it resumes where you were. A ▶️ pressed in
+  the moment the player is reloading gets a notice asking you to press it again.
+- **Timer sounds could start late or crackle** after coming back to Obsidian from
+  another desktop or a covering window. The sounds now use a larger audio buffer,
+  and the plugin wakes its sound output when the window comes back into view, so
+  the Start drum and the end sound play on an output that is already running.
+  When an end sound is going to play, the output is also started, silently, two
+  seconds before the session ends.
+  Bluetooth headphones that have gone to sleep can still clip the first moment
+  of a sound; that part is the headphones'.
+
 ## [0.7.1] — 2026-11-05
 
 **An optional focus note after each focus session, and the Low / Mid / High

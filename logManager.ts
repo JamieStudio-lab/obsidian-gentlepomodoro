@@ -1364,8 +1364,9 @@ export class LogManager {
   }
 
   /**
-   * Put `note` on a session's line, or take it off (null) — the focus note's
-   * one write (0.7.1). Only the line of `target.sessionId`, its last focus
+   * Put `note` on a session's line, or take it off (null), for the card and the
+   * command (0.7.1); Fix a logged session rewrites its line itself (logEditor.ts,
+   * logTools.ts). Only the line of `target.sessionId`, its last focus
    * line (setSessionNote), and only when the text changes.
    *
    * 1. The lines still waiting are written first, oldest first. A line of

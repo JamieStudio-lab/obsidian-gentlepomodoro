@@ -991,6 +991,7 @@ function harness(files = FILES(), set: Partial<GentlePomoSettings> = {}): Harnes
       h.dialogs.push(options);
       return Promise.resolve(h.answer(options));
     },
+    noteEdited: () => undefined,
   });
   return h;
 }

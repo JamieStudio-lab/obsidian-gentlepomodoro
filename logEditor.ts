@@ -5,27 +5,33 @@
  * hand-editing the inline format — and the real logs held six hand-edited
  * lines whose Total no longer matched their own times.
  *
- * Pure: no obsidian, the moments are the caller's. Every line is built by
+ * Pure: it calls no obsidian API (focusNote.ts's import chain loads the module),
+ * and the moments are the caller's. Every line is built by
  * logLine.ts's formatter and builder, so it is valid by construction; this
  * module decides what goes into it, where it goes in the file, and that a
  * line edited elsewhere meanwhile is never overwritten.
  */
 import { MIN_SESSION_SECONDS, NO_TASK_LABEL } from "./constants";
+import { noteFromInput } from "./focusNote";
 import {
   LOG_DATE_FORMAT,
   asciiDigits,
   formatLogLine,
   formatV2Line,
+  isSessionId,
   logSeconds,
   logTaskId,
   logicalDate,
   newSessionId,
   parseLogLine,
+  parseNoteValue,
   readLogPauses,
   readLogTail,
   readLogTime,
   repeatedReading,
+  setSessionNote,
   stamp,
+  type FocusNote,
   type LogLineKind,
   type ParsedLogLine,
   type SessionLog,
@@ -68,6 +74,8 @@ export interface SessionForm {
   /** Active minutes: the time spent, pauses left out. */
   minutes: string;
   status: SessionStatus;
+  /** The focus note box, as typed; undefined when the dialog has no box. */
+  note?: FocusNote;
 }
 
 export type ToMoment = (ms: number) => MomentLike;
@@ -84,6 +92,11 @@ export const FORM_OTHER_DAY_MESSAGE =
   "That moves the session to another day's log. Delete it here and add it on that day instead.";
 export const FORM_UNSAFE_MESSAGE =
   "This line can't be rewritten without losing part of it. Edit it by hand instead.";
+export const FORM_NOTE_LONG_MESSAGE =
+  "A focus note holds up to 500 characters. Shorten this one to save it.";
+export const FORM_NOTE_OLD_LINE_HINT = "Logged before 0.7.0, so this session can't hold a note.";
+export const FORM_NOTE_EARLIER_PART_HINT =
+  "Split at a task switch. Its note goes on the last part.";
 
 /** The task as the dialog's button names it. A line logged without a task
  *  says "No Task", and shows so: whether it is linked is its path (F36). */
@@ -368,6 +381,52 @@ export function replaceSessionLine(
   return rows.join("\n");
 }
 
+/**
+ * `target` among a file's session lines, as replaceSessionLine finds it: at
+ * its index, or the one line with its exact text. Null when it is not there
+ * as it was read.
+ */
+export function findLoggedLine(
+  lines: readonly LoggedLine[],
+  target: { index: number; text: string }
+): LoggedLine | null {
+  const same = lines.filter((l) => l.text === target.text);
+  return same.find((l) => l.index === target.index) ?? (same.length === 1 ? same[0] : null);
+}
+
+export type NoteSlot = "open" | "earlier-part" | "old-line" | "none";
+
+/**
+ * Where a logged line stands for a focus note:
+ *
+ * - "open": it can take one. Version 2 with a valid Session, and no later
+ *   focus line shares that Session. A rest line counts: made a focus, it
+ *   becomes that last line.
+ * - "earlier-part": the same, but a later focus line shares the Session. The
+ *   parts of a split session share one note, on the last part.
+ * - "old-line": a focus line with no valid Session, or not in version 2. A
+ *   note is found by its Session, and an old line is never given one.
+ * - "none": a rest line that has no valid Session.
+ *
+ * A focus line is "open" exactly when setSessionNote would write on it
+ * (logLine.ts, lastSessionRow). `lines` is loggedLines of the line's file.
+ */
+export function noteSlot(line: LoggedLine, lines: readonly LoggedLine[]): NoteSlot {
+  const { parsed } = line;
+  const session = parsed.values.get("Session");
+  if (parsed.format !== "v2" || !isSessionId(session)) {
+    return parsed.kind === "focus" ? "old-line" : "none";
+  }
+  const hasLaterPart = lines.some(
+    (other) =>
+      other.index > line.index &&
+      other.parsed.kind === "focus" &&
+      other.parsed.format === "v2" &&
+      other.parsed.values.get("Session") === session
+  );
+  return hasLaterPart ? "earlier-part" : "open";
+}
+
 /** The task a logged focus line names — as written, linked or not — or null for a break. */
 function lineTask(parsed: ParsedLogLine): SessionTask | null {
   if (parsed.kind !== "focus" || !parsed.task) return null;
@@ -476,13 +535,22 @@ export type EditResult =
   | { kind: "unchanged" }
   | { kind: "error"; message: string };
 
+/** Space around the words is no edit: the box reads as it opened. */
+const sameNoteBox = (a: FocusNote | undefined, b: FocusNote | undefined): boolean =>
+  a === undefined || b === undefined
+    ? a === b
+    : a.face === b.face && a.text.trim() === b.text.trim();
+
 const sameForm = (a: SessionForm, b: SessionForm): boolean =>
   a.kind === b.kind &&
   sameTask(a.task, b.task) &&
   a.date.trim() === b.date.trim() &&
   a.time.trim() === b.time.trim() &&
   a.minutes.trim() === b.minutes.trim() &&
-  a.status === b.status;
+  a.status === b.status &&
+  // Only a focus takes a note: on a break the box is ignored, words left in it
+  // while the kind was focus included.
+  (a.kind !== "focus" || sameNoteBox(a.note, b.note));
 
 /**
  * A logged line as the dialog edited it. What the user did not change keeps
@@ -517,8 +585,18 @@ const sameForm = (a: SessionForm, b: SessionForm): boolean =>
  * and keeps it, as every other edit does. Session, StartedBy, EndedBy,
  * Planned, Offset, OffsetChange and Device stay as they are: they say how the
  * session was timed, which a fix afterwards does not change. A line without the tail gets
- * none: an old line is never filled in. A move to
- * another day's file is refused — this rewrites one line in one file — and so
+ * none: an old line is never filled in.
+ *
+ * The focus note box follows the same rule. While it reads as it opened, the
+ * Note field is copied as written, even a hand-typed one the cleaner would
+ * change or one over the cap. Changed on a focus, the note goes through
+ * setSessionNote, the only thing that writes a Note: an empty box takes the
+ * field off with no question (the Save is the question), any second Note goes,
+ * and words past the cap refuse the save rather than lose what was typed. On a
+ * line that stays or becomes a break the box is ignored. So a note-only edit
+ * moves no time, no Slept, Dropped or Cycle.
+ *
+ * A move to another day's file is refused — this rewrites one line in one file — and so
  * is any line that would not read back the same. A start that stays on the
  * day it was on is not a move, even in a file named by another rule: files
  * from before 0.6.9 are named by calendar date, and "Day starts at" can change
@@ -534,6 +612,11 @@ export function editedLine(
   const minutesTyped = form.minutes.trim() !== initial.minutes.trim();
   const problem = timingProblem(form, minutesTyped);
   if (problem !== null) return { kind: "error", message: problem };
+  const note =
+    form.kind === "focus" && form.note !== undefined && !sameNoteBox(initial.note, form.note)
+      ? noteFromInput(form.note.face, form.note.text)
+      : null;
+  if (note?.cut) return { kind: "error", message: FORM_NOTE_LONG_MESSAGE };
   const original = line.parsed.values;
 
   const times = lineTimes(line.parsed);
@@ -655,5 +738,32 @@ export function editedLine(
     back.fields.length === fields.length &&
     back.fields.every((f, i) => f.key === fields[i][0] && f.value === fields[i][1]);
   if (!exact) return { kind: "error", message: FORM_UNSAFE_MESSAGE };
-  return text === line.text ? { kind: "unchanged" } : { kind: "ok", text };
+  const finished = note === null ? text : withNote(text, original.get("Session"), note);
+  if (finished === null) return { kind: "error", message: FORM_UNSAFE_MESSAGE };
+  return finished === line.text ? { kind: "unchanged" } : { kind: "ok", text: finished };
+}
+
+/**
+ * `text` with its focus note set to `note`, or null when the line would no
+ * longer read back as version 2 with that note and every other part as it was.
+ */
+function withNote(text: string, sessionId: string | undefined, note: FocusNote): string | null {
+  const noted = setSessionNote(text, sessionId ?? "", note);
+  if (noted === null) return null;
+  const before = parseLogLine(text);
+  const back = parseLogLine(noted);
+  if (before === null || back === null || back.format !== "v2" || back.kind !== before.kind) {
+    return null;
+  }
+  const others = (parsed: ParsedLogLine) =>
+    parsed.fields.filter((f) => f.key !== "Note").map((f) => [f.key, f.value]);
+  const expected = note.face === null && note.text === "" ? null : note;
+  const read = parseNoteValue(back.values.get("Note"));
+  const same =
+    back.rest === before.rest &&
+    JSON.stringify(others(back)) === JSON.stringify(others(before)) &&
+    back.fields.filter((f) => f.key === "Note").length === (expected === null ? 0 : 1) &&
+    read?.face === expected?.face &&
+    read?.text === expected?.text;
+  return same ? noted : null;
 }

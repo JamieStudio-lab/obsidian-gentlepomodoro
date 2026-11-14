@@ -4,23 +4,34 @@ import {
   FORM_DATE_MESSAGE,
   FORM_FUTURE_MESSAGE,
   FORM_MINUTES_MESSAGE,
+  FORM_NOTE_LONG_MESSAGE,
   FORM_OTHER_DAY_MESSAGE,
   FORM_TIME_MESSAGE,
   FORM_UNSAFE_MESSAGE,
   MAX_SESSION_MINUTES,
   describeLoggedLine,
   editedLine,
+  findLoggedLine,
   formFromLine,
   insertSessionLine,
   loggedLines,
   newSessionForm,
+  noteSlot,
   replaceSessionLine,
   sessionFromForm,
   sessionTaskLabel,
   type LoggedLine,
   type SessionForm,
 } from "../logEditor";
-import { formatLogLine, parseFocusTotalSeconds, parseLogLine, readLogTail } from "../logLine";
+import {
+  formatLogLine,
+  parseFocusTotalSeconds,
+  parseLogLine,
+  readLogTail,
+  readSessionNote,
+  setSessionNote,
+  type FocusNote,
+} from "../logLine";
 import type { MomentLike } from "../momentTypes";
 import { offsetAt } from "./logTail";
 
@@ -832,6 +843,354 @@ describe("a 0.7.1 line, fixed: its focus note", () => {
   it("gives none to an added session", () => {
     expect(lineFor()).not.toContain("Note::");
     expect(lineFor({ kind: "short-break", minutes: "5" })).not.toContain("Note::");
+  });
+});
+
+describe("the focus note's place on a file's lines (noteSlot)", () => {
+  const ID = "sd4f6g8j2k";
+  const focusAt = (time: string, tail = "") =>
+    `- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 ${time}:00] [End:: 2026-10-02 ${time}:30] [Scheduled:: 1500] [Pauses:: []] [Total:: 30] [Status:: finished] [Type:: focus] [Overtime:: 0]${tail}`;
+  const restAt = (time: string, tail = "") =>
+    `- ☕ Rest [Start:: 2026-10-02 ${time}:00] [End:: 2026-10-02 ${time}:30] [Scheduled:: 300] [Total:: 30] [Type:: short-break]${tail}`;
+  const v1At = (time: string, tail = "") =>
+    `- 🍅 Focus | Task:: No Task | Start:: 2026-10-02 ${time}:00 | End:: 2026-10-02 ${time}:30 | Scheduled:: 1500 | Pauses:: [] | Total:: 30 | Status:: finished${tail}`;
+  const session = (id = ID) => ` [Session:: ${id}]`;
+
+  const slots = (content: string) => {
+    const lines = loggedLines(content);
+    return lines.map((line) => noteSlot(line, lines));
+  };
+
+  it("opens a line with a valid Session that no later focus line shares", () => {
+    expect(slots(`${focusAt("09:00", session())}\n`)).toEqual(["open"]);
+    expect(
+      slots(`${focusAt("09:00", session())}\n${focusAt("10:00", session("s000000002"))}\n`)
+    ).toEqual(["open", "open"]);
+  });
+
+  it("calls the parts of a split session earlier, and opens the last", () => {
+    const file = [
+      focusAt("09:00", session()),
+      focusAt("09:10", session()),
+      focusAt("09:20", session()),
+    ];
+    expect(slots(file.join("\n"))).toEqual(["earlier-part", "earlier-part", "open"]);
+  });
+
+  it("opens a rest line with a Session: made a focus, it can take a note", () => {
+    expect(slots(restAt("09:00", session()))).toEqual(["open"]);
+    // A focus line of that session before it does not close it; one after does.
+    expect(slots(`${focusAt("09:00", session())}\n${restAt("09:30", session())}`)).toEqual([
+      "open",
+      "open",
+    ]);
+    expect(slots(`${restAt("09:00", session())}\n${focusAt("09:30", session())}`)).toEqual([
+      "earlier-part",
+      "open",
+    ]);
+  });
+
+  it("does not count a later rest line, or a later line in the old format, as a later part", () => {
+    expect(slots(`${focusAt("09:00", session())}\n${restAt("09:30", session())}`)[0]).toBe("open");
+    expect(slots(`${focusAt("09:00", session())}\n${v1At("09:30", ` | Session:: ${ID}`)}`)).toEqual(
+      ["open", "old-line"]
+    );
+  });
+
+  it("calls a focus line old when it has no valid Session, or is not version 2", () => {
+    expect(slots(focusAt("09:00"))).toEqual(["old-line"]);
+    expect(slots(focusAt("09:00", " [Session:: nope]"))).toEqual(["old-line"]);
+    expect(slots(v1At("09:00"))).toEqual(["old-line"]);
+    expect(slots(v1At("09:00", ` | Session:: ${ID}`))).toEqual(["old-line"]);
+    // The old format only ever had its own keys: this one is part of Status.
+    expect(parseLogLine(v1At("09:00", ` | Session:: ${ID}`))?.values.has("Session")).toBe(false);
+  });
+
+  it("gives a rest line without a valid Session no place at all", () => {
+    expect(slots(restAt("09:00"))).toEqual(["none"]);
+    expect(slots(restAt("09:00", " [Session:: nope]"))).toEqual(["none"]);
+  });
+
+  // Whatever noteSlot calls open is the row setSessionNote writes on.
+  const PROPERTIES = `---\nnote: |\n  ${focusAt("08:00", session())}\n---\n`;
+  const SPLIT = [focusAt("09:00", session()), focusAt("09:10", session())];
+  const HAND_NOTE = [focusAt("09:00", `${session()} [Note:: typed on the earlier part]`), SPLIT[1]];
+  const MIXED = [
+    focusAt("07:00"),
+    restAt("08:30", session("s000000002")),
+    ...SPLIT,
+    v1At("09:40", ` | Session:: ${ID}`),
+    restAt("10:00"),
+    focusAt("11:00", session("s000000003")),
+  ];
+  it.each([
+    ["a split session", SPLIT.join("\n")],
+    ["a split session, CRLF", `${SPLIT.join("\r\n")}\r\n`],
+    ["a split session below properties", PROPERTIES + SPLIT.join("\n")],
+    ["a hand-typed Note on an earlier part", HAND_NOTE.join("\n")],
+    ["a hand-typed Note on an earlier part, CRLF", HAND_NOTE.join("\r\n")],
+    ["a day of everything", MIXED.join("\n")],
+    ["a day of everything, CRLF, below properties", PROPERTIES + MIXED.join("\r\n")],
+  ])("agrees with setSessionNote's choice of row on %s", (_name, content) => {
+    const lines = loggedLines(content);
+    const rows = content.split("\n");
+    for (const line of lines) {
+      const id = line.parsed.values.get("Session");
+      if (id === undefined || line.parsed.kind !== "focus") continue;
+      const written = setSessionNote(content, id, { face: "smile", text: "a new note" });
+      const changed =
+        written === null ? -1 : written.split("\n").findIndex((r, i) => r !== rows[i]);
+      expect(changed === line.index, line.text).toBe(noteSlot(line, lines) === "open");
+      if (written !== null && changed !== -1) {
+        // The row it wrote keeps its own line ending, and reads as the note.
+        expect(written.split("\n")[changed].endsWith("\r")).toBe(rows[changed].endsWith("\r"));
+        expect(readSessionNote(written, id)).toEqual({
+          found: true,
+          note: { face: "smile", text: "a new note" },
+        });
+      }
+    }
+  });
+
+  it("finds a line as replaceSessionLine does: at its index, or the one with its text", () => {
+    const a = focusAt("09:00");
+    const b = focusAt("10:00");
+    const lines = loggedLines(`${a}\n${b}\n${a}\n`);
+    expect(findLoggedLine(lines, { index: 2, text: a })?.index).toBe(2);
+    expect(findLoggedLine(lines, { index: 0, text: b })?.index).toBe(1);
+    // Two copies and neither at the index: it can't be told which.
+    expect(findLoggedLine(lines, { index: 1, text: a })).toBeNull();
+    expect(findLoggedLine(lines, { index: 0, text: focusAt("12:00") })).toBeNull();
+  });
+});
+
+describe("the focus note box, saved (editedLine)", () => {
+  const TAIL =
+    "[Session:: sd4f6g8j2k] [StartedBy:: start] [EndedBy:: stop] [Planned:: 1500] [Cycle:: 3] [Offset:: -240]";
+  const BARE = `- 🍅 Focus [Task:: No Task] [Start:: 2026-10-02 10:00:00] [End:: 2026-10-02 10:30:00] [Scheduled:: 1500] [Pauses:: []] [Total:: 1800] [Status:: finished] [Type:: focus] [Overtime:: 300] ${TAIL}`;
+  const NOTED = `${BARE} [Note:: meh · stuck on refs]`;
+  const REST = `- ☕ Rest [Start:: 2026-10-02 10:30:00] [End:: 2026-10-02 10:35:00] [Scheduled:: 300] [Total:: 300] [Type:: short-break] [Session:: sd4f6g8j2k] [StartedBy:: auto] [EndedBy:: stop] [Planned:: 300] [Offset:: -240]`;
+  const CONTEXT = { toMoment, nowMs: NOW, dayStartHour: 0, fileDate: "2026-10-02" };
+
+  /** The dialog saved on `text`: it opened on `opening`, and now reads `set`. */
+  const save = (text: string, opening: FocusNote, set: Partial<SessionForm>) => {
+    const line = loggedLines(text)[0];
+    const start = formFromLine(line, toMoment);
+    if (!start) throw new Error("unreadable");
+    const initial = { ...start, note: opening };
+    return editedLine(line, initial, { ...initial, ...set }, CONTEXT);
+  };
+  const MEH: FocusNote = { face: "meh", text: "stuck on refs" };
+  const EMPTY: FocusNote = { face: null, text: "" };
+  const okText = (result: ReturnType<typeof save>) => {
+    if (result.kind !== "ok") throw new Error(JSON.stringify(result));
+    return result.text;
+  };
+
+  it("adds a note as the line's last field, and changes nothing else", () => {
+    expect(okText(save(BARE, EMPTY, { note: { face: "smile", text: "went well" } }))).toBe(
+      `${BARE} [Note:: smile · went well]`
+    );
+  });
+
+  it("changes only the Note's own text on a note-only edit", () => {
+    expect(okText(save(NOTED, MEH, { note: { face: "frown", text: "stuck on [refs]" } }))).toBe(
+      NOTED.replace("meh · stuck on refs", "frown · stuck on (refs)")
+    );
+    expect(okText(save(NOTED, MEH, { note: { face: "meh", text: "" } }))).toBe(
+      NOTED.replace("meh · stuck on refs", "meh")
+    );
+    expect(okText(save(NOTED, MEH, { note: { face: null, text: "stuck on refs" } }))).toBe(
+      NOTED.replace("meh · stuck on refs", "stuck on refs")
+    );
+  });
+
+  it("moves no time, no Slept, Dropped or Cycle on a note-only edit", () => {
+    const full = BARE.replace("[Cycle:: 3]", "[Cycle:: 3] [Slept:: 120] [Dropped:: 60]");
+    const fixed = okText(save(full, EMPTY, { note: { face: "smile", text: "" } }));
+    expect(fixed).toBe(`${full} [Note:: smile]`);
+  });
+
+  it("copies a hand-typed Note byte for byte while the box still reads as it opened", () => {
+    const typed = "a #tag, 100%% and  two  spaces";
+    const hand = `${BARE} [Note:: ${typed}]`;
+    const opened: FocusNote = { face: null, text: typed };
+    // Nothing else changed: nothing to write, spaces around the words aside.
+    expect(save(hand, opened, {})).toEqual({ kind: "unchanged" });
+    expect(save(hand, opened, { note: { face: null, text: ` ${typed} ` } })).toEqual({
+      kind: "unchanged",
+    });
+    // Another field changed: the Note stays exactly as it is written.
+    expect(okText(save(hand, opened, { status: "cancelled" }))).toContain(`[Note:: ${typed}]`);
+  });
+
+  it("keeps a Note over the cap as written while the box still reads as it opened", () => {
+    const long = "x".repeat(600);
+    const hand = `${BARE} [Note:: ${long}]`;
+    const opened: FocusNote = { face: null, text: long };
+    expect(save(hand, opened, {})).toEqual({ kind: "unchanged" });
+    expect(okText(save(hand, opened, { time: "10:05" }))).toContain(`[Note:: ${long}]`);
+  });
+
+  it("refuses words past the cap, and never cuts them", () => {
+    const over = "x".repeat(501);
+    expect(save(NOTED, MEH, { note: { face: "meh", text: over } })).toEqual({
+      kind: "error",
+      message: FORM_NOTE_LONG_MESSAGE,
+    });
+    // Astral characters count as one each, as the cap counts them.
+    const exactly = "🌱".repeat(500);
+    expect(okText(save(BARE, EMPTY, { note: { face: null, text: exactly } }))).toBe(
+      `${BARE} [Note:: ${exactly}]`
+    );
+    expect(save(BARE, EMPTY, { note: { face: null, text: `${exactly}x` } })).toEqual({
+      kind: "error",
+      message: FORM_NOTE_LONG_MESSAGE,
+    });
+    expect(FORM_NOTE_LONG_MESSAGE).toBe(
+      "A focus note holds up to 500 characters. Shorten this one to save it."
+    );
+  });
+
+  it("takes the note off when the box is emptied", () => {
+    expect(okText(save(NOTED, MEH, { note: EMPTY }))).toBe(BARE);
+    // Words the cleaner empties are no note either.
+    expect(okText(save(NOTED, MEH, { note: { face: null, text: " 🍅 " } }))).toBe(BARE);
+    // Nothing there, nothing typed: no write.
+    expect(save(BARE, EMPTY, { note: { face: null, text: "   " } })).toEqual({ kind: "unchanged" });
+  });
+
+  it("lets a second Note go when the box changes, and only then", () => {
+    const twice = `${BARE} [Note:: first] [Note:: second]`;
+    const opened: FocusNote = { face: null, text: "first" };
+    expect(okText(save(twice, opened, { note: { face: null, text: "changed" } }))).toBe(
+      `${BARE} [Note:: changed]`
+    );
+    expect(okText(save(twice, opened, { note: EMPTY }))).toBe(BARE);
+    expect(okText(save(twice, opened, { time: "10:05" }))).toContain(
+      "[Note:: first] [Note:: second]"
+    );
+  });
+
+  it("leaves text after the fields where it is", () => {
+    expect(okText(save(`${BARE} and a remark`, EMPTY, { note: { face: "meh", text: "" } }))).toBe(
+      `${BARE} [Note:: meh] and a remark`
+    );
+    expect(okText(save(`${NOTED} and a remark`, MEH, { note: EMPTY }))).toBe(
+      `${BARE} and a remark`
+    );
+  });
+
+  it("drops the note when the focus is made a break, whatever the box says", () => {
+    const rest = okText(
+      save(NOTED, MEH, { kind: "short-break", note: { face: "smile", text: "ignored" } })
+    );
+    expect(rest).not.toContain("Note::");
+    expect(rest).not.toContain("ignored");
+    // Over the cap too: a box that isn't saved can't refuse the save.
+    const long = save(NOTED, MEH, {
+      kind: "long-break",
+      note: { face: null, text: "x".repeat(600) },
+    });
+    expect(okText(long)).not.toContain("Note::");
+  });
+
+  it("ignores the box on a line that stays a break", () => {
+    expect(
+      save(REST, EMPTY, { note: { face: "smile", text: "typed, then switched back" } })
+    ).toEqual({ kind: "unchanged" });
+    const hand = `${REST} [Note:: typed by hand]`;
+    expect(
+      okText(save(hand, { face: null, text: "typed by hand" }, { kind: "long-break", note: EMPTY }))
+    ).toContain("[Note:: typed by hand]");
+  });
+
+  it("writes nothing for words left in the box on a line that stays a break, spacing and all", () => {
+    // A rebuild would close up the hand-typed gap: nothing the form says changed.
+    const spaced = REST.replace("] [Total", "]  [Total");
+    expect(save(spaced, EMPTY, { note: { face: "smile", text: "typed, then back" } })).toEqual({
+      kind: "unchanged",
+    });
+  });
+
+  it("still checks the times when the note changed", () => {
+    const note: FocusNote = { face: "smile", text: "went well" };
+    expect(save(BARE, EMPTY, { time: "25:99", note })).toEqual({
+      kind: "error",
+      message: FORM_TIME_MESSAGE,
+    });
+  });
+
+  it("takes a box that was given no opening note as changed", () => {
+    const line = loggedLines(BARE)[0];
+    const start = formFromLine(line, toMoment);
+    if (!start) throw new Error("unreadable");
+    const edited = editedLine(
+      line,
+      start,
+      { ...start, note: { face: "smile", text: "" } },
+      CONTEXT
+    );
+    expect(edited).toEqual({ kind: "ok", text: `${BARE} [Note:: smile]` });
+  });
+
+  it("takes a note on a break made a focus", () => {
+    const fixed = okText(
+      save(REST, EMPTY, { kind: "focus", note: { face: "smile", text: "it was work" } })
+    );
+    expect(parseLogLine(fixed)?.kind).toBe("focus");
+    expect(fixed.endsWith("[Offset:: -240] [Note:: smile · it was work]")).toBe(true);
+    // With the box left alone it gets none.
+    expect(okText(save(REST, EMPTY, { kind: "focus" }))).not.toContain("Note::");
+  });
+
+  it("moves a session and sets its note in one save", () => {
+    const fixed = okText(save(NOTED, MEH, { time: "10:05", note: { face: "smile", text: "" } }));
+    expect(fixed).toContain("[Start:: 2026-10-02 10:05:00]");
+    expect(fixed.endsWith("[Note:: smile]")).toBe(true);
+  });
+
+  it("takes words that read as a face as that face, as the card does", () => {
+    expect(okText(save(BARE, EMPTY, { note: { face: null, text: "smile · went fine" } }))).toBe(
+      `${BARE} [Note:: smile · went fine]`
+    );
+    // The same note, only arrived at another way: nothing to write.
+    expect(save(NOTED, MEH, { note: { face: null, text: "meh · stuck on refs" } })).toEqual({
+      kind: "unchanged",
+    });
+  });
+
+  it("refuses a note on a line with no Session to find it by", () => {
+    const old = BARE.replace(/ \[Session:: \w+\]/, "");
+    expect(save(old, EMPTY, { note: { face: "meh", text: "x" } })).toEqual({
+      kind: "error",
+      message: FORM_UNSAFE_MESSAGE,
+    });
+    const bad = BARE.replace("sd4f6g8j2k", "nope");
+    expect(save(bad, EMPTY, { note: { face: "meh", text: "x" } })).toEqual({
+      kind: "error",
+      message: FORM_UNSAFE_MESSAGE,
+    });
+  });
+
+  it("adds nothing but the note: no Session, no other tail field", () => {
+    const old = BARE.replace(/ \[Session:: .*$/, "");
+    // No box on this line, so no note: the form it answers has none.
+    const line = loggedLines(old)[0];
+    const initial = formFromLine(line, toMoment);
+    if (!initial) throw new Error("unreadable");
+    expect(initial.note).toBeUndefined();
+    const result = editedLine(line, initial, { ...initial, status: "cancelled" }, CONTEXT);
+    expect(result).toEqual({ kind: "ok", text: old.replace("finished", "cancelled") });
+  });
+
+  it("stays CRLF, as replaceSessionLine keeps each row's ending", () => {
+    const content = `${BARE}\r\n${FOCUS_1000}\r\n`;
+    const line = loggedLines(content)[0];
+    const fixed = okText(save(content, EMPTY, { note: { face: "meh", text: "" } }));
+    expect(replaceSessionLine(content, line, fixed)).toBe(
+      `${BARE} [Note:: meh]\r\n${FOCUS_1000}\r\n`
+    );
   });
 });
 
