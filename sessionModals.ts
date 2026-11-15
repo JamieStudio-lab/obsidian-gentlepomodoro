@@ -205,9 +205,9 @@ class SessionFormModal extends Modal {
     const form = this.form;
     const note = (): FocusNote => form.note ?? opening;
     const box = this.notePart();
-    box.createEl("div", { cls: "gp-note-title", text: FOCUS_NOTE_TITLE });
-    const row = box.createEl("div", { cls: "gp-note-form" });
-    const faces = row.createEl("div", {
+    box.createDiv({ cls: "gp-note-title", text: FOCUS_NOTE_TITLE });
+    const row = box.createDiv({ cls: "gp-note-form" });
+    const faces = row.createDiv({
       cls: "gp-note-faces",
       attr: { role: "group", "aria-label": FOCUS_NOTE_FACES_LABEL },
     });
