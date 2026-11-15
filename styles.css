@@ -4281,6 +4281,17 @@ body {
   margin: 0;
 }
 
+/* In the session dialog (Fix a logged session) the box or its hint is one more
+   of the dialog's rows: the same hairline above, the same 16px around it, or
+   the row under it sits on its text. The card's rounded corners would bend the
+   hairline at both ends. Three classes, so it out-ranks the rule above on
+   specificity (DESIGN.md entry 2). */
+.gp-note.gp-note-in-modal.gp-fix-note {
+  padding: var(--gp-space-7) 0;
+  border-top: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+}
+
 /* Hidden parts, and the section itself, in the panel AND in the dialog,
    which has no .gp-root ancestor for .gp-root .gp-hidden. Last in the
    section, after every rule that gives a card part a display. */

@@ -77,7 +77,8 @@ anyone would look to check, is fine:
   [GentlePomoSettingTab.ts](GentlePomoSettingTab.ts)
 - `.workspace-leaf-content[data-type="gentle-pomo-view"]` — the resize-divider floor, the first rule in styles.css
 - `.gp-note-modal` and the card in it, `.gp-note.gp-note-in-modal` — the focus note's dialog,
-  [focusNoteCard.ts](focusNoteCard.ts) (0.7.1). The card's own rules are scoped `.gp-note`, never
+  [focusNoteCard.ts](focusNoteCard.ts) (0.7.1), and `.gp-fix-note`, the same parts in the Fix a
+  logged session dialog, [sessionModals.ts](sessionModals.ts) (0.7.2). The card's own rules are scoped `.gp-note`, never
   `.gp-root`, so they reach it; its hidden parts take `.gp-note .gp-hidden`, since the dialog has
   no `.gp-root` for `.gp-root .gp-hidden`
 

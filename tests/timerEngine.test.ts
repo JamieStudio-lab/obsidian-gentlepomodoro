@@ -673,7 +673,7 @@ describe("TimerEngine — dispose", () => {
     const timer = new TimerEngine(stub.plugin as any);
 
     timer.start();
-    expect(vi.getTimerCount()).toBe(2); // the tick and the end-time wake-up
+    expect(vi.getTimerCount()).toBe(3); // the tick, the end-time wake-up, the sound's pre-wake
     expect(() => timer.dispose()).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
 

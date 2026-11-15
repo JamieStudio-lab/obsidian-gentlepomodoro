@@ -846,6 +846,209 @@ describe("FocusNoteStore", () => {
   });
 });
 
+describe("a Note typed by hand, read back raw, is nothing the user typed", () => {
+  // The cleaner would change each of these, and the line keeps them as written.
+  const RAW: FocusNote[] = [
+    { face: null, text: "a#b" },
+    { face: "meh", text: "x".repeat(501) },
+  ];
+
+  for (const raw of RAW) {
+    const name = `${raw.text.slice(0, 3)} (${String(raw.text.length)})`;
+
+    it(`after a Fix: not dirty, Save inactive, and no notice at the next Start or end: ${name}`, () => {
+      const c = host();
+      const store = new FocusNoteStore(c.h);
+      store.ended(target());
+      store.lineEdited(ID, raw);
+      expect(store.draft).toEqual(raw);
+      expect(store.isDirty()).toBe(false);
+      expect(store.view(moment)?.dirty).toBe(false);
+      expect(store.view(moment)?.saveActive).toBe(false);
+      store.focusStarted();
+      store.ended(target({ sessionId: "s0000000002" }));
+      expect(c.notices).toEqual([]);
+    });
+
+    it(`adopted from the log: not dirty either: ${name}`, () => {
+      const c = host();
+      const store = new FocusNoteStore(c.h);
+      store.adopt(target(), raw);
+      expect(store.isDirty()).toBe(false);
+      expect(noteIsDirty(raw, raw)).toBe(false);
+    });
+
+    it(`an edit to it is dirty again: ${name}`, () => {
+      const c = host();
+      const store = new FocusNoteStore(c.h);
+      store.adopt(target(), raw);
+      store.setDraft(raw.face, `${raw.text}!`);
+      expect(store.isDirty()).toBe(true);
+    });
+  }
+
+  it("a draft over the cap that is not the saved note is still dirty, so Save shows the cut", () => {
+    const long = { face: null, text: "x".repeat(501) };
+    expect(noteIsDirty(long, null)).toBe(true);
+    expect(noteIsDirty(long, { face: null, text: "x".repeat(500) })).toBe(true);
+  });
+});
+
+describe("FocusNoteStore.lineEdited — Fix a logged session rewrote a line", () => {
+  const SAVED: FocusNote = { face: "meh", text: "stuck on refs" };
+  const NEW: FocusNote = { face: "smile", text: "fixed it" };
+  /** A store on the target, with `saved` in the log and the draft on it. */
+  const on = (saved: FocusNote | null) => {
+    const c = host();
+    const store = new FocusNoteStore(c.h);
+    store.adopt(target(), saved);
+    const changes: boolean[] = [];
+    store.onChange(({ reseed }) => changes.push(reseed));
+    return { c, store, changes };
+  };
+
+  it("takes the new note: read from the file, so with no time, and the draft follows", () => {
+    const { store, changes } = on(SAVED);
+    const revision = store.revision;
+    store.lineEdited(ID, NEW);
+    expect(store.saved).toEqual({ ...NEW, at: null });
+    expect(store.draft).toEqual(NEW);
+    expect(store.revision).toBe(revision + 1);
+    expect(changes).toEqual([true]);
+  });
+
+  it("clears the note when the line has none now, and for a note with nothing in it", () => {
+    const gone = on(SAVED);
+    gone.store.lineEdited(ID, null);
+    expect(gone.store.saved).toBeNull();
+    expect(gone.store.draft).toEqual(EMPTY);
+    expect(gone.changes).toEqual([true]);
+    const empty = on(SAVED);
+    empty.store.lineEdited(ID, EMPTY);
+    expect(empty.store.saved).toBeNull();
+    expect(empty.store.draft).toEqual(EMPTY);
+  });
+
+  it("does nothing for another session, or when the note is the one it knows", () => {
+    const { store, changes } = on(SAVED);
+    const revision = store.revision;
+    store.lineEdited(OTHER, NEW);
+    store.lineEdited(ID, { ...SAVED });
+    expect(store.saved).toEqual({ ...SAVED, at: null });
+    expect(store.revision).toBe(revision);
+    expect(changes).toEqual([]);
+    // Nothing known and nothing there.
+    const none = on(null);
+    none.store.lineEdited(ID, null);
+    none.store.lineEdited(ID, EMPTY);
+    expect(none.changes).toEqual([]);
+    expect(none.store.revision).toBe(0);
+    // No target at all.
+    const c = host();
+    const bare = new FocusNoteStore(c.h);
+    bare.lineEdited(ID, NEW);
+    expect(bare.saved).toBeNull();
+    expect(bare.revision).toBe(0);
+  });
+
+  it("leaves the door open to the file when the fix changed no note", () => {
+    // A fix of the time alone is no write of the note: another device's still shows.
+    const { store } = on(null);
+    store.lineEdited(ID, null);
+    store.knowSaved(ID, NEW);
+    expect(store.saved).toEqual({ ...NEW, at: null });
+  });
+
+  it("keeps a saved note's time when the line reads the same, and drops it when it changed", async () => {
+    const c = host();
+    const store = new FocusNoteStore(c.h);
+    store.ended(target());
+    store.setDraft(SAVED.face, SAVED.text);
+    void store.save(target(), SAVED);
+    await c.settle("saved");
+    const when = store.saved?.at;
+    expect(typeof when).toBe("number");
+    store.lineEdited(ID, SAVED);
+    expect(store.saved?.at).toBe(when);
+    store.lineEdited(ID, NEW);
+    expect(store.saved?.at).toBeNull();
+  });
+
+  it("keeps the user's typed words when they differ from the old note", () => {
+    const { store, changes } = on(SAVED);
+    store.setDraft("frown", "half a thought");
+    changes.length = 0;
+    store.lineEdited(ID, NEW);
+    expect(store.saved).toEqual({ ...NEW, at: null });
+    expect(store.draft).toEqual({ face: "frown", text: "half a thought" });
+    // The box keeps its words, so no card is reseeded.
+    expect(changes).toEqual([false]);
+  });
+
+  it("keeps an emptied box over a saved note: emptying it was the user's", () => {
+    const { store, changes } = on(SAVED);
+    store.setDraft(null, "");
+    changes.length = 0;
+    store.lineEdited(ID, NEW);
+    expect(store.draft).toEqual(EMPTY);
+    expect(store.saved).toEqual({ ...NEW, at: null });
+    expect(changes).toEqual([false]);
+  });
+
+  it("reads a draft through the cleaner, as a dirty check does", () => {
+    // Stored as "stuck on (refs)", typed with the brackets: not dirty.
+    const { store } = on({ face: "meh", text: "stuck on (refs)" });
+    store.setDraft("meh", "stuck on [refs]");
+    store.lineEdited(ID, NEW);
+    expect(store.draft).toEqual(NEW);
+  });
+
+  it("moves a draft that is the old note as written, even one the cleaner would change", () => {
+    // A Note typed by hand: the store read it from the log, nobody typed it here.
+    const hand = on({ face: null, text: "#tag and 🍅" });
+    hand.store.lineEdited(ID, NEW);
+    expect(hand.store.draft).toEqual(NEW);
+    expect(hand.changes).toEqual([true]);
+    const long = on({ face: null, text: "x".repeat(600) });
+    long.store.lineEdited(ID, null);
+    expect(long.store.draft).toEqual({ face: null, text: "" });
+  });
+
+  it("waits while a write for that session is pending", async () => {
+    const c = host();
+    const store = new FocusNoteStore(c.h);
+    store.adopt(target(), SAVED);
+    void store.save(target(), NEW);
+    const revision = store.revision;
+    store.lineEdited(ID, null);
+    expect(store.saved).toEqual({ ...SAVED, at: null });
+    expect(store.revision).toBe(revision);
+    await c.settle("saved");
+    expect(store.saved).toMatchObject(NEW);
+    // Settled: it listens again.
+    store.lineEdited(ID, null);
+    expect(store.saved).toBeNull();
+  });
+
+  it("stops a read begun before the fix from putting the old note back", () => {
+    const { store } = on(SAVED);
+    store.lineEdited(ID, null);
+    store.knowSaved(ID, SAVED);
+    expect(store.saved).toBeNull();
+    expect(store.draft).toEqual(EMPTY);
+  });
+
+  it("keeps what it took on this device", () => {
+    const c = host();
+    const store = new FocusNoteStore(c.h);
+    store.adopt(target(), SAVED);
+    store.lineEdited(ID, NEW);
+    const again = new FocusNoteStore(c.h);
+    expect(again.saved).toEqual({ ...NEW, at: null });
+    expect(again.draft).toEqual(NEW);
+  });
+});
+
 describe("readFocusNoteState", () => {
   const good = {
     target: target(),

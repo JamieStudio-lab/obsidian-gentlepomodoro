@@ -1,6 +1,16 @@
-import { FuzzySuggestModal, Modal, Setting } from "obsidian";
+import { FuzzySuggestModal, Modal, Setting, setIcon } from "obsidian";
 import type { App, DropdownComponent, TextComponent } from "obsidian";
 import { markDestructive } from "./confirmModal";
+import { FACE_LABELS, FOCUS_NOTE_PROMPTS, NOTE_DRAFT_MAX } from "./focusNote";
+import {
+  FOCUS_NOTE_FACES_LABEL,
+  FOCUS_NOTE_TEXT_LABEL,
+  FOCUS_NOTE_TITLE,
+  isComposing,
+  isSaveShortcut,
+  saveShortcutText,
+} from "./focusNoteCard";
+import { NOTE_FACES, type FocusNote, type NoteFace } from "./logLine";
 import {
   EXPORT_FOLDER_NOTE,
   EXPORT_FORMATS,
@@ -41,6 +51,8 @@ export interface SessionFormOptions {
   tasks: () => Promise<SessionTaskChoice[]>;
   /** Why these values cannot be saved, or null. Checked before the dialog closes. */
   check: (form: SessionForm) => string | null;
+  /** One plain line in place of the focus note box, for a focus that can't take a note. */
+  noteHint?: string;
 }
 
 export type SessionFormAnswer = { action: "save"; form: SessionForm } | { action: "delete" } | null;
@@ -60,6 +72,9 @@ export function askSessionForm(app: App, options: SessionFormOptions): Promise<S
 class SessionFormModal extends Modal {
   private answer: SessionFormAnswer = null;
   private readonly form: SessionForm;
+  private problemEl: HTMLElement | null = null;
+  /** The focus note box and its hint: only a focus has either. */
+  private readonly noteParts: HTMLElement[] = [];
 
   constructor(
     app: App,
@@ -78,6 +93,7 @@ class SessionFormModal extends Modal {
       for (const option of SESSION_KIND_OPTIONS) dropdown.addOption(option.value, option.label);
       dropdown.setValue(form.kind).onChange((value) => {
         form.kind = value as SessionKind;
+        this.syncNoteParts();
       });
     });
     new Setting(this.contentEl)
@@ -140,7 +156,11 @@ class SessionFormModal extends Modal {
         });
       });
 
-    const problem = this.contentEl.createDiv("gp-setting-note");
+    if (form.note !== undefined) this.buildNoteBox(form.note);
+    if (this.options.noteHint !== undefined) this.buildNoteHint(this.options.noteHint);
+    this.syncNoteParts();
+
+    this.problemEl = this.contentEl.createDiv("gp-setting-note");
     const buttons = new Setting(this.contentEl).addButton((button) =>
       button.setButtonText("Cancel").onClick(() => {
         this.close();
@@ -160,14 +180,95 @@ class SessionFormModal extends Modal {
         .setButtonText(this.options.submitText)
         .setCta()
         .onClick(() => {
-          // Said in the dialog, which stays open: the values typed are kept.
-          const message = this.options.check(form);
-          problem.setText(message ?? "");
-          if (message !== null) return;
-          this.answer = { action: "save", form: { ...form } };
-          this.close();
+          this.submit();
         })
     );
+  }
+
+  /** The Save button, and Mod+Enter in the note box. */
+  private submit(): void {
+    // Said in the dialog, which stays open: the values typed are kept.
+    const message = this.options.check(this.form);
+    this.problemEl?.setText(message ?? "");
+    if (message !== null) return;
+    this.answer = { action: "save", form: { ...this.form } };
+    this.close();
+  }
+
+  /**
+   * The focus note card's face row and box (focusNoteCard.ts), under its
+   * classes so its rules apply. Every change assigns a new `form.note`, so
+   * neither the form the dialog was given nor an answer shares an object with
+   * a later keystroke. The listeners go with the nodes when the dialog empties.
+   */
+  private buildNoteBox(opening: FocusNote): void {
+    const form = this.form;
+    const note = (): FocusNote => form.note ?? opening;
+    const box = this.notePart();
+    box.createDiv({ cls: "gp-note-title", text: FOCUS_NOTE_TITLE });
+    const row = box.createDiv({ cls: "gp-note-form" });
+    const faces = row.createDiv({
+      cls: "gp-note-faces",
+      attr: { role: "group", "aria-label": FOCUS_NOTE_FACES_LABEL },
+    });
+    const textarea = row.createEl("textarea", {
+      cls: "gp-note-text",
+      attr: {
+        rows: "2",
+        maxlength: String(NOTE_DRAFT_MAX),
+        "aria-label": FOCUS_NOTE_TEXT_LABEL,
+        "aria-keyshortcuts": saveShortcutText().aria,
+      },
+    });
+    textarea.value = opening.text;
+
+    const buttons = new Map<NoteFace, HTMLElement>();
+    const paint = () => {
+      const pressed = note().face;
+      for (const [face, button] of buttons) {
+        button.setAttr("aria-pressed", pressed === face ? "true" : "false");
+      }
+      textarea.setAttr("placeholder", FOCUS_NOTE_PROMPTS[pressed ?? "none"]);
+    };
+    for (const face of NOTE_FACES) {
+      const button = faces.createEl("button", {
+        cls: "gp-note-face",
+        attr: { type: "button", "data-face": face, "aria-label": FACE_LABELS[face] },
+      });
+      setIcon(button, face);
+      buttons.set(face, button);
+      button.addEventListener("click", () => {
+        form.note = { face: note().face === face ? null : face, text: note().text };
+        paint();
+      });
+    }
+    paint();
+
+    textarea.addEventListener("input", () => {
+      form.note = { face: note().face, text: textarea.value };
+    });
+    // Plain Enter is a new line. The chord never is, a held or a composing one
+    // included, but only a fresh press outside an input method saves.
+    textarea.addEventListener("keydown", (evt: KeyboardEvent) => {
+      if (!isSaveShortcut(evt)) return;
+      evt.preventDefault();
+      if (!evt.repeat && !isComposing(evt)) this.submit();
+    });
+  }
+
+  private buildNoteHint(hint: string): void {
+    this.notePart().createEl("p", { cls: "gp-note-hint", text: hint });
+  }
+
+  /** The card's own wrapper: hidden by `.gp-note.gp-hidden`, as a dialog has no `.gp-root`. */
+  private notePart(): HTMLElement {
+    const part = this.contentEl.createDiv("gp-note gp-note-in-modal gp-fix-note");
+    this.noteParts.push(part);
+    return part;
+  }
+
+  private syncNoteParts(): void {
+    for (const part of this.noteParts) part.toggleClass("gp-hidden", this.form.kind !== "focus");
   }
 
   override onClose(): void {

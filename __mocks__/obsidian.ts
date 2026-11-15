@@ -683,7 +683,7 @@ export interface ModalContent extends StubEl {
   elements: ModalChild[];
   settings: Setting[];
   createEl: (tag: string, options?: { text?: string }) => ModalChild;
-  createDiv: (cls?: string) => ModalContent;
+  createDiv: (cls?: string | StubElInfo) => ModalContent;
   children: ModalContent[];
   empty: () => void;
 }
@@ -693,6 +693,9 @@ function modalContent(cls = ""): ModalContent {
     if (options?.text !== undefined) content.paragraphs.push(options.text);
     const el: ModalChild = Object.assign(stubEl(options?.cls ?? "", tag), {
       createEl: (inner: string, info?: StubElInfo) => child(inner, info),
+      // createDiv(info) is createEl("div", info), as in Obsidian.
+      createDiv: (info?: string | StubElInfo) =>
+        child("div", typeof info === "string" ? { cls: info } : info),
     });
     if (options?.attr) Object.assign(el.attrs, options.attr);
     content.elements.push(el);
@@ -704,7 +707,10 @@ function modalContent(cls = ""): ModalContent {
     settings: [] as Setting[],
     children: [] as ModalContent[],
     createEl: (tag: string, options?: StubElInfo) => child(tag, options),
-    createDiv: (c = "") => {
+    // With a class name, a part of the dialog with its own lists; with an
+    // options object, an element like any createEl makes.
+    createDiv: (c: string | StubElInfo = "") => {
+      if (typeof c !== "string") return child("div", c) as unknown as ModalContent;
       const div = modalContent(c);
       content.children.push(div);
       return div;

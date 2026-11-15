@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // The real assets are .mp3 imports that @rollup/plugin-url turns into base64
 // data URLs at build time; under vitest they resolve to plain paths, which
@@ -13,7 +15,7 @@ vi.mock("../audioAssets", () => ({
 }));
 
 import { TimerEngine } from "../TimerEngine";
-import { DEFAULT_SETTINGS } from "../constants";
+import { DEFAULT_SETTINGS, END_SOUND_PREWAKE_MS } from "../constants";
 
 // ---------------------------------------------------------------------------
 // playSound() — the plugin's ONE audio entry point, and until now the one piece
@@ -54,7 +56,12 @@ class FakeAudioContext {
   currentTime = 10;
   destination = {};
 
-  constructor() {
+  sampleRate = 48000;
+  /** What the engine asked for when it made the context. */
+  options: unknown;
+
+  constructor(options?: unknown) {
+    this.options = options;
     FakeAudioContext.lastInstance = this;
     FakeAudioContext.instances++;
   }
@@ -78,6 +85,9 @@ class FakeAudioContext {
       return Promise.resolve({ duration: fromVault, tag } as unknown as AudioBuffer);
     }
     return Promise.resolve({ duration: 2.5, tag: "bundled" } as unknown as AudioBuffer);
+  }
+  createBuffer(channels: number, length: number, rate: number) {
+    return { duration: length / rate, tag: "silence", channels } as unknown as AudioBuffer;
   }
   createBufferSource(): FakeSource {
     const self = this;
@@ -751,6 +761,155 @@ describe("wakeAudio — inside the click", () => {
     timer.dispose();
     timer.wakeAudio();
     expect(FakeAudioContext.instances).toBe(0);
+  });
+});
+
+describe("the window coming back into view", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+  });
+
+  it("asks for a playback-sized output buffer, so a cue does not crackle", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    expect(FakeAudioContext.lastInstance?.options).toEqual({ latencyHint: "playback" });
+  });
+
+  it("creates no context for a session that has played nothing", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.rewakeAudio();
+    expect(FakeAudioContext.instances).toBe(0);
+  });
+
+  it("runs a moment of silence through a running context", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    const ctx = FakeAudioContext.lastInstance!;
+    timer.rewakeAudio();
+    expect(ctx.resumeCalls).toBe(0);
+    expect(ctx.startedTags).toEqual(["silence"]);
+    expect(FakeAudioContext.instances).toBe(1);
+  });
+
+  it.each(["suspended", "interrupted"])("resumes a %s context", (state) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    const ctx = FakeAudioContext.lastInstance!;
+    ctx.state = state;
+    ctx.resumeCalls = 0;
+    timer.rewakeAudio();
+    expect(ctx.resumeCalls).toBe(1);
+  });
+
+  it("does nothing once disposed, and survives a context that throws", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(makeCueStub(fakeVault([])).plugin as any);
+    timer.wakeAudio();
+    const ctx = FakeAudioContext.lastInstance!;
+    ctx.createBufferSource = () => {
+      throw new Error("InvalidStateError");
+    };
+    expect(() => timer.rewakeAudio()).not.toThrow();
+    timer.dispose();
+    ctx.createBufferSource = FakeAudioContext.prototype.createBufferSource;
+    timer.rewakeAudio();
+    expect(ctx.startedTags).toEqual([]);
+  });
+
+  it("is wired to the window's focus and to the page becoming visible", () => {
+    const main = readFileSync(resolve(__dirname, "..", "main.ts"), "utf8").replace(/\s+/g, " ");
+    expect(main).toContain(
+      'this.registerDomEvent(window, "focus", () => { void this.maybeRefreshFocusTotal(); this.timer.rewakeAudio(); });'
+    );
+    expect(main).toContain("const mainPage = window.document;");
+    expect(main).toContain(
+      'this.registerDomEvent(mainPage, "visibilitychange", () => { if (!mainPage.hidden) this.timer.rewakeAudio(); });'
+    );
+  });
+});
+
+describe("the sound output, woken before a session ends", () => {
+  beforeEach(() => {
+    FakeAudioContext.lastInstance = null;
+    FakeAudioContext.instances = 0;
+    (globalThis as unknown as Record<string, unknown>).AudioContext = FakeAudioContext;
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const silences = () =>
+    (FakeAudioContext.lastInstance?.sources ?? []).filter(
+      (s) => (s.buffer as unknown as { tag: string }).tag === "silence"
+    );
+  const running = (overrides: Partial<typeof DEFAULT_SETTINGS>) => {
+    const stub = makeCueStub(fakeVault([]), { focusMinutes: 1, ...overrides });
+    // What a session that starts, pauses and gains minutes asks of the log.
+    Object.assign(stub.plugin.logManager, {
+      discardSession: () => {},
+      resumeSession: () => {},
+      plannedLengthChanged: () => {},
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const timer = new TimerEngine(stub.plugin as any);
+    // The Start drum is not what is under test here.
+    seams(timer).playSound = () => Promise.resolve(null);
+    timer.start();
+    return timer;
+  };
+
+  it("runs silence from two seconds before the end until past it", () => {
+    const timer = running({ focusEndSoundEnabled: true });
+    vi.advanceTimersByTime(60_000 - END_SOUND_PREWAKE_MS - 100);
+    expect(silences()).toHaveLength(0);
+    vi.advanceTimersByTime(200);
+    expect(silences()).toHaveLength(1);
+    const seconds = (silences()[0].buffer as unknown as { duration: number }).duration;
+    expect(seconds * 1000).toBeGreaterThan(END_SOUND_PREWAKE_MS);
+    timer.dispose();
+  });
+
+  it.each([
+    ["the end sound is off", { focusEndSoundEnabled: false }],
+    ["timer sounds are off", { focusEndSoundEnabled: true, soundEnabled: false }],
+    ["the volume is 0", { focusEndSoundEnabled: true, soundVolume: 0 }],
+  ])("makes no context and no silence when %s", (_name, overrides) => {
+    const timer = running(overrides);
+    vi.advanceTimersByTime(60_000 - END_SOUND_PREWAKE_MS + 100);
+    expect(FakeAudioContext.instances).toBe(0);
+    timer.dispose();
+  });
+
+  it("does nothing for a session paused, reset or disposed before then", () => {
+    const paused = running({ focusEndSoundEnabled: true });
+    vi.advanceTimersByTime(30_000);
+    paused.pause();
+    vi.advanceTimersByTime(60_000);
+    expect(FakeAudioContext.instances).toBe(0);
+    paused.dispose();
+
+    const gone = running({ focusEndSoundEnabled: true });
+    gone.dispose();
+    vi.advanceTimersByTime(60_000);
+    expect(FakeAudioContext.instances).toBe(0);
+  });
+
+  it("moves with the planned end when minutes are added", () => {
+    const timer = running({ focusEndSoundEnabled: true });
+    vi.advanceTimersByTime(30_000);
+    timer.addMinutes(5);
+    vi.advanceTimersByTime(30_000);
+    expect(silences()).toHaveLength(0);
+    vi.advanceTimersByTime(5 * 60_000 - END_SOUND_PREWAKE_MS + 100);
+    expect(silences()).toHaveLength(1);
+    timer.dispose();
   });
 });
 

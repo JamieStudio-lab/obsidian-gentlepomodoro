@@ -32,12 +32,16 @@ import {
   type UnconvertedLine,
 } from "./logConvert";
 import {
+  FORM_NOTE_EARLIER_PART_HINT,
+  FORM_NOTE_OLD_LINE_HINT,
   describeLoggedLine,
   editedLine,
+  findLoggedLine,
   formFromLine,
   insertSessionLine,
   loggedLines,
   newSessionForm,
+  noteSlot,
   replaceSessionLine,
   sessionFromForm,
   type LoggedLine,
@@ -68,7 +72,16 @@ import {
   type LogDateSpan,
 } from "./logExport";
 import { dailyLogFiles, dailyLogPath, logFolderProblem, logFolderProblemNotice } from "./logFolder";
-import { formatLogLine, logicalDate, stamp, type SessionLog } from "./logLine";
+import {
+  formatLogLine,
+  isSessionId,
+  logicalDate,
+  parseNoteValue,
+  readSessionNote,
+  stamp,
+  type FocusNote,
+  type SessionLog,
+} from "./logLine";
 import { ensureLogFolder, isAlreadyExists, type DuplicateTaskId } from "./logManager";
 import { logger } from "./logger";
 import type { MomentFactory } from "./momentTypes";
@@ -93,6 +106,7 @@ export const NO_LOG_TODAY_NOTICE = "Gentle pomodoro: no sessions logged today ye
 export const NO_LOG_FILES_NOTICE = "Gentle pomodoro: no log files found.";
 export const LINE_CHANGED_NOTICE =
   "Gentle pomodoro: that session's line changed after you opened it, so nothing was written. Open it again to fix it.";
+export const DELETE_NOTE_SENTENCE = "Its focus note goes with it.";
 
 /** What the log tools need from the plugin. */
 export interface LogToolsHost {
@@ -112,6 +126,8 @@ export interface LogToolsHost {
   saveSettings(): Promise<void>;
   /** The Export dialog (sessionModals.ts), a seam like askSessionForm. */
   askExportForm?: (options: ExportFormOptions) => Promise<ExportForm | null>;
+  /** Fix rewrote a line of this session: the note its line holds now (null for none). */
+  noteEdited(sessionId: string, note: FocusNote | null): void;
 }
 
 /** What Check log found, for its Notice. */
@@ -1056,6 +1072,8 @@ export class LogTools {
       );
       return;
     }
+    const noteParts = await this.noteParts(date, line);
+    if (noteParts.note !== undefined) initial.note = noteParts.note;
     const edit = (form: SessionForm) =>
       editedLine(line, initial, form, {
         toMoment,
@@ -1068,6 +1086,7 @@ export class LogTools {
       form: initial,
       submitText: "Save",
       canDelete: true,
+      noteHint: noteParts.hint,
       tasks: () => this.taskChoices(),
       check: (form) => {
         const result = edit(form);
@@ -1078,11 +1097,15 @@ export class LogTools {
     if (answer.action === "delete") {
       const confirmed = await this.host.confirm({
         title: "Delete this session?",
-        body: `${describeLoggedLine(line)}, from the log for ${date}. This can't be undone.`,
+        body: `${describeLoggedLine(line)}, from the log for ${date}. ${
+          parseNoteValue(line.parsed.values.get("Note")) === null ? "" : `${DELETE_NOTE_SENTENCE} `
+        }This can't be undone.`,
         ctaText: "Delete",
         destructive: true,
       });
-      if (confirmed) await this.rewriteSessionLine(file, line, null);
+      if (confirmed && (await this.rewriteSessionLine(file, line, null)) === "done") {
+        await this.tellNoteEdited(file, line);
+      }
       return;
     }
     const result = edit(answer.form);
@@ -1094,7 +1117,57 @@ export class LogTools {
       new Notice(`Gentle pomodoro: ${result.message}`);
       return;
     }
-    await this.rewriteSessionLine(file, line, result.text);
+    if ((await this.rewriteSessionLine(file, line, result.text)) === "done") {
+      await this.tellNoteEdited(file, line);
+    }
+  }
+
+  /**
+   * What the dialog shows for a line's focus note: the box, its one-line
+   * explanation, or neither. Decided on the file as it reads now, since a later
+   * part of a split session decides where the note goes; with no fresh reading
+   * of the line there is no box, and the line's Note stays as written.
+   */
+  private async noteParts(
+    date: string,
+    line: LoggedLine
+  ): Promise<{ note?: FocusNote; hint?: string }> {
+    let lines: LoggedLine[];
+    try {
+      lines = (await this.sessionsOn(date))?.lines ?? [];
+    } catch (e) {
+      logger.warn(`Could not read the log for ${date} to find the session's focus note`, e);
+      return {};
+    }
+    const found = findLoggedLine(lines, line);
+    if (found === null) {
+      logger.warn(`The session being fixed is no longer in the log for ${date} as it was read`);
+      return {};
+    }
+    const enabled = this.host.settings().focusNoteEnabled;
+    const slot = noteSlot(found, lines);
+    if (slot === "open") {
+      const written = parseNoteValue(found.parsed.values.get("Note"));
+      return enabled || written !== null ? { note: written ?? { face: null, text: "" } } : {};
+    }
+    if (!enabled) return {};
+    if (slot === "old-line") return { hint: FORM_NOTE_OLD_LINE_HINT };
+    return slot === "earlier-part" ? { hint: FORM_NOTE_EARLIER_PART_HINT } : {};
+  }
+
+  /** Tell the focus note's store what a rewritten session's line now holds. */
+  private async tellNoteEdited(file: TFile, line: LoggedLine): Promise<void> {
+    const sessionId = line.parsed.values.get("Session");
+    if (!isSessionId(sessionId)) return;
+    let content: string;
+    try {
+      content = await this.host.app.vault.read(file);
+    } catch (e) {
+      logger.warn(`Could not read "${file.path}" back after fixing a session`, e);
+      return;
+    }
+    const read = readSessionNote(content, sessionId);
+    this.host.noteEdited(sessionId, read.found ? read.note : null);
   }
 }
 
